@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="TheKrystalShip.Llm.Tests/TheKrystalShip.Llm.Tests.csproj" />
+  <Project Path="TheKrystalShip.Llm/TheKrystalShip.Llm.csproj" />
+</Solution>

@@ -69,22 +69,22 @@ public class LlmAgent : ILlmAgent
 
             // Append the assistant's tool-call turn, then one tool-result per call, in order.
             working.Add(LlmMessage.AssistantToolCalls(message.ToolCalls));
-            foreach (var call in message.ToolCalls)
+            var outputs = await Task.WhenAll(message.ToolCalls.Select(async call =>
             {
-                string output;
-
                 var decision = gate?.Invoke(call) ?? ToolGate.Allow;
                 if (!decision.Allowed)
                 {
-                    output = decision.RefusalMessage
+                    return decision.RefusalMessage
                         ?? $"Refused: the '{call.Name}' tool is not permitted right now.";
                 }
-                else
-                {
-                    output = await _dispatcher.ExecuteAsync(call, cancellationToken);
-                }
 
-                working.Add(LlmMessage.Tool(call.Name, Truncate(output, _options.MaxToolOutputChars)));
+                return await _dispatcher.ExecuteAsync(call, cancellationToken);
+            }));
+
+            var calls = message.ToolCalls.ToList();
+            for (int i = 0; i < calls.Count; i++)
+            {
+                working.Add(LlmMessage.Tool(calls[i].Name, Truncate(outputs[i], _options.MaxToolOutputChars)));
             }
         }
 

@@ -1,0 +1,95 @@
+using FluentAssertions;
+
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+
+using NSubstitute;
+
+using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
+using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
+
+using Xunit;
+
+namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
+
+public class KgsmServerInventoryTests
+{
+    private readonly IInstanceService _instances = Substitute.For<IInstanceService>();
+    private readonly IBlueprintService _blueprints = Substitute.For<IBlueprintService>();
+
+    private KgsmServerInventory Create(int ttl = 300) =>
+        new(_instances, _blueprints,
+            Options.Create(new InventoryCacheOptions { InstancesTtlSeconds = ttl, BlueprintsTtlSeconds = ttl }),
+            NullLogger<KgsmServerInventory>.Instance);
+
+    private static IReadOnlyDictionary<string, Instance> Inst(params (string name, string bp)[] items) =>
+        items.ToDictionary(i => i.name, i => new Instance { Name = i.name, Blueprint = i.bp });
+
+    [Fact]
+    public async Task GetInstances_MapsNameToBlueprint()
+    {
+        _instances.GetAll().Returns(Inst(("terraria", "terraria"), ("mc", "minecraft")));
+
+        var result = await Create().GetInstancesAsync();
+
+        result["terraria"].Should().Be("terraria");
+        result["mc"].Should().Be("minecraft");
+    }
+
+    [Fact]
+    public async Task WithinTtl_CachesAndCallsKgsmOnce()
+    {
+        _instances.GetAll().Returns(Inst(("terraria", "terraria")));
+        var inv = Create(ttl: 300);
+
+        await inv.GetInstancesAsync();
+        await inv.GetInstancesAsync();
+
+        _instances.Received(1).GetAll();
+    }
+
+    [Fact]
+    public async Task Invalidate_ForcesRefresh()
+    {
+        _instances.GetAll().Returns(Inst(("terraria", "terraria")));
+        var inv = Create(ttl: 300);
+
+        await inv.GetInstancesAsync();
+        inv.Invalidate();
+        await inv.GetInstancesAsync();
+
+        _instances.Received(2).GetAll();
+    }
+
+    [Fact]
+    public async Task RefreshFailure_ServesLastKnownGood()
+    {
+        _instances.GetAll().Returns(
+            _ => Inst(("terraria", "terraria")),
+            _ => throw new InvalidOperationException("boom"));
+        var inv = Create(ttl: 300);
+
+        var first = await inv.GetInstancesAsync();
+        inv.Invalidate();
+        var second = await inv.GetInstancesAsync(); // refresh throws -> keep the snapshot
+
+        second.Should().BeEquivalentTo(first);
+        _instances.Received(2).GetAll();
+    }
+
+    [Fact]
+    public async Task GetBlueprintNames_ReturnsKeys()
+    {
+        _blueprints.GetAll().Returns(new Dictionary<string, Blueprint>
+        {
+            ["valheim"] = new Blueprint { Name = "valheim" },
+            ["terraria"] = new Blueprint { Name = "terraria" },
+        });
+
+        var names = await Create().GetBlueprintNamesAsync();
+
+        names.Should().BeEquivalentTo("valheim", "terraria");
+    }
+}

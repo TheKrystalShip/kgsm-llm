@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TheKrystalShip.Kgsm.Assistant.Service</RootNamespace>
+    <AssemblyName>TheKrystalShip.Kgsm.Assistant.Service</AssemblyName>
+    <!-- This box ships the ASP.NET Core shared framework only at 10.x; the app targets
+         net9.0, so roll forward to the installed major at runtime. -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Let the test project reach the internal adapters / security helpers. -->
+    <InternalsVisibleTo Include="TheKrystalShip.Kgsm.Assistant.Service.Tests" />
+    <!-- Let NSubstitute (Castle DynamicProxy) mock the internal IDiscordOAuthClient. -->
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The reusable agent loop + the kgsm assistant (prompt, tools, dispatcher,
+         policy, ConfirmAsync). The assistant stays KGSM.Lib-free; the KGSM.Lib glue
+         that satisfies its ports lives in this service. -->
+    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.0.0-beta" />
+  </ItemGroup>
+
+</Project>

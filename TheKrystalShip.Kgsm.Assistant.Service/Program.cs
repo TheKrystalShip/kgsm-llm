@@ -1,0 +1,263 @@
+using System.Text.Json;
+
+using Microsoft.Extensions.Options;
+
+using TheKrystalShip.Kgsm.Assistant;
+using TheKrystalShip.Kgsm.Assistant.Extensions;
+using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Service;
+using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Service.Discord;
+using TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Services;
+using TheKrystalShip.Llm.Extensions;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// --- Options -----------------------------------------------------------------
+builder.Services.Configure<InventoryCacheOptions>(
+    builder.Configuration.GetSection(InventoryCacheOptions.Section));
+builder.Services.Configure<AssistantServiceOptions>(
+    builder.Configuration.GetSection(AssistantServiceOptions.Section));
+builder.Services.Configure<DiscordOAuthOptions>(
+    builder.Configuration.GetSection(DiscordOAuthOptions.Section));
+builder.Services.Configure<AuthOptions>(
+    builder.Configuration.GetSection(AuthOptions.Section));
+
+var kgsm = builder.Configuration.GetSection(KgsmConnectionOptions.Section).Get<KgsmConnectionOptions>()
+    ?? throw new InvalidOperationException("KGSM configuration section is missing.");
+
+// --- LLM + assistant ---------------------------------------------------------
+// The reusable agent loop (Ollama client, conversation store) and the kgsm assistant
+// (prompt builder with the lib's canonical prompt, tool dispatcher, policy, ConfirmAsync).
+// No Llm:* config is required here — the prompt text lives in the library.
+builder.Services.AddLocalLlm(builder.Configuration);
+builder.Services.AddKgsmAssistant();
+
+// --- KGSM.Lib + the port adapters that back the assistant --------------------
+// We register the instance/blueprint services (which shell out to kgsm) WITHOUT
+// KGSM.Lib's AddKgsmServices: that wires the full IKgsmClient, whose construction
+// auto-starts the Unix-socket event listener and would contend with the bot for the
+// single kgsm event socket. This service receives events over the /events webhook, so
+// it must never bind that socket — hence no IKgsmClient / IEventService here.
+builder.Services.AddSingleton<IProcessRunner, ProcessRunner>();
+builder.Services.AddSingleton<IInstanceService>(sp => new InstanceService(
+    sp.GetRequiredService<IProcessRunner>(), kgsm.Path,
+    sp.GetRequiredService<ILoggerFactory>().CreateLogger<InstanceService>()));
+builder.Services.AddSingleton<IBlueprintService>(sp => new BlueprintService(
+    sp.GetRequiredService<IProcessRunner>(), kgsm.Path,
+    sp.GetRequiredService<ILoggerFactory>().CreateLogger<BlueprintService>()));
+
+builder.Services.AddSingleton<KgsmServerInventory>();
+builder.Services.AddSingleton<IServerInventory>(sp => sp.GetRequiredService<KgsmServerInventory>());
+builder.Services.AddSingleton<IServerOperations, KgsmServerOperations>();
+
+// --- Security ----------------------------------------------------------------
+builder.Services.AddSingleton<ConfirmationTokenService>();
+
+// --- Web auth (Discord OAuth) ------------------------------------------------
+// The SPA is a separate origin (GitHub Pages), so auth is a bearer session token the
+// service mints — not a cookie. The three in-memory stores are SINGLETONS; the typed
+// HttpClient is transient (factory-managed); the orchestration service + bearer filter
+// are SCOPED — so no singleton ever captures the transient client.
+builder.Services.AddSingleton<SessionStore>();
+builder.Services.AddSingleton<OAuthStateStore>();
+builder.Services.AddSingleton<RoleCache>();
+builder.Services.AddHttpClient<IDiscordOAuthClient, DiscordOAuthClient>(
+    c => c.BaseAddress = new Uri("https://discord.com/"));
+builder.Services.AddScoped<DiscordAuthService>();
+builder.Services.AddScoped<BearerAuthFilter>();
+
+// CORS: allow the configured SPA origin to call with an Authorization header. NO
+// AllowCredentials (bearer, not cookies). UseCors is ordered before the secured group so
+// cross-origin preflight (OPTIONS) is answered by the CORS middleware, pre-auth.
+var authOptions = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>() ?? new AuthOptions();
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
+    .WithOrigins(authOptions.AllowedOrigins)
+    .WithMethods("GET", "POST")
+    .WithHeaders("Authorization", "Content-Type")));
+
+var app = builder.Build();
+
+app.UseCors();
+
+// Warn loudly if actions are switched on but can't actually be authorized — the service
+// then stays read-only (CanPerformActionsAsync requires all of these), the safe default.
+{
+    var opts = app.Services.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
+    var tokens = app.Services.GetRequiredService<ConfirmationTokenService>();
+    var discord = app.Services.GetRequiredService<IOptions<DiscordOAuthOptions>>().Value;
+    if (opts.ActionsEnabled && !tokens.IsConfigured)
+        app.Logger.LogWarning(
+            "Assistant:ActionsEnabled is true but Assistant:Confirmation:Key is unset — " +
+            "the service will run READ-ONLY until a key is configured.");
+    if (opts.ActionsEnabled &&
+        (string.IsNullOrEmpty(discord.ClientSecret) || string.IsNullOrEmpty(discord.GuildId) ||
+         string.IsNullOrEmpty(discord.ActionRoleId)))
+        app.Logger.LogWarning(
+            "Assistant:ActionsEnabled is true but DiscordOAuth is not fully configured " +
+            "(ClientSecret/GuildId/ActionRoleId) — no caller will be authorized for actions.");
+}
+
+// --- Public endpoints --------------------------------------------------------
+// Open: a liveness probe, and the two auth-bootstrap endpoints (a caller has no session yet).
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+// Returns the Discord authorize URL (with a fresh single-use state + PKCE challenge) for the
+// SPA to navigate the browser to. JSON, not a 302 — the SPA owns navigation.
+app.MapGet("/auth/login", (DiscordAuthService auth) =>
+    Results.Ok(new LoginUrlResponse(auth.BuildLoginUrl())));
+
+// The SPA POSTs the code + state Discord handed back. The service exchanges it server-side,
+// requires guild membership, and returns a session bearer token. 401 if anything fails.
+app.MapPost("/auth/callback", async (AuthCallbackRequest request, DiscordAuthService auth, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.State))
+        return Results.BadRequest(new { error = "code and state are required." });
+
+    var session = await auth.CompleteLoginAsync(request.Code, request.State, ct);
+    return session is null
+        ? Results.Unauthorized()
+        : Results.Ok(new AuthSessionResponse(session.SessionToken, session.DisplayName));
+});
+
+app.MapPost("/events", async (
+    HttpRequest httpRequest,
+    KgsmServerInventory inventory,
+    IOptions<AssistantServiceOptions> options,
+    ILoggerFactory loggerFactory,
+    CancellationToken ct) =>
+{
+    var logger = loggerFactory.CreateLogger("KgsmWebhook");
+
+    using var buffer = new MemoryStream();
+    await httpRequest.Body.CopyToAsync(buffer, ct);
+    var body = buffer.ToArray();
+
+    var secret = options.Value.Webhook.Secret;
+    if (!string.IsNullOrEmpty(secret))
+    {
+        var signature = httpRequest.Headers["X-KGSM-Signature"].ToString();
+        if (!KgsmWebhookSignature.Verify(signature, body, secret))
+        {
+            logger.LogWarning("Rejected kgsm webhook: invalid or missing signature");
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        logger.LogWarning("Webhook secret not configured — signature is NOT enforced");
+    }
+
+    // The payload's only job here is cache invalidation; any instance lifecycle event can
+    // change the inventory, so invalidate unconditionally. Parse only to log the type.
+    try
+    {
+        using var doc = JsonDocument.Parse(body);
+        if (doc.RootElement.TryGetProperty("EventType", out var eventType))
+            logger.LogInformation("kgsm event received: {EventType}", eventType.GetString());
+    }
+    catch (JsonException)
+    {
+        logger.LogWarning("kgsm webhook body was not valid JSON; invalidating cache anyway");
+    }
+
+    inventory.Invalidate();
+    return Results.NoContent();
+});
+
+// --- Secured endpoints -------------------------------------------------------
+// Every user endpoint requires a valid session whose principal is a guild member (login +
+// membership for ALL — mirrors having to be in the Discord server to use the bot). The
+// action role additionally gates mutations, computed FRESH per call.
+var secured = app.MapGroup("").AddEndpointFilter<BearerAuthFilter>();
+
+// Who am I, and may I act right now? Lets the SPA show/hide action affordances.
+secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    return Results.Ok(new MeResponse(principal.UserId, principal.DisplayName, canPerform));
+});
+
+secured.MapPost("/auth/logout", (HttpContext http, DiscordAuthService auth) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    auth.Logout(principal);
+    return Results.NoContent();
+});
+
+secured.MapPost("/turn", async (
+    TurnRequest request,
+    HttpContext http,
+    IServerAssistant assistant,
+    ConfirmationTokenService tokens,
+    DiscordAuthService auth,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Prompt))
+        return Results.BadRequest(new { error = "prompt is required." });
+
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+
+    // Authority is derived fresh from the verified principal; the conversation key is
+    // principal-scoped so one user can't read or poison another's memory.
+    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    var conversationId = $"web:{principal.UserId}";
+
+    // Opt into token streaming with `Accept: text/event-stream`; everyone else gets the buffered
+    // JSON contract unchanged. (SSE here is POST, so the SPA reads it via fetch()+ReadableStream —
+    // the browser EventSource is GET-only and can't carry the bearer.)
+    var wantsStream = http.Request.Headers.Accept
+        .Any(v => v is not null && v.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase));
+
+    if (wantsStream)
+    {
+        await SseTurnWriter.WriteAsync(
+            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform);
+        return Results.Empty;
+    }
+
+    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, ct);
+
+    if (result.IsFailure)
+        return Results.Problem(result.Error, statusCode: StatusCodes.Status502BadGateway);
+
+    var confirmations = result.Confirmations
+        .Select(c => new ConfirmationDto(
+            c.Kind.ToString().ToLowerInvariant(), c.Target, c.InstanceName, tokens.Create(c, principal.UserId)))
+        .ToArray();
+
+    return Results.Ok(new TurnResponse(result.Text, confirmations));
+});
+
+secured.MapPost("/confirm", async (
+    ConfirmRequest request,
+    HttpContext http,
+    IServerAssistant assistant,
+    ConfirmationTokenService tokens,
+    DiscordAuthService auth,
+    CancellationToken ct) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+
+    // Reject a malformed/expired token AND a token staged by a different user — with the same
+    // generic message, so it isn't an oracle for which case occurred.
+    if (!tokens.TryValidate(request.Token, out var confirmation, out var stagedBy) ||
+        !string.Equals(stagedBy, principal.UserId, StringComparison.Ordinal))
+        return Results.BadRequest(new { error = "Invalid or expired confirmation." });
+
+    // Re-derive authority FRESH at confirm time — never trust it from the token.
+    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    var result = await assistant.ConfirmAsync(confirmation, canPerform, ct);
+
+    return Results.Ok(new ConfirmResponse(
+        result.IsSuccess ? result.Value! : result.Error!, result.IsSuccess));
+});
+
+app.Run();
+
+/// <summary>Exposed so the test project's <c>WebApplicationFactory</c> can boot the app.</summary>
+public partial class Program;

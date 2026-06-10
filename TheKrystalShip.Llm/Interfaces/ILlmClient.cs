@@ -22,4 +22,16 @@ public interface ILlmClient
         IReadOnlyList<LlmMessage> messages,
         IReadOnlyList<LlmToolDefinition>? tools = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Streaming counterpart to <see cref="ChatAsync"/>: sends the conversation and yields the
+    /// model's reply as a sequence of <see cref="LlmStreamChunk"/> frames (content deltas, tool
+    /// calls, and a terminal done marker) as they arrive. Transport/backend failures surface as a
+    /// thrown exception when the consumer advances the enumerator (the agent loop maps it to a
+    /// terminal error event); disposing the enumerator early aborts the underlying request.
+    /// </summary>
+    IAsyncEnumerable<LlmStreamChunk> ChatStreamAsync(
+        IReadOnlyList<LlmMessage> messages,
+        IReadOnlyList<LlmToolDefinition>? tools = null,
+        CancellationToken cancellationToken = default);
 }

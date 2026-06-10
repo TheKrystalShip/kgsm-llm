@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using System.Text;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -67,31 +70,139 @@ public class LlmAgent : ILlmAgent
                 return Result.Success(text);
             }
 
-            // Append the assistant's tool-call turn, then one tool-result per call, in order.
-            working.Add(LlmMessage.AssistantToolCalls(message.ToolCalls));
-            var outputs = await Task.WhenAll(message.ToolCalls.Select(async call =>
-            {
-                var decision = gate?.Invoke(call) ?? ToolGate.Allow;
-                if (!decision.Allowed)
-                {
-                    return decision.RefusalMessage
-                        ?? $"Refused: the '{call.Name}' tool is not permitted right now.";
-                }
-
-                return await _dispatcher.ExecuteAsync(call, cancellationToken);
-            }));
-
-            var calls = message.ToolCalls.ToList();
-            for (int i = 0; i < calls.Count; i++)
-            {
-                working.Add(LlmMessage.Tool(calls[i].Name, Truncate(outputs[i], _options.MaxToolOutputChars)));
-            }
+            await ExecuteToolRoundAsync(message.ToolCalls, working, gate, cancellationToken);
         }
 
         _logger.LogWarning(
             "Agent hit the {Max}-iteration cap for conversation {Conversation}",
             _options.MaxIterations, turn.ConversationId);
         return Result.Success(_options.IterationLimitReply);
+    }
+
+    public async IAsyncEnumerable<AgentEvent> RunStreamAsync(
+        AgentTurn turn,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // Identical persistence boundary to RunAsync: record the user's turn, then assemble
+        // [fresh system, ...history]. Only the final no-tool-call text is persisted below.
+        _conversationStore.Append(turn.ConversationId, LlmMessage.User(turn.UserPrompt));
+
+        var working = new List<LlmMessage> { LlmMessage.System(turn.SystemPrompt) };
+        working.AddRange(_conversationStore.GetHistory(turn.ConversationId));
+
+        var tools = turn.Tools;
+        var gate = turn.Gate;
+
+        for (var iteration = 0; iteration < _options.MaxIterations; iteration++)
+        {
+            var content = new StringBuilder();
+            List<LlmToolCall>? toolCalls = null;
+            string? error = null;
+
+            // Drive the chunk stream through a manual enumerator: a mid-stream failure must be
+            // captured and surfaced as a terminal error event, and C# forbids `yield` in a catch.
+            await using var chunks = _llmClient
+                .ChatStreamAsync(working, tools, cancellationToken)
+                .GetAsyncEnumerator(cancellationToken);
+
+            while (true)
+            {
+                LlmStreamChunk? chunk = null;
+                try
+                {
+                    if (await chunks.MoveNextAsync())
+                        chunk = chunks.Current;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // genuine cancellation (e.g. the client disconnected) — let it propagate
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                }
+
+                if (error is not null || chunk is null)
+                    break;
+
+                if (!string.IsNullOrEmpty(chunk.ContentDelta))
+                {
+                    content.Append(chunk.ContentDelta);
+                    yield return AgentEvent.Token(chunk.ContentDelta);
+                }
+
+                // Tool calls arrive complete in one frame (probe-verified) — capture, don't accumulate.
+                if (chunk.ToolCalls is { Count: > 0 })
+                    toolCalls = chunk.ToolCalls.ToList();
+
+                if (chunk.Done)
+                    break;
+            }
+
+            if (error is not null)
+            {
+                yield return AgentEvent.Error(error);
+                yield break;
+            }
+
+            if (toolCalls is { Count: > 0 })
+            {
+                // A tool round emits no user-facing prose; intermediate content is NOT persisted
+                // (parity with RunAsync, which only ever stores the final no-tool-call text).
+                await ExecuteToolRoundAsync(toolCalls, working, gate, cancellationToken);
+                yield return AgentEvent.Status(DescribeToolRound(toolCalls));
+                continue;
+            }
+
+            // Final turn: persist only the final assistant text (trimmed, matching the buffered
+            // client which trims the whole reply), then signal completion.
+            var text = content.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(text))
+                _conversationStore.Append(turn.ConversationId, LlmMessage.Assistant(text));
+            yield return AgentEvent.Final(text);
+            yield break;
+        }
+
+        _logger.LogWarning(
+            "Agent hit the {Max}-iteration cap (stream) for conversation {Conversation}",
+            _options.MaxIterations, turn.ConversationId);
+        yield return AgentEvent.Final(_options.IterationLimitReply);
+    }
+
+    /// <summary>
+    /// Runs one tool round: append the assistant's tool-call turn, gate-then-dispatch each call
+    /// concurrently (a refused call feeds its refusal back instead of executing), then append one
+    /// tool-result message per call, in order. Shared by <see cref="RunAsync"/> and
+    /// <see cref="RunStreamAsync"/> so the gate/dispatch/truncate semantics can't drift.
+    /// </summary>
+    private async Task ExecuteToolRoundAsync(
+        IReadOnlyList<LlmToolCall> toolCalls,
+        List<LlmMessage> working,
+        Func<LlmToolCall, ToolGate>? gate,
+        CancellationToken cancellationToken)
+    {
+        working.Add(LlmMessage.AssistantToolCalls(toolCalls));
+
+        var outputs = await Task.WhenAll(toolCalls.Select(async call =>
+        {
+            var decision = gate?.Invoke(call) ?? ToolGate.Allow;
+            if (!decision.Allowed)
+            {
+                return decision.RefusalMessage
+                    ?? $"Refused: the '{call.Name}' tool is not permitted right now.";
+            }
+
+            return await _dispatcher.ExecuteAsync(call, cancellationToken);
+        }));
+
+        for (int i = 0; i < toolCalls.Count; i++)
+            working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i], _options.MaxToolOutputChars)));
+    }
+
+    private static string DescribeToolRound(IReadOnlyList<LlmToolCall> toolCalls)
+    {
+        var names = toolCalls.Select(c => c.Name).Distinct().ToArray();
+        return $"Running {string.Join(", ", names)}…";
     }
 
     private static string Truncate(string text, int max)

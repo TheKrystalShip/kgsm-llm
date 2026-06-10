@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="TheKrystalShip.Llm.Tests/TheKrystalShip.Llm.Tests.csproj" />
   <Project Path="TheKrystalShip.Llm/TheKrystalShip.Llm.csproj" />
+  <Project Path="TheKrystalShip.Kgsm.Assistant/TheKrystalShip.Kgsm.Assistant.csproj" />
+  <Project Path="TheKrystalShip.Kgsm.Assistant.Tests/TheKrystalShip.Kgsm.Assistant.Tests.csproj" />
 </Solution>

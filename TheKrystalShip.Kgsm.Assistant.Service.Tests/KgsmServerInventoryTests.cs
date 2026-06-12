@@ -25,7 +25,7 @@ public class KgsmServerInventoryTests
             NullLogger<KgsmServerInventory>.Instance);
 
     private static IReadOnlyDictionary<string, Instance> Inst(params (string name, string bp)[] items) =>
-        items.ToDictionary(i => i.name, i => new Instance { Name = i.name, Blueprint = i.bp });
+        items.ToDictionary(i => i.name, i => new Instance { Name = i.name, BlueprintFile = i.bp });
 
     [Fact]
     public async Task GetInstances_MapsNameToBlueprint()
@@ -82,7 +82,7 @@ public class KgsmServerInventoryTests
     [Fact]
     public async Task GetBlueprintNames_ReturnsKeys()
     {
-        _blueprints.GetAll().Returns(new Dictionary<string, Blueprint>
+        _blueprints.ListDetailed().Returns(new Dictionary<string, Blueprint>
         {
             ["valheim"] = new Blueprint { Name = "valheim" },
             ["terraria"] = new Blueprint { Name = "terraria" },

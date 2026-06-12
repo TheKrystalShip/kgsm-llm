@@ -11,6 +11,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Services;
 using TheKrystalShip.Llm.Extensions;
 
@@ -37,18 +38,20 @@ builder.Services.AddLocalLlm(builder.Configuration);
 builder.Services.AddKgsmAssistant();
 
 // --- KGSM.Lib + the port adapters that back the assistant --------------------
-// We register the instance/blueprint services (which shell out to kgsm) WITHOUT
-// KGSM.Lib's AddKgsmServices: that wires the full IKgsmClient, whose construction
-// auto-starts the Unix-socket event listener and would contend with the bot for the
-// single kgsm event socket. This service receives events over the /events webhook, so
-// it must never bind that socket — hence no IKgsmClient / IEventService here.
+// We register the command-executor service graph (which shells out to kgsm) by hand
+// instead of KGSM.Lib's AddKgsmServices: that also wires IUnixSocketClient / IEventService
+// / IKgsmClient, whose construction auto-starts the Unix-socket event listener and would
+// contend with the bot for the single kgsm event socket. This service receives events over
+// the /events webhook, so it must never bind that socket — hence we register only the
+// IKgsmCommandExecutor graph the inventory needs and omit those three socket-bound singletons.
+// (SocketPath is left empty: nothing here follows logs over the socket.)
+builder.Services.AddSingleton(new KgsmOptions { KgsmPath = kgsm.Path });
 builder.Services.AddSingleton<IProcessRunner, ProcessRunner>();
-builder.Services.AddSingleton<IInstanceService>(sp => new InstanceService(
-    sp.GetRequiredService<IProcessRunner>(), kgsm.Path,
-    sp.GetRequiredService<ILoggerFactory>().CreateLogger<InstanceService>()));
-builder.Services.AddSingleton<IBlueprintService>(sp => new BlueprintService(
-    sp.GetRequiredService<IProcessRunner>(), kgsm.Path,
-    sp.GetRequiredService<ILoggerFactory>().CreateLogger<BlueprintService>()));
+builder.Services.AddSingleton<IKgsmCommandExecutor, KgsmCommandExecutor>();
+builder.Services.AddSingleton<ILogSubscriptionService, LogSubscriptionService>();
+builder.Services.AddSingleton<ILifecycleService, LifecycleService>();
+builder.Services.AddSingleton<IInstanceService, InstanceService>();
+builder.Services.AddSingleton<IBlueprintService, BlueprintService>();
 
 builder.Services.AddSingleton<KgsmServerInventory>();
 builder.Services.AddSingleton<IServerInventory>(sp => sp.GetRequiredService<KgsmServerInventory>());

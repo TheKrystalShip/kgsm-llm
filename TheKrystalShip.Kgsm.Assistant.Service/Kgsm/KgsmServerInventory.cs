@@ -104,7 +104,7 @@ internal sealed class KgsmServerInventory : IServerInventory
 
             try
             {
-                var all = await Task.Run(() => _blueprints.GetAll(), cancellationToken);
+                var all = await Task.Run(() => _blueprints.ListDetailed(), cancellationToken);
                 _blueprintsCache = all.Keys.ToArray();
                 _blueprintsFetchedUtc = DateTime.UtcNow;
                 _blueprintsDirty = false;

@@ -170,8 +170,17 @@ public class ServerAssistant : IServerAssistant
                     case AgentEventKind.Token:
                         await writer.WriteAsync(AssistantStreamEvent.Token(ev.Text ?? string.Empty), cancellationToken);
                         break;
-                    case AgentEventKind.Status:
-                        await writer.WriteAsync(AssistantStreamEvent.Status(ev.Text ?? string.Empty), cancellationToken);
+                    case AgentEventKind.ToolStart:
+                        await writer.WriteAsync(
+                            AssistantStreamEvent.ToolStart(
+                                ev.ToolName ?? string.Empty,
+                                ev.ToolArguments ?? new Dictionary<string, string?>()),
+                            cancellationToken);
+                        break;
+                    case AgentEventKind.ToolResult:
+                        await writer.WriteAsync(
+                            AssistantStreamEvent.ToolResult(ev.ToolName ?? string.Empty, ev.ToolSummary ?? string.Empty),
+                            cancellationToken);
                         break;
                     case AgentEventKind.Final:
                         finalText = ev.Text ?? string.Empty;

@@ -35,14 +35,24 @@ public sealed record AuthSessionResponse(string Token, string DisplayName);
 public sealed record MeResponse(string UserId, string DisplayName, bool CanPerformActions);
 
 // --- Server-Sent Events payloads --------------------------------------------------------------
-// A client that sends `Accept: text/event-stream` to /turn gets these as the `data:` of named SSE
-// events instead of one buffered TurnResponse. The confirmation event reuses ConfirmationDto.
+// A client that sends `Accept: text/event-stream` to /turn gets these as the `data:` of the
+// canonical §5a typed events (toolbox-plan §5a / keystone O1) instead of one buffered
+// TurnResponse: `text.delta` / `tool.start` / `tool.result` / `command.proposed` / `done` /
+// `error`. The `command.proposed` event reuses ConfirmationDto. (`command.verified` belongs to the
+// separate command-execution flow, not the turn stream — see toolbox-plan §5·d.)
 
-/// <summary>`event: token` — one incremental slice of the assistant's reply text.</summary>
+/// <summary>`event: text.delta` — one incremental slice of the assistant's reply text.</summary>
 public sealed record TokenEvent(string Delta);
 
-/// <summary>`event: status` — a non-token progress note (e.g. a tool round is running).</summary>
-public sealed record StatusEvent(string Message);
+/// <summary>`event: tool.start` — a tool is about to run; its name + arguments.</summary>
+public sealed record ToolStartEvent(string Tool, IReadOnlyDictionary<string, string?> Arguments);
+
+/// <summary>
+/// `event: tool.result` — a tool finished. V1 is the minimal envelope: <see cref="Summary"/> is the
+/// model's grounding text (the dispatcher's string output). The full ToolResult&lt;K,D&gt; `data`
+/// card (toolbox-plan §5) is deferred until a surface consumes it.
+/// </summary>
+public sealed record ToolResultEvent(string Tool, string Summary);
 
 /// <summary>`event: done` — terminal success; carries the full assembled reply text.</summary>
 public sealed record DoneEvent(string Text);

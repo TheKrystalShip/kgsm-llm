@@ -241,10 +241,32 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
         var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("event: token");
+        body.Should().Contain("event: text.delta");
         body.Should().Contain("\"delta\":\"Hel\"");
         body.Should().Contain("event: done");
         body.Should().Contain("\"text\":\"Hello\"");
+    }
+
+    [Fact]
+    public async Task Turn_StreamAccept_EmitsToolStartAndResult()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(_ => AsyncSeq(
+                AssistantStreamEvent.ToolStart("get_status", new Dictionary<string, string?> { ["instance_name"] = "factorio" }),
+                AssistantStreamEvent.ToolResult("get_status", "factorio: stopped"),
+                AssistantStreamEvent.Token("Stopped."),
+                AssistantStreamEvent.Final("Stopped.")));
+
+        var response = await StreamTurnAsync(Authed(Factory(assistant)), "status?");
+        var body = await response.Content.ReadAsStringAsync();
+
+        body.Should().Contain("event: tool.start");
+        body.Should().Contain("\"tool\":\"get_status\"");
+        body.Should().Contain("\"instance_name\":\"factorio\"");
+        body.Should().Contain("event: tool.result");
+        body.Should().Contain("\"summary\":\"factorio: stopped\"");
+        body.Should().Contain("event: done");
     }
 
     [Fact]
@@ -261,7 +283,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var response = await StreamTurnAsync(Authed(factory), "remove terraria");
         var body = await response.Content.ReadAsStringAsync();
 
-        body.Should().Contain("event: confirmation");
+        body.Should().Contain("event: command.proposed");
         var token = ExtractConfirmationToken(body);
 
         // The token minted into the SSE frame must validate AND be bound to the caller (user1).
@@ -315,7 +337,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         foreach (var frame in sseBody.Split("\n\n"))
         {
-            if (!frame.Contains("event: confirmation"))
+            if (!frame.Contains("event: command.proposed"))
                 continue;
             foreach (var line in frame.Split('\n'))
             {

@@ -9,9 +9,10 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 
 /// <summary>
 /// Streams an assistant turn to the caller as Server-Sent Events. net9 has no built-in SSE result
-/// (that arrives in net10), so we frame events onto the response body directly. Named events:
-/// <c>token</c> (reply deltas), <c>status</c> (tool rounds), <c>confirmation</c> (a staged op plus
-/// its host-minted token), <c>done</c> (the full reply), and <c>error</c> (in-band failure).
+/// (that arrives in net10), so we frame events onto the response body directly. The canonical §5a
+/// typed events (toolbox-plan §5a / keystone O1): <c>text.delta</c> (reply slices),
+/// <c>tool.start</c> / <c>tool.result</c> (per tool call), <c>command.proposed</c> (a staged op
+/// plus its host-minted token), <c>done</c> (the full reply), and <c>error</c> (in-band failure).
 /// <para>
 /// The session bearer is already enforced by <see cref="BearerAuthFilter"/> before we get here.
 /// The response commits HTTP 200 the moment the first frame flushes, so any failure after that is
@@ -52,11 +53,20 @@ internal static class SseTurnWriter
                 switch (ev.Kind)
                 {
                     case AssistantEventKind.Token:
-                        await WriteEventAsync(response, "token", new TokenEvent(ev.Text ?? string.Empty), ct);
+                        await WriteEventAsync(response, "text.delta", new TokenEvent(ev.Text ?? string.Empty), ct);
                         break;
 
-                    case AssistantEventKind.Status:
-                        await WriteEventAsync(response, "status", new StatusEvent(ev.Text ?? string.Empty), ct);
+                    case AssistantEventKind.ToolStart:
+                        await WriteEventAsync(response, "tool.start",
+                            new ToolStartEvent(
+                                ev.ToolName ?? string.Empty,
+                                ev.ToolArguments ?? new Dictionary<string, string?>()),
+                            ct);
+                        break;
+
+                    case AssistantEventKind.ToolResult:
+                        await WriteEventAsync(response, "tool.result",
+                            new ToolResultEvent(ev.ToolName ?? string.Empty, ev.ToolSummary ?? string.Empty), ct);
                         break;
 
                     case AssistantEventKind.Confirmation:
@@ -66,7 +76,7 @@ internal static class SseTurnWriter
                         var dto = new ConfirmationDto(
                             c.Kind.ToString().ToLowerInvariant(), c.Target, c.InstanceName,
                             tokens.Create(c, principal.UserId));
-                        await WriteEventAsync(response, "confirmation", dto, ct);
+                        await WriteEventAsync(response, "command.proposed", dto, ct);
                         break;
 
                     case AssistantEventKind.Error:

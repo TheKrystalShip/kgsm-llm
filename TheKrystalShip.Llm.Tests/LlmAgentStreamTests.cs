@@ -80,7 +80,7 @@ public class LlmAgentStreamTests
     }
 
     [Fact]
-    public async Task ToolRound_ThenProse_EmitsStatus_DispatchesTool_AndPersistsOnlyFinalText()
+    public async Task ToolRound_ThenProse_EmitsToolStartThenResult_DispatchesTool_AndPersistsOnlyFinalText()
     {
         var client = new ScriptedStreamClient(new[]
         {
@@ -91,9 +91,11 @@ public class LlmAgentStreamTests
         var events = await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
 
         events.Select(e => e.Kind).Should().Equal(
-            AgentEventKind.Status, AgentEventKind.Token, AgentEventKind.Final);
-        events[0].Text.Should().Contain("tool_a");
-        events[2].Text.Should().Be("all done");
+            AgentEventKind.ToolStart, AgentEventKind.ToolResult, AgentEventKind.Token, AgentEventKind.Final);
+        events[0].ToolName.Should().Be("tool_a");
+        events[1].ToolName.Should().Be("tool_a");
+        events[1].ToolSummary.Should().Be("Done.");   // the dispatcher's output, surfaced to the stream
+        events[3].Text.Should().Be("all done");
 
         await _dispatcher.Received(1).ExecuteAsync(
             Arg.Is<LlmToolCall>(c => c.Name == "tool_a"), Arg.Any<CancellationToken>());
@@ -102,6 +104,29 @@ public class LlmAgentStreamTests
         _store.Messages.Should().HaveCount(2);
         _store.Messages.Should().NotContain(m => m.Role == LlmRole.Tool);
         _store.Messages.Should().NotContain(m => m.ToolCalls != null);
+    }
+
+    [Fact]
+    public async Task MultiToolRound_EmitsAllStartsThenAllResults_InInputOrder()
+    {
+        // The §5a ordering invariant: all tool.start (input order) BEFORE dispatch, then all
+        // tool.result (input order). Two tools in one round make the batching observable.
+        var client = new ScriptedStreamClient(new[]
+        {
+            new[] { ToolFrame("tool_a", "tool_b"), DoneFrame() },
+            new[] { Content("ok"), DoneFrame() },
+        });
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
+
+        events.Select(e => e.Kind).Should().Equal(
+            AgentEventKind.ToolStart, AgentEventKind.ToolStart,
+            AgentEventKind.ToolResult, AgentEventKind.ToolResult,
+            AgentEventKind.Token, AgentEventKind.Final);
+        events.Where(e => e.Kind == AgentEventKind.ToolStart).Select(e => e.ToolName)
+            .Should().Equal("tool_a", "tool_b");
+        events.Where(e => e.Kind == AgentEventKind.ToolResult).Select(e => e.ToolName)
+            .Should().Equal("tool_a", "tool_b");
     }
 
     [Fact]
@@ -119,7 +144,9 @@ public class LlmAgentStreamTests
 
         events[^1].Kind.Should().Be(AgentEventKind.Final);
         events[^1].Text.Should().Be(new LlmAgentOptions().IterationLimitReply);
-        events.Count(e => e.Kind == AgentEventKind.Status).Should().Be(3);
+        // 3 rounds, one tool each → a start+result pair per round.
+        events.Count(e => e.Kind == AgentEventKind.ToolStart).Should().Be(3);
+        events.Count(e => e.Kind == AgentEventKind.ToolResult).Should().Be(3);
     }
 
     [Fact]

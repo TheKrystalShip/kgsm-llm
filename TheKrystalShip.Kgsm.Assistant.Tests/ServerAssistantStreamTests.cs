@@ -16,7 +16,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
 /// Streaming counterpart to <see cref="ServerAssistantTests"/>: verifies that
-/// <c>RunStreamAsync</c> forwards the agent's token/status events, surfaces destructive ops staged
+/// <c>RunStreamAsync</c> forwards the agent's token/tool events, surfaces destructive ops staged
 /// during the turn as <c>Confirmation</c> events AFTER the reply and BEFORE the terminal
 /// <c>Final</c>, offers the right tool set per caller, and — critically — that two concurrent
 /// streams don't cross-contaminate staged confirmations (the AsyncLocal isolation that lets the
@@ -45,12 +45,13 @@ public class ServerAssistantStreamTests
     }
 
     [Fact]
-    public async Task ForwardsTokensAndStatus_ThenFinal()
+    public async Task ForwardsToolEventsAndTokens_ThenFinal()
     {
         var confirmations = new ConfirmationContext();
         var agent = new ScriptedAgent(confirmations, new[]
         {
-            AgentEvent.Status("Running get_server_status…"),
+            AgentEvent.ToolStart("get_status", new Dictionary<string, string?>()),
+            AgentEvent.ToolResult("get_status", "factorio-test: stopped"),
             AgentEvent.Token("All "),
             AgentEvent.Token("good."),
             AgentEvent.Final("All good."),
@@ -59,7 +60,10 @@ public class ServerAssistantStreamTests
         var events = await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "status?", true));
 
         events.Select(e => e.Kind).Should().Equal(
-            AssistantEventKind.Status, AssistantEventKind.Token, AssistantEventKind.Token, AssistantEventKind.Final);
+            AssistantEventKind.ToolStart, AssistantEventKind.ToolResult,
+            AssistantEventKind.Token, AssistantEventKind.Token, AssistantEventKind.Final);
+        events[0].ToolName.Should().Be("get_status");
+        events[1].ToolSummary.Should().Be("factorio-test: stopped");
         events[^1].Text.Should().Be("All good.");
     }
 
@@ -83,7 +87,7 @@ public class ServerAssistantStreamTests
     [Fact]
     public async Task ConfirmationStagedAfterAnEarlierYield_StillDrains()
     {
-        // Multi-round timing: the op is staged AFTER a Status has already been yielded to the
+        // Multi-round timing: the op is staged AFTER a tool.start has already been yielded to the
         // consumer — i.e. after the point where the ambient AsyncLocal would have been lost. The
         // scope-backed drain must still surface it (the dispatcher staged into the list captured
         // at the agent's first await). This locks the residual case the single-round test misses.
@@ -92,17 +96,17 @@ public class ServerAssistantStreamTests
             confirmations,
             new[]
             {
-                AgentEvent.Status("Running uninstall_server…"),
+                AgentEvent.ToolStart("uninstall_server", new Dictionary<string, string?>()),
                 AgentEvent.Token("Staging…"),
                 AgentEvent.Final("Staged."),
             },
             stage: new[] { new PendingConfirmation(ConfirmationKind.Uninstall, "valheim") },
-            stageAfter: 1); // stage only after the first event (the Status) has been yielded out
+            stageAfter: 1); // stage only after the first event (the tool.start) has been yielded out
 
         var events = await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "remove valheim", true));
 
         events.Select(e => e.Kind).Should().Equal(
-            AssistantEventKind.Status, AssistantEventKind.Token,
+            AssistantEventKind.ToolStart, AssistantEventKind.Token,
             AssistantEventKind.Confirmation, AssistantEventKind.Final);
         events.Single(e => e.Kind == AssistantEventKind.Confirmation)
             .StagedConfirmation!.Target.Should().Be("valheim");

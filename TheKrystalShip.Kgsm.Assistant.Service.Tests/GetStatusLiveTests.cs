@@ -109,6 +109,37 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
             .MatchRegex("not running|stopped|offline|inactive|isn't running|is not");
     }
 
+    /// <summary>
+    /// Streaming path: the live turn emits the canonical §5a vocabulary — a get_status tool round
+    /// (tool.start with NO instance_name → bulk path, then tool.result) and a terminal Final, with
+    /// no iteration-cap apology. Like the buffered live tests, this needs an installed instance:
+    /// with an empty fleet the model can answer "(none)" straight from the injected inventory and
+    /// skip the tool call, which would fail the get_status assertion.
+    /// </summary>
+    [Theory]
+    [InlineData("gemma4:12b")]
+    [InlineData("qwen3.5:9b")]
+    public async Task FleetPrompt_StreamsCanonicalTypedEvents(string model)
+    {
+        if (!LiveEnabled()) return;
+
+        var events = await RunStreamTurnAsync(model, "Which of my game servers are currently running?");
+
+        var toolStarts = events.Where(e => e.Kind == AssistantEventKind.ToolStart).ToList();
+        toolStarts.Should().Contain(e => e.ToolName == LlmTools.GetStatus,
+            "a fleet status question drives a get_status tool round on the stream");
+        events.Should().Contain(e => e.Kind == AssistantEventKind.ToolResult,
+            "each tool.start is followed by a tool.result");
+        events.Should().NotBeEmpty();
+        events[^1].Kind.Should().Be(AssistantEventKind.Final, "the stream ends with exactly one terminal Final");
+        events[^1].Text.Should().NotBe(IterationLimitReply, "the loop must not hit the MaxIterations cap");
+
+        // The bulk path: the get_status tool.start carried no instance_name.
+        var fleetStart = toolStarts.First(e => e.ToolName == LlmTools.GetStatus);
+        string.IsNullOrWhiteSpace(fleetStart.ToolArguments?.GetValueOrDefault("instance_name")).Should().BeTrue(
+            "the fleet stream must take the bulk path (no instance_name)");
+    }
+
     // --- harness ---------------------------------------------------------------------------
 
     private bool LiveEnabled()
@@ -120,21 +151,19 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         return false;
     }
 
-    private async Task<(AssistantResult Result, IReadOnlyList<RecordedCall> Calls)> RunTurnAsync(
-        string model, string prompt)
-    {
-        var recorder = new ToolCallRecorder();
-        var factory = _factory.WithWebHostBuilder(builder =>
+    /// <summary>
+    /// Boots the real composition root with the dev-checkout kgsm + the chosen model, and wraps the
+    /// app's IToolDispatcher with a recorder (capturing tool name + arguments) without naming the
+    /// internal type.
+    /// </summary>
+    private WebApplicationFactory<Program> BuildFactory(string model, ToolCallRecorder recorder) =>
+        _factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("KGSM:Path", DevKgsm);
             builder.UseSetting("Ollama:Model", model);
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton(recorder);
-
-                // Wrap whatever IToolDispatcher the app registered (ToolDispatcher) so we can
-                // observe which tools the model invokes AND with what arguments, without naming
-                // the internal type.
                 var descriptor = services.Last(d => d.ServiceType == typeof(IToolDispatcher));
                 services.Remove(descriptor);
                 services.AddSingleton<IToolDispatcher>(sp =>
@@ -145,7 +174,11 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
             });
         });
 
-        var assistant = factory.Services.GetRequiredService<IServerAssistant>();
+    private async Task<(AssistantResult Result, IReadOnlyList<RecordedCall> Calls)> RunTurnAsync(
+        string model, string prompt)
+    {
+        var recorder = new ToolCallRecorder();
+        var assistant = BuildFactory(model, recorder).Services.GetRequiredService<IServerAssistant>();
         var result = await assistant.RunAsync(
             conversationId: $"live-{model}-{prompt.GetHashCode()}",
             userPrompt: prompt,
@@ -157,6 +190,20 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         _out.WriteLine($"  tool calls: [{string.Join(", ", calls.Select(c => c.Describe()))}]");
         _out.WriteLine($"  reply: {result.Text}");
         return (result, calls);
+    }
+
+    private async Task<IReadOnlyList<AssistantStreamEvent>> RunStreamTurnAsync(string model, string prompt)
+    {
+        var recorder = new ToolCallRecorder();
+        var assistant = BuildFactory(model, recorder).Services.GetRequiredService<IServerAssistant>();
+        var events = new List<AssistantStreamEvent>();
+        await foreach (var ev in assistant.RunStreamAsync(
+                           $"live-stream-{model}-{prompt.GetHashCode()}", prompt, canPerformActions: false))
+            events.Add(ev);
+
+        _out.WriteLine($"[stream model={model}] prompt: {prompt}");
+        _out.WriteLine($"  events: [{string.Join(", ", events.Select(e => e.Kind))}]");
+        return events;
     }
 
     private sealed record RecordedCall(string Name, IReadOnlyDictionary<string, string?> Args)

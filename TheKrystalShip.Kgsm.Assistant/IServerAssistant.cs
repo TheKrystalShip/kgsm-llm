@@ -27,11 +27,14 @@ public sealed record AssistantResult
 /// <summary>The kind of event emitted while streaming an assistant turn.</summary>
 public enum AssistantEventKind
 {
-    /// <summary>A non-token progress note (e.g. a tool round is running).</summary>
-    Status,
-
     /// <summary>An incremental slice of the assistant's reply text.</summary>
     Token,
+
+    /// <summary>A tool is about to be dispatched; carries its name + arguments.</summary>
+    ToolStart,
+
+    /// <summary>A tool finished; carries its name + a summary of the result.</summary>
+    ToolResult,
 
     /// <summary>A destructive op staged this turn, now awaiting human confirmation.</summary>
     Confirmation,
@@ -55,10 +58,16 @@ public sealed record AssistantStreamEvent(
     AssistantEventKind Kind,
     string? Text = null,
     PendingConfirmation? StagedConfirmation = null,
-    string? ErrorMessage = null)
+    string? ErrorMessage = null,
+    string? ToolName = null,
+    IReadOnlyDictionary<string, string?>? ToolArguments = null,
+    string? ToolSummary = null)
 {
-    public static AssistantStreamEvent Status(string message) => new(AssistantEventKind.Status, Text: message);
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
+    public static AssistantStreamEvent ToolStart(string tool, IReadOnlyDictionary<string, string?> arguments) =>
+        new(AssistantEventKind.ToolStart, ToolName: tool, ToolArguments: arguments);
+    public static AssistantStreamEvent ToolResult(string tool, string summary) =>
+        new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary);
     public static AssistantStreamEvent Confirmation(PendingConfirmation confirmation) =>
         new(AssistantEventKind.Confirmation, StagedConfirmation: confirmation);
     public static AssistantStreamEvent Final(string text) => new(AssistantEventKind.Final, Text: text);

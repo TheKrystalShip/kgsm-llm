@@ -149,8 +149,21 @@ public class LlmAgent : ILlmAgent
             {
                 // A tool round emits no user-facing prose; intermediate content is NOT persisted
                 // (parity with RunAsync, which only ever stores the final no-tool-call text).
-                await ExecuteToolRoundAsync(toolCalls, working, gate, cancellationToken);
-                yield return AgentEvent.Status(DescribeToolRound(toolCalls));
+                // Surface per-tool events: all tool.start (input order) BEFORE dispatch, then all
+                // tool.result (input order) after — a deterministic, batched order that matches the
+                // model-feedback append order below. (Dispatch/gate/truncate stay centralised in the
+                // shared helpers so the buffered and streaming paths can't drift.)
+                working.Add(LlmMessage.AssistantToolCalls(toolCalls));
+                foreach (var call in toolCalls)
+                    yield return AgentEvent.ToolStart(call.Name, call.Arguments);
+
+                var outputs = await DispatchRoundAsync(toolCalls, gate, cancellationToken);
+
+                for (int i = 0; i < toolCalls.Count; i++)
+                {
+                    working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i], _options.MaxToolOutputChars)));
+                    yield return AgentEvent.ToolResult(toolCalls[i].Name, outputs[i]);
+                }
                 continue;
             }
 
@@ -170,10 +183,9 @@ public class LlmAgent : ILlmAgent
     }
 
     /// <summary>
-    /// Runs one tool round: append the assistant's tool-call turn, gate-then-dispatch each call
-    /// concurrently (a refused call feeds its refusal back instead of executing), then append one
-    /// tool-result message per call, in order. Shared by <see cref="RunAsync"/> and
-    /// <see cref="RunStreamAsync"/> so the gate/dispatch/truncate semantics can't drift.
+    /// Runs one tool round for the buffered path: append the assistant's tool-call turn,
+    /// gate-then-dispatch, then append one tool-result message per call, in order. Delegates the
+    /// gate/dispatch to <see cref="DispatchRoundAsync"/> (shared with the streaming path).
     /// </summary>
     private async Task ExecuteToolRoundAsync(
         IReadOnlyList<LlmToolCall> toolCalls,
@@ -182,8 +194,22 @@ public class LlmAgent : ILlmAgent
         CancellationToken cancellationToken)
     {
         working.Add(LlmMessage.AssistantToolCalls(toolCalls));
+        var outputs = await DispatchRoundAsync(toolCalls, gate, cancellationToken);
+        for (int i = 0; i < toolCalls.Count; i++)
+            working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i], _options.MaxToolOutputChars)));
+    }
 
-        var outputs = await Task.WhenAll(toolCalls.Select(async call =>
+    /// <summary>
+    /// Gate-then-dispatch one tool round concurrently (a refused call yields its refusal string
+    /// instead of executing) and return one raw output per call, in input order. The single source
+    /// of gate/dispatch semantics for both <see cref="RunAsync"/> and <see cref="RunStreamAsync"/>.
+    /// </summary>
+    private async Task<string[]> DispatchRoundAsync(
+        IReadOnlyList<LlmToolCall> toolCalls,
+        Func<LlmToolCall, ToolGate>? gate,
+        CancellationToken cancellationToken)
+    {
+        return await Task.WhenAll(toolCalls.Select(async call =>
         {
             var decision = gate?.Invoke(call) ?? ToolGate.Allow;
             if (!decision.Allowed)
@@ -194,15 +220,6 @@ public class LlmAgent : ILlmAgent
 
             return await _dispatcher.ExecuteAsync(call, cancellationToken);
         }));
-
-        for (int i = 0; i < toolCalls.Count; i++)
-            working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i], _options.MaxToolOutputChars)));
-    }
-
-    private static string DescribeToolRound(IReadOnlyList<LlmToolCall> toolCalls)
-    {
-        var names = toolCalls.Select(c => c.Name).Distinct().ToArray();
-        return $"Running {string.Join(", ", names)}…";
     }
 
     private static string Truncate(string text, int max)

@@ -8,12 +8,12 @@ namespace TheKrystalShip.Kgsm.Assistant;
 ///
 /// Tools fall into three tiers:
 ///  - <see cref="ReadOnly"/>: open to everyone.
-///  - <see cref="Mutating"/>: offered only to authorized callers; gated in
-///    <see cref="ServerAssistant"/> (authorization + a per-message action cap).
-///  - <see cref="Destructive"/>: offered only to authorized callers, but NEVER
-///    executed inline — the dispatcher resolves and STAGES them, and execution
-///    happens only after an explicit human confirmation handled by the host. These
-///    are the data-losing / heavy ops.
+///  - <see cref="AuthorizedReadOnly"/>: offered only to action-authorized callers
+///    (exposes file contents), but mutates nothing — runs inline, uncapped.
+///  - <see cref="StagedCommands"/>: every server command (§3.5). Offered only to
+///    authorized callers and NEVER executed inline — the dispatcher resolves and
+///    STAGES them, and execution happens only after an explicit human confirmation
+///    handled by the host. The model only ever PROPOSES a command.
 /// </summary>
 public static class LlmTools
 {
@@ -22,17 +22,16 @@ public static class LlmTools
     public const string ListBlueprints = "list_blueprints";
 
     // Authorized read (offered only to action-authorized callers — exposes file
-    // contents, so gated like the action tier even though it mutates nothing)
+    // contents, so gated like the command tier even though it mutates nothing)
     public const string ViewConfigFile = "view_config_file";
 
-    // Mutating
+    // Staged commands — propose-only (§3.5). The model never executes these; the
+    // dispatcher resolves + STAGES them, and a human confirms before they run.
     public const string StartServer = "start_server";
     public const string StopServer = "stop_server";
     public const string RestartServer = "restart_server";
     public const string CreateBackup = "create_backup";
     public const string UpdateServer = "update_server";
-
-    // Destructive (staged behind human confirmation)
     public const string InstallServer = "install_server";
     public const string UninstallServer = "uninstall_server";
 
@@ -81,54 +80,59 @@ public static class LlmTools
             InstanceName),
     };
 
-    public static readonly IReadOnlyList<LlmToolDefinition> Mutating = new[]
+    /// <summary>
+    /// Every server command — all propose-only (§3.5). The dispatcher STAGES each for
+    /// human confirmation; none runs in the agent loop. Descriptions say so explicitly,
+    /// so the model narrates "I've proposed…", never "I've done it."
+    /// </summary>
+    public static readonly IReadOnlyList<LlmToolDefinition> StagedCommands = new[]
     {
         LlmToolDefinition.Create(StartServer,
-            "Start a stopped server instance.", InstanceName),
+            "Propose starting a stopped server instance. Staged for human confirmation — it does " +
+            "not run until a person confirms.", InstanceName),
 
         LlmToolDefinition.Create(StopServer,
-            "Stop a running server instance.", InstanceName),
+            "Propose stopping a running server instance. Staged for human confirmation — it does " +
+            "not run until a person confirms.", InstanceName),
 
         LlmToolDefinition.Create(RestartServer,
-            "Restart (stop then start) a server instance.", InstanceName),
+            "Propose restarting (stop then start) a server instance. Staged for human confirmation " +
+            "— it does not run until a person confirms.", InstanceName),
 
         LlmToolDefinition.Create(CreateBackup,
-            "Create a backup of a server instance.", InstanceName),
+            "Propose creating a backup of a server instance. Staged for human confirmation — it " +
+            "does not run until a person confirms.", InstanceName),
 
         LlmToolDefinition.Create(UpdateServer,
-            "Update a server instance to its latest available version.", InstanceName),
-    };
+            "Propose updating a server instance to its latest available version. Staged for human " +
+            "confirmation — it does not run until a person confirms.", InstanceName),
 
-    public static readonly IReadOnlyList<LlmToolDefinition> Destructive = new[]
-    {
         LlmToolDefinition.Create(InstallServer,
-            "Install a NEW game server from a blueprint. Heavy and slow; requires human " +
-            "confirmation before it runs.", BlueprintName, OptionalInstanceName),
+            "Propose installing a NEW game server from a blueprint. Heavy and slow; staged for " +
+            "human confirmation — it does not run until a person confirms.",
+            BlueprintName, OptionalInstanceName),
 
         LlmToolDefinition.Create(UninstallServer,
-            "PERMANENTLY delete a server instance and all its data. Irreversible; requires " +
-            "human confirmation before it runs.", InstanceName),
+            "Propose PERMANENTLY deleting a server instance and all its data. Irreversible; staged " +
+            "for human confirmation — it does not run until a person confirms.", InstanceName),
     };
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>
     public static readonly IReadOnlyList<LlmToolDefinition> All =
-        ReadOnly.Concat(AuthorizedReadOnly).Concat(Mutating).Concat(Destructive).ToArray();
+        ReadOnly.Concat(AuthorizedReadOnly).Concat(StagedCommands).ToArray();
 
     /// <summary>Names of authorized-only reads; refused for unauthorized callers, but not capped.</summary>
     public static readonly IReadOnlySet<string> AuthorizedReadNames =
         AuthorizedReadOnly.Select(t => t.Name).ToHashSet();
 
-    /// <summary>Names of tools that change server state; gated and counted against the cap.</summary>
-    public static readonly IReadOnlySet<string> MutatingNames =
-        Mutating.Select(t => t.Name).ToHashSet();
+    /// <summary>
+    /// Names of the propose-only commands; offered only to authorized callers, staged
+    /// (never executed inline), and counted against the per-message staging cap.
+    /// </summary>
+    public static readonly IReadOnlySet<string> StagedCommandNames =
+        StagedCommands.Select(t => t.Name).ToHashSet();
 
-    /// <summary>Names of data-losing / heavy tools that are staged for human confirmation.</summary>
-    public static readonly IReadOnlySet<string> DestructiveNames =
-        Destructive.Select(t => t.Name).ToHashSet();
-
-    public static bool IsMutating(string toolName) => MutatingNames.Contains(toolName);
-
-    public static bool IsDestructive(string toolName) => DestructiveNames.Contains(toolName);
+    public static bool IsStagedCommand(string toolName) => StagedCommandNames.Contains(toolName);
 
     public static bool IsAuthorizedRead(string toolName) => AuthorizedReadNames.Contains(toolName);
 }

@@ -12,9 +12,12 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// not matched below is refused.
 ///
 /// Inventory reads (listing/resolving instances and blueprints) go through the
-/// cached <see cref="IServerInventory"/>; real-time reads and writes go through
-/// <see cref="IServerOperations"/>. install/uninstall are resolved and STAGED into
-/// the <see cref="IConfirmationContext"/> — never executed here.
+/// cached <see cref="IServerInventory"/>; live status reads go through
+/// <see cref="IServerOperations"/>. Every COMMAND (start/stop/restart/update/backup
+/// /install/uninstall) is propose-only (§3.5): the dispatcher resolves and STAGES it
+/// into the <see cref="IConfirmationContext"/> — it is never executed here. The
+/// matching op runs later, from <see cref="ServerAssistant.ConfirmAsync"/>, only after
+/// a human confirms.
 /// </summary>
 public class ToolDispatcher : IToolDispatcher
 {
@@ -47,11 +50,11 @@ public class ToolDispatcher : IToolDispatcher
                 LlmTools.GetStatus => await GetStatusAsync(call, cancellationToken),
                 LlmTools.ListBlueprints => await ListBlueprintsAsync(cancellationToken),
                 LlmTools.ViewConfigFile => await ViewConfigFileAsync(call, cancellationToken),
-                LlmTools.StartServer => await ActAsync(call, _operations.StartAsync, "started", cancellationToken),
-                LlmTools.StopServer => await ActAsync(call, _operations.StopAsync, "stopped", cancellationToken),
-                LlmTools.RestartServer => await ActAsync(call, _operations.RestartAsync, "restarted", cancellationToken),
-                LlmTools.CreateBackup => await ActAsync(call, _operations.CreateBackupAsync, "backed up", cancellationToken),
-                LlmTools.UpdateServer => await ActAsync(call, _operations.UpdateAsync, "updated", cancellationToken),
+                LlmTools.StartServer => await StageCommandAsync(call, ConfirmationKind.Start, cancellationToken),
+                LlmTools.StopServer => await StageCommandAsync(call, ConfirmationKind.Stop, cancellationToken),
+                LlmTools.RestartServer => await StageCommandAsync(call, ConfirmationKind.Restart, cancellationToken),
+                LlmTools.CreateBackup => await StageCommandAsync(call, ConfirmationKind.Backup, cancellationToken),
+                LlmTools.UpdateServer => await StageCommandAsync(call, ConfirmationKind.Update, cancellationToken),
                 LlmTools.UninstallServer => await StageUninstallAsync(call, cancellationToken),
                 LlmTools.InstallServer => await StageInstallAsync(call, cancellationToken),
                 _ => $"Error: '{call.Name}' is not a known tool."
@@ -168,24 +171,25 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// Resolves the instance name, then runs the given mutating operation. Returns
-    /// a human-readable result string either way (resolution problems included).
+    /// Propose-only (§3.5): resolves the instance, then STAGES the command for human
+    /// confirmation instead of executing it — the same path uninstall/install already
+    /// take. Resolution problems (ambiguous / unknown) short-circuit to the model so it
+    /// asks the user, and nothing is staged for an unresolved target. The single-instance
+    /// op itself (<c>StartAsync</c> et al.) runs later, from
+    /// <see cref="ServerAssistant.ConfirmAsync"/>, only after a human confirms.
     /// </summary>
-    private async Task<string> ActAsync(
-        LlmToolCall call,
-        Func<string, CancellationToken, Task<Result>> operation,
-        string pastTense,
-        CancellationToken cancellationToken)
+    private async Task<string> StageCommandAsync(
+        LlmToolCall call, ConfirmationKind kind, CancellationToken cancellationToken)
     {
         var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
         if (error is not null)
             return error;
 
-        var result = await operation(resolved!, cancellationToken);
-        if (!result.IsSuccess)
-            return $"Error: could not complete the action on '{resolved}' ({result.Error ?? "unknown error"}).";
+        _confirmations.Stage(new PendingConfirmation(kind, resolved!));
 
-        return $"Done: {resolved} has been {pastTense}.";
+        return $"Staged a {ConfirmationKinds.Verb(kind)} of '{resolved}' for confirmation. A confirmation " +
+               "prompt with a button has been shown to the user. This is NOT done yet and will only run " +
+               "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
     }
 
     /// <summary>

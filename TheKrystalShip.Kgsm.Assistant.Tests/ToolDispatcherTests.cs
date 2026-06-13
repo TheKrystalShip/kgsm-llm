@@ -171,6 +171,54 @@ public class ToolDispatcherTests
         result.Should().Contain("not a known tool");
     }
 
+    public static IEnumerable<object[]> StagedCommandCases() => new[]
+    {
+        new object[] { LlmTools.StartServer, ConfirmationKind.Start },
+        new object[] { LlmTools.StopServer, ConfirmationKind.Stop },
+        new object[] { LlmTools.RestartServer, ConfirmationKind.Restart },
+        new object[] { LlmTools.CreateBackup, ConfirmationKind.Backup },
+        new object[] { LlmTools.UpdateServer, ConfirmationKind.Update },
+    };
+
+    [Theory]
+    [MemberData(nameof(StagedCommandCases))]
+    public async Task Command_StagesConfirmation_AndDoesNotExecuteInline(string tool, ConfirmationKind kind)
+    {
+        // §3.5: every command is propose-only. The dispatcher resolves + stages it; the
+        // single-instance op runs later (from ConfirmAsync), never here in the agent loop.
+        string result;
+        using (_confirmations.BeginTurn())
+        {
+            result = await Create().ExecuteAsync(Call(tool, "minecraft"));
+
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new PendingConfirmation(kind, "minecraft"));
+        }
+
+        result.Should().Contain("Staged").And.Contain("confirm");
+
+        // None of the mutating ops fired inline — staging only.
+        await _operations.DidNotReceive().StartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().StopAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().RestartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().UpdateAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().CreateBackupAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Command_UnresolvedTarget_DoesNotStage()
+    {
+        string result;
+        using (_confirmations.BeginTurn())
+        {
+            result = await Create().ExecuteAsync(Call(LlmTools.StartServer, "doesnotexist"));
+            _confirmations.Staged.Should().BeEmpty();
+        }
+
+        result.Should().Contain("no instance named");
+        await _operations.DidNotReceive().StartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task UninstallServer_StagesConfirmation_AndDoesNotExecute()
     {

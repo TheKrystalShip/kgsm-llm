@@ -14,8 +14,9 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
 /// Verifies <see cref="ServerAssistant.ConfirmAsync"/> — the model-independent execution
-/// gate for staged destructive ops: authority is re-checked, the target is re-validated
-/// against live inventory (which also blunts token replay), and only then does it execute.
+/// gate for staged commands (§3.5: every command is propose-only): authority is re-checked,
+/// the target is re-validated against live inventory (which also blunts token replay), and
+/// only then does it execute.
 /// </summary>
 public class ServerAssistantConfirmTests
 {
@@ -135,5 +136,96 @@ public class ServerAssistantConfirmTests
 
         result.IsFailure.Should().BeTrue();
         result.Error.Should().Contain("kgsm exploded");
+    }
+
+    // --- §3.5 generalised commands (start/stop/restart/update/backup) -----------------------
+
+    public static IEnumerable<object[]> CommandKinds() => new[]
+    {
+        new object[] { ConfirmationKind.Start, "started" },
+        new object[] { ConfirmationKind.Stop, "stopped" },
+        new object[] { ConfirmationKind.Restart, "restarted" },
+        new object[] { ConfirmationKind.Update, "updated" },
+        new object[] { ConfirmationKind.Backup, "backed up" },
+    };
+
+    [Theory]
+    [MemberData(nameof(CommandKinds))]
+    public async Task Command_HappyPath_ExecutesAndReportsOutcome(ConfirmationKind kind, string pastTense)
+    {
+        Instances("minecraft");
+        StubOp(kind, "minecraft", Result.Success());
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(kind, "minecraft"), canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("minecraft").And.Contain(pastTense);
+        await ReceivedOp(kind, "minecraft");
+    }
+
+    [Fact]
+    public async Task Command_TargetGone_IsRefused_WithoutExecuting()
+    {
+        Instances(); // the instance vanished since staging (or the token is being replayed)
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.Start, "minecraft"), canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("no longer exists");
+        await _operations.DidNotReceive().StartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Command_UnauthorizedCaller_IsRefused_AndNothingExecutes()
+    {
+        Instances("minecraft");
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.Start, "minecraft"), canPerformActions: false);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("permission");
+        await _operations.DidNotReceive().StartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Command_OperationFails_SurfacesError()
+    {
+        Instances("minecraft");
+        _operations.StartAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Failure("kgsm exploded")));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.Start, "minecraft"), canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("kgsm exploded");
+    }
+
+    private void StubOp(ConfirmationKind kind, string instance, Result r)
+    {
+        var task = Task.FromResult(r);
+        switch (kind)
+        {
+            case ConfirmationKind.Start: _operations.StartAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Stop: _operations.StopAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Restart: _operations.RestartAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Update: _operations.UpdateAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Backup: _operations.CreateBackupAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            default: throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+    }
+
+    private async Task ReceivedOp(ConfirmationKind kind, string instance)
+    {
+        switch (kind)
+        {
+            case ConfirmationKind.Start: await _operations.Received(1).StartAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Stop: await _operations.Received(1).StopAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Restart: await _operations.Received(1).RestartAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Update: await _operations.Received(1).UpdateAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Backup: await _operations.Received(1).CreateBackupAsync(instance, Arg.Any<CancellationToken>()); break;
+            default: throw new ArgumentOutOfRangeException(nameof(kind));
+        }
     }
 }

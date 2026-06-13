@@ -30,6 +30,26 @@ public class ConfirmationTokenServiceTests
         userId.Should().Be("user-1");
     }
 
+    [Theory]
+    [InlineData(ConfirmationKind.Start)]
+    [InlineData(ConfirmationKind.Stop)]
+    [InlineData(ConfirmationKind.Restart)]
+    [InlineData(ConfirmationKind.Update)]
+    [InlineData(ConfirmationKind.Backup)]
+    public void RoundTrip_GeneralisedCommand_PreservesKindAndTarget(ConfirmationKind kind)
+    {
+        // §3.5: the formerly-inline commands now ride the same stateless token. The token
+        // carries (int)Kind, so each new member must round-trip (and pass Enum.IsDefined).
+        var service = Create();
+        var token = service.Create(new PendingConfirmation(kind, "minecraft"), "user-1");
+
+        service.TryValidate(token, out var parsed, out var userId).Should().BeTrue();
+        parsed.Kind.Should().Be(kind);
+        parsed.Target.Should().Be("minecraft");
+        parsed.InstanceName.Should().BeNull();
+        userId.Should().Be("user-1");
+    }
+
     [Fact]
     public void RoundTrip_Install_PreservesInstanceName()
     {

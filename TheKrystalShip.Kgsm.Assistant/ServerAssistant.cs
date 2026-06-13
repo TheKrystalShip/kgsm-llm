@@ -14,24 +14,21 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// reusable library agent loop (<see cref="ILlmAgent"/>).
 ///
 /// This is where ALL kgsm authorization policy lives:
-///  - which tools are offered (read-only for everyone, mutating/destructive only for authorized callers);
-///  - the per-message blast-radius cap on mutating actions;
-///  - the defense-in-depth refusal of a mutating/destructive call from an unauthorized caller;
-///  - draining the destructive ops the dispatcher staged this turn so the caller can confirm them.
+///  - which tools are offered (read-only for everyone, authorized-read + commands only for authorized callers);
+///  - the per-message blast-radius cap on staged commands;
+///  - the defense-in-depth refusal of a command (or authorized read) from an unauthorized caller;
+///  - draining the commands the dispatcher staged this turn so the caller can confirm them.
 /// The library loop knows none of this — it just evaluates the gate we supply.
 /// </summary>
 public class ServerAssistant : IServerAssistant
 {
-    /// <summary>Blast-radius limit: at most this many mutating actions per user message.</summary>
-    private const int MaxActionsPerMessage = 5;
-
     /// <summary>
-    /// Blast-radius limit on the DESTRUCTIVE tier: at most this many install/uninstall
-    /// ops may be staged (proposed) per user message. These never execute without a
-    /// per-op human confirmation, but this still stops one prompt from teeing up a
-    /// library-wide shuffle. Tunable; kept small on purpose.
+    /// Blast-radius limit: at most this many commands may be staged (proposed) per user
+    /// message. Every command is propose-only (§3.5) and needs a per-op human
+    /// confirmation, but this still stops one prompt from teeing up a fleet-wide shuffle
+    /// of confirmation buttons. Tunable; kept small on purpose.
     /// </summary>
-    private const int MaxDestructiveStagedPerMessage = 3;
+    private const int MaxStagedCommandsPerMessage = 5;
 
     private readonly ILlmAgent _agent;
     private readonly ISystemPromptBuilder _promptBuilder;
@@ -77,7 +74,7 @@ public class ServerAssistant : IServerAssistant
     {
         var systemPrompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
 
-        // Mutating + destructive tools are only offered to authorized callers; the gate re-checks.
+        // Command + authorized-read tools are only offered to authorized callers; the gate re-checks.
         var tools = SelectTools(userPrompt, canPerformActions);
 
         var turn = new AgentTurn
@@ -89,7 +86,7 @@ public class ServerAssistant : IServerAssistant
             Gate = BuildGate(canPerformActions),
         };
 
-        // The dispatcher stages any destructive ops into this per-turn scope; we drain
+        // The dispatcher stages any proposed commands into this per-turn scope; we drain
         // them after the run so the caller can post confirmation prompts.
         using var scope = _confirmations.BeginTurn();
         var result = await _agent.RunAsync(turn, cancellationToken);
@@ -108,8 +105,8 @@ public class ServerAssistant : IServerAssistant
     {
         var systemPrompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
 
-        // Identical policy to RunAsync: mutating/destructive tools only for authorized callers;
-        // the gate re-checks each call and enforces the per-message blast caps.
+        // Identical policy to RunAsync: command + authorized-read tools only for authorized
+        // callers; the gate re-checks each call and enforces the per-message staging cap.
         var tools = SelectTools(userPrompt, canPerformActions);
 
         var turn = new AgentTurn
@@ -227,8 +224,46 @@ public class ServerAssistant : IServerAssistant
             ConfirmationKind.Uninstall => await ConfirmUninstallAsync(confirmation.Target, cancellationToken),
             ConfirmationKind.Install => await ConfirmInstallAsync(
                 confirmation.Target, confirmation.InstanceName, cancellationToken),
+            ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
+                or ConfirmationKind.Update or ConfirmationKind.Backup
+                => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
             _ => Result.Failure<string>("Unknown action; nothing was done."),
         };
+    }
+
+    /// <summary>
+    /// Executes a confirmed single-instance command (start/stop/restart/update/backup).
+    /// Re-validates the target still exists (it was resolved at staging time, which may
+    /// have been a while ago, and a stateless token is replayable within its lifetime),
+    /// then runs the matching <see cref="IServerOperations"/> op.
+    /// </summary>
+    private async Task<Result<string>> ConfirmCommandAsync(
+        ConfirmationKind kind, string target, CancellationToken cancellationToken)
+    {
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        var match = instances.Keys.FirstOrDefault(
+            k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+            return Result.Failure<string>(
+                $"'{target}' no longer exists — nothing to {ConfirmationKinds.Verb(kind)}.");
+
+        Func<string, CancellationToken, Task<Result>> op = kind switch
+        {
+            ConfirmationKind.Start => _operations.StartAsync,
+            ConfirmationKind.Stop => _operations.StopAsync,
+            ConfirmationKind.Restart => _operations.RestartAsync,
+            ConfirmationKind.Update => _operations.UpdateAsync,
+            ConfirmationKind.Backup => _operations.CreateBackupAsync,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "not a single-instance command"),
+        };
+
+        _logger.LogInformation("Confirmed {Verb} of {Instance}", ConfirmationKinds.Verb(kind), match);
+
+        var result = await op(match, cancellationToken);
+        return result.IsSuccess
+            ? Result.Success($"{match} has been {ConfirmationKinds.PastTense(kind)}.")
+            : Result.Failure<string>(
+                $"Could not {ConfirmationKinds.Verb(kind)} '{match}': {result.Error ?? "unknown error"}.");
     }
 
     /// <summary>
@@ -290,49 +325,34 @@ public class ServerAssistant : IServerAssistant
     /// Per-turn gate closure.
     ///  - Read-only tools always pass.
     ///  - Authorized reads (e.g. view_config_file): refused for unauthorized callers, but not capped.
-    ///  - Mutating tools: refused for unauthorized callers; capped at <see cref="MaxActionsPerMessage"/>.
-    ///  - Destructive tools: refused for unauthorized callers; otherwise allowed through to the
-    ///    dispatcher, which only STAGES them (it never executes), so they don't consume the cap.
-    /// The closure holds the per-message mutating-action counter.
+    ///  - Commands (start/stop/restart/update/backup/install/uninstall): refused for unauthorized
+    ///    callers; otherwise allowed through to the dispatcher, which only STAGES them (it never
+    ///    executes). Every command is propose-only (§3.5), so there is one cap — the count of ops
+    ///    proposed this message — at <see cref="MaxStagedCommandsPerMessage"/>.
+    /// The closure holds the per-message staging counter.
     /// </summary>
     private static Func<LlmToolCall, ToolGate> BuildGate(bool canPerformActions)
     {
-        var actionsTaken = 0;
-        var destructiveStaged = 0;
+        var staged = 0;
         return call =>
         {
-            if (LlmTools.IsDestructive(call.Name))
-            {
-                if (!canPerformActions)
-                    return ToolGate.Refuse("Refused: you don't have permission to perform server actions.");
-
-                if (destructiveStaged >= MaxDestructiveStagedPerMessage)
-                    return ToolGate.Refuse(
-                        $"Refused: at most {MaxDestructiveStagedPerMessage} install/uninstall actions " +
-                        "can be proposed per message. Ask the user to do these one at a time.");
-
-                destructiveStaged++;
-                return ToolGate.Allow;
-            }
-
             if (LlmTools.IsAuthorizedRead(call.Name))
                 return canPerformActions
                     ? ToolGate.Allow
                     : ToolGate.Refuse("Refused: you don't have permission to view server configuration.");
 
-            if (!LlmTools.IsMutating(call.Name))
-                return ToolGate.Allow;
+            if (!LlmTools.IsStagedCommand(call.Name))
+                return ToolGate.Allow; // read-only
 
             if (!canPerformActions)
-                return ToolGate.Refuse(
-                    "Refused: you don't have permission to perform server actions.");
+                return ToolGate.Refuse("Refused: you don't have permission to perform server actions.");
 
-            if (actionsTaken >= MaxActionsPerMessage)
+            if (staged >= MaxStagedCommandsPerMessage)
                 return ToolGate.Refuse(
-                    $"Refused: the limit of {MaxActionsPerMessage} actions per message has been " +
-                    "reached. Ask the user to send the remaining actions separately.");
+                    $"Refused: at most {MaxStagedCommandsPerMessage} server actions can be proposed " +
+                    "per message. Ask the user to do the rest separately.");
 
-            actionsTaken++;
+            staged++;
             return ToolGate.Allow;
         };
     }

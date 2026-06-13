@@ -140,6 +140,36 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
             "the fleet stream must take the bulk path (no instance_name)");
     }
 
+    /// <summary>
+    /// §3.5 command path — an authorized "start it" prompt must PROPOSE, not execute: the turn
+    /// stages a Start confirmation for the resolved instance (drained into
+    /// <see cref="AssistantResult.Confirmations"/>) and proposes via the start_server tool.
+    /// factorio-test must be installed (and is stopped), so "start it" has a real, unambiguous
+    /// target. (The "never executes inline" guarantee itself is unit-proven in ToolDispatcherTests
+    /// via DidNotReceive().StartAsync; this live test confirms the model selects + stages it.)
+    /// </summary>
+    [Theory]
+    [InlineData("gemma4:12b")]
+    [InlineData("qwen3.5:9b")]
+    public async Task CommandPrompt_StagesConfirmation_NeverExecutesInLoop(string model)
+    {
+        if (!LiveEnabled()) return;
+
+        var (result, calls) = await RunTurnAsync(
+            model, "Start the factorio-test server.", canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue("the live turn should complete against Ollama + kgsm");
+        result.Text.Should().NotBe(IterationLimitReply);
+
+        // Propose-only: a Start was staged for the resolved instance, awaiting human confirmation.
+        result.Confirmations.Should().Contain(
+            c => c.Kind == ConfirmationKind.Start && c.Target == "factorio-test",
+            "an authorized start request must STAGE a Start confirmation, not run it inline");
+
+        // The model proposed via the start_server tool (which the dispatcher only stages).
+        calls.Should().Contain(c => c.Name == LlmTools.StartServer);
+    }
+
     // --- harness ---------------------------------------------------------------------------
 
     private bool LiveEnabled()
@@ -175,14 +205,14 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         });
 
     private async Task<(AssistantResult Result, IReadOnlyList<RecordedCall> Calls)> RunTurnAsync(
-        string model, string prompt)
+        string model, string prompt, bool canPerformActions = false)
     {
         var recorder = new ToolCallRecorder();
         var assistant = BuildFactory(model, recorder).Services.GetRequiredService<IServerAssistant>();
         var result = await assistant.RunAsync(
             conversationId: $"live-{model}-{prompt.GetHashCode()}",
             userPrompt: prompt,
-            canPerformActions: false);
+            canPerformActions: canPerformActions);
 
         var calls = recorder.Calls;
         _out.WriteLine($"[model={model}] prompt: {prompt}");

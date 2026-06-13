@@ -15,9 +15,10 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 /// <summary>
 /// Verifies the kgsm authorization policy that <see cref="ServerAssistant"/>
 /// supplies to the (library) agent loop: which tools are offered per caller, the
-/// per-message mutating-action cap, and the unauthorized-caller refusal. The loop
-/// itself is the library's concern (and is tested there); here we capture the
-/// <see cref="AgentTurn"/> the assistant builds and exercise its gate directly.
+/// single per-message staging cap (every command is propose-only, §3.5), and the
+/// unauthorized-caller refusal. The loop itself is the library's concern (and is
+/// tested there); here we capture the <see cref="AgentTurn"/> the assistant builds
+/// and exercise its gate directly.
 /// </summary>
 public class ServerAssistantTests
 {
@@ -68,7 +69,7 @@ public class ServerAssistantTests
     }
 
     [Fact]
-    public async Task UnauthorizedCaller_GateRefusesMutatingTool()
+    public async Task UnauthorizedCaller_GateRefusesCommand()
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
@@ -79,19 +80,36 @@ public class ServerAssistantTests
     }
 
     [Fact]
-    public async Task Gate_CapsMutatingActionsAtFivePerMessage()
+    public async Task Gate_CapsStagedCommandsAtFivePerMessage()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
         var stop = Call(LlmTools.StopServer);
 
-        // First five mutating calls are allowed...
+        // First five proposed commands are allowed (the dispatcher only STAGES them)...
         for (var i = 0; i < 5; i++)
             turn.Gate!(stop).Allowed.Should().BeTrue($"call {i} should be within the cap");
 
         // ...the sixth is refused.
         var sixth = turn.Gate!(stop);
         sixth.Allowed.Should().BeFalse();
-        sixth.RefusalMessage.Should().Contain("limit");
+        sixth.RefusalMessage.Should().Contain("separately");
+    }
+
+    [Fact]
+    public async Task Gate_OneCap_SpansEveryCommandKind()
+    {
+        // §3.5: ordinary commands and the formerly-"destructive" ops now share ONE staging
+        // cap — a mix of kinds counts together, with no separate budget per tier.
+        var turn = await CaptureTurnAsync(canPerformActions: true);
+
+        turn.Gate!(Call(LlmTools.StartServer)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.CreateBackup)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.UpdateServer)).Allowed.Should().BeTrue();
+
+        // Five staged across kinds; the sixth (any kind) is refused.
+        turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeFalse();
     }
 
     [Fact]
@@ -100,11 +118,11 @@ public class ServerAssistantTests
         var turn = await CaptureTurnAsync(canPerformActions: true);
         var status = Call(LlmTools.GetStatus);
 
-        // Many read-only calls, all allowed and none consuming the action budget.
+        // Many read-only calls, all allowed and none consuming the staging budget.
         for (var i = 0; i < 10; i++)
             turn.Gate!(status).Allowed.Should().BeTrue();
 
-        // The mutating budget is still fully intact afterwards.
+        // The staging budget is still fully intact afterwards.
         for (var i = 0; i < 5; i++)
             turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeTrue();
     }
@@ -121,49 +139,18 @@ public class ServerAssistantTests
     }
 
     [Fact]
-    public async Task Gate_AllowsAuthorizedReadForAuthorizedCaller_WithoutConsumingActionCap()
+    public async Task Gate_AllowsAuthorizedReadForAuthorizedCaller_WithoutConsumingStagingCap()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
         var view = Call(LlmTools.ViewConfigFile);
 
-        // Many config views are allowed and none consume the mutating budget...
+        // Many config views are allowed and none consume the staging budget...
         for (var i = 0; i < 10; i++)
             turn.Gate!(view).Allowed.Should().BeTrue();
 
-        // ...so the full mutating budget remains.
+        // ...so the full staging budget remains.
         for (var i = 0; i < 5; i++)
             turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task Gate_CapsStagedDestructiveOpsPerMessage()
-    {
-        var turn = await CaptureTurnAsync(canPerformActions: true);
-
-        // Destructive ops pass the gate (the dispatcher only STAGES them) up to the cap of 3...
-        turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeTrue();
-
-        // ...the fourth is refused so one prompt can't tee up a library-wide shuffle.
-        var fourth = turn.Gate!(Call(LlmTools.UninstallServer));
-        fourth.Allowed.Should().BeFalse();
-        fourth.RefusalMessage.Should().Contain("one at a time");
-    }
-
-    [Fact]
-    public async Task Gate_DestructiveOps_DoNotConsumeTheMutatingCap()
-    {
-        var turn = await CaptureTurnAsync(canPerformActions: true);
-
-        // Stage some destructive ops...
-        turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeTrue();
-
-        // ...the 5-action mutating budget is independent and fully intact.
-        for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeFalse();
     }
 
     [Fact]

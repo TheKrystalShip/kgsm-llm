@@ -1,19 +1,92 @@
 namespace TheKrystalShip.Kgsm.Assistant;
 
-/// <summary>The kind of destructive operation awaiting confirmation.</summary>
+/// <summary>
+/// The kind of command awaiting confirmation. Every server command is propose-only
+/// (§3.5): the model never executes one, it only stages it here; a human confirms
+/// before it runs. New members are APPENDED (never reordered) — the Service mints
+/// stateless tokens carrying <c>(int)Kind</c>, so reordering would invalidate any
+/// in-flight token.
+/// </summary>
 public enum ConfirmationKind
 {
+    // Original destructive tier.
     Uninstall,
-    Install
+    Install,
+    // §3.5 generalisation: the formerly-inline commands, now propose-only too.
+    Start,
+    Stop,
+    Restart,
+    Update,
+    Backup
 }
 
 /// <summary>
-/// A destructive operation that has been resolved and staged, awaiting an
-/// explicit human confirmation before it runs.
+/// Classification + human-readable labels for <see cref="ConfirmationKind"/>. Shared by
+/// the dispatcher (staging message), the assistant (confirm/execute), and the surfaces
+/// (prompt text + future confirm-friction).
+/// </summary>
+public static class ConfirmationKinds
+{
+    /// <summary>
+    /// Instance-targeted command verbs that stage → confirm → execute via the matching
+    /// single-instance <c>IServerOperations</c> op. (<see cref="ConfirmationKind.Install"/>
+    /// is excluded — it creates a NEW instance from a blueprint, so it carries a different
+    /// payload and has its own confirm path.)
+    /// </summary>
+    public static readonly IReadOnlySet<ConfirmationKind> Commands = new HashSet<ConfirmationKind>
+    {
+        ConfirmationKind.Start, ConfirmationKind.Stop, ConfirmationKind.Restart,
+        ConfirmationKind.Update, ConfirmationKind.Backup, ConfirmationKind.Uninstall,
+    };
+
+    /// <summary>
+    /// Kinds that destroy data / are irreversible. V1 confirm friction is uniform
+    /// (Confirm/Cancel for all, Q5); this set is the home for the stronger
+    /// type-the-name friction those kinds will get later, so renderers can already
+    /// emphasise them differently.
+    /// </summary>
+    public static readonly IReadOnlySet<ConfirmationKind> Destructive = new HashSet<ConfirmationKind>
+    {
+        ConfirmationKind.Uninstall,
+    };
+
+    public static bool IsDestructive(ConfirmationKind kind) => Destructive.Contains(kind);
+
+    /// <summary>Imperative verb label, e.g. "start", "restart", "back up".</summary>
+    public static string Verb(ConfirmationKind kind) => kind switch
+    {
+        ConfirmationKind.Start => "start",
+        ConfirmationKind.Stop => "stop",
+        ConfirmationKind.Restart => "restart",
+        ConfirmationKind.Update => "update",
+        ConfirmationKind.Backup => "back up",
+        ConfirmationKind.Uninstall => "uninstall",
+        ConfirmationKind.Install => "install",
+        _ => kind.ToString().ToLowerInvariant(),
+    };
+
+    /// <summary>Past-tense outcome label, e.g. "started", "backed up".</summary>
+    public static string PastTense(ConfirmationKind kind) => kind switch
+    {
+        ConfirmationKind.Start => "started",
+        ConfirmationKind.Stop => "stopped",
+        ConfirmationKind.Restart => "restarted",
+        ConfirmationKind.Update => "updated",
+        ConfirmationKind.Backup => "backed up",
+        ConfirmationKind.Uninstall => "uninstalled",
+        ConfirmationKind.Install => "installed",
+        _ => kind.ToString().ToLowerInvariant(),
+    };
+}
+
+/// <summary>
+/// A command that has been resolved and staged, awaiting an explicit human
+/// confirmation before it runs.
 /// <para>
-/// <see cref="Target"/> is the RESOLVED name (an existing instance for
-/// <see cref="ConfirmationKind.Uninstall"/>, a known blueprint for
-/// <see cref="ConfirmationKind.Install"/>) — never the model's raw argument.
+/// <see cref="Target"/> is the RESOLVED name (an existing instance for the
+/// instance-targeted kinds, a known blueprint for <see cref="ConfirmationKind.Install"/>)
+/// — never the model's raw argument. <see cref="InstanceName"/> is Install-only (the
+/// optional custom name for the new instance).
 /// </para>
 /// </summary>
 public sealed record PendingConfirmation(

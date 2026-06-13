@@ -295,6 +295,31 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Turn_StreamAccept_GeneralisedCommand_ProposedEventCarriesVerbKind()
+    {
+        // §3.5: a generalised command (start) is propose-only too — it surfaces as
+        // command.proposed, and the DTO Kind tells the surface which verb to render.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(_ => AsyncSeq(
+                AssistantStreamEvent.Token("Proposing…"),
+                AssistantStreamEvent.Confirmation(new PendingConfirmation(ConfirmationKind.Start, "factorio")),
+                AssistantStreamEvent.Final("Proposed.")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Confirmation:Key", "test-key"));
+        var response = await StreamTurnAsync(Authed(factory), "start factorio");
+        var body = await response.Content.ReadAsStringAsync();
+
+        body.Should().Contain("event: command.proposed");
+        body.Should().Contain("\"kind\":\"start\"");
+
+        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
+        tokenSvc.TryValidate(ExtractConfirmationToken(body), out var confirmation, out _).Should().BeTrue();
+        confirmation.Kind.Should().Be(ConfirmationKind.Start);
+        confirmation.Target.Should().Be("factorio");
+    }
+
+    [Fact]
     public async Task Turn_StreamAccept_NoBearer_Returns401()
     {
         // The bearer filter runs before the handler, so SSE is never opened for an anonymous caller.

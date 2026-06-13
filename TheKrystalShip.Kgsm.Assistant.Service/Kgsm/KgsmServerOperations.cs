@@ -62,6 +62,123 @@ internal sealed class KgsmServerOperations : IServerOperations
         }
     }
 
+    /// <summary>Cap on bytes read from a config file — bounds what flows into the model's context.</summary>
+    private const int MaxFileBytes = 64 * 1024;
+
+    public async Task<Result<string>> ReadInstanceFileAsync(
+        string instance, string relativePath, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var info = await Task.Run(() => _instances.GetInstanceInfo(instance), cancellationToken);
+            if (info is null)
+                return Result.Failure<string>($"'{instance}' is not a known instance.");
+
+            // The install dir is the security boundary. Guard empty (a CWD-relative
+            // read would otherwise escape into the service's own working directory).
+            if (string.IsNullOrWhiteSpace(info.InstallDir))
+                return Result.Failure<string>($"'{instance}' has no known install directory.");
+
+            var dirInfo = new DirectoryInfo(Path.GetFullPath(info.InstallDir));
+            if (!dirInfo.Exists)
+                return Result.Failure<string>("The instance install directory does not exist.");
+
+            // Canonicalize the boundary (resolve a symlinked install dir to its target).
+            var realDir = dirInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? dirInfo.FullName;
+
+            // Combine + normalize (defeats ".."), then confine to the boundary.
+            var candidate = Path.GetFullPath(Path.Combine(realDir, relativePath));
+            if (!IsWithin(realDir, candidate))
+                return Result.Failure<string>("Refused: the requested file is outside the instance directory.");
+
+            var fileInfo = new FileInfo(candidate);
+            if (!fileInfo.Exists)
+                return Result.Failure<string>("The requested file was not found.");
+
+            // Re-check after resolving a final-component symlink (an in-dir link out).
+            var realFile = fileInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? fileInfo.FullName;
+            if (!IsWithin(realDir, realFile))
+                return Result.Failure<string>("Refused: the requested file resolves outside the instance directory.");
+
+            var text = await ReadCappedTextAsync(realFile, MaxFileBytes, cancellationToken);
+            return Result.Success(text);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ReadInstanceFile failed for {Instance} ({Path})", instance, relativePath);
+            return Result.Failure<string>(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// True if <paramref name="candidate"/> is <paramref name="dir"/> itself or a path
+    /// beneath it. The trailing-separator check is what keeps a sibling whose name
+    /// merely starts with the dir (e.g. <c>/opt/x/inst</c> vs <c>/opt/x/inst-evil</c>)
+    /// from being admitted.
+    /// </summary>
+    private static bool IsWithin(string dir, string candidate)
+    {
+        var normalizedDir = dir.TrimEnd(Path.DirectorySeparatorChar);
+        return candidate == normalizedDir ||
+               candidate.StartsWith(normalizedDir + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    private static async Task<string> ReadCappedTextAsync(string path, int maxBytes, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var toRead = (int)Math.Min(stream.Length, maxBytes);
+        var buffer = new byte[toRead];
+        var read = await stream.ReadAtLeastAsync(buffer, toRead, throwOnEndOfStream: false, cancellationToken);
+        var text = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+        return stream.Length > maxBytes ? text + "\n… (truncated)" : text;
+    }
+
+    public async Task<Result<IReadOnlyList<FleetStatusEntry>>> GetFleetStatusAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // fast: true skips the per-instance network update-check (~20x cheaper);
+            // a fleet liveness read has no business polling for updates.
+            var statuses = await Task.Run(() => _instances.GetAllStatuses(fast: true), cancellationToken);
+
+            var entries = statuses
+                .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(kv => MapFleetEntry(kv.Key, kv.Value))
+                .ToList();
+
+            return Result.Success<IReadOnlyList<FleetStatusEntry>>(entries);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetFleetStatus failed");
+            return Result.Failure<IReadOnlyList<FleetStatusEntry>>(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Maps a kgsm-lib <see cref="Reading{T}"/> onto the toolbox-boundary
+    /// <see cref="FleetStatusEntry"/>, preserving the measured-vs-unavailable
+    /// distinction. A non-measured reading becomes <see cref="FleetStatusAvailability.Unavailable"/>
+    /// with <c>Running = null</c> — never a fabricated "stopped."
+    /// </summary>
+    private static FleetStatusEntry MapFleetEntry(string name, Reading<InstanceRuntimeStatus> reading) =>
+        reading.State == ReadingState.Measured
+            ? new FleetStatusEntry(name, FleetStatusAvailability.Read, reading.Value!.Status, Reason: null)
+            : new FleetStatusEntry(
+                name,
+                FleetStatusAvailability.Unavailable,
+                Running: null,
+                Reason: reading.Reason ?? DescribeReadingCode(reading.Code));
+
+    private static string DescribeReadingCode(ReadingCode? code) => code switch
+    {
+        ReadingCode.RequiresRegeneration => "its management file must be regenerated to report status",
+        ReadingCode.DeadlineExceeded => "the status read timed out",
+        ReadingCode.MonitorOffline => "the status source is offline",
+        ReadingCode.SourceError => "the status source returned an error",
+        _ => "the status could not be read",
+    };
+
     public async Task<Result<bool>> IsActiveAsync(string instance, CancellationToken cancellationToken = default)
     {
         try

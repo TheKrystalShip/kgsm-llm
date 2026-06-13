@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using TheKrystalShip.Llm.Interfaces;
 
@@ -23,6 +24,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConfirmationContext, ConfirmationContext>();
         services.AddSingleton<IToolDispatcher, ToolDispatcher>();
         services.AddSingleton<ISystemPromptBuilder, SystemPromptBuilder>();
+        // The §3.2 relevance seam: a deliberate no-op today (coarse/bulk tools are the
+        // small-model fix). A host can override with its own filter before this call.
+        services.TryAddSingleton<IToolRelevanceFilter, NoopToolRelevanceFilter>();
         services.AddSingleton<IServerAssistant, ServerAssistant>();
 
         return services;

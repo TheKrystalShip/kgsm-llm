@@ -55,46 +55,111 @@ public class ToolDispatcherTests
     [Fact]
     public async Task ExactName_Resolves_AndExecutes()
     {
-        _operations.IsActiveAsync("minecraft", Arg.Any<CancellationToken>())
-            .Returns(Result.Success(true));
+        _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("running, pid 123"));
 
-        var result = await Create().ExecuteAsync(Call(LlmTools.IsServerActive, "minecraft"));
+        var result = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "minecraft"));
 
-        result.Should().Contain("running");
-        await _operations.Received(1).IsActiveAsync("minecraft", Arg.Any<CancellationToken>());
+        result.Should().Contain("Status for minecraft");
+        await _operations.Received(1).GetStatusAsync("minecraft", Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task SingleFuzzyMatch_Resolves()
     {
-        _operations.IsActiveAsync("terraria-pvp", Arg.Any<CancellationToken>())
-            .Returns(Result.Success(false));
+        _operations.GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("stopped"));
 
         // "pvp" is a substring of exactly one instance.
-        await Create().ExecuteAsync(Call(LlmTools.IsServerActive, "pvp"));
+        await Create().ExecuteAsync(Call(LlmTools.GetStatus, "pvp"));
 
-        await _operations.Received(1).IsActiveAsync("terraria-pvp", Arg.Any<CancellationToken>());
+        await _operations.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task AmbiguousName_AsksUser_AndDoesNotExecute()
     {
         // "terraria" matches two instances by game type / substring.
-        var result = await Create().ExecuteAsync(Call(LlmTools.IsServerActive, "terraria"));
+        var result = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "terraria"));
 
         result.Should().Contain("Ambiguous")
             .And.Contain("terraria-pvp")
             .And.Contain("terraria-creative");
-        await _operations.DidNotReceive().IsActiveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task UnknownName_ReturnsMiss_WithKnownList()
     {
-        var result = await Create().ExecuteAsync(Call(LlmTools.IsServerActive, "doesnotexist"));
+        var result = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "doesnotexist"));
 
         result.Should().Contain("no instance named").And.Contain("minecraft");
-        await _operations.DidNotReceive().IsActiveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetStatus_NoInstanceName_ReturnsFleetSummary_InASingleBulkCall()
+    {
+        _operations.GetFleetStatusAsync(Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<FleetStatusEntry>>(new[]
+            {
+                new FleetStatusEntry("minecraft", FleetStatusAvailability.Read, true, null),
+                new FleetStatusEntry("terraria-pvp", FleetStatusAvailability.Read, false, null),
+            }));
+
+        var result = await Create().ExecuteAsync(
+            new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
+
+        result.Should().Contain("minecraft: running").And.Contain("terraria-pvp: stopped");
+
+        // The MaxIterations fix: one bulk call, never a per-instance fan-out.
+        await _operations.Received(1).GetFleetStatusAsync(Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetStatus_Fleet_UnreadableInstance_IsUnavailable_NeverStopped()
+    {
+        _operations.GetFleetStatusAsync(Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<FleetStatusEntry>>(new[]
+            {
+                new FleetStatusEntry("broken", FleetStatusAvailability.Unavailable, null,
+                    "its management file must be regenerated to report status"),
+            }));
+
+        var result = await Create().ExecuteAsync(
+            new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
+
+        // The §3.7 guard: a could-not-read instance must not masquerade as stopped.
+        result.Should().Contain("status unavailable").And.Contain("regenerated");
+        result.Should().NotContain("stopped");
+    }
+
+    [Fact]
+    public async Task ViewConfigFile_ReadsResolvedInstanceConfig_AndRedactsSecrets()
+    {
+        _operations.ReadInstanceFileAsync("minecraft", "minecraft.config.ini", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("port = 25565\nrcon_password = hunter2\nlevel = world"));
+
+        var result = await Create().ExecuteAsync(Call(LlmTools.ViewConfigFile, "minecraft"));
+
+        // The filename is derived from the resolved instance name (no model-supplied path).
+        await _operations.Received(1)
+            .ReadInstanceFileAsync("minecraft", "minecraft.config.ini", Arg.Any<CancellationToken>());
+
+        result.Should().Contain("port = 25565").And.Contain("level = world");
+        result.Should().Contain("rcon_password").And.Contain("***redacted***");
+        result.Should().NotContain("hunter2");
+    }
+
+    [Fact]
+    public async Task ViewConfigFile_UnknownInstance_DoesNotRead()
+    {
+        var result = await Create().ExecuteAsync(Call(LlmTools.ViewConfigFile, "doesnotexist"));
+
+        result.Should().Contain("no instance named");
+        await _operations.DidNotReceive()
+            .ReadInstanceFileAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

@@ -32,7 +32,8 @@ public class ServerAssistantStreamTests
     {
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns("system");
         return new ServerAssistant(
-            agent, _prompt, confirmations, _inventory, _operations, NullLogger<ServerAssistant>.Instance);
+            agent, _prompt, confirmations, _inventory, _operations,
+            new NoopToolRelevanceFilter(), NullLogger<ServerAssistant>.Instance);
     }
 
     private static async Task<List<AssistantStreamEvent>> DrainAsync(IAsyncEnumerable<AssistantStreamEvent> events)

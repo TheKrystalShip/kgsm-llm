@@ -33,7 +33,8 @@ public class ServerAssistantTests
     {
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns("system");
         return new ServerAssistant(
-            _agent, _prompt, _confirmations, _inventory, _operations, NullLogger<ServerAssistant>.Instance);
+            _agent, _prompt, _confirmations, _inventory, _operations,
+            new NoopToolRelevanceFilter(), NullLogger<ServerAssistant>.Instance);
     }
 
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>
@@ -97,13 +98,39 @@ public class ServerAssistantTests
     public async Task Gate_DoesNotCountReadOnlyToolsAgainstTheCap()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var status = Call(LlmTools.GetServerStatus);
+        var status = Call(LlmTools.GetStatus);
 
         // Many read-only calls, all allowed and none consuming the action budget.
         for (var i = 0; i < 10; i++)
             turn.Gate!(status).Allowed.Should().BeTrue();
 
         // The mutating budget is still fully intact afterwards.
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Gate_RefusesAuthorizedReadForUnauthorizedCaller()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        var gate = turn.Gate!(Call(LlmTools.ViewConfigFile));
+
+        gate.Allowed.Should().BeFalse();
+        gate.RefusalMessage.Should().Contain("permission");
+    }
+
+    [Fact]
+    public async Task Gate_AllowsAuthorizedReadForAuthorizedCaller_WithoutConsumingActionCap()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: true);
+        var view = Call(LlmTools.ViewConfigFile);
+
+        // Many config views are allowed and none consume the mutating budget...
+        for (var i = 0; i < 10; i++)
+            turn.Gate!(view).Allowed.Should().BeTrue();
+
+        // ...so the full mutating budget remains.
         for (var i = 0; i < 5; i++)
             turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeTrue();
     }

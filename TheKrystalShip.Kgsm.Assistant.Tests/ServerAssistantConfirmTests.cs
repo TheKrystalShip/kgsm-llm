@@ -28,6 +28,7 @@ public class ServerAssistantConfirmTests
         new ConfirmationContext(),
         _inventory,
         _operations,
+        new NoopToolRelevanceFilter(),
         NullLogger<ServerAssistant>.Instance);
 
     private void Instances(params string[] names) =>

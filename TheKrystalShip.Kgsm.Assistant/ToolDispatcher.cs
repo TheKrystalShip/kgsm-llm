@@ -44,10 +44,9 @@ public class ToolDispatcher : IToolDispatcher
         {
             return call.Name switch
             {
-                LlmTools.ListInstances => await ListInstancesAsync(cancellationToken),
+                LlmTools.GetStatus => await GetStatusAsync(call, cancellationToken),
                 LlmTools.ListBlueprints => await ListBlueprintsAsync(cancellationToken),
-                LlmTools.GetServerStatus => await GetServerStatusAsync(call, cancellationToken),
-                LlmTools.IsServerActive => await IsServerActiveAsync(call, cancellationToken),
+                LlmTools.ViewConfigFile => await ViewConfigFileAsync(call, cancellationToken),
                 LlmTools.StartServer => await ActAsync(call, _operations.StartAsync, "started", cancellationToken),
                 LlmTools.StopServer => await ActAsync(call, _operations.StopAsync, "stopped", cancellationToken),
                 LlmTools.RestartServer => await ActAsync(call, _operations.RestartAsync, "restarted", cancellationToken),
@@ -65,18 +64,6 @@ public class ToolDispatcher : IToolDispatcher
         }
     }
 
-    private async Task<string> ListInstancesAsync(CancellationToken cancellationToken)
-    {
-        var instances = await _inventory.GetInstancesAsync(cancellationToken);
-        if (instances.Count == 0)
-            return "There are no installed server instances.";
-
-        var lines = instances
-            .OrderBy(kv => kv.Key)
-            .Select(kv => $"- {kv.Key} (game: {kv.Value})");
-        return "Installed instances:\n" + string.Join("\n", lines);
-    }
-
     private async Task<string> ListBlueprintsAsync(CancellationToken cancellationToken)
     {
         var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
@@ -87,9 +74,67 @@ public class ToolDispatcher : IToolDispatcher
         return "Installable game types:\n" + string.Join("\n", names.Select(n => $"- {n}"));
     }
 
-    private async Task<string> GetServerStatusAsync(LlmToolCall call, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads an instance's main config file (<c>&lt;name&gt;.config.ini</c>), redacted.
+    /// V1 whitelist (§3.8): only that one file. The filename is derived from the
+    /// resolved (real-inventory-matched) instance name, so the model supplies no
+    /// path segment — there is no attacker-controlled path component. The port
+    /// enforces install-dir path-binding as defense-in-depth.
+    /// </summary>
+    private async Task<string> ViewConfigFileAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var file = $"{resolved}.config.ini";
+
+        var result = await _operations.ReadInstanceFileAsync(resolved!, file, cancellationToken);
+        if (!result.IsSuccess)
+            return $"Error: could not read the config for '{resolved}' ({result.Error ?? "unknown error"}).";
+
+        var redacted = RedactSecrets(result.Value ?? string.Empty);
+        return $"Config file ({file}) for {resolved}:\n{redacted}";
+    }
+
+    /// <summary>Secret-key hints for light V1 redaction. Kept tight on purpose —
+    /// over-redaction would hide the very settings a user is trying to fix.</summary>
+    private static readonly string[] SecretKeyHints = ["password", "passwd", "secret", "token"];
+
+    /// <summary>
+    /// Masks the value of any <c>key = value</c> / <c>key: value</c> line whose KEY
+    /// contains a secret hint, leaving everything else intact. Matching on the key
+    /// (not the value) avoids mangling unrelated content.
+    /// </summary>
+    private static string RedactSecrets(string content)
+    {
+        var lines = content.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var sep = lines[i].IndexOfAny(['=', ':']);
+            if (sep <= 0)
+                continue;
+
+            var key = lines[i][..sep];
+            if (SecretKeyHints.Any(h => key.Contains(h, StringComparison.OrdinalIgnoreCase)))
+                lines[i] = lines[i][..(sep + 1)] + " ***redacted***";
+        }
+        return string.Join('\n', lines);
+    }
+
+    /// <summary>
+    /// Merged status read (toolbox catalog §4.1): no instance_name → a single
+    /// fleet-wide summary (the one-shot replacement for fanning a per-instance
+    /// liveness loop, which is the agent-loop iteration-cap cause); an
+    /// instance_name → detailed status for that one server.
+    /// </summary>
+    private async Task<string> GetStatusAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var name = call.Arg("instance_name")?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return await GetFleetStatusAsync(cancellationToken);
+
+        var (resolved, error) = await ResolveInstanceAsync(name, cancellationToken);
         if (error is not null)
             return error;
 
@@ -100,19 +145,26 @@ public class ToolDispatcher : IToolDispatcher
         return $"Status for {resolved}:\n{result.Value}";
     }
 
-    private async Task<string> IsServerActiveAsync(LlmToolCall call, CancellationToken cancellationToken)
+    /// <summary>
+    /// One-shot fleet status. An instance whose status could not be read is
+    /// reported as "status unavailable (reason)", never collapsed to "stopped" —
+    /// the model must not narrate a read failure as a measured state.
+    /// </summary>
+    private async Task<string> GetFleetStatusAsync(CancellationToken cancellationToken)
     {
-        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
-        if (error is not null)
-            return error;
-
-        var result = await _operations.IsActiveAsync(resolved!, cancellationToken);
+        var result = await _operations.GetFleetStatusAsync(cancellationToken);
         if (!result.IsSuccess)
-            return $"Error: could not check '{resolved}' ({result.Error ?? "unknown error"}).";
+            return $"Error: could not read server status ({result.Error ?? "unknown error"}).";
 
-        return result.Value
-            ? $"{resolved} is currently running."
-            : $"{resolved} is currently stopped.";
+        var entries = result.Value!;
+        if (entries.Count == 0)
+            return "There are no installed server instances.";
+
+        var lines = entries.Select(e => e.Availability == FleetStatusAvailability.Read
+            ? $"- {e.Instance}: {(e.Running == true ? "running" : "stopped")}"
+            : $"- {e.Instance}: status unavailable ({e.Reason ?? "unknown reason"})");
+
+        return $"Status of all {entries.Count} server(s):\n" + string.Join("\n", lines);
     }
 
     /// <summary>

@@ -38,6 +38,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IConfirmationContext _confirmations;
     private readonly IServerInventory _inventory;
     private readonly IServerOperations _operations;
+    private readonly IToolRelevanceFilter _toolFilter;
     private readonly ILogger<ServerAssistant> _logger;
 
     public ServerAssistant(
@@ -46,6 +47,7 @@ public class ServerAssistant : IServerAssistant
         IConfirmationContext confirmations,
         IServerInventory inventory,
         IServerOperations operations,
+        IToolRelevanceFilter toolFilter,
         ILogger<ServerAssistant> logger)
     {
         _agent = agent;
@@ -53,7 +55,18 @@ public class ServerAssistant : IServerAssistant
         _confirmations = confirmations;
         _inventory = inventory;
         _operations = operations;
+        _toolFilter = toolFilter;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Two-axis tool selection (§3.2): authorization picks the set the caller MAY
+    /// use (read-only vs all), then the relevance seam may narrow it (no-op today).
+    /// </summary>
+    private IReadOnlyList<LlmToolDefinition> SelectTools(string userPrompt, bool canPerformActions)
+    {
+        var authorized = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+        return _toolFilter.GetToolsFor(new ToolSelectionContext(userPrompt, canPerformActions), authorized);
     }
 
     public async Task<AssistantResult> RunAsync(
@@ -65,7 +78,7 @@ public class ServerAssistant : IServerAssistant
         var systemPrompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
 
         // Mutating + destructive tools are only offered to authorized callers; the gate re-checks.
-        var tools = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+        var tools = SelectTools(userPrompt, canPerformActions);
 
         var turn = new AgentTurn
         {
@@ -97,7 +110,7 @@ public class ServerAssistant : IServerAssistant
 
         // Identical policy to RunAsync: mutating/destructive tools only for authorized callers;
         // the gate re-checks each call and enforces the per-message blast caps.
-        var tools = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+        var tools = SelectTools(userPrompt, canPerformActions);
 
         var turn = new AgentTurn
         {
@@ -267,6 +280,7 @@ public class ServerAssistant : IServerAssistant
     /// <summary>
     /// Per-turn gate closure.
     ///  - Read-only tools always pass.
+    ///  - Authorized reads (e.g. view_config_file): refused for unauthorized callers, but not capped.
     ///  - Mutating tools: refused for unauthorized callers; capped at <see cref="MaxActionsPerMessage"/>.
     ///  - Destructive tools: refused for unauthorized callers; otherwise allowed through to the
     ///    dispatcher, which only STAGES them (it never executes), so they don't consume the cap.
@@ -291,6 +305,11 @@ public class ServerAssistant : IServerAssistant
                 destructiveStaged++;
                 return ToolGate.Allow;
             }
+
+            if (LlmTools.IsAuthorizedRead(call.Name))
+                return canPerformActions
+                    ? ToolGate.Allow
+                    : ToolGate.Refuse("Refused: you don't have permission to view server configuration.");
 
             if (!LlmTools.IsMutating(call.Name))
                 return ToolGate.Allow;

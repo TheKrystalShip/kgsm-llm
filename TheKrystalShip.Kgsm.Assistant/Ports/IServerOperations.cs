@@ -26,7 +26,38 @@ public interface IServerOperations
     /// <summary>Live status text for an instance.</summary>
     Task<Result<string>> GetStatusAsync(string instance, CancellationToken cancellationToken = default);
 
-    /// <summary>Live running-or-not check for an instance.</summary>
+    /// <summary>
+    /// Reads a UTF-8 text file belonging to an instance, <b>path-bound to the
+    /// instance's install directory</b>: the implementation canonicalizes the path
+    /// and refuses anything that resolves outside that directory (a <c>..</c> escape
+    /// or an out-of-tree symlink). The size read is capped. Read-only. Returns a
+    /// failed <see cref="Result"/> if the instance/dir is unknown, the path escapes,
+    /// or the file is missing — never throws.
+    /// <para>
+    /// V1 callers pass only the instance's own <c>&lt;name&gt;.config.ini</c> (the
+    /// dispatcher derives that filename from the resolved instance name, so no
+    /// model-supplied path segment ever reaches here). The path-binding is
+    /// defense-in-depth for when a future whitelist admits model-chosen files.
+    /// </para>
+    /// </summary>
+    Task<Result<string>> ReadInstanceFileAsync(string instance, string relativePath, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Live status of the whole fleet in a single kgsm invocation — the bulk read
+    /// that replaces fanning a per-instance check across N instances (the cause of
+    /// the agent-loop iteration cap on "which servers are running?"). An instance
+    /// whose status could not be read appears as
+    /// <see cref="FleetStatusAvailability.Unavailable"/> with a reason, so one bad
+    /// instance neither sinks the read nor masquerades as "stopped."
+    /// </summary>
+    Task<Result<IReadOnlyList<FleetStatusEntry>>> GetFleetStatusAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Live running-or-not check for an instance. Internal capability — not a
+    /// model-facing tool (a per-instance liveness loop is the iteration-cap cause;
+    /// the model uses the bulk <see cref="GetFleetStatusAsync"/> instead). Retained
+    /// for host/aggregator use.
+    /// </summary>
     Task<Result<bool>> IsActiveAsync(string instance, CancellationToken cancellationToken = default);
 
     /// <summary>

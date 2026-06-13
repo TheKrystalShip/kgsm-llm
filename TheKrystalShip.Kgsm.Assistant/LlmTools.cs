@@ -17,11 +17,13 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// </summary>
 public static class LlmTools
 {
-    // Read-only
-    public const string ListInstances = "list_instances";
+    // Read-only (offered to everyone)
+    public const string GetStatus = "get_status";
     public const string ListBlueprints = "list_blueprints";
-    public const string GetServerStatus = "get_server_status";
-    public const string IsServerActive = "is_server_active";
+
+    // Authorized read (offered only to action-authorized callers — exposes file
+    // contents, so gated like the action tier even though it mutates nothing)
+    public const string ViewConfigFile = "view_config_file";
 
     // Mutating
     public const string StartServer = "start_server";
@@ -37,6 +39,13 @@ public static class LlmTools
     private static readonly LlmToolParameter InstanceName = new(
         "instance_name", "The exact name of the server instance.");
 
+    private static readonly LlmToolParameter StatusInstanceName = new(
+        "instance_name",
+        "The server to report on in detail. OMIT this to get a one-shot summary of EVERY server " +
+        "at once — always do that for questions like \"which servers are running?\" instead of " +
+        "checking servers one at a time.",
+        Required: false);
+
     private static readonly LlmToolParameter BlueprintName = new(
         "blueprint_name", "The game type (blueprint) to install, from the installable list.");
 
@@ -46,18 +55,29 @@ public static class LlmTools
 
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
-        LlmToolDefinition.Create(ListInstances,
-            "List all installed game server instances and their game type."),
+        LlmToolDefinition.Create(GetStatus,
+            "Get game server status. With NO instance_name: a single one-shot summary of every " +
+            "server (running or stopped) — this is the right tool for \"what's running?\" / \"list " +
+            "the servers\". With instance_name: detailed status for that one server.",
+            StatusInstanceName),
 
         LlmToolDefinition.Create(ListBlueprints,
             "List all game types (blueprints) that can be installed."),
+    };
 
-        LlmToolDefinition.Create(GetServerStatus,
-            "Get detailed status and information for a specific server instance.",
-            InstanceName),
-
-        LlmToolDefinition.Create(IsServerActive,
-            "Check whether a specific server instance is currently running.",
+    /// <summary>
+    /// Reads that expose file contents — offered only to action-authorized callers.
+    /// They mutate nothing (no per-message cap, no staging), but reading a config
+    /// file reveals more than the read-only tier, so the gate refuses them for
+    /// unauthorized callers as defense-in-depth. (V1 owner-decision: conservative;
+    /// can be relaxed into <see cref="ReadOnly"/> later — tightening after exposure
+    /// is the harder direction.)
+    /// </summary>
+    public static readonly IReadOnlyList<LlmToolDefinition> AuthorizedReadOnly = new[]
+    {
+        LlmToolDefinition.Create(ViewConfigFile,
+            "View a game server's main configuration file (its .config.ini), with secrets " +
+            "redacted. Use this to inspect or help diagnose a server's settings.",
             InstanceName),
     };
 
@@ -92,7 +112,11 @@ public static class LlmTools
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>
     public static readonly IReadOnlyList<LlmToolDefinition> All =
-        ReadOnly.Concat(Mutating).Concat(Destructive).ToArray();
+        ReadOnly.Concat(AuthorizedReadOnly).Concat(Mutating).Concat(Destructive).ToArray();
+
+    /// <summary>Names of authorized-only reads; refused for unauthorized callers, but not capped.</summary>
+    public static readonly IReadOnlySet<string> AuthorizedReadNames =
+        AuthorizedReadOnly.Select(t => t.Name).ToHashSet();
 
     /// <summary>Names of tools that change server state; gated and counted against the cap.</summary>
     public static readonly IReadOnlySet<string> MutatingNames =
@@ -105,4 +129,6 @@ public static class LlmTools
     public static bool IsMutating(string toolName) => MutatingNames.Contains(toolName);
 
     public static bool IsDestructive(string toolName) => DestructiveNames.Contains(toolName);
+
+    public static bool IsAuthorizedRead(string toolName) => AuthorizedReadNames.Contains(toolName);
 }

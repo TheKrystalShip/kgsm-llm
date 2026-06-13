@@ -9,12 +9,6 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Discord;
 
-/// <summary>Thrown when Discord rejects the retained access token (HTTP 401) — the caller should re-login.</summary>
-internal sealed class DiscordTokenExpiredException : Exception
-{
-    public DiscordTokenExpiredException(string message) : base(message) { }
-}
-
 /// <summary>Discord's OAuth token-exchange response (snake_case on the wire).</summary>
 internal sealed record DiscordTokenResponse
 {
@@ -47,11 +41,17 @@ internal interface IDiscordOAuthClient
     Task<DiscordTokenResponse?> ExchangeCodeAsync(string code, string codeVerifier, CancellationToken ct = default);
 
     /// <summary>
-    /// Fetches the caller's member object in the configured guild using their access token.
-    /// Returns null if they are NOT in the guild (404) or on a transient denial (429/other).
-    /// Throws <see cref="DiscordTokenExpiredException"/> on 401 (token no longer valid).
+    /// Fetches the authenticated user's identity (<c>/users/@me</c>) with their access token.
+    /// This is the ONLY use of the caller's token — it is discarded immediately after. Null on failure.
     /// </summary>
-    Task<DiscordGuildMember?> GetGuildMemberAsync(string accessToken, CancellationToken ct = default);
+    Task<DiscordUser?> GetCurrentUserAsync(string accessToken, CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetches a user's member object (roles) in the configured guild using the BOT token —
+    /// no caller token involved. Returns null if they are NOT in the guild (404) or on a
+    /// transient denial (429/other); a 401 means the bot token itself is misconfigured.
+    /// </summary>
+    Task<DiscordGuildMember?> GetGuildMemberAsync(string userId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -95,11 +95,26 @@ internal sealed class DiscordOAuthClient : IDiscordOAuthClient
         return await response.Content.ReadFromJsonAsync<DiscordTokenResponse>(ct);
     }
 
-    public async Task<DiscordGuildMember?> GetGuildMemberAsync(string accessToken, CancellationToken ct = default)
+    public async Task<DiscordUser?> GetCurrentUserAsync(string accessToken, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "api/v10/users/@me");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        using var response = await _http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Discord /users/@me failed: {Status}", (int)response.StatusCode);
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<DiscordUser>(ct);
+    }
+
+    public async Task<DiscordGuildMember?> GetGuildMemberAsync(string userId, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, $"api/v10/users/@me/guilds/{_options.GuildId}/member");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            HttpMethod.Get, $"api/v10/guilds/{_options.GuildId}/members/{userId}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bot", _options.BotToken);
 
         using var response = await _http.SendAsync(request, ct);
         switch (response.StatusCode)
@@ -109,7 +124,9 @@ internal sealed class DiscordOAuthClient : IDiscordOAuthClient
             case HttpStatusCode.NotFound:
                 return null; // not a member of the guild → deny
             case HttpStatusCode.Unauthorized:
-                throw new DiscordTokenExpiredException("Discord rejected the access token (401).");
+                // The BOT token is invalid — a server misconfiguration, not the caller's problem.
+                _logger.LogError("Discord member lookup got 401 — DiscordOAuth:BotToken is missing or invalid.");
+                return null;
             case HttpStatusCode.TooManyRequests:
                 _logger.LogWarning("Discord member lookup rate-limited (429) — denying this check");
                 return null; // the role cache throttles; surfacing a transient deny beats a retry loop

@@ -29,8 +29,6 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 /// </summary>
 public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    private const string AccessToken = "discord-access-token";
-
     private readonly WebApplicationFactory<Program> _factory;
 
     public EndpointSmokeTests(WebApplicationFactory<Program> factory) => _factory = factory;
@@ -58,7 +56,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var client = factory.CreateClient();
         var store = factory.Services.GetRequiredService<SessionStore>();
-        var token = store.Create(new Session(userId, "User One", AccessToken, DateTimeOffset.UtcNow.AddHours(1)));
+        var token = store.Create(new Session(userId, "User One", DateTimeOffset.UtcNow.AddHours(1)));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return client;
     }
@@ -164,8 +162,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var discord = Substitute.For<IDiscordOAuthClient>();
         discord.ExchangeCodeAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new DiscordTokenResponse { AccessToken = "tok" });
-        discord.GetGuildMemberAsync("tok", Arg.Any<CancellationToken>())
-            .Returns(new DiscordGuildMember { Roles = Array.Empty<string>(), User = new DiscordUser { Id = "u1", Username = "Alice" } });
+        discord.GetCurrentUserAsync("tok", Arg.Any<CancellationToken>())
+            .Returns(new DiscordUser { Id = "u1", Username = "Alice" });
+        discord.GetGuildMemberAsync("u1", Arg.Any<CancellationToken>())
+            .Returns(new DiscordGuildMember { Roles = Array.Empty<string>() });
 
         var client = Factory(discord: discord).CreateClient();
 
@@ -192,8 +192,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Me_ReflectsLiveRoleLookup()
     {
         var discord = Substitute.For<IDiscordOAuthClient>();
-        discord.GetGuildMemberAsync(AccessToken, Arg.Any<CancellationToken>())
-            .Returns(new DiscordGuildMember { Roles = new[] { "role-123" }, User = new DiscordUser { Id = "user1" } });
+        discord.GetGuildMemberAsync("user1", Arg.Any<CancellationToken>())
+            .Returns(new DiscordGuildMember { Roles = new[] { "role-123" } });
 
         var factory = Factory(discord: discord, configure: b =>
         {

@@ -36,8 +36,9 @@ public class DiscordAuthServiceTests
         var discordOpts = Options.Create(new DiscordOAuthOptions
         {
             ClientId = "client-id",
+            BotToken = "bot-token",
             RedirectUri = "https://spa.example/callback",
-            Scopes = "identify guilds.members.read",
+            Scopes = "identify",
             GuildId = "guild-1",
             ActionRoleId = actionRoleId,
         });
@@ -93,8 +94,10 @@ public class DiscordAuthServiceTests
         var state = QueryValue(service.BuildLoginUrl(), "state");
         discord.ExchangeCodeAsync("code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new DiscordTokenResponse { AccessToken = "access" });
-        discord.GetGuildMemberAsync("access", Arg.Any<CancellationToken>())
-            .Returns(new DiscordGuildMember { Roles = new[] { ActionRole }, User = new DiscordUser { Id = "u1", Username = "Alice" } });
+        discord.GetCurrentUserAsync("access", Arg.Any<CancellationToken>())
+            .Returns(new DiscordUser { Id = "u1", Username = "Alice" });
+        discord.GetGuildMemberAsync("u1", Arg.Any<CancellationToken>())
+            .Returns(new DiscordGuildMember { Roles = new[] { ActionRole } });
 
         var result = await service.CompleteLoginAsync("code", state);
 
@@ -102,11 +105,11 @@ public class DiscordAuthServiceTests
         result!.DisplayName.Should().Be("Alice");
         sessions.TryGet(result.SessionToken, out _).Should().BeTrue();
 
-        // Authority was seeded from the member we already fetched — a re-check is served from
-        // cache without a second Discord call.
+        // Authority was seeded from the member we already fetched (by user id, via the bot) —
+        // a re-check is served from cache without a second Discord call.
         service.TryResolvePrincipal(result.SessionToken, out var principal).Should().BeTrue();
         (await service.CanPerformActionsAsync(principal)).Should().BeTrue();
-        await discord.Received(1).GetGuildMemberAsync("access", Arg.Any<CancellationToken>());
+        await discord.Received(1).GetGuildMemberAsync("u1", Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -118,8 +121,10 @@ public class DiscordAuthServiceTests
         var state = QueryValue(service.BuildLoginUrl(), "state");
         discord.ExchangeCodeAsync("code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new DiscordTokenResponse { AccessToken = "access" });
-        discord.GetGuildMemberAsync("access", Arg.Any<CancellationToken>())
-            .Returns((DiscordGuildMember?)null); // 404 → not a member
+        discord.GetCurrentUserAsync("access", Arg.Any<CancellationToken>())
+            .Returns(new DiscordUser { Id = "u1", Username = "Alice" });
+        discord.GetGuildMemberAsync("u1", Arg.Any<CancellationToken>())
+            .Returns((DiscordGuildMember?)null); // bot lookup 404 → not a member
 
         var result = await service.CompleteLoginAsync("code", state);
 
@@ -143,31 +148,33 @@ public class DiscordAuthServiceTests
     {
         var discord = Substitute.For<IDiscordOAuthClient>();
         var service = Build(discord, out var sessions, out _, out _);
-        var token = sessions.Create(new Session("u1", "U", "access", DateTimeOffset.UtcNow.AddHours(1)));
+        var token = sessions.Create(new Session("u1", "U", DateTimeOffset.UtcNow.AddHours(1)));
         service.TryResolvePrincipal(token, out var principal);
 
-        discord.GetGuildMemberAsync("access", Arg.Any<CancellationToken>())
-            .Returns(new DiscordGuildMember { Roles = new[] { ActionRole }, User = new DiscordUser { Id = "u1" } });
+        discord.GetGuildMemberAsync("u1", Arg.Any<CancellationToken>())
+            .Returns(new DiscordGuildMember { Roles = new[] { ActionRole } });
 
         (await service.CanPerformActionsAsync(principal)).Should().BeTrue();
         (await service.CanPerformActionsAsync(principal)).Should().BeTrue();
 
-        await discord.Received(1).GetGuildMemberAsync("access", Arg.Any<CancellationToken>());
+        await discord.Received(1).GetGuildMemberAsync("u1", Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task CanPerformActions_TokenExpired_EvictsSession()
+    public async Task CanPerformActions_BotLookupFails_DeniesWithoutEvicting()
     {
         var discord = Substitute.For<IDiscordOAuthClient>();
         var service = Build(discord, out var sessions, out _, out _);
-        var token = sessions.Create(new Session("u1", "U", "access", DateTimeOffset.UtcNow.AddHours(1)));
+        var token = sessions.Create(new Session("u1", "U", DateTimeOffset.UtcNow.AddHours(1)));
         service.TryResolvePrincipal(token, out var principal);
 
-        discord.GetGuildMemberAsync("access", Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<DiscordGuildMember?>(new DiscordTokenExpiredException("401")));
+        // Bot lookup returns null (caller left the guild, or a transient 429/401-misconfig).
+        discord.GetGuildMemberAsync("u1", Arg.Any<CancellationToken>())
+            .Returns((DiscordGuildMember?)null);
 
         (await service.CanPerformActionsAsync(principal)).Should().BeFalse();
-        sessions.TryGet(token, out _).Should().BeFalse(); // evicted → forces re-login
+        // No caller token to expire, so the session is NOT evicted — it stays valid for reads.
+        sessions.TryGet(token, out _).Should().BeTrue();
     }
 
     [Fact]
@@ -175,7 +182,7 @@ public class DiscordAuthServiceTests
     {
         var discord = Substitute.For<IDiscordOAuthClient>();
         var service = Build(discord, out var sessions, out _, out _, actionsEnabled: false);
-        var token = sessions.Create(new Session("u1", "U", "access", DateTimeOffset.UtcNow.AddHours(1)));
+        var token = sessions.Create(new Session("u1", "U", DateTimeOffset.UtcNow.AddHours(1)));
         service.TryResolvePrincipal(token, out var principal);
 
         (await service.CanPerformActionsAsync(principal)).Should().BeFalse();
@@ -187,7 +194,7 @@ public class DiscordAuthServiceTests
     {
         var discord = Substitute.For<IDiscordOAuthClient>();
         var service = Build(discord, out var sessions, out _, out _, actionRoleId: "");
-        var token = sessions.Create(new Session("u1", "U", "access", DateTimeOffset.UtcNow.AddHours(1)));
+        var token = sessions.Create(new Session("u1", "U", DateTimeOffset.UtcNow.AddHours(1)));
         service.TryResolvePrincipal(token, out var principal);
 
         (await service.CanPerformActionsAsync(principal)).Should().BeFalse();

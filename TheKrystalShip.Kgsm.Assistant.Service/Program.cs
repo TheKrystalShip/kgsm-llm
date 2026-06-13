@@ -97,11 +97,18 @@ app.UseCors();
             "Assistant:ActionsEnabled is true but Assistant:Confirmation:Key is unset — " +
             "the service will run READ-ONLY until a key is configured.");
     if (opts.ActionsEnabled &&
-        (string.IsNullOrEmpty(discord.ClientSecret) || string.IsNullOrEmpty(discord.GuildId) ||
-         string.IsNullOrEmpty(discord.ActionRoleId)))
+        (string.IsNullOrEmpty(discord.ClientSecret) || string.IsNullOrEmpty(discord.BotToken) ||
+         string.IsNullOrEmpty(discord.GuildId) || string.IsNullOrEmpty(discord.ActionRoleId)))
         app.Logger.LogWarning(
             "Assistant:ActionsEnabled is true but DiscordOAuth is not fully configured " +
-            "(ClientSecret/GuildId/ActionRoleId) — no caller will be authorized for actions.");
+            "(ClientSecret/BotToken/GuildId/ActionRoleId) — no caller will be authorized for actions.");
+
+    // The bot token now resolves guild membership AND roles (the caller's OAuth token is
+    // discarded after /users/@me), so without it no login can succeed at all.
+    if (string.IsNullOrEmpty(discord.BotToken) && !string.IsNullOrEmpty(discord.GuildId))
+        app.Logger.LogWarning(
+            "DiscordOAuth:BotToken is unset — guild-membership and role lookups use the bot " +
+            "token, so every login will be denied until it is configured.");
 }
 
 // --- Public endpoints --------------------------------------------------------

@@ -81,6 +81,15 @@ public sealed class DiscordOAuthOptions
     /// </summary>
     public string ClientSecret { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Bot token for the SAME Discord application. Roles are resolved with this
+    /// (<c>GET /guilds/{guild}/members/{user}</c>) — NOT the caller's OAuth token — so the
+    /// login scope stays <c>identify</c>-only and no Discord token is ever retained. Required
+    /// for any login to succeed (the guild-membership check uses it too).
+    /// ENV-ONLY: supply <c>DiscordOAuth__BotToken</c> via the environment at runtime.
+    /// </summary>
+    public string BotToken { get; set; } = string.Empty;
+
     /// <summary>The guild (Discord server) whose membership + role gate access.</summary>
     public string GuildId { get; set; } = string.Empty;
 
@@ -93,8 +102,11 @@ public sealed class DiscordOAuthOptions
     /// <summary>Where Discord redirects after authorize — the SPA's callback URL (HTTPS).</summary>
     public string RedirectUri { get; set; } = string.Empty;
 
-    /// <summary>OAuth scopes. Both are required: identity + reading the caller's guild member object.</summary>
-    public string Scopes { get; set; } = "identify guilds.members.read";
+    /// <summary>
+    /// OAuth scopes. <c>identify</c> only: we need just the verified user id (via
+    /// <c>/users/@me</c>); roles are read with the bot token, never the caller's.
+    /// </summary>
+    public string Scopes { get; set; } = "identify";
 }
 
 /// <summary>

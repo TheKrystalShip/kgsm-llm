@@ -9,7 +9,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 public class SessionStoreTests
 {
     private static Session ValidSession(string userId = "u1") =>
-        new(userId, "Display", "discord-access-token", DateTimeOffset.UtcNow.AddHours(1));
+        new(userId, "Display", DateTimeOffset.UtcNow.AddHours(1));
 
     [Fact]
     public void Create_Then_TryGet_RoundTrips()
@@ -19,7 +19,6 @@ public class SessionStoreTests
 
         store.TryGet(token, out var session).Should().BeTrue();
         session.DiscordUserId.Should().Be("alice");
-        session.AccessToken.Should().Be("discord-access-token");
     }
 
     [Fact]
@@ -37,7 +36,7 @@ public class SessionStoreTests
     public void ExpiredSession_IsNotReturned_AndEvicted()
     {
         var store = new SessionStore();
-        var token = store.Create(new Session("u1", "D", "t", DateTimeOffset.UtcNow.AddSeconds(-1)));
+        var token = store.Create(new Session("u1", "D", DateTimeOffset.UtcNow.AddSeconds(-1)));
 
         store.TryGet(token, out _).Should().BeFalse();
         // Evicted: even a fresh lookup stays false.

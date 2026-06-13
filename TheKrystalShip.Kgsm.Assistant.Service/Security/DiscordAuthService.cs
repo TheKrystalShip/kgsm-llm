@@ -79,9 +79,10 @@ internal sealed class DiscordAuthService
     }
 
     /// <summary>
-    /// Completes login: validates the single-use state, exchanges the code, requires guild
-    /// membership, and mints a session. Returns the session bearer token, or null on any
-    /// failure (bad state, exchange failure, or not a guild member).
+    /// Completes login: validates the single-use state, exchanges the code, verifies identity
+    /// (<c>/users/@me</c>, the caller's token then discarded), requires guild membership, and
+    /// mints a session. Returns the session bearer token, or null on any failure (bad state,
+    /// exchange failure, or not a guild member).
     /// </summary>
     public async Task<AuthSessionResult?> CompleteLoginAsync(string code, string state, CancellationToken ct = default)
     {
@@ -95,31 +96,29 @@ internal sealed class DiscordAuthService
         if (token is null || string.IsNullOrEmpty(token.AccessToken))
             return null;
 
-        DiscordGuildMember? member;
-        try
-        {
-            member = await _oauth.GetGuildMemberAsync(token.AccessToken, ct);
-        }
-        catch (DiscordTokenExpiredException)
-        {
-            return null; // freshly-issued token rejected (e.g. missing guilds.members.read scope)
-        }
+        // Verify identity once with the caller's token, then discard it — nothing downstream
+        // ever needs it again (roles come from the bot, by user id).
+        var user = await _oauth.GetCurrentUserAsync(token.AccessToken, ct);
+        if (user is null || string.IsNullOrEmpty(user.Id))
+            return null;
 
-        if (member?.User is null || string.IsNullOrEmpty(member.User.Id))
-            return null; // not a member of the configured guild → access denied
+        // Authority is the bot's to resolve: fetch the caller's member object by user id. A
+        // null result (404) means they are not in the configured guild → access denied.
+        var member = await _oauth.GetGuildMemberAsync(user.Id, ct);
+        if (member is null)
+            return null;
 
         var session = new Session(
-            member.User.Id,
-            member.User.DisplayName,
-            token.AccessToken,
+            user.Id,
+            user.DisplayName,
             DateTimeOffset.UtcNow.AddSeconds(_auth.SessionTtlSeconds > 0 ? _auth.SessionTtlSeconds : 3600));
 
         var sessionToken = _sessions.Create(session);
 
         // Seed the role cache from the member we already have — saves the first re-fetch.
-        _roleCache.Set(member.User.Id, HasActionRole(member.Roles));
+        _roleCache.Set(user.Id, HasActionRole(member.Roles));
 
-        return new AuthSessionResult(sessionToken, member.User.DisplayName);
+        return new AuthSessionResult(sessionToken, user.DisplayName);
     }
 
     /// <summary>Resolves a bearer token to a principal, or false if the session is unknown/expired.</summary>
@@ -137,7 +136,8 @@ internal sealed class DiscordAuthService
     /// Whether this principal may perform mutating/destructive actions RIGHT NOW. The master
     /// kill-switch (ActionsEnabled + a signing key + a configured action role) is checked live;
     /// the per-user role decision is served from a short-TTL cache, else re-fetched from Discord
-    /// using the session's retained token. A 401 evicts the session (forces re-login).
+    /// with the BOT token (by user id). No caller token is involved, so a role re-check never
+    /// forces a re-login.
     /// </summary>
     public async Task<bool> CanPerformActionsAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
@@ -147,21 +147,10 @@ internal sealed class DiscordAuthService
         if (_roleCache.TryGet(principal.UserId, out var cached))
             return cached;
 
-        if (!_sessions.TryGet(principal.SessionToken, out var session))
-            return false;
-
-        DiscordGuildMember? member;
-        try
-        {
-            member = await _oauth.GetGuildMemberAsync(session.AccessToken, ct);
-        }
-        catch (DiscordTokenExpiredException)
-        {
-            _sessions.Remove(principal.SessionToken);
-            _roleCache.Remove(principal.UserId);
-            return false;
-        }
-
+        // Re-derive authority from the bot by user id. A null member (left the guild, or a
+        // transient denial) simply denies for this cache TTL — the session itself stays valid
+        // until its own expiry; there is no caller token to expire and force a re-login.
+        var member = await _oauth.GetGuildMemberAsync(principal.UserId, ct);
         var hasRole = member is not null && HasActionRole(member.Roles);
         _roleCache.Set(principal.UserId, hasRole);
         return hasRole;

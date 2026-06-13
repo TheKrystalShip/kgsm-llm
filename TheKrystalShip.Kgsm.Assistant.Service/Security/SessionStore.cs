@@ -4,15 +4,14 @@ using System.Security.Cryptography;
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
 /// <summary>
-/// A logged-in web session. Holds IDENTITY plus the retained Discord access token so
-/// authority can be RE-CHECKED against Discord at confirm time — it deliberately carries
-/// NO <c>canPerformActions</c> boolean (baking authority in would reintroduce a
+/// A logged-in web session. Holds IDENTITY only — it deliberately carries NO retained Discord
+/// token (authority is re-checked with the bot token, by user id) and NO
+/// <c>canPerformActions</c> boolean (baking authority in would reintroduce a
 /// staleness/escalation gap). Authority is a separate, short-TTL role lookup.
 /// </summary>
 internal sealed record Session(
     string DiscordUserId,
     string DisplayName,
-    string AccessToken,
     DateTimeOffset ExpiresUtc);
 
 /// <summary>

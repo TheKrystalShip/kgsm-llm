@@ -13,11 +13,11 @@ namespace TheKrystalShip.Kgsm.Assistant;
 ///
 /// Inventory reads (listing/resolving instances and blueprints) go through the
 /// cached <see cref="IServerInventory"/>; live status reads go through
-/// <see cref="IServerOperations"/>. Every COMMAND (start/stop/restart/update/backup
-/// /install/uninstall) is propose-only (§3.5): the dispatcher resolves and STAGES it
-/// into the <see cref="IConfirmationContext"/> — it is never executed here. The
-/// matching op runs later, from <see cref="ServerAssistant.ConfirmAsync"/>, only after
-/// a human confirms.
+/// <see cref="IServerOperations"/>. Every COMMAND — the merged lifecycle
+/// <c>server_command</c> (start/stop/restart/update/backup), plus install/uninstall and
+/// set_config — is propose-only (§3.5): the dispatcher resolves and STAGES it into the
+/// <see cref="IConfirmationContext"/> — it is never executed here. The matching op runs
+/// later, from <see cref="ServerAssistant.ConfirmAsync"/>, only after a human confirms.
 /// </summary>
 public class ToolDispatcher : IToolDispatcher
 {
@@ -50,11 +50,7 @@ public class ToolDispatcher : IToolDispatcher
                 LlmTools.GetStatus => await GetStatusAsync(call, cancellationToken),
                 LlmTools.ListBlueprints => await ListBlueprintsAsync(cancellationToken),
                 LlmTools.ViewConfigFile => await ViewConfigFileAsync(call, cancellationToken),
-                LlmTools.StartServer => await StageCommandAsync(call, ConfirmationKind.Start, cancellationToken),
-                LlmTools.StopServer => await StageCommandAsync(call, ConfirmationKind.Stop, cancellationToken),
-                LlmTools.RestartServer => await StageCommandAsync(call, ConfirmationKind.Restart, cancellationToken),
-                LlmTools.CreateBackup => await StageCommandAsync(call, ConfirmationKind.Backup, cancellationToken),
-                LlmTools.UpdateServer => await StageCommandAsync(call, ConfirmationKind.Update, cancellationToken),
+                LlmTools.ServerCommand => await StageServerCommandAsync(call, cancellationToken),
                 LlmTools.UninstallServer => await StageUninstallAsync(call, cancellationToken),
                 LlmTools.InstallServer => await StageInstallAsync(call, cancellationToken),
                 LlmTools.SetConfigValue => await StageSetConfigAsync(call, cancellationToken),
@@ -169,6 +165,24 @@ public class ToolDispatcher : IToolDispatcher
             : $"- {e.Instance}: status unavailable ({e.Reason ?? "unknown reason"})");
 
         return $"Status of all {entries.Count} server(s):\n" + string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// The merged lifecycle command (§4.1): maps the model-supplied <c>verb</c>
+    /// (start/stop/restart/update/backup) onto its <see cref="ConfirmationKind"/> and
+    /// stages it. An unknown or missing verb is refused before anything is staged and the
+    /// valid verbs are listed back so the model can self-correct — defense-in-depth behind
+    /// the schema <c>enum</c> (a non-enum-aware client could still send a bad verb).
+    /// </summary>
+    private async Task<string> StageServerCommandAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var verb = call.Arg("verb");
+        var kind = LlmTools.ServerCommandKind(verb);
+        if (kind is null)
+            return $"Error: '{verb ?? "(none)"}' is not a valid server action. " +
+                   $"Valid actions: {string.Join(", ", LlmTools.ServerCommandVerbs)}.";
+
+        return await StageCommandAsync(call, kind.Value, cancellationToken);
     }
 
     /// <summary>

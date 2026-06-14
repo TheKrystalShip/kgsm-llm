@@ -28,6 +28,12 @@
     <None Include="..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!-- Expose internals (e.g. the Ollama tool-payload builder) to the test project only;
+       `internal` keeps them out of the published package's public surface. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="TheKrystalShip.Llm.Tests" />
+  </ItemGroup>
+
   <!--
     Floor the framework-extension deps at 8.0.0 (the lowest that supports the
     APIs used here) so the package is consumable by both .NET 8.x and 9.x hosts

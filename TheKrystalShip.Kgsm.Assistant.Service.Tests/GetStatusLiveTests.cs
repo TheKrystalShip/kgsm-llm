@@ -141,33 +141,40 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     /// <summary>
-    /// §3.5 command path — an authorized "start it" prompt must PROPOSE, not execute: the turn
-    /// stages a Start confirmation for the resolved instance (drained into
-    /// <see cref="AssistantResult.Confirmations"/>) and proposes via the start_server tool.
-    /// factorio-test must be installed (and is stopped), so "start it" has a real, unambiguous
-    /// target. (The "never executes inline" guarantee itself is unit-proven in ToolDispatcherTests
-    /// via DidNotReceive().StartAsync; this live test confirms the model selects + stages it.)
+    /// §3.5/§4.1 command path — an authorized lifecycle prompt must PROPOSE, not execute: the
+    /// turn stages the matching confirmation for the resolved instance (drained into
+    /// <see cref="AssistantResult.Confirmations"/>) and proposes via the merged
+    /// <c>server_command</c> tool with the right <c>verb</c>. Two verbs across both models check
+    /// the §3.2 thesis that consolidation keeps model SELECTION reliable (not just routing).
+    /// factorio-test must be installed (and is stopped), so the prompt has a real, unambiguous
+    /// target — staging is propose-only, so "stop/restart" on a stopped server still only stages.
+    /// (The "never executes inline" guarantee itself is unit-proven in ToolDispatcherTests via
+    /// DidNotReceive().StartAsync; this live test confirms the model selects + stages it.)
     /// </summary>
     [Theory]
-    [InlineData("gemma4:12b")]
-    [InlineData("qwen3.5:9b")]
-    public async Task CommandPrompt_StagesConfirmation_NeverExecutesInLoop(string model)
+    [InlineData("gemma4:12b", "Start the factorio-test server.", "start", ConfirmationKind.Start)]
+    [InlineData("gemma4:12b", "Restart the factorio-test server.", "restart", ConfirmationKind.Restart)]
+    [InlineData("qwen3.5:9b", "Start the factorio-test server.", "start", ConfirmationKind.Start)]
+    [InlineData("qwen3.5:9b", "Restart the factorio-test server.", "restart", ConfirmationKind.Restart)]
+    public async Task CommandPrompt_StagesConfirmation_NeverExecutesInLoop(
+        string model, string prompt, string verb, ConfirmationKind kind)
     {
         if (!LiveEnabled()) return;
 
-        var (result, calls) = await RunTurnAsync(
-            model, "Start the factorio-test server.", canPerformActions: true);
+        var (result, calls) = await RunTurnAsync(model, prompt, canPerformActions: true);
 
         result.IsSuccess.Should().BeTrue("the live turn should complete against Ollama + kgsm");
         result.Text.Should().NotBe(IterationLimitReply);
 
-        // Propose-only: a Start was staged for the resolved instance, awaiting human confirmation.
+        // Propose-only: the action was staged for the resolved instance, awaiting human confirmation.
         result.Confirmations.Should().Contain(
-            c => c.Kind == ConfirmationKind.Start && c.Target == "factorio-test",
-            "an authorized start request must STAGE a Start confirmation, not run it inline");
+            c => c.Kind == kind && c.Target == "factorio-test",
+            $"an authorized {verb} request must STAGE a {kind} confirmation, not run it inline");
 
-        // The model proposed via the start_server tool (which the dispatcher only stages).
-        calls.Should().Contain(c => c.Name == LlmTools.StartServer);
+        // The model proposed via the merged server_command tool with the right verb (the
+        // dispatcher routes the verb to its kind and only stages it).
+        calls.Should().Contain(c =>
+            c.Name == LlmTools.ServerCommand && c.Args.GetValueOrDefault("verb") == verb);
     }
 
     // --- harness ---------------------------------------------------------------------------

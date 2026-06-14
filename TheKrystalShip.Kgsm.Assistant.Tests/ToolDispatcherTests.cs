@@ -45,6 +45,13 @@ public class ToolDispatcherTests
     private static LlmToolCall Call(string name, string instance) =>
         new(name, new Dictionary<string, string?> { ["instance_name"] = instance });
 
+    private static LlmToolCall ServerCommandCall(string verb, string instance) =>
+        new(LlmTools.ServerCommand, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["verb"] = verb,
+        });
+
     private static LlmToolCall InstallCall(string blueprint, string? name = null) =>
         new(LlmTools.InstallServer, new Dictionary<string, string?>
         {
@@ -181,23 +188,23 @@ public class ToolDispatcherTests
 
     public static IEnumerable<object[]> StagedCommandCases() => new[]
     {
-        new object[] { LlmTools.StartServer, ConfirmationKind.Start },
-        new object[] { LlmTools.StopServer, ConfirmationKind.Stop },
-        new object[] { LlmTools.RestartServer, ConfirmationKind.Restart },
-        new object[] { LlmTools.CreateBackup, ConfirmationKind.Backup },
-        new object[] { LlmTools.UpdateServer, ConfirmationKind.Update },
+        new object[] { "start", ConfirmationKind.Start },
+        new object[] { "stop", ConfirmationKind.Stop },
+        new object[] { "restart", ConfirmationKind.Restart },
+        new object[] { "backup", ConfirmationKind.Backup },
+        new object[] { "update", ConfirmationKind.Update },
     };
 
     [Theory]
     [MemberData(nameof(StagedCommandCases))]
-    public async Task Command_StagesConfirmation_AndDoesNotExecuteInline(string tool, ConfirmationKind kind)
+    public async Task ServerCommand_StagesConfirmation_AndDoesNotExecuteInline(string verb, ConfirmationKind kind)
     {
-        // §3.5: every command is propose-only. The dispatcher resolves + stages it; the
-        // single-instance op runs later (from ConfirmAsync), never here in the agent loop.
+        // §3.5 + §4.1: the merged server_command routes its `verb` to the matching kind and
+        // STAGES it; the single-instance op runs later (from ConfirmAsync), never inline.
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Create().ExecuteAsync(Call(tool, "minecraft"));
+            result = await Create().ExecuteAsync(ServerCommandCall(verb, "minecraft"));
 
             _confirmations.Staged.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new PendingConfirmation(kind, "minecraft"));
@@ -213,13 +220,31 @@ public class ToolDispatcherTests
         await _operations.DidNotReceive().CreateBackupAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("boot")]   // not a verb we know
+    [InlineData("")]       // blank
+    public async Task ServerCommand_InvalidVerb_IsRefused_AndStagesNothing(string verb)
+    {
+        // Defense-in-depth behind the schema enum: a verb the dispatcher doesn't recognise is
+        // refused (with the valid verbs listed) before any instance resolution or staging.
+        string result;
+        using (_confirmations.BeginTurn())
+        {
+            result = await Create().ExecuteAsync(ServerCommandCall(verb, "minecraft"));
+            _confirmations.Staged.Should().BeEmpty();
+        }
+
+        result.Should().Contain("not a valid server action");
+        await _operations.DidNotReceive().StartAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
-    public async Task Command_UnresolvedTarget_DoesNotStage()
+    public async Task ServerCommand_UnresolvedTarget_DoesNotStage()
     {
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Create().ExecuteAsync(Call(LlmTools.StartServer, "doesnotexist"));
+            result = await Create().ExecuteAsync(ServerCommandCall("start", "doesnotexist"));
             _confirmations.Staged.Should().BeEmpty();
         }
 

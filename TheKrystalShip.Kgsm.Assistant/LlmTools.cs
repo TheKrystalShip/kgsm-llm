@@ -27,14 +27,40 @@ public static class LlmTools
 
     // Staged commands — propose-only (§3.5). The model never executes these; the
     // dispatcher resolves + STAGES them, and a human confirms before they run.
-    public const string StartServer = "start_server";
-    public const string StopServer = "stop_server";
-    public const string RestartServer = "restart_server";
-    public const string CreateBackup = "create_backup";
-    public const string UpdateServer = "update_server";
+
+    // The lifecycle actions (start/stop/restart/update/backup) are ONE tool with a
+    // `verb` parameter (§4.1) — collapsed from five near-identical tools so the small
+    // local model faces fewer, less-overlapping choices (§3.2). install/uninstall stay
+    // separate (different params + confirm tiers); set_config carries a key/value.
+    public const string ServerCommand = "server_command";
     public const string InstallServer = "install_server";
     public const string UninstallServer = "uninstall_server";
     public const string SetConfigValue = "set_config_value";
+
+    /// <summary>
+    /// The verbs <see cref="ServerCommand"/> accepts, in display order. Single source of
+    /// truth for both the tool's <c>enum</c> schema and the dispatcher's verb→kind routing
+    /// (<see cref="ServerCommandKind"/>) — so the catalog and the dispatcher cannot drift.
+    /// </summary>
+    public static readonly IReadOnlyList<string> ServerCommandVerbs =
+        new[] { "start", "stop", "restart", "update", "backup" };
+
+    /// <summary>
+    /// Maps a <see cref="ServerCommand"/> verb token to its <see cref="ConfirmationKind"/>;
+    /// returns null for an unknown/missing verb (the dispatcher then refuses the call). The
+    /// token differs from <see cref="ConfirmationKinds.Verb"/> ("backup" vs the label "back up"),
+    /// which is why this is its own map.
+    /// </summary>
+    public static ConfirmationKind? ServerCommandKind(string? verb) =>
+        verb?.Trim().ToLowerInvariant() switch
+        {
+            "start" => ConfirmationKind.Start,
+            "stop" => ConfirmationKind.Stop,
+            "restart" => ConfirmationKind.Restart,
+            "update" => ConfirmationKind.Update,
+            "backup" => ConfirmationKind.Backup,
+            _ => null,
+        };
 
     private static readonly LlmToolParameter InstanceName = new(
         "instance_name", "The exact name of the server instance.");
@@ -61,6 +87,11 @@ public static class LlmTools
     private static readonly LlmToolParameter ConfigValue = new(
         "config_value",
         "The new value for the key. Pass an empty string to clear the setting.");
+
+    private static readonly LlmToolParameter ServerVerb = new(
+        "verb",
+        "Which lifecycle action to take on the server: start, stop, restart, update, or backup.",
+        AllowedValues: ServerCommandVerbs);
 
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
@@ -98,25 +129,12 @@ public static class LlmTools
     /// </summary>
     public static readonly IReadOnlyList<LlmToolDefinition> StagedCommands = new[]
     {
-        LlmToolDefinition.Create(StartServer,
-            "Propose starting a stopped server instance. Staged for human confirmation — it does " +
-            "not run until a person confirms.", InstanceName),
-
-        LlmToolDefinition.Create(StopServer,
-            "Propose stopping a running server instance. Staged for human confirmation — it does " +
-            "not run until a person confirms.", InstanceName),
-
-        LlmToolDefinition.Create(RestartServer,
-            "Propose restarting (stop then start) a server instance. Staged for human confirmation " +
-            "— it does not run until a person confirms.", InstanceName),
-
-        LlmToolDefinition.Create(CreateBackup,
-            "Propose creating a backup of a server instance. Staged for human confirmation — it " +
-            "does not run until a person confirms.", InstanceName),
-
-        LlmToolDefinition.Create(UpdateServer,
-            "Propose updating a server instance to its latest available version. Staged for human " +
-            "confirmation — it does not run until a person confirms.", InstanceName),
+        LlmToolDefinition.Create(ServerCommand,
+            "Propose a lifecycle action on an EXISTING server instance — choose it with the 'verb' " +
+            "parameter: start (a stopped server), stop (a running one), restart (stop then start), " +
+            "update (to its latest version), or backup (create a backup). Staged for human " +
+            "confirmation — it does not run until a person confirms.",
+            InstanceName, ServerVerb),
 
         LlmToolDefinition.Create(InstallServer,
             "Propose installing a NEW game server from a blueprint. Heavy and slow; staged for " +

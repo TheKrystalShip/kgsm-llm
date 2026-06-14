@@ -73,7 +73,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
-        var decision = turn.Gate!(Call(LlmTools.StopServer));
+        var decision = turn.Gate!(Call(LlmTools.ServerCommand));
 
         decision.Allowed.Should().BeFalse();
         decision.RefusalMessage.Should().Contain("permission");
@@ -83,7 +83,7 @@ public class ServerAssistantTests
     public async Task Gate_CapsStagedCommandsAtFivePerMessage()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var stop = Call(LlmTools.StopServer);
+        var stop = Call(LlmTools.ServerCommand);
 
         // First five proposed commands are allowed (the dispatcher only STAGES them)...
         for (var i = 0; i < 5; i++)
@@ -102,14 +102,14 @@ public class ServerAssistantTests
         // cap — a mix of kinds counts together, with no separate budget per tier.
         var turn = await CaptureTurnAsync(canPerformActions: true);
 
-        turn.Gate!(Call(LlmTools.StartServer)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
         turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeTrue();
         turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.CreateBackup)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.UpdateServer)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.SetConfigValue)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
 
         // Five staged across kinds; the sixth (any kind) is refused.
-        turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeFalse();
+        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse();
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public class ServerAssistantTests
 
         // The staging budget is still fully intact afterwards.
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeTrue();
+            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
     }
 
     [Fact]
@@ -150,7 +150,7 @@ public class ServerAssistantTests
 
         // ...so the full staging budget remains.
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.StopServer)).Allowed.Should().BeTrue();
+            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
     }
 
     [Fact]

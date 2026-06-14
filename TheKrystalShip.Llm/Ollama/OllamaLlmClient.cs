@@ -199,7 +199,7 @@ public class OllamaLlmClient : ILlmClient
         return payload;
     }
 
-    private static object BuildToolPayload(LlmToolDefinition tool) => new
+    internal static object BuildToolPayload(LlmToolDefinition tool) => new
     {
         type = "function",
         function = new
@@ -209,11 +209,26 @@ public class OllamaLlmClient : ILlmClient
             parameters = new
             {
                 type = "object",
-                properties = tool.Parameters.ToDictionary(
-                    p => p.Name,
-                    p => (object)new { type = p.Type, description = p.Description }),
+                properties = tool.Parameters.ToDictionary(p => p.Name, BuildParameterSchema),
                 required = tool.Parameters.Where(p => p.Required).Select(p => p.Name).ToArray()
             }
         }
     };
+
+    /// <summary>
+    /// Builds one parameter's JSON-schema object. A parameter with
+    /// <see cref="LlmToolParameter.AllowedValues"/> gains an <c>enum</c> constraint,
+    /// which steers the model to a valid value (the small-model reliability lever).
+    /// </summary>
+    private static object BuildParameterSchema(LlmToolParameter p)
+    {
+        var schema = new Dictionary<string, object>
+        {
+            ["type"] = p.Type,
+            ["description"] = p.Description,
+        };
+        if (p.AllowedValues is { Count: > 0 })
+            schema["enum"] = p.AllowedValues;
+        return schema;
+    }
 }

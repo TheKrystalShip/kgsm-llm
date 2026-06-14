@@ -10,8 +10,12 @@ public sealed record TurnRequest(string? Prompt);
 /// <summary>
 /// One destructive op the assistant staged this turn, awaiting confirmation. The opaque
 /// <see cref="Token"/> is what the client POSTs back to <c>/confirm</c>.
+/// <see cref="ConfigKey"/>/<see cref="ConfigValue"/> are populated only for the
+/// <c>setconfig</c> kind so a client can render "set key = value on target"; null otherwise.
 /// </summary>
-public sealed record ConfirmationDto(string Kind, string Target, string? InstanceName, string Token);
+public sealed record ConfirmationDto(
+    string Kind, string Target, string? InstanceName, string Token,
+    string? ConfigKey = null, string? ConfigValue = null);
 
 /// <summary>The assistant's reply plus any staged confirmations.</summary>
 public sealed record TurnResponse(string Text, IReadOnlyList<ConfirmationDto> Confirmations);

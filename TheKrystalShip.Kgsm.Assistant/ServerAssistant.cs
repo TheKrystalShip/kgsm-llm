@@ -224,6 +224,8 @@ public class ServerAssistant : IServerAssistant
             ConfirmationKind.Uninstall => await ConfirmUninstallAsync(confirmation.Target, cancellationToken),
             ConfirmationKind.Install => await ConfirmInstallAsync(
                 confirmation.Target, confirmation.InstanceName, cancellationToken),
+            ConfirmationKind.SetConfig => await ConfirmSetConfigAsync(
+                confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
             ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
                 or ConfirmationKind.Update or ConfirmationKind.Backup
                 => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
@@ -319,6 +321,36 @@ public class ServerAssistant : IServerAssistant
         return result.IsSuccess
             ? Result.Success($"Installed a new '{match}' server{named}.")
             : Result.Failure<string>($"Could not install '{match}': {result.Error ?? "unknown error"}.");
+    }
+
+    /// <summary>
+    /// Re-validates the instance still exists (it was resolved at staging time, and a
+    /// stateless token is replayable within its lifetime), then sets one config value.
+    /// kgsm owns the key-safety policy, so a refused (denylisted/invalid) key surfaces
+    /// here as a failed <see cref="Result"/> reported to the user, never an exception.
+    /// </summary>
+    private async Task<Result<string>> ConfirmSetConfigAsync(
+        string target, string? key, string? value, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return Result.Failure<string>("No configuration key was given — nothing to set.");
+
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        var match = instances.Keys.FirstOrDefault(
+            k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+            return Result.Failure<string>($"'{target}' no longer exists — nothing to configure.");
+
+        // The value may legitimately be the empty string (clearing the setting).
+        var newValue = value ?? string.Empty;
+
+        _logger.LogInformation("Confirmed set-config of {Instance} ({Key})", match, key);
+
+        var result = await _operations.SetInstanceConfigValueAsync(match, key, newValue, cancellationToken);
+        var shown = newValue.Length == 0 ? "(empty)" : newValue;
+        return result.IsSuccess
+            ? Result.Success($"Set {key} = {shown} on '{match}'.")
+            : Result.Failure<string>($"Could not set {key} on '{match}': {result.Error ?? "unknown error"}.");
     }
 
     /// <summary>

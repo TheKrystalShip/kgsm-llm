@@ -34,6 +34,7 @@ public static class LlmTools
     public const string UpdateServer = "update_server";
     public const string InstallServer = "install_server";
     public const string UninstallServer = "uninstall_server";
+    public const string SetConfigValue = "set_config_value";
 
     private static readonly LlmToolParameter InstanceName = new(
         "instance_name", "The exact name of the server instance.");
@@ -51,6 +52,15 @@ public static class LlmTools
     private static readonly LlmToolParameter OptionalInstanceName = new(
         "instance_name", "Optional custom name for the new instance. Omit to let the system name it.",
         Required: false);
+
+    private static readonly LlmToolParameter ConfigKey = new(
+        "config_key",
+        "The configuration key to set, e.g. \"auto_update\", \"executable_arguments\", or " +
+        "\"stop_command_timeout_seconds\".");
+
+    private static readonly LlmToolParameter ConfigValue = new(
+        "config_value",
+        "The new value for the key. Pass an empty string to clear the setting.");
 
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
@@ -76,7 +86,8 @@ public static class LlmTools
     {
         LlmToolDefinition.Create(ViewConfigFile,
             "View a game server's main configuration file (its .config.ini), with secrets " +
-            "redacted. Use this to inspect or help diagnose a server's settings.",
+            "redacted. Read-only — use it to inspect or help diagnose a server's settings; to " +
+            "CHANGE a setting, propose it with set_config_value instead.",
             InstanceName),
     };
 
@@ -115,6 +126,15 @@ public static class LlmTools
         LlmToolDefinition.Create(UninstallServer,
             "Propose PERMANENTLY deleting a server instance and all its data. Irreversible; staged " +
             "for human confirmation — it does not run until a person confirms.", InstanceName),
+
+        LlmToolDefinition.Create(SetConfigValue,
+            "Propose setting one key=value in a server's configuration file (its .config.ini), e.g. " +
+            "auto_update, executable_arguments, or a timeout setting. Staged for human confirmation — " +
+            "it does not run until a person confirms. kgsm refuses identity/structural keys, path keys " +
+            "(*_dir/*_file), ports, and the integration toggles (enable_firewall_management/_port_" +
+            "forwarding/_command_shortcuts) — those have dedicated flows — so proposing one of those is " +
+            "rejected when confirmed; tell the user rather than retrying.",
+            InstanceName, ConfigKey, ConfigValue),
     };
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>

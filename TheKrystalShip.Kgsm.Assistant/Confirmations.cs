@@ -17,7 +17,10 @@ public enum ConfirmationKind
     Stop,
     Restart,
     Update,
-    Backup
+    Backup,
+    // §3.8: set a single key=value in an instance's .config.ini. Propose-only like the
+    // rest; carries a key/value payload and has its own confirm path (like Install).
+    SetConfig
 }
 
 /// <summary>
@@ -62,6 +65,7 @@ public static class ConfirmationKinds
         ConfirmationKind.Backup => "back up",
         ConfirmationKind.Uninstall => "uninstall",
         ConfirmationKind.Install => "install",
+        ConfirmationKind.SetConfig => "set config on",
         _ => kind.ToString().ToLowerInvariant(),
     };
 
@@ -75,6 +79,7 @@ public static class ConfirmationKinds
         ConfirmationKind.Backup => "backed up",
         ConfirmationKind.Uninstall => "uninstalled",
         ConfirmationKind.Install => "installed",
+        ConfirmationKind.SetConfig => "reconfigured",
         _ => kind.ToString().ToLowerInvariant(),
     };
 }
@@ -86,13 +91,17 @@ public static class ConfirmationKinds
 /// <see cref="Target"/> is the RESOLVED name (an existing instance for the
 /// instance-targeted kinds, a known blueprint for <see cref="ConfirmationKind.Install"/>)
 /// — never the model's raw argument. <see cref="InstanceName"/> is Install-only (the
-/// optional custom name for the new instance).
+/// optional custom name for the new instance). <see cref="ConfigKey"/>/<see cref="ConfigValue"/>
+/// are <see cref="ConfirmationKind.SetConfig"/>-only (the config key to set and its new value;
+/// the value may legitimately be the empty string).
 /// </para>
 /// </summary>
 public sealed record PendingConfirmation(
     ConfirmationKind Kind,
     string Target,
-    string? InstanceName = null);
+    string? InstanceName = null,
+    string? ConfigKey = null,
+    string? ConfigValue = null);
 
 /// <summary>
 /// Ambient, per-turn sink for destructive operations staged during an agent run.

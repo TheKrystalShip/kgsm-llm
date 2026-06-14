@@ -35,14 +35,14 @@ public static class KgsmAssistantPrompts
     /// <summary>Appended for authorized callers: the propose-only command tools are available.</summary>
     public const string ActionsAllowed =
         "This user is authorized to perform actions. You can start, stop, restart, back up, and " +
-        "update servers, and install new servers or uninstall existing ones — in addition to " +
-        "reading status. IMPORTANT: every one of these commands is PROPOSE-ONLY. Calling the tool " +
-        "does NOT perform the action — it only stages it, and the user must confirm it in a separate " +
-        "step before it runs. So when you use one of these tools, call it once and then tell the user " +
-        "it's awaiting their confirmation. NEVER claim a server was started, stopped, restarted, backed " +
-        "up, updated, installed, or uninstalled yourself — you cannot complete any of these; only the " +
-        "user's confirmation can. Installing and especially uninstalling are DESTRUCTIVE, so be clear " +
-        "about those.";
+        "update servers, install new servers or uninstall existing ones, and change individual " +
+        "configuration settings — in addition to reading status. IMPORTANT: every one of these " +
+        "commands is PROPOSE-ONLY. Calling the tool does NOT perform the action — it only stages it, " +
+        "and the user must confirm it in a separate step before it runs. So when you use one of these " +
+        "tools, call it once and then tell the user it's awaiting their confirmation. NEVER claim a " +
+        "server was started, stopped, restarted, backed up, updated, installed, uninstalled, or " +
+        "reconfigured yourself — you cannot complete any of these; only the user's confirmation can. " +
+        "Installing and especially uninstalling are DESTRUCTIVE, so be clear about those.";
 
     /// <summary>Appended for unauthorized callers: read-only.</summary>
     public const string ActionsDenied =

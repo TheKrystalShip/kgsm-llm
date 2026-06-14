@@ -52,6 +52,14 @@ public class ToolDispatcherTests
             ["instance_name"] = name,
         });
 
+    private static LlmToolCall SetConfigCall(string instance, string? key, string? value) =>
+        new(LlmTools.SetConfigValue, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["config_key"] = key,
+            ["config_value"] = value,
+        });
+
     [Fact]
     public async Task ExactName_Resolves_AndExecutes()
     {
@@ -269,6 +277,51 @@ public class ToolDispatcherTests
             var result = await Create().ExecuteAsync(InstallCall("valheim", "minecraft"));
 
             result.Should().Contain("already exists");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task SetConfig_StagesConfirmation_WithKeyAndValue_AndDoesNotWrite()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            // A value with spaces and an '=' — the prime executable_arguments case.
+            var result = await Create().ExecuteAsync(
+                SetConfigCall("minecraft", "executable_arguments", "--foo=bar baz"));
+
+            result.Should().Contain("Staged").And.Contain("confirm");
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new PendingConfirmation(
+                    ConfirmationKind.SetConfig, "minecraft",
+                    InstanceName: null, ConfigKey: "executable_arguments", ConfigValue: "--foo=bar baz"));
+        }
+
+        // Propose-only: nothing is written inline (kgsk runs only after a human confirms).
+        await _operations.DidNotReceive().SetInstanceConfigValueAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetConfig_BlankKey_DoesNotStage()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Create().ExecuteAsync(SetConfigCall("minecraft", "   ", "x"));
+
+            result.Should().Contain("no config_key");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task SetConfig_UnknownInstance_DoesNotStage()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Create().ExecuteAsync(SetConfigCall("doesnotexist", "auto_update", "true"));
+
+            result.Should().Contain("no instance named");
             _confirmations.Staged.Should().BeEmpty();
         }
     }

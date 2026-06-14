@@ -46,7 +46,9 @@ internal sealed class ConfirmationTokenService
             confirmation.Target,
             confirmation.InstanceName,
             DateTimeOffset.UtcNow.ToUnixTimeSeconds() + _ttlSeconds,
-            userId);
+            userId,
+            confirmation.ConfigKey,
+            confirmation.ConfigValue);
 
         var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload);
         var signature = HMACSHA256.HashData(_key, payloadBytes);
@@ -99,10 +101,13 @@ internal sealed class ConfirmationTokenService
         if (!Enum.IsDefined(typeof(ConfirmationKind), payload.K) || string.IsNullOrEmpty(payload.T))
             return false;
 
-        confirmation = new PendingConfirmation((ConfirmationKind)payload.K, payload.T, payload.N);
+        confirmation = new PendingConfirmation(
+            (ConfirmationKind)payload.K, payload.T, payload.N, payload.Ck, payload.Cv);
         userId = payload.U ?? string.Empty;
         return true;
     }
 
-    private sealed record TokenPayload(int K, string T, string? N, long Exp, string? U);
+    // Ck/Cv are SetConfig-only (config key/value); nullable with defaults so tokens
+    // minted before they existed still deserialize.
+    private sealed record TokenPayload(int K, string T, string? N, long Exp, string? U, string? Ck = null, string? Cv = null);
 }

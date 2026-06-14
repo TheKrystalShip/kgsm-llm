@@ -237,7 +237,8 @@ secured.MapPost("/turn", async (
 
     var confirmations = result.Confirmations
         .Select(c => new ConfirmationDto(
-            c.Kind.ToString().ToLowerInvariant(), c.Target, c.InstanceName, tokens.Create(c, principal.UserId)))
+            c.Kind.ToString().ToLowerInvariant(), c.Target, c.InstanceName, tokens.Create(c, principal.UserId),
+            c.ConfigKey, c.ConfigValue))
         .ToArray();
 
     return Results.Ok(new TurnResponse(result.Text, confirmations));

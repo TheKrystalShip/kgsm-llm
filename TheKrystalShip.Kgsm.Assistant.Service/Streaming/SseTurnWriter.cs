@@ -75,7 +75,7 @@ internal static class SseTurnWriter
                         var c = ev.StagedConfirmation!;
                         var dto = new ConfirmationDto(
                             c.Kind.ToString().ToLowerInvariant(), c.Target, c.InstanceName,
-                            tokens.Create(c, principal.UserId));
+                            tokens.Create(c, principal.UserId), c.ConfigKey, c.ConfigValue);
                         await WriteEventAsync(response, "command.proposed", dto, ct);
                         break;
 

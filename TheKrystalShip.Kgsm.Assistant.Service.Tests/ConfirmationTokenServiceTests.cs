@@ -63,6 +63,39 @@ public class ConfirmationTokenServiceTests
     }
 
     [Fact]
+    public void RoundTrip_SetConfig_PreservesKeyAndValue()
+    {
+        // The point of the Ck/Cv payload fields: a config edit must survive the token
+        // round-trip, including a value with spaces and '=' (the executable_arguments case).
+        var service = Create();
+        var token = service.Create(
+            new PendingConfirmation(ConfirmationKind.SetConfig, "minecraft",
+                InstanceName: null, ConfigKey: "executable_arguments", ConfigValue: "--foo=bar baz"),
+            "user-1");
+
+        service.TryValidate(token, out var parsed, out var userId).Should().BeTrue();
+        parsed.Kind.Should().Be(ConfirmationKind.SetConfig);
+        parsed.Target.Should().Be("minecraft");
+        parsed.ConfigKey.Should().Be("executable_arguments");
+        parsed.ConfigValue.Should().Be("--foo=bar baz");
+        userId.Should().Be("user-1");
+    }
+
+    [Fact]
+    public void RoundTrip_SetConfig_EmptyValue_IsPreserved()
+    {
+        var service = Create();
+        var token = service.Create(
+            new PendingConfirmation(ConfirmationKind.SetConfig, "minecraft",
+                InstanceName: null, ConfigKey: "executable_arguments", ConfigValue: ""),
+            "user-1");
+
+        service.TryValidate(token, out var parsed, out _).Should().BeTrue();
+        parsed.ConfigKey.Should().Be("executable_arguments");
+        parsed.ConfigValue.Should().Be("");
+    }
+
+    [Fact]
     public void TamperedPayload_FailsValidation()
     {
         var service = Create();

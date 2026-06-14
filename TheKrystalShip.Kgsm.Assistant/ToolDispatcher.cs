@@ -57,6 +57,7 @@ public class ToolDispatcher : IToolDispatcher
                 LlmTools.UpdateServer => await StageCommandAsync(call, ConfirmationKind.Update, cancellationToken),
                 LlmTools.UninstallServer => await StageUninstallAsync(call, cancellationToken),
                 LlmTools.InstallServer => await StageInstallAsync(call, cancellationToken),
+                LlmTools.SetConfigValue => await StageSetConfigAsync(call, cancellationToken),
                 _ => $"Error: '{call.Name}' is not a known tool."
             };
         }
@@ -238,6 +239,35 @@ public class ToolDispatcher : IToolDispatcher
         var named = instanceName is null ? "" : $" named '{instanceName}'";
         return $"Staged an install of a new '{blueprint}' server{named} for confirmation. A confirmation " +
                "prompt with a button has been shown to the user. This is NOT done yet and will only run " +
+               "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
+    }
+
+    /// <summary>
+    /// Propose-only (§3.8): resolves the instance and validates a non-empty key, then
+    /// STAGES a set-config for human confirmation — it is never written here. kgsm owns
+    /// the key-safety policy (denylist); this stage does not pre-judge the key, so a
+    /// refusal surfaces only at confirm time. An empty value is allowed (clears the
+    /// setting); a missing/blank key short-circuits to the model.
+    /// </summary>
+    private async Task<string> StageSetConfigAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var key = call.Arg("config_key")?.Trim();
+        if (string.IsNullOrWhiteSpace(key))
+            return "Error: no config_key was provided.";
+
+        // The value is intentionally NOT trimmed and may be the empty string (clearing
+        // the setting). A model that omits it entirely is treated as clearing it.
+        var value = call.Arg("config_value") ?? string.Empty;
+
+        _confirmations.Stage(new PendingConfirmation(
+            ConfirmationKind.SetConfig, resolved!, InstanceName: null, ConfigKey: key, ConfigValue: value));
+
+        return $"Staged setting '{key}' on '{resolved}' for confirmation. A confirmation prompt " +
+               "with a button has been shown to the user. This is NOT done yet and will only run " +
                "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
     }
 

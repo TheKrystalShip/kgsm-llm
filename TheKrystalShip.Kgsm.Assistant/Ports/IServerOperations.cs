@@ -78,4 +78,17 @@ public interface IServerOperations
     /// <param name="instance">The resolved instance name to uninstall.</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     Task<Result> UninstallAsync(string instance, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets a single key=value in an instance's <c>.config.ini</c>. Called only by
+    /// <see cref="IServerAssistant.ConfirmAsync"/> after a human confirms a staged
+    /// set-config — never from the agent loop. kgsm owns the safety policy: it refuses
+    /// structural/identity/path/toggle keys, surfacing that refusal as a failed
+    /// <see cref="Result"/> (this method does not pre-judge the key).
+    /// </summary>
+    /// <param name="instance">The resolved instance name.</param>
+    /// <param name="key">The config key to set.</param>
+    /// <param name="value">The new value (may be the empty string, but not null).</param>
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    Task<Result> SetInstanceConfigValueAsync(string instance, string key, string value, CancellationToken cancellationToken = default);
 }

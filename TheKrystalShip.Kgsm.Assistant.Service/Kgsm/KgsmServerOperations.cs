@@ -223,6 +223,13 @@ internal sealed class KgsmServerOperations : IServerOperations
         }
     }
 
+    public Task<Result> SetInstanceConfigValueAsync(
+        string instance, string key, string value, CancellationToken cancellationToken = default) =>
+        // RunAsync surfaces kgsm's stderr on a non-zero exit, so a denylisted/invalid key
+        // (kgsm owns that policy) reaches the user as the failed Result's message.
+        RunAsync(nameof(SetInstanceConfigValueAsync), instance,
+            () => _instances.SetInstanceConfigValue(instance, key, value), cancellationToken);
+
     private async Task<Result> RunAsync(
         string op, string instance, Func<KgsmResult> action, CancellationToken cancellationToken)
     {

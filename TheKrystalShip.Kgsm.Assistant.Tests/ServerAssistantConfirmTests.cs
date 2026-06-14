@@ -138,6 +138,73 @@ public class ServerAssistantConfirmTests
         result.Error.Should().Contain("kgsm exploded");
     }
 
+    // --- §3.8 set-config (key=value) -------------------------------------------------------
+
+    [Fact]
+    public async Task SetConfig_HappyPath_ExecutesAndReportsOutcome()
+    {
+        Instances("minecraft");
+        _operations.SetInstanceConfigValueAsync("minecraft", "auto_update", "true", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Success()));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.SetConfig, "minecraft",
+                InstanceName: null, ConfigKey: "auto_update", ConfigValue: "true"),
+            canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("minecraft").And.Contain("auto_update").And.Contain("true");
+        await _operations.Received(1)
+            .SetInstanceConfigValueAsync("minecraft", "auto_update", "true", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetConfig_TargetGone_IsRefused_WithoutExecuting()
+    {
+        Instances(); // vanished since staging (or the token is being replayed)
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.SetConfig, "minecraft",
+                InstanceName: null, ConfigKey: "auto_update", ConfigValue: "true"),
+            canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("no longer exists");
+        await _operations.DidNotReceive().SetInstanceConfigValueAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetConfig_UnauthorizedCaller_IsRefused_AndNothingExecutes()
+    {
+        Instances("minecraft");
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.SetConfig, "minecraft",
+                InstanceName: null, ConfigKey: "auto_update", ConfigValue: "true"),
+            canPerformActions: false);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("permission");
+        await _operations.DidNotReceive().SetInstanceConfigValueAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetConfig_KgsmRefusesProtectedKey_SurfacesError()
+    {
+        // kgsm owns the denylist; a refused (protected) key comes back as a failed Result.
+        Instances("minecraft");
+        _operations.SetInstanceConfigValueAsync("minecraft", "name", "evil", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Failure("'name' is a protected key and cannot be set with config-set")));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.SetConfig, "minecraft",
+                InstanceName: null, ConfigKey: "name", ConfigValue: "evil"),
+            canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("protected key");
+    }
+
     // --- §3.5 generalised commands (start/stop/restart/update/backup) -----------------------
 
     public static IEnumerable<object[]> CommandKinds() => new[]

@@ -83,7 +83,7 @@ public class ToolDispatcher : IToolDispatcher
     /// V1 whitelist (§3.8): only that one file. The filename is derived from the
     /// resolved (real-inventory-matched) instance name, so the model supplies no
     /// path segment — there is no attacker-controlled path component. The port
-    /// enforces install-dir path-binding as defense-in-depth.
+    /// enforces instance-directory path-binding as defense-in-depth.
     /// </summary>
     private async Task<string> ViewConfigFileAsync(LlmToolCall call, CancellationToken cancellationToken)
     {

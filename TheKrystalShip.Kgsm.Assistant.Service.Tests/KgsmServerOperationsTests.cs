@@ -22,7 +22,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 public sealed class KgsmServerOperationsTests : IDisposable
 {
     private readonly IInstanceService _instances = Substitute.For<IInstanceService>();
-    private readonly string _root;     // stand-in for an instance install dir
+    private readonly string _root;     // stand-in for an instance (config) directory
     private readonly string _outside;  // a sibling tree the read must never reach
 
     public KgsmServerOperationsTests()
@@ -43,13 +43,18 @@ public sealed class KgsmServerOperationsTests : IDisposable
     private KgsmServerOperations Create() =>
         new(_instances, NullLogger<KgsmServerOperations>.Instance);
 
-    private void StubInstall(string instance, string? installDir) =>
-        _instances.GetInstanceInfo(instance).Returns(new Instance { Name = instance, InstallDir = installDir ?? string.Empty });
+    /// <summary>
+    /// Stub kgsm's config-path resolution (<c>instances find</c> → __find_instance_config)
+    /// to return the given absolute config-file path. The file's DIRECTORY becomes the read
+    /// boundary — this mirrors the real engine, the same resolution config-get/config-set use.
+    /// </summary>
+    private void StubConfigPath(string instance, string configFilePath) =>
+        _instances.FindConfigPath(instance).Returns(new KgsmResult(0, configFilePath));
 
     [Fact]
-    public async Task ReadInstanceFile_ValidFileInInstallDir_ReturnsContent()
+    public async Task ReadInstanceFile_ResolvedConfig_ReturnsContent()
     {
-        StubInstall("inst", _root);
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
         await File.WriteAllTextAsync(Path.Combine(_root, "inst.config.ini"), "port = 25565\n");
 
         var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
@@ -59,9 +64,35 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadInstanceFile_ReadsResolvedConfigDir_NotInstallDir()
+    {
+        // Regression guard for the view_config_file bug. Model the real layout: the config
+        // lives in the working dir while install_dir is a DIFFERENT, deeper directory
+        // (…/<inst>/install). The old code bound the read boundary to install_dir and so
+        // 404'd for every real instance; resolving via kgsm's find-path reads the real file.
+        var workingDir = Path.Combine(_root, "factorio-test");
+        var installDir = Path.Combine(workingDir, "install");
+        Directory.CreateDirectory(installDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(workingDir, "factorio-test.config.ini"), "auto_update = false\n");
+
+        // kgsm resolves the config to the working dir, never the install dir.
+        StubConfigPath("factorio-test", Path.Combine(workingDir, "factorio-test.config.ini"));
+        // Belt-and-suspenders: even if the impl regressed to GetInstanceInfo().InstallDir,
+        // that points at the file-less install dir.
+        _instances.GetInstanceInfo("factorio-test")
+            .Returns(new Instance { Name = "factorio-test", InstallDir = installDir, WorkingDir = workingDir });
+
+        var result = await Create().ReadInstanceFileAsync("factorio-test", "factorio-test.config.ini");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("auto_update = false");
+    }
+
+    [Fact]
     public async Task ReadInstanceFile_UnknownInstance_Fails()
     {
-        _instances.GetInstanceInfo("ghost").Returns((Instance?)null);
+        _instances.FindConfigPath("ghost").Returns(new KgsmResult(1, "", "Instance 'ghost' not found"));
 
         var result = await Create().ReadInstanceFileAsync("ghost", "ghost.config.ini");
 
@@ -69,11 +100,11 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     [Fact]
-    public async Task ReadInstanceFile_EmptyInstallDir_Fails_NoCwdRelativeRead()
+    public async Task ReadInstanceFile_EmptyResolvedPath_Fails_NoCwdRelativeRead()
     {
-        // The CWD-relative-read guard: an empty install dir must never combine into
+        // The CWD-relative-read guard: an empty resolved path must never combine into
         // a path rooted at the service's working directory.
-        StubInstall("inst", installDir: "");
+        StubConfigPath("inst", string.Empty);
 
         var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
 
@@ -83,7 +114,7 @@ public sealed class KgsmServerOperationsTests : IDisposable
     [Fact]
     public async Task ReadInstanceFile_MissingFile_Fails()
     {
-        StubInstall("inst", _root); // dir exists, file does not
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini")); // dir exists, file does not
 
         var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
 
@@ -93,7 +124,7 @@ public sealed class KgsmServerOperationsTests : IDisposable
     [Fact]
     public async Task ReadInstanceFile_DotDotEscape_IsRefused()
     {
-        StubInstall("inst", _root);
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
         await File.WriteAllTextAsync(Path.Combine(_outside, "secret.txt"), "TOPSECRET");
 
         var result = await Create().ReadInstanceFileAsync("inst", "../outside/secret.txt");
@@ -109,7 +140,7 @@ public sealed class KgsmServerOperationsTests : IDisposable
         var sibling = _root + "-evil";
         Directory.CreateDirectory(sibling);
         await File.WriteAllTextAsync(Path.Combine(sibling, "secret.txt"), "TOPSECRET");
-        StubInstall("inst", _root);
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
 
         var result = await Create().ReadInstanceFileAsync("inst", "../inst-evil/secret.txt");
 
@@ -122,9 +153,9 @@ public sealed class KgsmServerOperationsTests : IDisposable
     {
         var secret = Path.Combine(_outside, "secret.txt");
         await File.WriteAllTextAsync(secret, "TOPSECRET");
-        // A symlink that lives INSIDE the install dir but points OUT of it.
+        // A symlink that lives INSIDE the instance dir but points OUT of it.
         File.CreateSymbolicLink(Path.Combine(_root, "inst.config.ini"), secret);
-        StubInstall("inst", _root);
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
 
         var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
 

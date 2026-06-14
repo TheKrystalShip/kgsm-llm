@@ -70,20 +70,37 @@ internal sealed class KgsmServerOperations : IServerOperations
     {
         try
         {
-            var info = await Task.Run(() => _instances.GetInstanceInfo(instance), cancellationToken);
-            if (info is null)
-                return Result.Failure<string>($"'{instance}' is not a known instance.");
+            // Resolve the config file's location THROUGH kgsm itself (`instances find`,
+            // i.e. __find_instance_config) — the very same resolution config-get/config-set
+            // use. Reconstructing the path C#-side from a JSON dir field is what the old
+            // bug did: it bound to `install_dir`, which is the GAME install dir
+            // (…/<inst>/install) — not where <name>.config.ini lives — so every real read
+            // 404'd. (Empirically: install_dir=…/factorio-test/install, but the config is
+            // at ~/.local/share/kgsm/instances/factorio/factorio-test/… via a symlink to
+            // the working dir.) Deferring to the engine keeps this drift-proof as kgsm
+            // reshapes instance layout. The resolved file's directory is the read boundary.
+            var found = await Task.Run(() => _instances.FindConfigPath(instance), cancellationToken);
+            if (found.IsFailure)
+                return Result.Failure<string>(
+                    string.IsNullOrWhiteSpace(found.Stderr)
+                        ? $"'{instance}' is not a known instance."
+                        : found.Stderr.Trim());
 
-            // The install dir is the security boundary. Guard empty (a CWD-relative
-            // read would otherwise escape into the service's own working directory).
-            if (string.IsNullOrWhiteSpace(info.InstallDir))
-                return Result.Failure<string>($"'{instance}' has no known install directory.");
+            var configPath = found.Stdout?.Trim();
+            // Guard empty (a CWD-relative read would otherwise escape into the
+            // service's own working directory).
+            if (string.IsNullOrWhiteSpace(configPath))
+                return Result.Failure<string>($"'{instance}' has no resolvable config location.");
 
-            var dirInfo = new DirectoryInfo(Path.GetFullPath(info.InstallDir));
+            var boundary = Path.GetDirectoryName(Path.GetFullPath(configPath));
+            if (string.IsNullOrEmpty(boundary))
+                return Result.Failure<string>($"'{instance}' has no resolvable config directory.");
+
+            var dirInfo = new DirectoryInfo(boundary);
             if (!dirInfo.Exists)
-                return Result.Failure<string>("The instance install directory does not exist.");
+                return Result.Failure<string>("The instance directory does not exist.");
 
-            // Canonicalize the boundary (resolve a symlinked install dir to its target).
+            // Canonicalize the boundary (resolve a symlinked instance dir to its target).
             var realDir = dirInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? dirInfo.FullName;
 
             // Combine + normalize (defeats ".."), then confine to the boundary.

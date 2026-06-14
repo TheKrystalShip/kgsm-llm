@@ -23,11 +23,14 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
 internal sealed class KgsmServerOperations : IServerOperations
 {
     private readonly IInstanceService _instances;
+    private readonly ISystemService _system;
     private readonly ILogger<KgsmServerOperations> _logger;
 
-    public KgsmServerOperations(IInstanceService instances, ILogger<KgsmServerOperations> logger)
+    public KgsmServerOperations(
+        IInstanceService instances, ISystemService system, ILogger<KgsmServerOperations> logger)
     {
         _instances = instances;
+        _system = system;
         _logger = logger;
     }
 
@@ -209,6 +212,84 @@ internal sealed class KgsmServerOperations : IServerOperations
             return Result.Failure<bool>(ex.Message);
         }
     }
+
+    /// <summary>
+    /// Fetches the neutral health inputs for one instance (fetch + map only — the
+    /// health judgment lives in <c>HealthCheckAggregator</c>). One non-fast status read
+    /// supplies running-state, recent logs and the real update check; host disk comes
+    /// from <c>system info</c>. A failed host read maps to a null disk + reason (the
+    /// aggregator then skips the disk check) — never a fabricated <c>0%</c>.
+    /// </summary>
+    public async Task<Result<InstanceHealthSnapshot>> GetHealthSnapshotAsync(
+        string instance, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Non-fast: this performs the per-instance update check, so UpdatesAvailable
+            // is a real tri-state (true/false/null), not skipped like the fleet read.
+            var status = await Task.Run(() => _instances.GetInstanceStatus(instance), cancellationToken);
+            if (status is null)
+                return Result.Failure<InstanceHealthSnapshot>(
+                    $"'{instance}' did not return a status (it may need its management file regenerated).");
+
+            var logLines = SplitLogLines(status.RecentLogs);
+
+            // Host disk is best-effort: its absence skips the disk check, it never fails the read.
+            HostDisk? hostDisk = null;
+            string? diskReason = null;
+            try
+            {
+                var info = await Task.Run(() => _system.GetSystemInfo(), cancellationToken);
+                if (info is null)
+                    diskReason = "host system info was unavailable";
+                else
+                    hostDisk = new HostDisk(
+                        ParsePercent(info.Disk.UsePercent), info.Disk.Size, info.Disk.Available);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Host disk read failed for health check of {Instance}", instance);
+                diskReason = "the host disk usage could not be read";
+            }
+
+            var snapshot = new InstanceHealthSnapshot(
+                Running: status.Status,
+                RecentLogLines: logLines,
+                UpdatesAvailable: status.Version.UpdatesAvailable,
+                CurrentVersion: NullIfEmpty(status.Version.Current),
+                LatestVersion: status.Version.Latest,
+                HostDisk: hostDisk,
+                HostDiskUnavailableReason: diskReason);
+
+            return Result.Success(snapshot);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetHealthSnapshot failed for {Instance}", instance);
+            return Result.Failure<InstanceHealthSnapshot>(ex.Message);
+        }
+    }
+
+    /// <summary>Splits KGSM's newline-joined <c>recent_logs</c> tail into non-empty lines.</summary>
+    private static IReadOnlyList<string> SplitLogLines(string? recentLogs) =>
+        string.IsNullOrEmpty(recentLogs)
+            ? Array.Empty<string>()
+            : recentLogs.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// Parses the leading integer of a <c>df</c> use-percent string like <c>"26%"</c>.
+    /// Returns null if it can't be parsed (the disk check then skips, never assumes 0).
+    /// </summary>
+    private static int? ParsePercent(string? usePercent)
+    {
+        if (string.IsNullOrWhiteSpace(usePercent))
+            return null;
+        var digits = new string(usePercent.TrimStart().TakeWhile(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var pct) ? pct : null;
+    }
+
+    private static string? NullIfEmpty(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 
     public async Task<Result> InstallAsync(string blueprint, string? instanceName, CancellationToken cancellationToken = default)
     {

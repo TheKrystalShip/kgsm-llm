@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 
+using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
@@ -49,6 +50,7 @@ public class ToolDispatcher : IToolDispatcher
             {
                 LlmTools.GetStatus => await GetStatusAsync(call, cancellationToken),
                 LlmTools.ListBlueprints => await ListBlueprintsAsync(cancellationToken),
+                LlmTools.RunHealthCheck => await RunHealthCheckAsync(call, cancellationToken),
                 LlmTools.ViewConfigFile => await ViewConfigFileAsync(call, cancellationToken),
                 LlmTools.ServerCommand => await StageServerCommandAsync(call, cancellationToken),
                 LlmTools.UninstallServer => await StageUninstallAsync(call, cancellationToken),
@@ -165,6 +167,26 @@ public class ToolDispatcher : IToolDispatcher
             : $"- {e.Instance}: status unavailable ({e.Reason ?? "unknown reason"})");
 
         return $"Status of all {entries.Count} server(s):\n" + string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// The first aggregator (toolbox-plan §3.4): resolves the instance, fetches the
+    /// neutral health inputs via the port, and runs the deterministic
+    /// <see cref="HealthCheckAggregator"/>. Returns the result's <c>Summary</c> — the
+    /// model's grounding text (§3.6); the structured card travels to a surface later.
+    /// All judgment lives in the aggregator, so this handler only orchestrates.
+    /// </summary>
+    private async Task<string> RunHealthCheckAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var result = await _operations.GetHealthSnapshotAsync(resolved!, cancellationToken);
+        if (!result.IsSuccess)
+            return $"Error: could not run a health check on '{resolved}' ({result.Error ?? "unknown error"}).";
+
+        return HealthCheckAggregator.Run(result.Value!, resolved!).Summary;
     }
 
     /// <summary>

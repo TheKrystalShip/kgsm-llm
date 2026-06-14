@@ -22,6 +22,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 public sealed class KgsmServerOperationsTests : IDisposable
 {
     private readonly IInstanceService _instances = Substitute.For<IInstanceService>();
+    private readonly ISystemService _system = Substitute.For<ISystemService>();
     private readonly string _root;     // stand-in for an instance (config) directory
     private readonly string _outside;  // a sibling tree the read must never reach
 
@@ -41,7 +42,7 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     private KgsmServerOperations Create() =>
-        new(_instances, NullLogger<KgsmServerOperations>.Instance);
+        new(_instances, _system, NullLogger<KgsmServerOperations>.Instance);
 
     /// <summary>
     /// Stub kgsm's config-path resolution (<c>instances find</c> → __find_instance_config)
@@ -192,5 +193,74 @@ public sealed class KgsmServerOperationsTests : IDisposable
         byName["broken"].Availability.Should().Be(FleetStatusAvailability.Unavailable);
         byName["broken"].Running.Should().BeNull();
         byName["broken"].Reason.Should().NotBeNullOrEmpty();
+    }
+
+    // --- GetHealthSnapshot (fetch + map; judgment lives in the aggregator) ---
+
+    [Fact]
+    public async Task GetHealthSnapshot_MapsStatusLogsVersionAndDisk()
+    {
+        _instances.GetInstanceStatus("minecraft").Returns(new InstanceRuntimeStatus
+        {
+            InstanceName = "minecraft",
+            Status = true,
+            Version = new VersionInfo
+            {
+                Current = "1.20.1",
+                Latest = "1.20.4",
+                Checked = true,
+                UpdatesAvailable = true,
+            },
+            RecentLogs = "INFO started\nERROR boom\n",
+        });
+        _system.GetSystemInfo().Returns(new SystemInfo
+        {
+            Disk = new DiskInfo { UsePercent = "26%", Size = "916G", Available = "649G" },
+        });
+
+        var result = await Create().GetHealthSnapshotAsync("minecraft");
+
+        result.IsSuccess.Should().BeTrue();
+        var s = result.Value!;
+        s.Running.Should().BeTrue();
+        s.RecentLogLines.Should().BeEquivalentTo(new[] { "INFO started", "ERROR boom" });
+        s.UpdatesAvailable.Should().BeTrue();
+        s.CurrentVersion.Should().Be("1.20.1");
+        s.LatestVersion.Should().Be("1.20.4");
+        s.HostDisk!.UsedPercent.Should().Be(26);     // "26%" parsed to an int
+        s.HostDisk.Size.Should().Be("916G");
+        s.HostDisk.Available.Should().Be("649G");
+        s.HostDiskUnavailableReason.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetHealthSnapshot_HostDiskUnavailable_SetsReason_NeverFabricates()
+    {
+        _instances.GetInstanceStatus("minecraft").Returns(new InstanceRuntimeStatus
+        {
+            InstanceName = "minecraft",
+            Status = true,
+            Version = new VersionInfo { Current = "1.0.0", Checked = false, UpdatesAvailable = null },
+            RecentLogs = "",
+        });
+        _system.GetSystemInfo().Returns((SystemInfo?)null); // host read failed
+
+        var result = await Create().GetHealthSnapshotAsync("minecraft");
+
+        result.IsSuccess.Should().BeTrue();
+        var s = result.Value!;
+        s.HostDisk.Should().BeNull();                          // no fabricated 0%
+        s.HostDiskUnavailableReason.Should().NotBeNullOrEmpty();
+        s.UpdatesAvailable.Should().BeNull();                  // honest unknown preserved
+    }
+
+    [Fact]
+    public async Task GetHealthSnapshot_NullStatus_Fails()
+    {
+        _instances.GetInstanceStatus("ghost").Returns((InstanceRuntimeStatus?)null);
+
+        var result = await Create().GetHealthSnapshotAsync("ghost");
+
+        result.IsSuccess.Should().BeFalse();
     }
 }

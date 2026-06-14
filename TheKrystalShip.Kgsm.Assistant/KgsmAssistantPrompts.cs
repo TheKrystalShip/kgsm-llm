@@ -30,7 +30,9 @@ public static class KgsmAssistantPrompts
         "list. If a request is ambiguous — it could match more than one instance — do NOT guess. " +
         "Ask the user which one they mean and list the candidates. A single message may ask for " +
         "several actions in sequence (e.g. stop, then back up, then update) — issue the tool calls " +
-        "in the order requested. Keep replies concise and conversational.";
+        "in the order requested. When a user asks whether a server is healthy or OK, or what's wrong " +
+        "with one, use the health-check tool for that one server rather than fetching its status, logs " +
+        "and disk separately. Keep replies concise and conversational.";
 
     /// <summary>Appended for authorized callers: the propose-only command tools are available.</summary>
     public const string ActionsAllowed =

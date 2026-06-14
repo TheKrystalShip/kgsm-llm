@@ -1,0 +1,50 @@
+namespace TheKrystalShip.Kgsm.Assistant.Ports;
+
+/// <summary>
+/// Root-filesystem disk usage for the host, in the neutral form the health check
+/// needs. The surface parses KGSM's <c>df -h</c> strings (e.g. <c>"26%"</c>,
+/// <c>"649G"</c>) into this; the aggregator thresholds <see cref="UsedPercent"/>.
+/// </summary>
+/// <param name="UsedPercent">
+/// Disk used percentage as an integer (0–100), parsed from <c>use_percent</c>. Null
+/// if the value was present but could not be parsed — the disk check then skips,
+/// never assumes a value.
+/// </param>
+/// <param name="Size">Total size as a human string (e.g. "916G"), for the detail text.</param>
+/// <param name="Available">Free space as a human string (e.g. "649G"), for the detail text.</param>
+public sealed record HostDisk(int? UsedPercent, string? Size, string? Available);
+
+/// <summary>
+/// The raw inputs <see cref="Health.HealthCheckAggregator"/> needs for one instance,
+/// in a neutral shape that keeps the assistant library decoupled from kgsm-lib (the
+/// host maps its own types onto this — the same boundary <see cref="FleetStatusEntry"/>
+/// draws). Surfaces only <b>fetch + map</b>; <b>all judgment lives once in the
+/// aggregator</b> (so the error tally can't drift between the Service and bot impls).
+/// </summary>
+/// <param name="Running">Whether the instance is currently running.</param>
+/// <param name="RecentLogLines">
+/// Recent log lines (a tail). The aggregator scans these for error severity — it does
+/// the tally so the two surface implementations never have to.
+/// </param>
+/// <param name="UpdatesAvailable">
+/// Whether an update is available: <c>true</c>/<c>false</c> when checked, <c>null</c>
+/// when KGSM did not check (honest unknown — the update check then skips).
+/// </param>
+/// <param name="CurrentVersion">The installed version, if known.</param>
+/// <param name="LatestVersion">The latest version, if a check produced one.</param>
+/// <param name="HostDisk">
+/// Host disk usage, or <c>null</c> if the host read failed (see
+/// <paramref name="HostDiskUnavailableReason"/>) — the disk check then skips, never
+/// reports a fabricated <c>0%</c>.
+/// </param>
+/// <param name="HostDiskUnavailableReason">
+/// Why host disk usage is absent. Non-null only when <paramref name="HostDisk"/> is null.
+/// </param>
+public sealed record InstanceHealthSnapshot(
+    bool Running,
+    IReadOnlyList<string> RecentLogLines,
+    bool? UpdatesAvailable,
+    string? CurrentVersion,
+    string? LatestVersion,
+    HostDisk? HostDisk,
+    string? HostDiskUnavailableReason);

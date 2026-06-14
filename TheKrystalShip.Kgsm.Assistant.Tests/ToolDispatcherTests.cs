@@ -150,6 +150,49 @@ public class ToolDispatcherTests
         result.Should().NotContain("stopped");
     }
 
+    // --- run_health_check (the first aggregator) ---
+
+    [Fact]
+    public async Task RunHealthCheck_Resolves_FetchesSnapshot_ReturnsSummary()
+    {
+        _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new InstanceHealthSnapshot(
+                Running: true,
+                RecentLogLines: Array.Empty<string>(),
+                UpdatesAvailable: false,
+                CurrentVersion: "1.0.0",
+                LatestVersion: null,
+                HostDisk: new HostDisk(26, "916G", "649G"),
+                HostDiskUnavailableReason: null)));
+
+        var result = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "minecraft"));
+
+        // The dispatcher returns the aggregator's deterministic summary (the model's grounding text).
+        result.Should().Contain("minecraft").And.Contain("healthy");
+        await _operations.Received(1).GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_UnresolvedInstance_DoesNotFetch()
+    {
+        var result = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "doesnotexist"));
+
+        result.Should().Contain("no instance named");
+        await _operations.DidNotReceive()
+            .GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_PortFailure_ReturnsError()
+    {
+        _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<InstanceHealthSnapshot>("kgsm unreachable"));
+
+        var result = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "minecraft"));
+
+        result.Should().Contain("could not run a health check").And.Contain("kgsm unreachable");
+    }
+
     [Fact]
     public async Task ViewConfigFile_ReadsResolvedInstanceConfig_AndRedactsSecrets()
     {

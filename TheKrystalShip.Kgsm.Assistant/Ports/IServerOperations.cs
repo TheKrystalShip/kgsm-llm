@@ -61,6 +61,18 @@ public interface IServerOperations
     Task<Result<bool>> IsActiveAsync(string instance, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Fetches the neutral inputs the <c>run_health_check</c> aggregator needs for one
+    /// instance (running-state, recent log lines, update availability, host disk). The
+    /// implementation only <b>fetches + maps</b> — it parses KGSM's strings into the
+    /// neutral shape but renders no health judgment; all judgment lives once in
+    /// <see cref="Health.HealthCheckAggregator"/>. A field whose source is unavailable
+    /// is mapped to its absent form (e.g. <see cref="InstanceHealthSnapshot.HostDisk"/>
+    /// null + a reason), never fabricated. Returns a failed <see cref="Result"/> only
+    /// when the instance itself cannot be read at all — never throws.
+    /// </summary>
+    Task<Result<InstanceHealthSnapshot>> GetHealthSnapshotAsync(string instance, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Installs a new instance from a blueprint. Called only by
     /// <see cref="IServerAssistant.ConfirmAsync"/> after a human confirms a staged
     /// install — never from the agent loop.

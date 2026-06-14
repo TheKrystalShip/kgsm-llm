@@ -20,6 +20,7 @@ public static class LlmTools
     // Read-only (offered to everyone)
     public const string GetStatus = "get_status";
     public const string ListBlueprints = "list_blueprints";
+    public const string RunHealthCheck = "run_health_check";
 
     // Authorized read (offered only to action-authorized callers — exposes file
     // contents, so gated like the command tier even though it mutates nothing)
@@ -103,6 +104,13 @@ public static class LlmTools
 
         LlmToolDefinition.Create(ListBlueprints,
             "List all game types (blueprints) that can be installed."),
+
+        LlmToolDefinition.Create(RunHealthCheck,
+            "Run a quick health check on ONE server and get a ranked summary. Checks whether it's " +
+            "running, scans its recent logs for errors, reports whether an update is available, and " +
+            "checks host disk space. Use this for \"is X healthy / OK?\" or \"what's wrong with X?\" " +
+            "instead of fetching status, logs and disk separately.",
+            InstanceName),
     };
 
     /// <summary>

@@ -52,6 +52,7 @@ builder.Services.AddSingleton<ILogSubscriptionService, LogSubscriptionService>()
 builder.Services.AddSingleton<ILifecycleService, LifecycleService>();
 builder.Services.AddSingleton<IInstanceService, InstanceService>();
 builder.Services.AddSingleton<IBlueprintService, BlueprintService>();
+builder.Services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
 
 builder.Services.AddSingleton<KgsmServerInventory>();
 builder.Services.AddSingleton<IServerInventory>(sp => sp.GetRequiredService<KgsmServerInventory>());

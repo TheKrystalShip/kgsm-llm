@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TheKrystalShip.Kgsm.Assistant.Infrastructure</RootNamespace>
+    <AssemblyName>TheKrystalShip.Kgsm.Assistant.Infrastructure</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Both hosts' adapter tests reach the internal adapters (TavilyWebSearch,
+         KgsmServerInventory/Operations). -->
+    <InternalsVisibleTo Include="TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests" />
+  </ItemGroup>
+
+  <!--
+    Floor the framework-extension deps at 9.0.0. Unlike TheKrystalShip.Llm (which floors at
+    8.0.0 and references nothing heavier), this lib hard-depends on kgsm-lib, which itself
+    requires Microsoft.Extensions.* >= 9.0.0 — pinning 8.0.0 here is a package downgrade
+    (NU1605). Microsoft.Extensions.Http supplies the typed-client AddHttpClient overload the
+    Tavily registration uses; it is NOT part of the base shared framework, so it must be
+    referenced explicitly (the Web SDK gave it to the Service transitively before this extraction).
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The assistant ports this lib satisfies (IServerInventory / IServerOperations /
+         IWebSearch) + the reusable Result type. -->
+    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The single C#<->kgsm chokepoint. Consume the local checkout (the canonical dev
+         source), same as the Service does — this lib needs the local lib's Reading<T>
+         bulk-status shape and is otherwise stranded across the 1.3.0 breaking release. -->
+    <ProjectReference Include="..\..\kgsm-lib\kgsm-lib\kgsm-lib.csproj" />
+  </ItemGroup>
+
+</Project>

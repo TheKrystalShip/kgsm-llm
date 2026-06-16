@@ -5,7 +5,7 @@ using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.Llm.Models;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 
 /// <summary>
 /// Satisfies the assistant's <see cref="IServerOperations"/> port by calling KGSM.Lib's

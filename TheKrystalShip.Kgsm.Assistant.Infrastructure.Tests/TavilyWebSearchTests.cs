@@ -6,10 +6,10 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
-using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
-using TheKrystalShip.Kgsm.Assistant.Service.Search;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Search;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 /// <summary>
 /// Unit-tests the Tavily adapter's request/response mapping over a stubbed transport — no

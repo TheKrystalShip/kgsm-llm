@@ -21,18 +21,11 @@
   <ItemGroup>
     <!-- The reusable agent loop + the kgsm assistant (prompt, tools, dispatcher,
          policy, ConfirmAsync). The assistant stays KGSM.Lib-free; the KGSM.Lib glue
-         that satisfies its ports lives in this service. -->
+         that satisfies its ports now lives in the shared Infrastructure library
+         (AddKgsmAdapters), which this service and the CLI both sit on. -->
     <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Dev loop: consume the local kgsm-lib checkout (the canonical dev source)
-         rather than the stale NuGet 1.1.0 — the Service needs the local lib's
-         Reading<T> bulk-status shape (Phase 0) and is otherwise stranded across
-         the 1.3.0 breaking release. Release-time packaging is a separate, later
-         decision (no publish pipeline exists yet). -->
-    <ProjectReference Include="..\..\kgsm-lib\kgsm-lib\kgsm-lib.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

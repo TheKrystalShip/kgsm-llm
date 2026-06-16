@@ -5,14 +5,14 @@ using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
-using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
-using TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 
 using Xunit;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 public class KgsmServerInventoryTests
 {

@@ -4,83 +4,38 @@ using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Extensions;
-using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
-using TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
-using TheKrystalShip.Kgsm.Assistant.Service.Search;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
-using TheKrystalShip.KGSM.Core.Interfaces;
-using TheKrystalShip.KGSM.Core.Models;
-using TheKrystalShip.KGSM.Services;
 using TheKrystalShip.Llm.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// --- Options -----------------------------------------------------------------
-builder.Services.Configure<InventoryCacheOptions>(
-    builder.Configuration.GetSection(InventoryCacheOptions.Section));
+// --- Options (web-only) ------------------------------------------------------
+// The kgsm/inventory/web-search options moved to the Infrastructure library and are bound by
+// AddKgsmAdapters below. These three stay here — they are web-host concerns (auth + webhook).
 builder.Services.Configure<AssistantServiceOptions>(
     builder.Configuration.GetSection(AssistantServiceOptions.Section));
 builder.Services.Configure<DiscordOAuthOptions>(
     builder.Configuration.GetSection(DiscordOAuthOptions.Section));
 builder.Services.Configure<AuthOptions>(
     builder.Configuration.GetSection(AuthOptions.Section));
-builder.Services.Configure<WebSearchOptions>(
-    builder.Configuration.GetSection(WebSearchOptions.Section));
 
-var kgsm = builder.Configuration.GetSection(KgsmConnectionOptions.Section).Get<KgsmConnectionOptions>()
-    ?? throw new InvalidOperationException("KGSM configuration section is missing.");
-
-// --- LLM + assistant ---------------------------------------------------------
+// --- LLM + assistant + kgsm adapters -----------------------------------------
 // The reusable agent loop (Ollama client, conversation store) and the kgsm assistant
 // (prompt builder with the lib's canonical prompt, tool dispatcher, policy, ConfirmAsync).
 // No Llm:* config is required here — the prompt text lives in the library.
 builder.Services.AddLocalLlm(builder.Configuration);
 builder.Services.AddKgsmAssistant();
-
-// --- KGSM.Lib + the port adapters that back the assistant --------------------
-// We register the command-executor service graph (which shells out to kgsm) by hand
-// instead of KGSM.Lib's AddKgsmServices: that also wires IUnixSocketClient / IEventService
-// / IKgsmClient, whose construction auto-starts the Unix-socket event listener and would
-// contend with the bot for the single kgsm event socket. This service receives events over
-// the /events webhook, so it must never bind that socket — hence we register only the
-// IKgsmCommandExecutor graph the inventory needs and omit those three socket-bound singletons.
-// (SocketPath is left empty: nothing here follows logs over the socket.)
-builder.Services.AddSingleton(new KgsmOptions { KgsmPath = kgsm.Path });
-builder.Services.AddSingleton<IProcessRunner, ProcessRunner>();
-builder.Services.AddSingleton<IKgsmCommandExecutor, KgsmCommandExecutor>();
-builder.Services.AddSingleton<ILogSubscriptionService, LogSubscriptionService>();
-builder.Services.AddSingleton<ILifecycleService, LifecycleService>();
-builder.Services.AddSingleton<IInstanceService, InstanceService>();
-builder.Services.AddSingleton<IBlueprintService, BlueprintService>();
-builder.Services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
-
-builder.Services.AddSingleton<KgsmServerInventory>();
-builder.Services.AddSingleton<IServerInventory>(sp => sp.GetRequiredService<KgsmServerInventory>());
-// Ambient provenance (who/through-what) for the current action — set per request at /turn and /confirm
-// from the verified principal, read at the kgsm chokepoint so every mutation is attributable. Singleton:
-// the AsyncLocal inside isolates the value per request flow.
-builder.Services.AddSingleton<IInvocationContext, AsyncLocalInvocationContext>();
-builder.Services.AddSingleton<IServerOperations, KgsmServerOperations>();
-
-// --- Web search (Tavily) -----------------------------------------------------
-// The assistant's web_search port. Registered AFTER AddKgsmAssistant() (which TryAdds a
-// fail-closed DisabledWebSearch), so this concrete adapter is the one resolved. The API key
-// is ENV-ONLY (WebSearch__ApiKey) and travels as a default Bearer header; with no key the
-// adapter fails closed. DailyCallBudget is the singleton wallet cap (the tool is offered to
-// everyone, so it's the only spend gate); the per-message cap lives in the assistant.
-builder.Services.AddSingleton<DailyCallBudget>();
-builder.Services.AddHttpClient<IWebSearch, TavilyWebSearch>((sp, client) =>
-{
-    var options = sp.GetRequiredService<IOptions<WebSearchOptions>>().Value;
-    client.BaseAddress = new Uri("https://api.tavily.com/");
-    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds <= 0 ? 10 : options.TimeoutSeconds);
-    if (!string.IsNullOrWhiteSpace(options.ApiKey))
-        client.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.ApiKey);
-});
+// The kgsm-lib graph + port adapters + Tavily web search, behind one socket-safe seam shared
+// with the CLI. MUST come AFTER AddKgsmAssistant so the concrete IWebSearch (TavilyWebSearch)
+// wins over the library's fail-closed DisabledWebSearch default. AddKgsmAdapters reads the KGSM,
+// InventoryCache and WebSearch config sections.
+builder.Services.AddKgsmAdapters(builder.Configuration);
 
 // --- Security ----------------------------------------------------------------
 builder.Services.AddSingleton<ConfirmationTokenService>();
@@ -160,7 +115,7 @@ app.MapPost("/auth/callback", async (AuthCallbackRequest request, DiscordAuthSer
 
 app.MapPost("/events", async (
     HttpRequest httpRequest,
-    KgsmServerInventory inventory,
+    IInventoryInvalidation inventory,
     IOptions<AssistantServiceOptions> options,
     ILoggerFactory loggerFactory,
     CancellationToken ct) =>

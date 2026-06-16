@@ -1,25 +1,9 @@
+// NOTE: KgsmConnectionOptions, InventoryCacheOptions, and WebSearchOptions moved to
+// TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration when the kgsm-lib adapters were
+// extracted into the shared infra library (both this service and the CLI bind them via
+// AddKgsmAdapters). The web-only options below stay here.
+
 namespace TheKrystalShip.Kgsm.Assistant.Service.Configuration;
-
-/// <summary>
-/// Where the service finds kgsm. Bound from the "KGSM" config section. Only the executable
-/// path is needed — the service shells out to kgsm for reads/writes and receives events over
-/// the HTTP webhook, so (unlike the bot) it has NO event socket and binds none.
-/// </summary>
-public sealed class KgsmConnectionOptions
-{
-    public const string Section = "KGSM";
-
-    public string Path { get; set; } = string.Empty;
-}
-
-/// <summary>TTLs for the in-process inventory cache (a backstop; the webhook invalidates on change).</summary>
-public sealed class InventoryCacheOptions
-{
-    public const string Section = "InventoryCache";
-
-    public int InstancesTtlSeconds { get; set; } = 300;
-    public int BlueprintsTtlSeconds { get; set; } = 600;
-}
 
 /// <summary>Assistant-service policy and secrets. Bound from the "Assistant" section.</summary>
 public sealed class AssistantServiceOptions
@@ -45,37 +29,6 @@ public sealed class ConfirmationOptions
 
     /// <summary>How long a staged confirmation token stays valid. Keep short — re-validation backstops replay.</summary>
     public int TtlSeconds { get; set; } = 300;
-}
-
-/// <summary>
-/// Tavily web-search provider settings + the daily spend guard. Bound from the "WebSearch"
-/// section. The tool is offered to everyone (read-only tier), so <see cref="MaxCallsPerDay"/>
-/// is the wallet backstop in front of Tavily's free-credit limit; the per-message cap lives in
-/// the assistant gate. Search is disabled (fails closed) whenever <see cref="ApiKey"/> is empty.
-/// </summary>
-public sealed class WebSearchOptions
-{
-    public const string Section = "WebSearch";
-
-    /// <summary>
-    /// Tavily API key (<c>tvly-…</c>). ENV-ONLY: leave empty in appsettings.json and supply
-    /// <c>WebSearch__ApiKey</c> via the environment at runtime — same discipline as the
-    /// DiscordOAuth secrets. Empty disables web search.
-    /// </summary>
-    public string ApiKey { get; set; } = string.Empty;
-
-    /// <summary>Results requested per search. Small keeps the grounding text (and context use) modest.</summary>
-    public int MaxResults { get; set; } = 4;
-
-    /// <summary><c>"basic"</c> (1 credit) or <c>"advanced"</c> (2 credits). Basic is plenty for lookups.</summary>
-    public string SearchDepth { get; set; } = "basic";
-
-    /// <summary>Per-request timeout. The agent loop blocks on this, so keep it short.</summary>
-    public int TimeoutSeconds { get; set; } = 10;
-
-    /// <summary>Process-wide ceiling on searches per UTC day — the wallet backstop. Keep well under
-    /// the provider's monthly free credit; given the read-only tier, this is the only spend gate.</summary>
-    public int MaxCallsPerDay { get; set; } = 200;
 }
 
 /// <summary>Shared secret for verifying inbound kgsm webhook signatures.</summary>

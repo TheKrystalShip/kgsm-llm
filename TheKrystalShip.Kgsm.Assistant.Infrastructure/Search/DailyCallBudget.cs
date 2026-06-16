@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Options;
 
-using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Search;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Search;
 
 /// <summary>
 /// Process-wide daily ceiling on outbound web searches — the wallet backstop. Because the

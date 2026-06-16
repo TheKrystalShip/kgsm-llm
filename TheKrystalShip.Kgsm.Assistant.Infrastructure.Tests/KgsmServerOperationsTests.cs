@@ -5,13 +5,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
-using TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 
 using Xunit;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 /// <summary>
 /// Covers the two pieces of <see cref="KgsmServerOperations"/> with real logic

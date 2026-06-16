@@ -5,12 +5,12 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
-using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
-using TheKrystalShip.Kgsm.Assistant.Service.Search;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Search;
 
 using Xunit.Abstractions;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 /// <summary>
 /// Live smoke test against the REAL Tavily API, exercising the actual adapter code path

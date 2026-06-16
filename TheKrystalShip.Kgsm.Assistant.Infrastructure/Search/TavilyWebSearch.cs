@@ -1,13 +1,15 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
-using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.Llm.Models;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Search;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Search;
 
 /// <summary>
 /// Tavily-backed <see cref="IWebSearch"/>. A typed <see cref="HttpClient"/> (factory-owned,

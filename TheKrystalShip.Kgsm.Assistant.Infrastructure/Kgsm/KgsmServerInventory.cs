@@ -2,23 +2,23 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
-using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.KGSM.Core.Interfaces;
 
-namespace TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
+namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 
 /// <summary>
 /// Satisfies the assistant's <see cref="IServerInventory"/> port from KGSM.Lib's
 /// <see cref="IInstanceService"/> / <see cref="IBlueprintService"/>, with a TTL cache,
 /// dirty-flag invalidation, and last-known-good on refresh failure — the same shape as the
-/// bot's <c>KgsmStateCache</c>. The bot invalidates from socket events; this service
-/// invalidates from the <c>/events</c> webhook via <see cref="Invalidate"/>.
+/// bot's <c>KgsmStateCache</c>. Hosts invalidate via <see cref="IInventoryInvalidation"/>: the
+/// HTTP service from its <c>/events</c> webhook, the CLI after a confirmed mutating action.
 /// <para>
-/// Note it depends on the instance/blueprint services, NOT <c>IKgsmClient</c>, so the service
+/// Note it depends on the instance/blueprint services, NOT <c>IKgsmClient</c>, so the host
 /// never constructs KGSM.Lib's socket event listener (see <see cref="KgsmServerOperations"/>).
 /// </para>
 /// </summary>
-internal sealed class KgsmServerInventory : IServerInventory
+internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalidation
 {
     private static readonly IReadOnlyDictionary<string, string> EmptyInstances = new Dictionary<string, string>();
     private static readonly IReadOnlyCollection<string> EmptyBlueprints = Array.Empty<string>();

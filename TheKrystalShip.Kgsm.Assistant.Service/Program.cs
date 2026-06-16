@@ -56,6 +56,10 @@ builder.Services.AddSingleton<ISystemService, SystemService>();   // host disk f
 
 builder.Services.AddSingleton<KgsmServerInventory>();
 builder.Services.AddSingleton<IServerInventory>(sp => sp.GetRequiredService<KgsmServerInventory>());
+// Ambient provenance (who/through-what) for the current action — set per request at /turn and /confirm
+// from the verified principal, read at the kgsm chokepoint so every mutation is attributable. Singleton:
+// the AsyncLocal inside isolates the value per request flow.
+builder.Services.AddSingleton<IInvocationContext, AsyncLocalInvocationContext>();
 builder.Services.AddSingleton<IServerOperations, KgsmServerOperations>();
 
 // --- Security ----------------------------------------------------------------
@@ -206,6 +210,7 @@ secured.MapPost("/turn", async (
     IServerAssistant assistant,
     ConfirmationTokenService tokens,
     DiscordAuthService auth,
+    IInvocationContext invocation,
     CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.Prompt))
@@ -217,6 +222,10 @@ secured.MapPost("/turn", async (
     // principal-scoped so one user can't read or poison another's memory.
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
     var conversationId = $"web:{principal.UserId}";
+
+    // Attribute any server mutation this turn runs to the asking user (origin=assistant); flows down the
+    // awaited turn → tool dispatch → kgsm chokepoint. Covers both the SSE and buffered paths below.
+    using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
 
     // Opt into token streaming with `Accept: text/event-stream`; everyone else gets the buffered
     // JSON contract unchanged. (SSE here is POST, so the SPA reads it via fetch()+ReadableStream —
@@ -251,6 +260,7 @@ secured.MapPost("/confirm", async (
     IServerAssistant assistant,
     ConfirmationTokenService tokens,
     DiscordAuthService auth,
+    IInvocationContext invocation,
     CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
@@ -263,6 +273,8 @@ secured.MapPost("/confirm", async (
 
     // Re-derive authority FRESH at confirm time — never trust it from the token.
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    // The confirming user is the authority for the action they just approved (origin=assistant).
+    using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
     var result = await assistant.ConfirmAsync(confirmation, canPerform, ct);
 
     return Results.Ok(new ConfirmResponse(

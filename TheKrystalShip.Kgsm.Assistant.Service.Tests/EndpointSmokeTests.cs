@@ -16,6 +16,8 @@ using NSubstitute;
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 
 using Xunit;
 
@@ -138,6 +140,48 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var response = await bob.PostAsJsonAsync("/confirm", new { token = aliceToken });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Confirm_Command_StampsProvenance_AtTheKgsmChokepoint()
+    {
+        // The one link that was proven only by static-read: the REAL /confirm handler opening the
+        // provenance scope in the live ASP.NET pipeline (IInvocationContext singleton +
+        // principal.DisplayName → ForAssistant), flowing through the real ServerAssistant and
+        // KgsmServerOperations to the kgsm chokepoint (IInstanceService). Commands are propose-only,
+        // so the mutation fires HERE at /confirm — a plain async handler, NO SSE/iterator on this
+        // path — which is exactly why this is the path that must carry actor+origin. Everything is
+        // real except the engine boundary (spied) and Discord (spied for the live role check).
+        var instances = Substitute.For<IInstanceService>();
+        instances.GetAll().Returns(new Dictionary<string, Instance>
+        {
+            ["inst"] = new Instance { Name = "inst", BlueprintFile = "factorio" },
+        });
+        instances.Start("inst", Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0));
+
+        // canPerformActions is re-derived live from the principal's guild role at confirm time.
+        var discord = Substitute.For<IDiscordOAuthClient>();
+        discord.GetGuildMemberAsync("user1", Arg.Any<CancellationToken>())
+            .Returns(new DiscordGuildMember { Roles = new[] { "role-123" } });
+
+        var factory = Factory(discord: discord, configure: b =>
+        {
+            b.UseSetting("Assistant:ActionsEnabled", "true");
+            b.UseSetting("Assistant:Confirmation:Key", "test-key");
+            b.UseSetting("DiscordOAuth:ActionRoleId", "role-123");
+            b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
+        });
+
+        var client = Authed(factory); // userId=user1, DisplayName="User One"
+        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
+        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+
+        var response = await client.PostAsJsonAsync("/confirm", new { token });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        // The engine call was attributed to the confirming Discord user, via the assistant surface —
+        // NOT the bare OS-user fallback (which would be null, null → unattributed audit row).
+        instances.Received(1).Start("inst", "discord:User One", "assistant");
     }
 
     [Fact]

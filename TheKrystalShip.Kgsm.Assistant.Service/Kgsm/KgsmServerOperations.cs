@@ -24,30 +24,56 @@ internal sealed class KgsmServerOperations : IServerOperations
 {
     private readonly IInstanceService _instances;
     private readonly ISystemService _system;
+    private readonly IInvocationContext _invocation;
     private readonly ILogger<KgsmServerOperations> _logger;
 
     public KgsmServerOperations(
-        IInstanceService instances, ISystemService system, ILogger<KgsmServerOperations> logger)
+        IInstanceService instances, ISystemService system, IInvocationContext invocation,
+        ILogger<KgsmServerOperations> logger)
     {
         _instances = instances;
         _system = system;
+        _invocation = invocation;
         _logger = logger;
     }
 
-    public Task<Result> StartAsync(string instance, CancellationToken cancellationToken = default) =>
-        RunAsync(nameof(StartAsync), instance, () => _instances.Start(instance), cancellationToken);
+    // The provenance of the action being performed (set at the HTTP entry point), or (null, null) for a
+    // non-attributed path — KGSM then applies its honest fallback, never a fabricated actor.
+    private (string? Actor, string? Origin) Provenance()
+    {
+        Invocation? inv = _invocation.Current;
+        return (inv?.Actor, inv?.Origin);
+    }
 
-    public Task<Result> StopAsync(string instance, CancellationToken cancellationToken = default) =>
-        RunAsync(nameof(StopAsync), instance, () => _instances.Stop(instance), cancellationToken);
+    public Task<Result> StartAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(StartAsync), instance, () => _instances.Start(instance, actor, origin), cancellationToken);
+    }
 
-    public Task<Result> RestartAsync(string instance, CancellationToken cancellationToken = default) =>
-        RunAsync(nameof(RestartAsync), instance, () => _instances.Restart(instance), cancellationToken);
+    public Task<Result> StopAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(StopAsync), instance, () => _instances.Stop(instance, actor, origin), cancellationToken);
+    }
 
-    public Task<Result> CreateBackupAsync(string instance, CancellationToken cancellationToken = default) =>
-        RunAsync(nameof(CreateBackupAsync), instance, () => _instances.CreateBackup(instance), cancellationToken);
+    public Task<Result> RestartAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(RestartAsync), instance, () => _instances.Restart(instance, actor, origin), cancellationToken);
+    }
 
-    public Task<Result> UpdateAsync(string instance, CancellationToken cancellationToken = default) =>
-        RunAsync(nameof(UpdateAsync), instance, () => _instances.Update(instance), cancellationToken);
+    public Task<Result> CreateBackupAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(CreateBackupAsync), instance, () => _instances.CreateBackup(instance, actor, origin), cancellationToken);
+    }
+
+    public Task<Result> UpdateAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(UpdateAsync), instance, () => _instances.Update(instance, actor, origin), cancellationToken);
+    }
 
     public async Task<Result<string>> GetStatusAsync(string instance, CancellationToken cancellationToken = default)
     {
@@ -297,7 +323,8 @@ internal sealed class KgsmServerOperations : IServerOperations
         {
             // Long-running; completion is also broadcast via events. Mirror the bot: run it
             // and report queued-successfully unless it throws synchronously.
-            await Task.Run(() => _instances.Install(blueprint, null, null, instanceName), cancellationToken);
+            var (actor, origin) = Provenance();
+            await Task.Run(() => _instances.Install(blueprint, null, null, instanceName, actor, origin), cancellationToken);
             return Result.Success();
         }
         catch (Exception ex)
@@ -311,7 +338,8 @@ internal sealed class KgsmServerOperations : IServerOperations
     {
         try
         {
-            await Task.Run(() => _instances.Uninstall(instance), cancellationToken);
+            var (actor, origin) = Provenance();
+            await Task.Run(() => _instances.Uninstall(instance, actor, origin), cancellationToken);
             return Result.Success();
         }
         catch (Exception ex)
@@ -322,11 +350,14 @@ internal sealed class KgsmServerOperations : IServerOperations
     }
 
     public Task<Result> SetInstanceConfigValueAsync(
-        string instance, string key, string value, CancellationToken cancellationToken = default) =>
+        string instance, string key, string value, CancellationToken cancellationToken = default)
+    {
         // RunAsync surfaces kgsm's stderr on a non-zero exit, so a denylisted/invalid key
         // (kgsm owns that policy) reaches the user as the failed Result's message.
-        RunAsync(nameof(SetInstanceConfigValueAsync), instance,
-            () => _instances.SetInstanceConfigValue(instance, key, value), cancellationToken);
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(SetInstanceConfigValueAsync), instance,
+            () => _instances.SetInstanceConfigValue(instance, key, value, actor, origin), cancellationToken);
+    }
 
     private async Task<Result> RunAsync(
         string op, string instance, Func<KgsmResult> action, CancellationToken cancellationToken)

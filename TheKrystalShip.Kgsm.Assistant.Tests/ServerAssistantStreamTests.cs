@@ -140,6 +140,51 @@ public class ServerAssistantStreamTests
         events.Should().NotContain(e => e.Kind == AssistantEventKind.Final);
     }
 
+    // A consumer-set ambient stands in for the Service's IInvocationContext (provenance: who/through-what),
+    // which the /turn handler opens BEFORE consuming RunStreamAsync. It must reach the agent-loop flow —
+    // that is where the kgsm chokepoint (KgsmServerOperations) reads it to stamp the audit event.
+    private static readonly AsyncLocal<string?> _consumerAmbient = new();
+
+    [Fact]
+    public async Task ConsumerSetAmbient_FlowsIntoTheAgentLoop_IncludingAfterAYield()
+    {
+        // The provenance flow under test: the /turn handler sets an AsyncLocal, then (for SSE) awaits
+        // SseTurnWriter, which `await foreach`-es RunStreamAsync. RunStreamAsync ferries the turn out
+        // through a channel + an inner iterator — the same structure whose yields drop an ambient set
+        // INSIDE it (see the confirmation-scope note above). A consumer-set ambient is different: it is
+        // captured when ProduceStreamAsync starts (during the consumer's first MoveNextAsync, inside the
+        // scope) and must stay visible to the whole agent loop — including reads that happen AFTER an
+        // event has been yielded back out to the consumer (where the real tool dispatch reads it).
+        var confirmations = new ConfirmationContext();
+        var agent = new ScriptedAgent(
+            confirmations,
+            new[]
+            {
+                AgentEvent.ToolStart("server_command", new Dictionary<string, string?>()),
+                AgentEvent.Token("Working…"),
+                AgentEvent.Final("Done."),
+            },
+            // Probe the ambient at the exact flow where KgsmServerOperations.Provenance() reads it:
+            // inside the agent loop, on the ProduceStreamAsync flow.
+            ambientProbe: () => _consumerAmbient.Value);
+
+        var previous = _consumerAmbient.Value;
+        _consumerAmbient.Value = "discord:Haru"; // set by the consumer BEFORE it begins enumerating
+        try
+        {
+            await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "restart it", true));
+        }
+        finally
+        {
+            _consumerAmbient.Value = previous; // restore (static AsyncLocal is shared across tests)
+        }
+
+        // Up-front AND every post-yield observation must see the consumer's value — never null
+        // (the silent-failure mode: a dropped ambient → an unattributed audit row that looks fine).
+        agent.AmbientObservations.Should().NotBeEmpty();
+        agent.AmbientObservations.Should().OnlyContain(v => v == "discord:Haru");
+    }
+
     [Fact]
     public async Task InterleavedStreams_DoNotCrossContaminateStagedConfirmations()
     {
@@ -182,24 +227,38 @@ public class ServerAssistantStreamTests
         private readonly IReadOnlyList<AgentEvent> _events;
         private readonly IReadOnlyList<PendingConfirmation> _stage;
         private readonly int _stageAfter;
+        private readonly Func<string?>? _ambientProbe;
 
         public AgentTurn? LastTurn { get; private set; }
+
+        /// <summary>
+        /// Every value the <c>ambientProbe</c> read, in order: once on entry (a tool dispatched up
+        /// front) and once after each yielded event (a dispatch on the resumed flow). Stands in for
+        /// each point KgsmServerOperations would read the provenance ambient during the turn.
+        /// </summary>
+        public List<string?> AmbientObservations { get; } = new();
 
         /// <param name="stageAfter">
         /// Stage the ops only after this many events have been yielded (0 = up front, before any
         /// yield). A positive value reproduces a staging that happens after the consumer has
         /// already pulled earlier events — the timing where the ambient AsyncLocal would be lost.
         /// </param>
+        /// <param name="ambientProbe">
+        /// If supplied, read on entry and after each yield, recording into <see cref="AmbientObservations"/> —
+        /// reproducing the kgsm chokepoint reading a consumer-set provenance ambient inside the agent loop.
+        /// </param>
         public ScriptedAgent(
             IConfirmationContext confirmations,
             IReadOnlyList<AgentEvent> events,
             IReadOnlyList<PendingConfirmation>? stage = null,
-            int stageAfter = 0)
+            int stageAfter = 0,
+            Func<string?>? ambientProbe = null)
         {
             _confirmations = confirmations;
             _events = events;
             _stage = stage ?? Array.Empty<PendingConfirmation>();
             _stageAfter = stageAfter;
+            _ambientProbe = ambientProbe;
         }
 
         public Task<Result<string>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default) =>
@@ -212,11 +271,13 @@ public class ServerAssistantStreamTests
             // Stage within this flow (the dispatcher would stage here, inside the BeginTurn scope).
             if (_stageAfter == 0)
                 Stage();
+            Probe(); // a tool dispatched up front, before any event is yielded out
 
             for (var i = 0; i < _events.Count; i++)
             {
                 await Task.Yield();
                 yield return _events[i];
+                Probe(); // a tool dispatched after the consumer pulled this event (post-yield flow)
                 if (_stageAfter > 0 && i + 1 == _stageAfter)
                     Stage(); // runs on the NEXT MoveNextAsync — i.e. after the consumer pulled this event
             }
@@ -226,6 +287,12 @@ public class ServerAssistantStreamTests
         {
             foreach (var c in _stage)
                 _confirmations.Stage(c);
+        }
+
+        private void Probe()
+        {
+            if (_ambientProbe is not null)
+                AmbientObservations.Add(_ambientProbe());
         }
     }
 }

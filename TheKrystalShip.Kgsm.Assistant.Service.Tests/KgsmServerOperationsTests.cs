@@ -23,6 +23,7 @@ public sealed class KgsmServerOperationsTests : IDisposable
 {
     private readonly IInstanceService _instances = Substitute.For<IInstanceService>();
     private readonly ISystemService _system = Substitute.For<ISystemService>();
+    private readonly AsyncLocalInvocationContext _invocation = new();
     private readonly string _root;     // stand-in for an instance (config) directory
     private readonly string _outside;  // a sibling tree the read must never reach
 
@@ -42,7 +43,57 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     private KgsmServerOperations Create() =>
-        new(_instances, _system, NullLogger<KgsmServerOperations>.Instance);
+        new(_instances, _system, _invocation, NullLogger<KgsmServerOperations>.Instance);
+
+    // --- provenance: a turn/confirm scope stamps actor (the Discord principal) + origin=assistant ---
+
+    [Fact]
+    public async Task StartAsync_WithinInvocationScope_StampsActorAndAssistantOrigin()
+    {
+        _instances.Start(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new KgsmResult(0, "ok"));
+        KgsmServerOperations ops = Create();
+
+        using (_invocation.Begin(Invocation.ForAssistant("Haru")))
+            await ops.StartAsync("inst");
+
+        _instances.Received(1).Start("inst", "discord:Haru", "assistant");
+    }
+
+    [Fact]
+    public async Task Mutations_WithinScope_AllCarryProvenance()
+    {
+        _instances.Update(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0, "ok"));
+        _instances.CreateBackup(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0, "ok"));
+        _instances.SetInstanceConfigValue(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0, "ok"));
+        _instances.Install(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0, "ok"));
+        KgsmServerOperations ops = Create();
+
+        using (_invocation.Begin(Invocation.ForAssistant("Haru")))
+        {
+            await ops.UpdateAsync("inst");
+            await ops.CreateBackupAsync("inst");
+            await ops.SetInstanceConfigValueAsync("inst", "key", "val");
+            await ops.InstallAsync("valheim", "my-server");
+        }
+
+        _instances.Received(1).Update("inst", "discord:Haru", "assistant");
+        _instances.Received(1).CreateBackup("inst", "discord:Haru", "assistant");
+        _instances.Received(1).SetInstanceConfigValue("inst", "key", "val", "discord:Haru", "assistant");
+        _instances.Received(1).Install("valheim", null, null, "my-server", "discord:Haru", "assistant");
+    }
+
+    [Fact]
+    public async Task StartAsync_OutsideAnyScope_PassesNullProvenance_KgsmKeepsItsFallback()
+    {
+        _instances.Start(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new KgsmResult(0, "ok"));
+        KgsmServerOperations ops = Create();
+
+        await ops.StartAsync("inst"); // no Begin() scope
+
+        _instances.Received(1).Start("inst", null, null); // honest-unknown, never fabricated
+    }
 
     /// <summary>
     /// Stub kgsm's config-path resolution (<c>instances find</c> → __find_instance_config)

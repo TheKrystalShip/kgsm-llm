@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TheKrystalShip.Kgsm.Assistant.Cli</RootNamespace>
+    <!-- The binary on PATH is `kgsm-assistant`, not the dotted project name. -->
+    <AssemblyName>kgsm-assistant</AssemblyName>
+    <!-- Dev runs (dotnet run) use the installed net9 runtime; the shipped artifact is a
+         self-contained single-file publish (Step 5), so this only helps a framework-dependent
+         dev box that has a newer major than 9. -->
+    <RollForward>LatestMajor</RollForward>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Backend, three calls: AddLocalLlm (Llm) + AddKgsmAssistant (Assistant) +
+         AddKgsmAdapters (Infrastructure, the socket-safe seam). No ASP.NET. -->
+    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- HostApplicationBuilder (config + DI + logging). The meta-package brings the JSON /
+         env-var config providers and the console logger the composition root uses. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Let the test project exercise the arg parser + renderer (both internal). -->
+    <InternalsVisibleTo Include="TheKrystalShip.Kgsm.Assistant.Cli.Tests" />
+  </ItemGroup>
+
+</Project>

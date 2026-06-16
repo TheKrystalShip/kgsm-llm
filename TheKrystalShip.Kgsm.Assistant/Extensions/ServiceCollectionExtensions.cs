@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
 
 namespace TheKrystalShip.Kgsm.Assistant.Extensions;
@@ -27,6 +28,11 @@ public static class ServiceCollectionExtensions
         // The §3.2 relevance seam: a deliberate no-op today (coarse/bulk tools are the
         // small-model fix). A host can override with its own filter before this call.
         services.TryAddSingleton<IToolRelevanceFilter, NoopToolRelevanceFilter>();
+        // web_search degrades closed if no provider is wired: a host that wants real search
+        // registers a concrete IWebSearch adapter (e.g. AddHttpClient<IWebSearch, TavilyWebSearch>)
+        // and that later registration is the one resolved. Without one, searches fail cleanly
+        // rather than breaking DI — keeps the lib embeddable by a host that doesn't use search.
+        services.TryAddSingleton<IWebSearch, DisabledWebSearch>();
         services.AddSingleton<IServerAssistant, ServerAssistant>();
 
         return services;

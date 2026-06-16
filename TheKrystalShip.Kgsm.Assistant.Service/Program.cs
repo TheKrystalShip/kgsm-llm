@@ -9,6 +9,7 @@ using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Service.Search;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
@@ -26,6 +27,8 @@ builder.Services.Configure<DiscordOAuthOptions>(
     builder.Configuration.GetSection(DiscordOAuthOptions.Section));
 builder.Services.Configure<AuthOptions>(
     builder.Configuration.GetSection(AuthOptions.Section));
+builder.Services.Configure<WebSearchOptions>(
+    builder.Configuration.GetSection(WebSearchOptions.Section));
 
 var kgsm = builder.Configuration.GetSection(KgsmConnectionOptions.Section).Get<KgsmConnectionOptions>()
     ?? throw new InvalidOperationException("KGSM configuration section is missing.");
@@ -61,6 +64,23 @@ builder.Services.AddSingleton<IServerInventory>(sp => sp.GetRequiredService<Kgsm
 // the AsyncLocal inside isolates the value per request flow.
 builder.Services.AddSingleton<IInvocationContext, AsyncLocalInvocationContext>();
 builder.Services.AddSingleton<IServerOperations, KgsmServerOperations>();
+
+// --- Web search (Tavily) -----------------------------------------------------
+// The assistant's web_search port. Registered AFTER AddKgsmAssistant() (which TryAdds a
+// fail-closed DisabledWebSearch), so this concrete adapter is the one resolved. The API key
+// is ENV-ONLY (WebSearch__ApiKey) and travels as a default Bearer header; with no key the
+// adapter fails closed. DailyCallBudget is the singleton wallet cap (the tool is offered to
+// everyone, so it's the only spend gate); the per-message cap lives in the assistant.
+builder.Services.AddSingleton<DailyCallBudget>();
+builder.Services.AddHttpClient<IWebSearch, TavilyWebSearch>((sp, client) =>
+{
+    var options = sp.GetRequiredService<IOptions<WebSearchOptions>>().Value;
+    client.BaseAddress = new Uri("https://api.tavily.com/");
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds <= 0 ? 10 : options.TimeoutSeconds);
+    if (!string.IsNullOrWhiteSpace(options.ApiKey))
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.ApiKey);
+});
 
 // --- Security ----------------------------------------------------------------
 builder.Services.AddSingleton<ConfirmationTokenService>();

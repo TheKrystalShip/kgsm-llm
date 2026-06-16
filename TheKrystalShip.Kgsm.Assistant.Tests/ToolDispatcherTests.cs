@@ -20,6 +20,7 @@ public class ToolDispatcherTests
 {
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
+    private readonly IWebSearch _webSearch = Substitute.For<IWebSearch>();
     private readonly ConfirmationContext _confirmations = new();
 
     public ToolDispatcherTests()
@@ -40,7 +41,7 @@ public class ToolDispatcherTests
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _webSearch, NullLogger<ToolDispatcher>.Instance);
 
     private static LlmToolCall Call(string name, string instance) =>
         new(name, new Dictionary<string, string?> { ["instance_name"] = instance });
@@ -66,6 +67,9 @@ public class ToolDispatcherTests
             ["config_key"] = key,
             ["config_value"] = value,
         });
+
+    private static LlmToolCall SearchCall(string? query) =>
+        new(LlmTools.WebSearch, new Dictionary<string, string?> { ["query"] = query });
 
     [Fact]
     public async Task ExactName_Resolves_AndExecutes()
@@ -227,6 +231,60 @@ public class ToolDispatcherTests
             new LlmToolCall("delete_everything", new Dictionary<string, string?>()));
 
         result.Should().Contain("not a known tool");
+    }
+
+    // --- web_search (external lookup via the IWebSearch port) ---
+
+    [Fact]
+    public async Task WebSearch_ReturnsHits_AsGroundingStringWithSourceUrls()
+    {
+        _webSearch.SearchAsync("terraria latest version", Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<WebSearchHit>>(new[]
+            {
+                new WebSearchHit("Terraria 1.4.5", "https://terraria.org/news",
+                    "Terraria 1.4.5 is the latest stable release.", 0.98),
+            }));
+
+        var result = await Create().ExecuteAsync(SearchCall("terraria latest version"));
+
+        // Snippet + source URL make it into the grounding text, framed as external/cite-able.
+        result.Should().Contain("Terraria 1.4.5")
+            .And.Contain("https://terraria.org/news")
+            .And.Contain("out of date");
+        await _webSearch.Received(1).SearchAsync("terraria latest version", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WebSearch_BlankQuery_DoesNotCallProvider()
+    {
+        var result = await Create().ExecuteAsync(SearchCall("   "));
+
+        result.Should().Contain("needs a 'query'");
+        await _webSearch.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WebSearch_ProviderFailure_ReturnsGracefulMessage_AndTellsModelNotToRetry()
+    {
+        _webSearch.SearchAsync("anything", Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<IReadOnlyList<WebSearchHit>>("the daily web-search limit has been reached"));
+
+        var result = await Create().ExecuteAsync(SearchCall("anything"));
+
+        result.Should().Contain("didn't work")
+            .And.Contain("daily web-search limit")
+            .And.Contain("do not retry");
+    }
+
+    [Fact]
+    public async Task WebSearch_NoResults_SaysSo()
+    {
+        _webSearch.SearchAsync("something obscure", Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<WebSearchHit>>(Array.Empty<WebSearchHit>()));
+
+        var result = await Create().ExecuteAsync(SearchCall("something obscure"));
+
+        result.Should().Contain("No web results");
     }
 
     public static IEnumerable<object[]> StagedCommandCases() => new[]

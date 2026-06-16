@@ -30,6 +30,14 @@ public class ServerAssistant : IServerAssistant
     /// </summary>
     private const int MaxStagedCommandsPerMessage = 5;
 
+    /// <summary>
+    /// Per-message ceiling on web searches. Each search spends a provider credit and adds an
+    /// agent-loop iteration, so this stops one prompt from spraying searches (a runaway loop or
+    /// an over-eager refine). The per-day wallet cap is a separate, host-side backstop; this is
+    /// the in-turn guard. Tunable; kept small on purpose.
+    /// </summary>
+    private const int MaxWebSearchesPerMessage = 3;
+
     private readonly ILlmAgent _agent;
     private readonly ISystemPromptBuilder _promptBuilder;
     private readonly IConfirmationContext _confirmations;
@@ -366,8 +374,23 @@ public class ServerAssistant : IServerAssistant
     private static Func<LlmToolCall, ToolGate> BuildGate(bool canPerformActions)
     {
         var staged = 0;
+        var searches = 0;
         return call =>
         {
+            // web_search is read-only (open to everyone), but each call spends a credit, so it
+            // carries its own per-message cap — the wallet's in-turn guard (the per-day ceiling
+            // lives host-side). Checked before the read-only pass-through below.
+            if (call.Name == LlmTools.WebSearch)
+            {
+                if (searches >= MaxWebSearchesPerMessage)
+                    return ToolGate.Refuse(
+                        $"Refused: at most {MaxWebSearchesPerMessage} web searches per message. " +
+                        "Answer from what you already found, or tell the user you couldn't find it.");
+
+                searches++;
+                return ToolGate.Allow;
+            }
+
             if (LlmTools.IsAuthorizedRead(call.Name))
                 return canPerformActions
                     ? ToolGate.Allow

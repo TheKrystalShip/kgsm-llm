@@ -21,6 +21,7 @@ public static class LlmTools
     public const string GetStatus = "get_status";
     public const string ListBlueprints = "list_blueprints";
     public const string RunHealthCheck = "run_health_check";
+    public const string WebSearch = "web_search";
 
     // Authorized read (offered only to action-authorized callers — exposes file
     // contents, so gated like the command tier even though it mutates nothing)
@@ -94,6 +95,12 @@ public static class LlmTools
         "Which lifecycle action to take on the server: start, stop, restart, update, or backup.",
         AllowedValues: ServerCommandVerbs);
 
+    private static readonly LlmToolParameter SearchQuery = new(
+        "query",
+        "What to look up on the public web. For OUTSIDE facts only — e.g. a game's latest " +
+        "version, release notes, or what a config option means. NOT for anything about this " +
+        "host's own servers (status/config/health) — use the KGSM tools for those.");
+
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
         LlmToolDefinition.Create(GetStatus,
@@ -111,6 +118,15 @@ public static class LlmTools
             "checks host disk space. Use this for \"is X healthy / OK?\" or \"what's wrong with X?\" " +
             "instead of fetching status, logs and disk separately.",
             InstanceName),
+
+        LlmToolDefinition.Create(WebSearch,
+            "Search the public web and get back short extracted snippets, each with its source URL. " +
+            "Use it ONLY for outside facts that help with the games/servers — a game's latest " +
+            "version, patch notes, or what a setting does. The results are external and may be out " +
+            "of date, so cite the source URLs and don't state them as certain. Do NOT use this for " +
+            "anything about this host's own servers (status, config, health) — the KGSM tools are " +
+            "authoritative for those.",
+            SearchQuery),
     };
 
     /// <summary>

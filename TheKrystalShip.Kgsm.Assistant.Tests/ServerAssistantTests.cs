@@ -161,4 +161,38 @@ public class ServerAssistantTests
         turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeFalse();
         turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task Gate_AllowsWebSearchForUnauthorizedCaller_ButCapsItPerMessage()
+    {
+        // web_search is offered to everyone (read-only tier), so an unauthorized caller may use it —
+        // but each call spends a credit, so the gate caps it at three per message (the in-turn
+        // runaway-spend guard; the per-day wallet cap is a separate host-side backstop).
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+        var search = Call(LlmTools.WebSearch);
+
+        for (var i = 0; i < 3; i++)
+            turn.Gate!(search).Allowed.Should().BeTrue($"search {i} is within the per-message cap");
+
+        var fourth = turn.Gate!(search);
+        fourth.Allowed.Should().BeFalse();
+        fourth.RefusalMessage.Should().Contain("web searches per message");
+    }
+
+    [Fact]
+    public async Task Gate_WebSearchCap_IsSeparateFromTheStagingCap()
+    {
+        // The two budgets are independent counters: exhausting web searches must not eat into the
+        // command-staging budget, and web searches never consume staging slots.
+        var turn = await CaptureTurnAsync(canPerformActions: true);
+
+        for (var i = 0; i < 3; i++)
+            turn.Gate!(Call(LlmTools.WebSearch)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.WebSearch)).Allowed.Should().BeFalse(); // web cap hit
+
+        // The full staging budget is still intact.
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse();
+    }
 }

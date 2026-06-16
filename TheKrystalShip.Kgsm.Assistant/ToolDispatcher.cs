@@ -25,17 +25,20 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IServerOperations _operations;
     private readonly IServerInventory _inventory;
     private readonly IConfirmationContext _confirmations;
+    private readonly IWebSearch _webSearch;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
         IServerOperations operations,
         IServerInventory inventory,
         IConfirmationContext confirmations,
+        IWebSearch webSearch,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
         _inventory = inventory;
         _confirmations = confirmations;
+        _webSearch = webSearch;
         _logger = logger;
     }
 
@@ -51,6 +54,7 @@ public class ToolDispatcher : IToolDispatcher
                 LlmTools.GetStatus => await GetStatusAsync(call, cancellationToken),
                 LlmTools.ListBlueprints => await ListBlueprintsAsync(cancellationToken),
                 LlmTools.RunHealthCheck => await RunHealthCheckAsync(call, cancellationToken),
+                LlmTools.WebSearch => await WebSearchAsync(call, cancellationToken),
                 LlmTools.ViewConfigFile => await ViewConfigFileAsync(call, cancellationToken),
                 LlmTools.ServerCommand => await StageServerCommandAsync(call, cancellationToken),
                 LlmTools.UninstallServer => await StageUninstallAsync(call, cancellationToken),
@@ -74,6 +78,34 @@ public class ToolDispatcher : IToolDispatcher
 
         var names = blueprints.OrderBy(k => k);
         return "Installable game types:\n" + string.Join("\n", names.Select(n => $"- {n}"));
+    }
+
+    /// <summary>
+    /// External web lookup via the <see cref="IWebSearch"/> port. Returns a numbered grounding
+    /// string (snippet + source URL per hit) so the model can cite sources. The result is
+    /// external and possibly stale — never a measured KGSM fact — so the text says so. The port
+    /// never throws; a failure (unconfigured, over the daily budget, transport) comes back as a
+    /// plain message telling the model not to retry. The per-message call cap is enforced upstream
+    /// in the assistant gate, so this handler just runs the search.
+    /// </summary>
+    private async Task<string> WebSearchAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var query = call.Arg("query")?.Trim();
+        if (string.IsNullOrWhiteSpace(query))
+            return "Error: web_search needs a 'query'.";
+
+        var result = await _webSearch.SearchAsync(query, cancellationToken);
+        if (!result.IsSuccess)
+            return $"The web search didn't work ({result.Error ?? "unknown error"}). " +
+                   "Tell the user plainly that you couldn't search right now; do not retry.";
+
+        var hits = result.Value!;
+        if (hits.Count == 0)
+            return $"No web results for \"{query}\".";
+
+        var lines = hits.Select((h, i) => $"{i + 1}. {h.Title}\n   {h.Content}\n   source: {h.Url}");
+        return $"Web results for \"{query}\" (external sources — cite the URLs, and note they may " +
+               $"be out of date):\n{string.Join("\n", lines)}";
     }
 
     /// <summary>

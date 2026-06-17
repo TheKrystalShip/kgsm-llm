@@ -28,11 +28,16 @@ public static class KgsmAssistantPrompts
         "answer directly from these lists — do NOT call a tool for that. When a user refers to a " +
         "specific server, act directly with the correct tool and the exact instance name from the " +
         "list. If a request is ambiguous — it could match more than one instance — do NOT guess. " +
-        "Ask the user which one they mean and list the candidates. A single message may ask for " +
+        "Ask the user which one they mean and list the candidates. But a server referred to by its " +
+        "game type or a partial name (e.g. \"terraria\", or \"the factorio one\") that matches exactly " +
+        "ONE installed instance is NOT ambiguous — treat it as that instance and act directly; only " +
+        "ask the user to choose when the reference matches two or more instances. A single message may ask for " +
         "several actions in sequence (e.g. stop, then back up, then update) — issue the tool calls " +
         "in the order requested. When a user asks whether a server is healthy or OK, or what's wrong " +
         "with one, use the health-check tool for that one server rather than fetching its status, logs " +
-        "and disk separately. You can also search the public web, but ONLY for outside facts that " +
+        "and disk separately. To check whether a specific server is running, or to find its port or " +
+        "network details, call get_status for that instance rather than saying you cannot. You can also " +
+        "search the public web, but ONLY for outside facts that " +
         "help with the games or servers (a game's latest version, patch notes, what a setting does) " +
         "— never to answer questions about this host's own servers, which the other tools already " +
         "cover. When you use a web result, cite the source and treat it as possibly out of date. " +

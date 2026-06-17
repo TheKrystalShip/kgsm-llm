@@ -11,6 +11,7 @@ using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 using TheKrystalShip.Llm.Ollama;
+using TheKrystalShip.Llm.Recording;
 
 using Xunit;
 
@@ -33,7 +34,7 @@ public class LlmAgentStreamTests
     {
         _dispatcher.ExecuteAsync(Arg.Any<LlmToolCall>(), Arg.Any<CancellationToken>()).Returns("Done.");
         var options = Options.Create(new LlmAgentOptions { MaxIterations = maxIterations });
-        return new LlmAgent(client, _dispatcher, _store, options, NullLogger<LlmAgent>.Instance);
+        return new LlmAgent(client, _dispatcher, _store, new NoopConversationRecorder(), options, NullLogger<LlmAgent>.Instance);
     }
 
     private static AgentTurn Turn() => new()

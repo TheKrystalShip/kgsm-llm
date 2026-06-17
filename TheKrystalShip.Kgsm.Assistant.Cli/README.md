@@ -56,6 +56,37 @@ each turn, this is per-turn occupancy — which is also why **`/compact`** visib
 shown on stderr on a TTY only, so piped output stays clean. (Every surface exposes the same
 figure: the HTTP service puts it on the SSE `done` event and the buffered `/turn` response.)
 
+### Conversation recording (for self-improvement)
+
+To analyse how the assistant behaves and improve the toolkit and system prompts over time, each
+completed turn is appended — **on by default in the CLI** — to a daily transcript file:
+
+```
+~/.local/share/kgsm-assistant/transcripts/2026-06-17.jsonl   # $XDG_DATA_HOME honored
+```
+
+One JSON object per turn (one `.jsonl` line), capturing what you need to study and tune behaviour:
+the user prompt, the **full tool trajectory** (each tool the model picked, its arguments, the *raw*
+result it got back, and the call latency), the iteration count and whether the safety cap was hit,
+the final reply, token usage, the model/temperature, the **system-prompt hash** (so you can bucket
+turns *before vs after* a prompt change), and the outcome (`ok` / `error` / `cap-hit` / `cancelled` —
+yes, turns you abandon with Ctrl-C are recorded too, so you can see where chats go wrong). Grep it,
+`jq` it, or feed whole days to a model:
+
+```bash
+jq -r 'select(.outcome=="cap-hit") | .user' ~/.local/share/kgsm-assistant/transcripts/*.jsonl
+jq '.tools[].name' ~/.local/share/kgsm-assistant/transcripts/*.jsonl | sort | uniq -c | sort -rn
+```
+
+This is a **separate concern from the model's working memory** (the rolling window `/compact` trims):
+the corpus is append-only and never trimmed, reset, or overwritten — so it survives compaction. It's
+also a **shared-core mechanism**: the recorder lives in the agent loop every surface composes through,
+so the HTTP service and Discord bot can opt in later with the same switch (off by default there).
+
+It records *your own* chats on *your own* host; no secrets transit tool arguments (the Tavily key is
+env/config, never an argument). To turn it off, set `Recording:Enabled` to `false` (or
+`Recording__Enabled=false`); to relocate the corpus, set `Recording:Directory`.
+
 ### Options
 
 | Flag | Effect |
@@ -123,6 +154,8 @@ Config layers, lowest → highest precedence (each overrides the one before it):
 | `Conversation:IdleTimeoutMinutes` | `Conversation__IdleTimeoutMinutes` | `15` | Idle reset window. |
 | `LlmAgent:MaxIterations` | `LlmAgent__MaxIterations` | `8` | Safety cap on model↔tool round-trips per turn. |
 | `LlmAgent:MaxToolOutputChars` | `LlmAgent__MaxToolOutputChars` | `1500` | Tool-output truncation fed back to the model. |
+| `Recording:Enabled` | `Recording__Enabled` | `true` (CLI) | Append each turn to the transcript corpus (see [Conversation recording](#conversation-recording-for-self-improvement)). |
+| `Recording:Directory` | `Recording__Directory` | *(XDG data home)* | Where daily `yyyy-MM-dd.jsonl` transcripts are written. Empty ⇒ `~/.local/share/kgsm-assistant/transcripts`. |
 | `InventoryCache:InstancesTtlSeconds` | `InventoryCache__InstancesTtlSeconds` | `300` | Instance-list cache TTL. |
 | `InventoryCache:BlueprintsTtlSeconds` | `InventoryCache__BlueprintsTtlSeconds` | `600` | Blueprint-list cache TTL. |
 | `WebSearch:ApiKey` | `WebSearch__ApiKey` | *(empty)* | Tavily key. **ENV-only**; empty ⇒ web search disabled (fails closed). |

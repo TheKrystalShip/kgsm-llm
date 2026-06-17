@@ -5,6 +5,7 @@ using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Ollama;
+using TheKrystalShip.Llm.Recording;
 
 namespace TheKrystalShip.Llm.Extensions;
 
@@ -30,11 +31,22 @@ public static class ServiceCollectionExtensions
         services.Configure<OllamaOptions>(configuration.GetSection(OllamaOptions.Section));
         services.Configure<ConversationOptions>(configuration.GetSection(ConversationOptions.Section));
         services.Configure<LlmAgentOptions>(configuration.GetSection(LlmAgentOptions.Section));
+        services.Configure<RecordingOptions>(configuration.GetSection(RecordingOptions.Section));
 
         services.AddSingleton<ILlmClient, OllamaLlmClient>();
         services.AddSingleton<IConversationStore, InMemoryConversationStore>();
         services.AddSingleton<ILlmAgent, LlmAgent>();
         services.AddSingleton<IConversationCompactor, ConversationCompactor>();
+
+        // Conversation recording is a separate, append-only sink for offline self-improvement
+        // analysis — NOT the model's working memory. Off by default; a host opts in and supplies a
+        // writable directory. When disabled (or directory-less) the no-op keeps the agent loop's
+        // record-building short-circuited. Installed here so every surface inherits it uniformly.
+        var recording = configuration.GetSection(RecordingOptions.Section).Get<RecordingOptions>() ?? new RecordingOptions();
+        if (recording.Enabled && !string.IsNullOrWhiteSpace(recording.Directory))
+            services.AddSingleton<IConversationRecorder, JsonlConversationRecorder>();
+        else
+            services.AddSingleton<IConversationRecorder, NoopConversationRecorder>();
 
         return services;
     }

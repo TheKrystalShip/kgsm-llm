@@ -8,6 +8,7 @@ using NSubstitute;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
+using TheKrystalShip.Llm.Recording;
 
 namespace TheKrystalShip.Llm.Tests;
 
@@ -28,7 +29,7 @@ public class LlmAgentTests
     {
         _dispatcher.ExecuteAsync(Arg.Any<LlmToolCall>(), Arg.Any<CancellationToken>()).Returns("Done.");
         var options = Options.Create(new LlmAgentOptions { MaxIterations = maxIterations });
-        return new LlmAgent(_llm, _dispatcher, _store, options, NullLogger<LlmAgent>.Instance);
+        return new LlmAgent(_llm, _dispatcher, _store, new NoopConversationRecorder(), options, NullLogger<LlmAgent>.Instance);
     }
 
     private void ScriptLlm(params Result<LlmResponse>[] responses) =>

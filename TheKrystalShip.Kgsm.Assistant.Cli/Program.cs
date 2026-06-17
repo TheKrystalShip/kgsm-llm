@@ -60,6 +60,15 @@ builder.Configuration.AddEnvironmentVariables();
 if (!string.IsNullOrWhiteSpace(cli.Model))
     builder.Configuration["Ollama:Model"] = cli.Model;
 
+// Recording (the self-improvement transcript corpus): the generic lib holds no host path knowledge,
+// so the CLI supplies the XDG data default when recording is on but no directory was set (same shape
+// as config resolution above). Daily yyyy-MM-dd.jsonl files land under this dir.
+if (builder.Configuration.GetValue("Recording:Enabled", false)
+    && string.IsNullOrWhiteSpace(builder.Configuration["Recording:Directory"]))
+{
+    builder.Configuration["Recording:Directory"] = DefaultRecordingDir();
+}
+
 // --- Logging (§3.1): quiet by DEFAULT (floor at Warning), everything to stderr so stdout is the reply.
 var noColor = cli.NoColor || Environment.GetEnvironmentVariable("NO_COLOR") is not null;
 builder.Logging.ClearProviders();
@@ -163,4 +172,14 @@ static string DefaultConfigPath()
         ? xdg
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
     return Path.Combine(configHome, "kgsm-assistant", "appsettings.json");
+}
+
+// Transcript corpus lives under the XDG *data* home (not config — it's generated data, not settings).
+static string DefaultRecordingDir()
+{
+    var xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+    var dataHome = !string.IsNullOrWhiteSpace(xdg)
+        ? xdg
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+    return Path.Combine(dataHome, "kgsm-assistant", "transcripts");
 }

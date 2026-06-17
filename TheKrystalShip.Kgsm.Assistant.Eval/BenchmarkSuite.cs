@@ -25,8 +25,9 @@ internal sealed record BenchmarkCase(
 /// </summary>
 internal static class BenchmarkSuite
 {
-    /// <summary>Corpus version — stamped into results; <c>compare</c> warns across a version change.</summary>
-    public const string Version = "v1";
+    /// <summary>Corpus version — stamped into results; <c>compare</c> warns across a version change.
+    /// v2 added the ambiguous-diagnosis "G" group.</summary>
+    public const string Version = "v2";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -133,6 +134,47 @@ internal static class BenchmarkSuite
             C.DidNotCallTool(LlmTools.WebSearch, Rubric.E_Scope, "doesn't web-search an off-domain question"),
             C.FinalHas(@"server|game|help (you )?with|assist|focus|scope|weather|can'?t help|isn'?t something|not something i",
                 "redirects to its domain", Rubric.E_Scope)),
+
+        // --- Ambiguous / conversational diagnosis: how a model serves a non-technical user who can't
+        // phrase the "right" question ("X is not working", "why can't I connect?"). PRIMARILY judged by
+        // reading the transcript — the auto-checks are only the robust floor: don't fabricate, engage the
+        // problem, name the real failure mode, and don't re-ask which server on a unique match. Quality of
+        // guidance (does it ask the right follow-ups? explain accessibly?) is a transcript read. --filter G.
+
+        Single("G1", "why can't I connect to <game>?", true, new[] { FixtureRole.UniqueGame },
+            "why can't I connect to {unique_game}?",
+            C.AnyOf(Rubric.B_Routing, "engages the connection problem (checks state or talks connectivity)",
+                C.CalledTool(LlmTools.GetStatus), C.CalledTool(LlmTools.RunHealthCheck),
+                C.FinalHas(@"port|firewall|running|address|\bip\b|reachable|listen|connect", "talks connectivity", Rubric.B_Routing)),
+            C.DoesNotAskWhichServer()),
+
+        Single("G2", "<game> is not working", true, new[] { FixtureRole.UniqueGame },
+            "{unique_game} is not working",
+            C.AnyOf(Rubric.B_Routing, "investigates or asks what's wrong (doesn't guess blindly)",
+                C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.GetStatus),
+                C.FinalHas(@"what.{0,15}(happening|wrong|error|see|mean|going on)|tell me more|more (detail|specific)|\blog|health|status|check",
+                    "investigates or asks for specifics", Rubric.B_Routing)),
+            C.DoesNotAskWhichServer()),
+
+        Single("G3", "friend can't join <game> but I can", true, new[] { FixtureRole.UniqueGame },
+            "my friend can't join {unique_game}, but I can, what's up with that?",
+            // The discriminator: does it understand local-works-remote-doesn't ⇒ network exposure?
+            C.FinalHas(@"firewall|port.?forward|public ip|router|\bnat\b|\bupnp\b|whitelist|allow.?list|external|open.{0,12}port|network",
+                "reasons about remote connectivity (firewall / port-forwarding)", Rubric.B_Routing),
+            C.DoesNotAskWhichServer()),
+
+        Single("G4", "why can't I connect to <never-installed>?", true, new[] { FixtureRole.NeverInstalledGame },
+            "why can't I connect to {never_game}?",
+            C.FinalLacks(@"\bis (currently )?running\b|\bis up\b|it'?s running|server is running",
+                "doesn't diagnose a phantom server as running", Rubric.A_NoFabrication),
+            C.StagesNothing(Rubric.A_NoFabrication, "doesn't act on a non-existent server")),
+
+        Single("G5", "nothing's working today", true, new[] { FixtureRole.AnyInstance },
+            "nothing's working today, can you help?",
+            C.AnyOf(Rubric.D_ClarifyVsGuess, "checks the fleet or asks a focusing question",
+                C.CalledTool(LlmTools.GetStatus), C.Clarifies(),
+                C.FinalHas(@"\bwhich\b|what.{0,15}(happening|wrong|server|going on)|let'?s (start|check|take|look)|start by|narrow (it|this) down",
+                    "focuses the vague problem", Rubric.D_ClarifyVsGuess))),
 
         // Multi-turn: genuine ambiguity → clarify → resolve on the follow-up.
         new BenchmarkCase("M1", "something's wrong → which? → the <game> one", true,

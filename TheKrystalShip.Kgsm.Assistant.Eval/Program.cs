@@ -94,7 +94,10 @@ static IReadOnlyList<BenchmarkCase> Filter(IReadOnlyList<BenchmarkCase> all, IRe
     var tokens = filter.Select(f => f.ToUpperInvariant()).ToHashSet();
     bool Matches(BenchmarkCase c)
     {
-        if (tokens.Contains(c.Id.ToUpperInvariant())) return true;
+        var id = c.Id.ToUpperInvariant();
+        if (tokens.Contains(id)) return true;
+        // Id-prefix, so "--filter G" runs the whole G group (G1..G5), "C" the C group, etc.
+        if (tokens.Any(t => id.StartsWith(t))) return true;
         var dims = c.Steps.SelectMany(s => s.Checks).Select(ch => ch.Dimension.ToString().Split('_')[0]).ToHashSet();
         return tokens.Overlaps(dims);
     }

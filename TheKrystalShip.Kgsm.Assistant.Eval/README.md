@@ -26,6 +26,17 @@ world fact. A turn that asks "is it up?" is scored on *did it call `get_status`*
 `status: false`), so "is it really up?" would stay red no matter how well the model behaves. Scoring
 routing/consistency keeps the tuning signal clean and independent of upstream bugs.
 
+The corpus has two styles of case:
+
+- **Closed cases** (`A`–`E`) — "is X up?", "what port?", "restart X" — have a right trajectory, so the
+  auto-checks carry most of the weight.
+- **Ambiguous cases** (`G`) — "minecraft is not working", "why can't I connect to valheim?", "my friend
+  can't join satisfactory but I can" — are how real, non-technical users actually talk. There's no
+  single right answer, so these are **primarily transcript-judged**: the auto-checks only assert the
+  robust floor (don't fabricate, engage the problem, name the real failure mode, don't re-ask which
+  server on a unique match), and you read the conversation to judge whether the guidance would actually
+  help someone who doesn't know the "right" question. Run the group with `--filter G --transcript`.
+
 The rubric, A–F (from the hand-eval):
 
 | Dim | Name | Scored by |

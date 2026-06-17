@@ -80,6 +80,14 @@ internal static class C
     public static Check DoesNotAskWhich(string label = "doesn't ask which (unique match)") =>
         new(Rubric.D_ClarifyVsGuess, label, (o, _) => !LooksLikeWhichQuestion(o.Final));
 
+    /// <summary>Rubric D: didn't ask the user to pick a SERVER (when only one matches) — but, unlike
+    /// <see cref="DoesNotAskWhich"/>, a diagnostic follow-up ("what error do you see?") is fine. For the
+    /// ambiguous-diagnosis cases, asking for specifics is good; only re-asking which server is the wart.</summary>
+    public static Check DoesNotAskWhichServer(string label = "doesn't ask which server (unique match)") =>
+        new(Rubric.D_ClarifyVsGuess, label, (o, _) => !Regex.IsMatch(o.Final,
+            @"\bwhich (server|one|instance|game)\b|\bwhich\b.{0,15}\b(do|did) you mean\b|\bdo you mean\b.{0,20}\b(server|one|instance)\b",
+            RegexOptions.IgnoreCase));
+
     /// <summary>Rubric D: genuine ambiguity — asks which, stages nothing, runs no command.</summary>
     public static Check Clarifies(string label = "asks which (genuine ambiguity)") =>
         new(Rubric.D_ClarifyVsGuess, label, (o, _) =>

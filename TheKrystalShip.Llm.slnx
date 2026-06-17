@@ -6,6 +6,7 @@
   <Project Path="TheKrystalShip.Kgsm.Assistant.Tests/TheKrystalShip.Kgsm.Assistant.Tests.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests/TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Cli/TheKrystalShip.Kgsm.Assistant.Cli.csproj" />
+  <Project Path="TheKrystalShip.Kgsm.Assistant.Cli.Tests/TheKrystalShip.Kgsm.Assistant.Cli.Tests.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Service/TheKrystalShip.Kgsm.Assistant.Service.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Service.Tests/TheKrystalShip.Kgsm.Assistant.Service.Tests.csproj" />
 </Solution>

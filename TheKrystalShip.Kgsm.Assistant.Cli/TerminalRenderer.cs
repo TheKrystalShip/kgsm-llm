@@ -21,10 +21,6 @@ namespace TheKrystalShip.Kgsm.Assistant.Cli;
 /// </summary>
 internal sealed class TerminalRenderer
 {
-    private const string AnsiReset = "\x1b[0m";
-    private const string AnsiDim = "\x1b[2m";
-    private const string AnsiRed = "\x1b[31m";
-
     private readonly TextWriter _out;
     private readonly TextWriter _err;
     private readonly bool _showStatus;   // stdout is interactive (a TTY)
@@ -92,14 +88,12 @@ internal sealed class TerminalRenderer
                     _out.WriteLine();
                 _out.Flush();
                 var message = string.IsNullOrWhiteSpace(ev.ErrorMessage) ? "the assistant failed." : ev.ErrorMessage;
-                _err.WriteLine(Paint($"error: {message}", AnsiRed));
+                _err.WriteLine(Ansi.Paint($"error: {message}", Ansi.Red, _color));
                 break;
         }
     }
 
-    private void Status(string text) => _err.WriteLine(Paint(text, AnsiDim));
-
-    private string Paint(string text, string ansi) => _color ? $"{ansi}{text}{AnsiReset}" : text;
+    private void Status(string text) => _err.WriteLine(Ansi.Paint(text, Ansi.Dim, _color));
 
     /// <summary>Renders tool arguments as <c>k=v, k=v</c>, trimming long values so a status line stays one line.</summary>
     private static string FormatArgs(IReadOnlyDictionary<string, string?>? args)

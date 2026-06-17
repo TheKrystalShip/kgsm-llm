@@ -9,6 +9,7 @@ using TheKrystalShip.Kgsm.Assistant.Cli;
 using TheKrystalShip.Kgsm.Assistant.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Llm.Extensions;
 
 // Exit codes: 0 ok · 1 runtime failure · 2 usage/config error · 130 cancelled (SIGINT).
@@ -91,6 +92,8 @@ using (host)
 
     var canPerformActions = !cli.ReadOnly;   // D1: authorized by default, --read-only opts down
     var assistant = host.Services.GetRequiredService<IServerAssistant>();
+    var inventory = host.Services.GetRequiredService<IInventoryInvalidation>();
+    var interactiveStdin = !Console.IsInputRedirected;   // gates interactive confirmation (L8)
 
     // Ctrl-C cancels the in-flight turn (aborts Ollama generation — the GPU is reserved away
     // from the game servers, so an abandoned-but-still-generating turn is a real cost). L3.
@@ -134,10 +137,16 @@ using (host)
     if (renderer.HadError)
         return ExitRuntime;
 
-    // Step 3 drains renderer.Confirmations here (interactive y/N). For now, note them.
+    // Drain any staged destructive ops: interactive y/N (a TTY) or print-only (piped, L8).
     if (renderer.Confirmations.Count > 0)
-        Console.Error.WriteLine(
-            $"({renderer.Confirmations.Count} action(s) staged — interactive confirmation is added in the next step)");
+    {
+        var allOk = await ConfirmationFlow.DrainAsync(
+            renderer.Confirmations, assistant, inventory, canPerformActions,
+            interactiveStdin, color: !Console.IsErrorRedirected && !noColor,
+            Console.In, Console.Error, cts.Token);
+        if (!allOk)
+            return ExitRuntime;
+    }
 
     return ExitOk;
 }

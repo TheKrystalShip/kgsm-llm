@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TheKrystalShip.Kgsm.Assistant.Eval</RootNamespace>
+    <!-- The benchmark runner; the binary is kgsm-assistant-eval. -->
+    <AssemblyName>kgsm-assistant-eval</AssemblyName>
+    <RollForward>LatestMajor</RollForward>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The same backend the CLI drives — the harness runs the real assistant in-process so
+         the trajectory it scores is the one a user would get. Never references the API/Service. -->
+    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The eval's own config defaults (Ollama endpoint, recording off); copied next to the binary
+         and read at startup. Operator-specific values (KGSM:Path, model) come from the CLI config,
+         env, or flags — never baked here. -->
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Let the test project exercise the (internal) checks, scoring, compare, and options parser. -->
+    <InternalsVisibleTo Include="TheKrystalShip.Kgsm.Assistant.Eval.Tests" />
+  </ItemGroup>
+
+</Project>

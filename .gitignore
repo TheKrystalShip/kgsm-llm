@@ -486,3 +486,6 @@ $RECYCLE.BIN/
 
 # Tier verification local config (may hold the OAuth client secret — never commit)
 scripts/tier.env
+
+# kgsm-assistant-eval result files (generated benchmark runs, not source)
+eval-results/

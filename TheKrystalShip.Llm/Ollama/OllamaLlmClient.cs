@@ -160,16 +160,22 @@ public class OllamaLlmClient : ILlmClient
     private Dictionary<string, object?> BuildBody(
         IReadOnlyList<LlmMessage> messages, IReadOnlyList<LlmToolDefinition>? tools, bool stream)
     {
+        var options = new Dictionary<string, object?>
+        {
+            ["num_ctx"] = _options.NumCtx,
+            ["temperature"] = _options.Temperature
+        };
+        // Only sent when explicitly configured (the eval harness's reproducible-run mode); an
+        // absent seed leaves Ollama's default unseeded sampling untouched.
+        if (_options.Seed is int seed)
+            options["seed"] = seed;
+
         var body = new Dictionary<string, object?>
         {
             ["model"] = _options.Model,
             ["stream"] = stream,
             ["messages"] = messages.Select(BuildMessagePayload).ToArray(),
-            ["options"] = new Dictionary<string, object?>
-            {
-                ["num_ctx"] = _options.NumCtx,
-                ["temperature"] = _options.Temperature
-            }
+            ["options"] = options
         };
 
         if (tools is { Count: > 0 })

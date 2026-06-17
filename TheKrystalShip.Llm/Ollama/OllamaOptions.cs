@@ -27,4 +27,12 @@ public class OllamaOptions
     /// while replies remain natural.
     /// </summary>
     public double Temperature { get; set; } = 0.3;
+
+    /// <summary>
+    /// Optional RNG seed for sampling. When set, Ollama produces a reproducible output for an
+    /// identical request (same model/options/prompt) — used by the eval harness to isolate a
+    /// prompt change's effect from sampling noise. Null (the default) leaves sampling unseeded,
+    /// which is the right choice for normal use.
+    /// </summary>
+    public int? Seed { get; set; }
 }

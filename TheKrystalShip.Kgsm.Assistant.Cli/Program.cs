@@ -114,11 +114,14 @@ using (host)
     var assistant = host.Services.GetRequiredService<IServerAssistant>();
     var inventory = host.Services.GetRequiredService<IInventoryInvalidation>();
 
+    var stderrTty = !Console.IsErrorRedirected;
+    var colorErr = stderrTty && !noColor;
     var runner = new CliRunner(
         assistant, inventory, canPerformActions,
         interactiveStdin: !Console.IsInputRedirected,   // gates interactive confirmation (L8)
         showStatus: !Console.IsOutputRedirected,        // ⚙/✓ progress only when stdout is a TTY
-        color: !Console.IsErrorRedirected && !noColor);
+        color: colorErr,
+        stderrTty: stderrTty);                          // spinner animates on stderr → gate on its TTY
 
     // Ctrl-C cancels the running turn (aborts Ollama generation, L3) rather than the process.
     using var interruptor = new TurnInterruptor();
@@ -148,7 +151,7 @@ using (host)
 
     // No prompt + interactive stdin → the REPL (which also offers /compact).
     var compactor = host.Services.GetRequiredService<IConversationCompactor>();
-    return await Repl.RunAsync(runner, interruptor, compactor, canPerformActions);
+    return await Repl.RunAsync(runner, interruptor, compactor, canPerformActions, colorErr);
 }
 
 // --- helpers ---------------------------------------------------------------------------------

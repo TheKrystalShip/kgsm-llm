@@ -143,4 +143,30 @@ public class TerminalRendererTests
 
         err.ToString().Should().BeEmpty();
     }
+
+    [Fact]
+    public void StyledReply_RendersMarkdownAsAnsi_OnStdout()   // TTY + color → bold / inline code
+    {
+        var (renderer, @out, _) = Make(showStatus: true, color: true);
+
+        renderer.Handle(AssistantStreamEvent.Token("Run **now** with `go`"));
+        renderer.Handle(AssistantStreamEvent.Final("Run **now** with `go`"));
+
+        var s = @out.ToString();
+        s.Should().Contain("\x1b[1mnow\x1b[22m");    // **now** → bold, markers stripped
+        s.Should().Contain("\x1b[36mgo\x1b[39m");     // `go` → inline code color
+        s.Should().NotContain("**");
+        s.Should().EndWith(Environment.NewLine);
+    }
+
+    [Fact]
+    public void PipedReply_StaysRawMarkdown_NoAnsi()   // not a TTY → byte-for-byte passthrough
+    {
+        var (renderer, @out, _) = Make(showStatus: false, color: false);
+
+        renderer.Handle(AssistantStreamEvent.Token("Run **now**"));
+        renderer.Handle(AssistantStreamEvent.Final("Run **now**"));
+
+        @out.ToString().Should().Be("Run **now**" + Environment.NewLine);
+    }
 }

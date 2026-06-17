@@ -25,17 +25,19 @@ internal static class Repl
         """;
 
     public static async Task<int> RunAsync(
-        CliRunner runner, TurnInterruptor interruptor, IConversationCompactor compactor, bool canPerformActions)
+        CliRunner runner, TurnInterruptor interruptor, IConversationCompactor compactor,
+        bool canPerformActions, bool color)
     {
-        Console.Error.WriteLine(
+        Console.Error.WriteLine(Ansi.Paint(
             $"kgsm-assistant — interactive{(canPerformActions ? "" : " (read-only)")}. " +
-            "Type /help for commands, /exit to quit.");
+            "Type /help for commands, /exit to quit.", Ansi.Dim, color));
 
         var conversationId = NewConversationId();
+        var prompt = Ansi.Paint("❯ ", Ansi.Cyan, color);
 
         while (true)
         {
-            Console.Error.Write("> ");
+            Console.Error.Write(prompt);
             Console.Error.Flush();
 
             var line = Console.In.ReadLine();
@@ -59,10 +61,10 @@ internal static class Repl
                     continue;
                 case "/reset":
                     conversationId = NewConversationId();
-                    Console.Error.WriteLine("(new conversation)");
+                    Console.Error.WriteLine(Ansi.Paint("(new conversation)", Ansi.Dim, color));
                     continue;
                 case "/compact":
-                    await CompactAsync(compactor, interruptor, conversationId);
+                    await CompactAsync(compactor, interruptor, conversationId, color);
                     continue;
             }
 
@@ -71,7 +73,7 @@ internal static class Repl
             if (!completed)
             {
                 Console.Error.WriteLine();
-                Console.Error.WriteLine("(cancelled)");
+                Console.Error.WriteLine(Ansi.Paint("(cancelled)", Ansi.Dim, color));
             }
         }
     }
@@ -81,28 +83,28 @@ internal static class Repl
     /// stderr; the history is left untouched on cancel or failure. Same conversation id continues.
     /// </summary>
     private static async Task CompactAsync(
-        IConversationCompactor compactor, TurnInterruptor interruptor, string conversationId)
+        IConversationCompactor compactor, TurnInterruptor interruptor, string conversationId, bool color)
     {
-        Console.Error.WriteLine("(compacting…)");
+        Console.Error.WriteLine(Ansi.Paint("(compacting…)", Ansi.Dim, color));
 
         var (completed, result) = await interruptor.RunAsync(
             ct => compactor.CompactAsync(conversationId, ct));
 
         if (!completed)
         {
-            Console.Error.WriteLine("(cancelled)");
+            Console.Error.WriteLine(Ansi.Paint("(cancelled)", Ansi.Dim, color));
             return;
         }
         if (result.IsFailure)
         {
-            Console.Error.WriteLine($"(compaction failed: {result.Error})");
+            Console.Error.WriteLine(Ansi.Paint($"(compaction failed: {result.Error})", Ansi.Red, color));
             return;
         }
 
         var outcome = result.Value!;
-        Console.Error.WriteLine(outcome.Compacted
+        Console.Error.WriteLine(Ansi.Paint(outcome.Compacted
             ? $"(compacted {outcome.MessagesCompacted} messages into a summary)"
-            : "(nothing to compact yet)");
+            : "(nothing to compact yet)", Ansi.Dim, color));
     }
 
     private static string NewConversationId() => $"cli:{Guid.NewGuid():N}";

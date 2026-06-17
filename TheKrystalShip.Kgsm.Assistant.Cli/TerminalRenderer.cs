@@ -25,6 +25,7 @@ internal sealed class TerminalRenderer
     private readonly TextWriter _err;
     private readonly bool _showStatus;   // stdout is interactive (a TTY)
     private readonly bool _color;        // stderr is interactive AND color not disabled
+    private readonly MarkdownStreamRenderer _md;
     private readonly List<PendingConfirmation> _confirmations = new();
     private bool _wroteToken;
 
@@ -34,6 +35,10 @@ internal sealed class TerminalRenderer
         _err = errWriter;
         _showStatus = showStatus;
         _color = color;
+        // The reply (stdout) is styled only when stdout is a TTY AND color is on; otherwise the
+        // markdown renderer is a byte-for-byte passthrough, so a piped reply stays exactly the
+        // model's raw text — the §4 pipe-clean contract.
+        _md = new MarkdownStreamRenderer(outWriter, showStatus && color);
     }
 
     /// <summary>Confirmations staged during the turn, in arrival order (drained after the stream ends).</summary>
@@ -50,7 +55,7 @@ internal sealed class TerminalRenderer
             case AssistantEventKind.Token:
                 if (!string.IsNullOrEmpty(ev.Text))
                 {
-                    _out.Write(ev.Text);
+                    _md.Write(ev.Text);
                     _out.Flush();
                     _wroteToken = true;
                 }
@@ -58,12 +63,17 @@ internal sealed class TerminalRenderer
 
             case AssistantEventKind.ToolStart:
                 if (_showStatus)
-                    Status($"⚙ {ev.ToolName}({FormatArgs(ev.ToolArguments)})");
+                    _err.WriteLine(
+                        Ansi.Paint("⚙ ", Ansi.Dim, _color)
+                        + Ansi.Paint(ev.ToolName ?? string.Empty, Ansi.Cyan, _color)
+                        + Ansi.Paint($"({FormatArgs(ev.ToolArguments)})", Ansi.Dim, _color));
                 break;
 
             case AssistantEventKind.ToolResult:
                 if (_showStatus)
-                    Status($"✓ {ev.ToolName}");
+                    _err.WriteLine(
+                        Ansi.Paint("✓ ", Ansi.Green, _color)
+                        + Ansi.Paint(ev.ToolName ?? string.Empty, Ansi.Dim, _color));
                 break;
 
             case AssistantEventKind.Confirmation:
@@ -72,12 +82,24 @@ internal sealed class TerminalRenderer
                 break;
 
             case AssistantEventKind.Final:
-                // Tokens already streamed the reply; just close the line. If the turn produced no
-                // tokens but Final still carries text (e.g. a pure tool turn), print that once.
+                // Tokens already streamed the reply; flush any carried markdown + close styles, then
+                // close the line. If the turn produced no tokens but Final still carries text (e.g. a
+                // pure tool turn), render that once through the same markdown path.
                 if (_wroteToken)
+                {
+                    _md.Complete();
                     _out.WriteLine();
+                }
                 else if (!string.IsNullOrEmpty(ev.Text))
-                    _out.WriteLine(ev.Text);
+                {
+                    _md.Write(ev.Text);
+                    _md.Complete();
+                    _out.WriteLine();
+                }
+                else
+                {
+                    _md.Complete();
+                }
                 _out.Flush();
                 // Context occupancy in tokens (used / window), to stderr, TTY-only so a piped
                 // reply stays clean — same discipline as the tool-status lines.
@@ -88,7 +110,9 @@ internal sealed class TerminalRenderer
 
             case AssistantEventKind.Error:
                 HadError = true;
-                // If a partial reply was already streaming, break the line before the error.
+                // If a partial reply was already streaming, flush + close styles, then break the
+                // line before the error (so an interrupted reply never leaves the terminal bold).
+                _md.Complete();
                 if (_wroteToken)
                     _out.WriteLine();
                 _out.Flush();

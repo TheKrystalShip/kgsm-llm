@@ -17,6 +17,7 @@ internal sealed class CliRunner
     private readonly bool _interactiveStdin;
     private readonly bool _showStatus;
     private readonly bool _color;
+    private readonly bool _stderrTty;
 
     public CliRunner(
         IServerAssistant assistant,
@@ -24,7 +25,8 @@ internal sealed class CliRunner
         bool canPerformActions,
         bool interactiveStdin,
         bool showStatus,
-        bool color)
+        bool color,
+        bool stderrTty)
     {
         _assistant = assistant;
         _inventory = inventory;
@@ -32,6 +34,7 @@ internal sealed class CliRunner
         _interactiveStdin = interactiveStdin;
         _showStatus = showStatus;
         _color = color;
+        _stderrTty = stderrTty;
     }
 
     /// <summary>
@@ -44,9 +47,29 @@ internal sealed class CliRunner
     {
         var renderer = new TerminalRenderer(Console.Out, Console.Error, _showStatus, _color);
 
-        await foreach (var ev in _assistant
-                           .RunStreamAsync(conversationId, prompt, _canPerformActions, cancellationToken))
-            renderer.Handle(ev);
+        // A transient "thinking…/working…" indicator fills the gaps where there is nothing to show
+        // yet — initial model latency, and the round-trip after each tool. Gated on stderr being a
+        // TTY (it animates carriage-return frames on stderr), never on stdout, so 2>file stays clean.
+        using var spinner = _stderrTty ? new Spinner(Console.Error, _color) : null;
+        spinner?.Start("thinking");
+        try
+        {
+            await foreach (var ev in _assistant
+                               .RunStreamAsync(conversationId, prompt, _canPerformActions, cancellationToken))
+            {
+                spinner?.Stop();
+                renderer.Handle(ev);
+                switch (ev.Kind)
+                {
+                    case AssistantEventKind.ToolStart: spinner?.Start("working"); break;
+                    case AssistantEventKind.ToolResult: spinner?.Start("thinking"); break;
+                }
+            }
+        }
+        finally
+        {
+            spinner?.Stop();   // also erases the line on Ctrl-C, before the REPL prints "(cancelled)"
+        }
 
         if (renderer.HadError)
             return false;

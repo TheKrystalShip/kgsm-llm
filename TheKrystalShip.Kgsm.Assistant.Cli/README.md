@@ -27,6 +27,20 @@ Tool progress (`⚙ get_status(...)`), the REPL prompt, confirmations, the conte
 logs all go to **stderr**, and only when stdout is a TTY — a redirected/piped reply stays
 plain text.
 
+### Rich terminal output
+
+On an interactive terminal (and never when piped), the reply is rendered with a small, safe
+subset of Markdown — **bold**, `inline code`, `#` headers, `-`/`*`/`+` bullets and fenced
+` ``` ` code blocks. Italic is deliberately *not* rendered: a single `*`/`_` would mangle
+identifiers like `instance_name`. A braille spinner (`⠙ thinking…` / `⠹ working…`) fills the
+gaps where there is nothing to show yet — the model's first-token latency and the round-trip
+after each tool — and erases itself the instant output starts. The REPL prompt is a colored
+`❯`, tool lines colorize the `⚙`/`✓`, and all of it is gated exactly like the status lines:
+
+* it's all on a **TTY only** — a redirected/piped reply is the model's **raw Markdown text**,
+  byte-for-byte (so `kgsm-assistant "…" | cat` still pipes cleanly), and
+* `--no-color` / `NO_COLOR` drop the color (the spinner stays, just uncolored).
+
 ### Context usage
 
 After each reply the assistant prints how much of the model's context window the turn used, in

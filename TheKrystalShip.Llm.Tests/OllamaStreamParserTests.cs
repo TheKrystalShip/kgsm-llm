@@ -77,4 +77,30 @@ public class OllamaStreamParserTests
         chunk!.ToolCalls.Should().ContainSingle();
         chunk.ToolCalls![0].Arg("instance").Should().Be("valheim");
     }
+
+    [Fact]
+    public void DoneFrame_CarriesTokenUsage_StampedWithContextWindow()
+    {
+        // The terminal frame reports prompt_eval_count / eval_count; num_ctx is stamped by the caller.
+        var chunk = OllamaStreamParser.ParseFrame(
+            """{"message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":1720,"eval_count":130}""",
+            contextWindow: 32768);
+
+        chunk!.Done.Should().BeTrue();
+        chunk.Usage.Should().NotBeNull();
+        chunk.Usage!.PromptTokens.Should().Be(1720);
+        chunk.Usage.ResponseTokens.Should().Be(130);
+        chunk.Usage.UsedTokens.Should().Be(1850);
+        chunk.Usage.ContextWindow.Should().Be(32768);
+        chunk.Usage.RemainingTokens.Should().Be(32768 - 1850);
+    }
+
+    [Fact]
+    public void NonFinalFrame_WithoutCounts_HasNoUsage()
+    {
+        var chunk = OllamaStreamParser.ParseFrame(
+            """{"message":{"role":"assistant","content":"hi"},"done":false}""", contextWindow: 32768);
+
+        chunk!.Usage.Should().BeNull();
+    }
 }

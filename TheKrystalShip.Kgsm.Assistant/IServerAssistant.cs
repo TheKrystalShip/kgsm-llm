@@ -5,7 +5,8 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// <summary>
 /// The outcome of an assistant turn: the reply text to show the user, plus any
 /// destructive operations that were staged this turn and now need explicit human
-/// confirmation before they run.
+/// confirmation before they run, plus the turn's token <see cref="Usage"/> so a host
+/// can show context occupancy (null if the backend reported none).
 /// </summary>
 public sealed record AssistantResult
 {
@@ -14,11 +15,13 @@ public sealed record AssistantResult
     public string Text { get; private init; } = string.Empty;
     public IReadOnlyList<PendingConfirmation> Confirmations { get; private init; } =
         Array.Empty<PendingConfirmation>();
+    public LlmUsage? Usage { get; private init; }
 
     public bool IsFailure => !IsSuccess;
 
-    public static AssistantResult Ok(string text, IReadOnlyList<PendingConfirmation> confirmations) =>
-        new() { IsSuccess = true, Text = text, Confirmations = confirmations };
+    public static AssistantResult Ok(
+        string text, IReadOnlyList<PendingConfirmation> confirmations, LlmUsage? usage = null) =>
+        new() { IsSuccess = true, Text = text, Confirmations = confirmations, Usage = usage };
 
     public static AssistantResult Fail(string error) =>
         new() { IsSuccess = false, Error = error };
@@ -61,7 +64,8 @@ public sealed record AssistantStreamEvent(
     string? ErrorMessage = null,
     string? ToolName = null,
     IReadOnlyDictionary<string, string?>? ToolArguments = null,
-    string? ToolSummary = null)
+    string? ToolSummary = null,
+    LlmUsage? Usage = null)
 {
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
     public static AssistantStreamEvent ToolStart(string tool, IReadOnlyDictionary<string, string?> arguments) =>
@@ -70,7 +74,10 @@ public sealed record AssistantStreamEvent(
         new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary);
     public static AssistantStreamEvent Confirmation(PendingConfirmation confirmation) =>
         new(AssistantEventKind.Confirmation, StagedConfirmation: confirmation);
-    public static AssistantStreamEvent Final(string text) => new(AssistantEventKind.Final, Text: text);
+
+    /// <summary>The terminal success event: the full reply plus the turn's token usage (if any).</summary>
+    public static AssistantStreamEvent Final(string text, LlmUsage? usage = null) =>
+        new(AssistantEventKind.Final, Text: text, Usage: usage);
     public static AssistantStreamEvent Error(string error) => new(AssistantEventKind.Error, ErrorMessage: error);
 }
 

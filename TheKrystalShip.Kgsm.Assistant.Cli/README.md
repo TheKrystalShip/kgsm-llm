@@ -23,8 +23,24 @@ stdout carries **only** the assistant's reply, so it pipes cleanly:
 kgsm-assistant "list the servers" | grep minecraft
 ```
 
-Tool progress (`⚙ get_status(...)`), the REPL prompt, confirmations, and logs all go to
-**stderr**, and only when stdout is a TTY — a redirected/piped reply stays plain text.
+Tool progress (`⚙ get_status(...)`), the REPL prompt, confirmations, the context line, and
+logs all go to **stderr**, and only when stdout is a TTY — a redirected/piped reply stays
+plain text.
+
+### Context usage
+
+After each reply the assistant prints how much of the model's context window the turn used, in
+**tokens** (never a percentage):
+
+```
+context: 2,102 / 32,768 tokens (30,666 free)
+```
+
+That is `prompt + reply` tokens (what the model actually processed) over the configured
+`Ollama:NumCtx` window. Because the conversation is a rolling window with a fresh system prompt
+each turn, this is per-turn occupancy — which is also why **`/compact`** visibly drops it. It's
+shown on stderr on a TTY only, so piped output stays clean. (Every surface exposes the same
+figure: the HTTP service puts it on the SSE `done` event and the buffered `/turn` response.)
 
 ### Options
 

@@ -43,7 +43,7 @@ public class ServerAssistantTests
     {
         AgentTurn? captured = null;
         _agent.RunAsync(Arg.Do<AgentTurn>(t => captured = t), Arg.Any<CancellationToken>())
-            .Returns(Result.Success("ok"));
+            .Returns(Result.Success(new AgentRunResult("ok", null)));
 
         await Create().RunAsync(Conversation, "do it", canPerformActions);
 

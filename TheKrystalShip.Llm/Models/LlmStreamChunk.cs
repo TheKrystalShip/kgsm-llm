@@ -14,4 +14,5 @@ namespace TheKrystalShip.Llm.Models;
 public sealed record LlmStreamChunk(
     string? ContentDelta,
     IReadOnlyList<LlmToolCall>? ToolCalls,
-    bool Done);
+    bool Done,
+    LlmUsage? Usage = null);

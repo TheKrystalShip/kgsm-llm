@@ -43,7 +43,7 @@ public class LlmAgent : ILlmAgent
         _logger = logger;
     }
 
-    public async Task<Result<string>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default)
+    public async Task<Result<AgentRunResult>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default)
     {
         // Record the user's turn, then assemble [fresh system, ...history].
         _conversationStore.Append(turn.ConversationId, LlmMessage.User(turn.UserPrompt));
@@ -58,7 +58,7 @@ public class LlmAgent : ILlmAgent
         {
             var response = await _llmClient.ChatAsync(working, tools, cancellationToken);
             if (response.IsFailure)
-                return Result.Failure<string>(response.Error!);
+                return Result.Failure<AgentRunResult>(response.Error!);
 
             var message = response.Value!;
 
@@ -67,7 +67,8 @@ public class LlmAgent : ILlmAgent
                 var text = message.Content ?? string.Empty;
                 if (!string.IsNullOrWhiteSpace(text))
                     _conversationStore.Append(turn.ConversationId, LlmMessage.Assistant(text));
-                return Result.Success(text);
+                // Usage of the producing (final) call — the turn's context occupancy.
+                return Result.Success(new AgentRunResult(text, message.Usage));
             }
 
             await ExecuteToolRoundAsync(message.ToolCalls, working, gate, cancellationToken);
@@ -76,7 +77,7 @@ public class LlmAgent : ILlmAgent
         _logger.LogWarning(
             "Agent hit the {Max}-iteration cap for conversation {Conversation}",
             _options.MaxIterations, turn.ConversationId);
-        return Result.Success(_options.IterationLimitReply);
+        return Result.Success(new AgentRunResult(_options.IterationLimitReply, null));
     }
 
     public async IAsyncEnumerable<AgentEvent> RunStreamAsync(
@@ -98,6 +99,7 @@ public class LlmAgent : ILlmAgent
             var content = new StringBuilder();
             List<LlmToolCall>? toolCalls = null;
             string? error = null;
+            LlmUsage? usage = null;
 
             // Drive the chunk stream through a manual enumerator: a mid-stream failure must be
             // captured and surfaced as a terminal error event, and C# forbids `yield` in a catch.
@@ -134,6 +136,10 @@ public class LlmAgent : ILlmAgent
                 // Tool calls arrive complete in one frame (probe-verified) — capture, don't accumulate.
                 if (chunk.ToolCalls is { Count: > 0 })
                     toolCalls = chunk.ToolCalls.ToList();
+
+                // Token counts ride the terminal done frame of this generation.
+                if (chunk.Usage is not null)
+                    usage = chunk.Usage;
 
                 if (chunk.Done)
                     break;
@@ -172,7 +178,7 @@ public class LlmAgent : ILlmAgent
             var text = content.ToString().Trim();
             if (!string.IsNullOrWhiteSpace(text))
                 _conversationStore.Append(turn.ConversationId, LlmMessage.Assistant(text));
-            yield return AgentEvent.Final(text);
+            yield return AgentEvent.Final(text, usage);
             yield break;
         }
 

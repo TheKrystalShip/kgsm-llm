@@ -261,7 +261,7 @@ public class ServerAssistantStreamTests
             _ambientProbe = ambientProbe;
         }
 
-        public Task<Result<string>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default) =>
+        public Task<Result<AgentRunResult>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("This stub only streams.");
 
         public async IAsyncEnumerable<AgentEvent> RunStreamAsync(

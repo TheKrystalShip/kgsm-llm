@@ -1,3 +1,5 @@
+using TheKrystalShip.Llm.Models;
+
 namespace TheKrystalShip.Kgsm.Assistant.Service;
 
 /// <summary>
@@ -6,6 +8,22 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// client-supplied, so one caller can't read or poison another's history.
 /// </summary>
 public sealed record TurnRequest(string? Prompt);
+
+/// <summary>
+/// Token accounting for a turn, in tokens (never a percentage): the prompt the model evaluated,
+/// what it generated, the sum (<see cref="UsedTokens"/>), the configured <see cref="ContextWindow"/>
+/// (num_ctx), and what's left. Lets the SPA render "used / available". Null when the backend
+/// reported no counts.
+/// </summary>
+public sealed record UsageDto(
+    int PromptTokens, int ResponseTokens, int UsedTokens, int ContextWindow, int RemainingTokens)
+{
+    public static UsageDto? From(LlmUsage? usage) => usage is null
+        ? null
+        : new UsageDto(
+            usage.PromptTokens, usage.ResponseTokens, usage.UsedTokens,
+            usage.ContextWindow, usage.RemainingTokens);
+}
 
 /// <summary>
 /// One destructive op the assistant staged this turn, awaiting confirmation. The opaque
@@ -17,8 +35,9 @@ public sealed record ConfirmationDto(
     string Kind, string Target, string? InstanceName, string Token,
     string? ConfigKey = null, string? ConfigValue = null);
 
-/// <summary>The assistant's reply plus any staged confirmations.</summary>
-public sealed record TurnResponse(string Text, IReadOnlyList<ConfirmationDto> Confirmations);
+/// <summary>The assistant's reply plus any staged confirmations and the turn's token usage.</summary>
+public sealed record TurnResponse(
+    string Text, IReadOnlyList<ConfirmationDto> Confirmations, UsageDto? Usage = null);
 
 /// <summary>A confirmation submission: the token issued by a prior <c>/turn</c>.</summary>
 public sealed record ConfirmRequest(string? Token);
@@ -58,8 +77,11 @@ public sealed record ToolStartEvent(string Tool, IReadOnlyDictionary<string, str
 /// </summary>
 public sealed record ToolResultEvent(string Tool, string Summary);
 
-/// <summary>`event: done` — terminal success; carries the full assembled reply text.</summary>
-public sealed record DoneEvent(string Text);
+/// <summary>
+/// `event: done` — terminal success; the full assembled reply plus the turn's token
+/// <see cref="Usage"/> (used / available, in tokens) for the SPA's context meter.
+/// </summary>
+public sealed record DoneEvent(string Text, UsageDto? Usage = null);
 
 /// <summary>`event: error` — terminal failure surfaced in-band (the stream is already HTTP 200).</summary>
 public sealed record StreamErrorEvent(string Error);

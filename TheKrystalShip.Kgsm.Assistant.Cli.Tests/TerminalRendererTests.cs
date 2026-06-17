@@ -1,5 +1,7 @@
 using FluentAssertions;
 
+using TheKrystalShip.Llm.Models;
+
 namespace TheKrystalShip.Kgsm.Assistant.Cli.Tests;
 
 /// <summary>
@@ -104,5 +106,41 @@ public class TerminalRendererTests
         renderer.Handle(AssistantStreamEvent.Error("boom"));
 
         err.ToString().Should().NotContain("\x1b[");
+    }
+
+    [Fact]
+    public void Final_WithUsage_PrintsContextLineInTokens_OnStderr_WhenStatusShown()
+    {
+        var (renderer, @out, err) = Make(showStatus: true, color: false);
+
+        renderer.Handle(AssistantStreamEvent.Token("hi"));
+        renderer.Handle(AssistantStreamEvent.Final("hi", new LlmUsage(1720, 130, 32768)));
+
+        // Tokens, not a percentage: used (1850), window (32768), free (30918) — culture-agnostic
+        // substring checks so a thousands-separator difference doesn't break the assertion.
+        var stderr = err.ToString();
+        stderr.Should().Contain("context:").And.Contain("tokens").And.Contain("free");
+        stderr.Should().Contain("850").And.Contain("768");   // 1,850 used / 32,768 window
+        @out.ToString().Should().Be("hi" + Environment.NewLine);   // usage never leaks to stdout
+    }
+
+    [Fact]
+    public void Final_WithUsage_Suppressed_WhenStatusHidden()   // piped reply (stdout not a TTY) stays clean
+    {
+        var (renderer, _, err) = Make(showStatus: false, color: false);
+
+        renderer.Handle(AssistantStreamEvent.Final("hi", new LlmUsage(1720, 130, 32768)));
+
+        err.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Final_WithoutUsage_PrintsNoContextLine()
+    {
+        var (renderer, _, err) = Make(showStatus: true, color: false);
+
+        renderer.Handle(AssistantStreamEvent.Final("hi"));   // no usage reported
+
+        err.ToString().Should().BeEmpty();
     }
 }

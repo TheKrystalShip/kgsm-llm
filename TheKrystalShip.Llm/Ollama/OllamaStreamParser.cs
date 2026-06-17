@@ -18,7 +18,7 @@ public static class OllamaStreamParser
     /// reader simply skips it. Content deltas are returned verbatim (NOT trimmed: trimming each
     /// delta would swallow the spaces between tokens); the caller trims the assembled whole.
     /// </summary>
-    public static LlmStreamChunk? ParseFrame(string jsonLine)
+    public static LlmStreamChunk? ParseFrame(string jsonLine, int contextWindow = 0)
     {
         if (string.IsNullOrWhiteSpace(jsonLine))
             return null;
@@ -57,8 +57,31 @@ public static class OllamaStreamParser
                     toolCalls = parsed;
             }
 
-            return new LlmStreamChunk(contentDelta, toolCalls, done);
+            // Token counts ride the terminal `done` frame; earlier frames carry none.
+            return new LlmStreamChunk(contentDelta, toolCalls, done, ParseUsage(root, contextWindow));
         }
+    }
+
+    /// <summary>
+    /// Extracts token accounting from an Ollama response/frame root: <c>prompt_eval_count</c> and
+    /// <c>eval_count</c>, stamped with the caller's configured <paramref name="contextWindow"/>
+    /// (<c>num_ctx</c>, which the response itself doesn't echo). Returns null when neither count is
+    /// present — only the final response (buffered) or the terminal <c>done</c> frame (streaming)
+    /// carries them. Shared by both client paths so usage parsing can't drift.
+    /// </summary>
+    public static LlmUsage? ParseUsage(JsonElement root, int contextWindow)
+    {
+        var hasPrompt = root.TryGetProperty("prompt_eval_count", out var promptElement) &&
+                        promptElement.ValueKind == JsonValueKind.Number;
+        var hasEval = root.TryGetProperty("eval_count", out var evalElement) &&
+                      evalElement.ValueKind == JsonValueKind.Number;
+
+        if (!hasPrompt && !hasEval)
+            return null;
+
+        var prompt = hasPrompt ? promptElement.GetInt32() : 0;
+        var eval = hasEval ? evalElement.GetInt32() : 0;
+        return new LlmUsage(prompt, eval, contextWindow);
     }
 
     /// <summary>

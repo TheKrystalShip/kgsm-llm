@@ -49,6 +49,7 @@ public class LlmAgentStreamTests
     private static LlmStreamChunk ToolFrame(params string[] names) =>
         new(null, names.Select(n => new LlmToolCall(n, new Dictionary<string, string?>())).ToArray(), false);
     private static LlmStreamChunk DoneFrame() => new(null, null, true);
+    private static LlmStreamChunk DoneFrame(LlmUsage usage) => new(null, null, true, usage);
 
     private static async Task<List<AgentEvent>> DrainAsync(IAsyncEnumerable<AgentEvent> events)
     {
@@ -77,6 +78,22 @@ public class LlmAgentStreamTests
         _store.Messages.Should().HaveCount(2);
         _store.Messages[0].Role.Should().Be(LlmRole.User);
         _store.Messages[1].Should().Match<LlmMessage>(m => m.Role == LlmRole.Assistant && m.Content == "Hello");
+    }
+
+    [Fact]
+    public async Task FinalEvent_CarriesUsageFromTheTerminalDoneFrame()
+    {
+        var usage = new LlmUsage(900, 60, 32768);
+        var client = new ScriptedStreamClient(new[]
+        {
+            new[] { Content("hi"), DoneFrame(usage) },
+        });
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
+
+        var final = events.Single(e => e.Kind == AgentEventKind.Final);
+        final.Usage.Should().Be(usage);
+        final.Usage!.UsedTokens.Should().Be(960);
     }
 
     [Fact]

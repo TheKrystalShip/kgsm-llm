@@ -5,12 +5,12 @@ namespace TheKrystalShip.Llm.Interfaces;
 /// <summary>
 /// Runs a full agent turn: prepends the host-built system prompt, drives the
 /// model↔tool loop (honoring the per-call gate), persists the conversation, and
-/// returns the final reply text. Stateful only through the conversation store;
-/// safe to share as a singleton.
+/// returns the final reply text plus the producing call's token usage. Stateful
+/// only through the conversation store; safe to share as a singleton.
 /// </summary>
 public interface ILlmAgent
 {
-    Task<Result<string>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default);
+    Task<Result<AgentRunResult>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Streaming counterpart to <see cref="RunAsync"/>: drives the same model↔tool loop but yields

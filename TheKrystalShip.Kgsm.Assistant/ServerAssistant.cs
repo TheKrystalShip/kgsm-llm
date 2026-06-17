@@ -101,7 +101,7 @@ public class ServerAssistant : IServerAssistant
         var confirmations = scope.Staged;
 
         return result.IsSuccess
-            ? AssistantResult.Ok(result.Value!, confirmations)
+            ? AssistantResult.Ok(result.Value!.Text, confirmations, result.Value!.Usage)
             : AssistantResult.Fail(result.Error!);
     }
 
@@ -165,6 +165,7 @@ public class ServerAssistant : IServerAssistant
         {
             using var scope = _confirmations.BeginTurn();
             var finalText = string.Empty;
+            LlmUsage? finalUsage = null;
             var errored = false;
 
             await foreach (var ev in _agent.RunStreamAsync(turn, cancellationToken)
@@ -189,6 +190,7 @@ public class ServerAssistant : IServerAssistant
                         break;
                     case AgentEventKind.Final:
                         finalText = ev.Text ?? string.Empty;
+                        finalUsage = ev.Usage;
                         break;
                     case AgentEventKind.Error:
                         // Terminal: a failed turn stages nothing to confirm.
@@ -208,7 +210,7 @@ public class ServerAssistant : IServerAssistant
                 foreach (var confirmation in scope.Staged)
                     await writer.WriteAsync(AssistantStreamEvent.Confirmation(confirmation), cancellationToken);
 
-                await writer.WriteAsync(AssistantStreamEvent.Final(finalText), cancellationToken);
+                await writer.WriteAsync(AssistantStreamEvent.Final(finalText, finalUsage), cancellationToken);
             }
         }
         finally

@@ -226,7 +226,7 @@ secured.MapPost("/turn", async (
             c.ConfigKey, c.ConfigValue))
         .ToArray();
 
-    return Results.Ok(new TurnResponse(result.Text, confirmations));
+    return Results.Ok(new TurnResponse(result.Text, confirmations, UsageDto.From(result.Usage)));
 });
 
 secured.MapPost("/confirm", async (

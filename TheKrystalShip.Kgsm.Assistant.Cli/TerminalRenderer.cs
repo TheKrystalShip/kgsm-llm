@@ -79,6 +79,11 @@ internal sealed class TerminalRenderer
                 else if (!string.IsNullOrEmpty(ev.Text))
                     _out.WriteLine(ev.Text);
                 _out.Flush();
+                // Context occupancy in tokens (used / window), to stderr, TTY-only so a piped
+                // reply stays clean — same discipline as the tool-status lines.
+                if (_showStatus && ev.Usage is { } usage)
+                    Status($"context: {usage.UsedTokens:N0} / {usage.ContextWindow:N0} tokens "
+                        + $"({usage.RemainingTokens:N0} free)");
                 break;
 
             case AssistantEventKind.Error:

@@ -85,7 +85,8 @@ internal static class SseTurnWriter
                         break;
 
                     case AssistantEventKind.Final:
-                        await WriteEventAsync(response, "done", new DoneEvent(ev.Text ?? string.Empty), ct);
+                        await WriteEventAsync(response, "done",
+                            new DoneEvent(ev.Text ?? string.Empty, UsageDto.From(ev.Usage)), ct);
                         break;
                 }
             }

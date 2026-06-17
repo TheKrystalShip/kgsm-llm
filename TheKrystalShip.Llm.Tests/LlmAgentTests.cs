@@ -78,7 +78,7 @@ public class LlmAgentTests
         var result = await CreateAgent().RunAsync(Turn());
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be("all done");
+        result.Value!.Text.Should().Be("all done");
         Received.InOrder(() =>
         {
             _ = _dispatcher.ExecuteAsync(Arg.Is<LlmToolCall>(c => c.Name == ToolA), Arg.Any<CancellationToken>());
@@ -164,7 +164,20 @@ public class LlmAgentTests
         var result = await CreateAgent(maxIterations: 3).RunAsync(Turn());
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Be(new LlmAgentOptions().IterationLimitReply);
+        result.Value!.Text.Should().Be(new LlmAgentOptions().IterationLimitReply);
+    }
+
+    [Fact]
+    public async Task BufferedResult_CarriesUsageFromTheFinalResponse()
+    {
+        var usage = new LlmUsage(1720, 130, 32768);
+        ScriptLlm(Result.Success(new LlmResponse("done", Array.Empty<LlmToolCall>(), usage)));
+
+        var result = await CreateAgent().RunAsync(Turn());
+
+        result.Value!.Text.Should().Be("done");
+        result.Value.Usage.Should().Be(usage);
+        result.Value.Usage!.UsedTokens.Should().Be(1850);
     }
 
     [Fact]

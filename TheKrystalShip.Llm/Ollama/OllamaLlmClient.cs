@@ -78,8 +78,9 @@ public class OllamaLlmClient : ILlmClient
                 : null;
 
             var toolCalls = OllamaStreamParser.ParseToolCalls(messageElement);
+            var usage = OllamaStreamParser.ParseUsage(document.RootElement, _options.NumCtx);
 
-            return Result.Success(new LlmResponse(replyContent, toolCalls));
+            return Result.Success(new LlmResponse(replyContent, toolCalls, usage));
         }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -118,7 +119,7 @@ public class OllamaLlmClient : ILlmClient
         string? line;
         while ((line = await reader.ReadLineAsync(cancellationToken)) is not null)
         {
-            var chunk = OllamaStreamParser.ParseFrame(line);
+            var chunk = OllamaStreamParser.ParseFrame(line, _options.NumCtx);
             if (chunk is null)
                 continue;
             yield return chunk;

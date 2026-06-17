@@ -183,5 +183,10 @@ public class LlmAgentTests
         public List<LlmMessage> Messages { get; } = new();
         public IReadOnlyList<LlmMessage> GetHistory(string conversationId) => Messages.ToArray();
         public void Append(string conversationId, params LlmMessage[] messages) => Messages.AddRange(messages);
+        public void Replace(string conversationId, params LlmMessage[] messages)
+        {
+            Messages.Clear();
+            Messages.AddRange(messages);
+        }
     }
 }

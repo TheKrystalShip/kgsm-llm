@@ -13,6 +13,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Llm.Extensions;
+using TheKrystalShip.Llm.Interfaces;
 
 // Exit codes: 0 ok · 1 runtime failure · 2 usage/config error · 130 cancelled (SIGINT).
 const int ExitOk = 0, ExitRuntime = 1, ExitUsage = 2, ExitCancelled = 130;
@@ -145,8 +146,9 @@ using (host)
         return ok ? ExitOk : ExitRuntime;
     }
 
-    // No prompt + interactive stdin → the REPL.
-    return await Repl.RunAsync(runner, interruptor, canPerformActions);
+    // No prompt + interactive stdin → the REPL (which also offers /compact).
+    var compactor = host.Services.GetRequiredService<IConversationCompactor>();
+    return await Repl.RunAsync(runner, interruptor, compactor, canPerformActions);
 }
 
 // --- helpers ---------------------------------------------------------------------------------

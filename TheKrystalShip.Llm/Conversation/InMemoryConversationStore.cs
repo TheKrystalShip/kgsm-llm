@@ -68,6 +68,24 @@ public class InMemoryConversationStore : IConversationStore
         }
     }
 
+    public void Replace(string conversationId, params LlmMessage[] messages)
+    {
+        var conversation = _conversations.GetOrAdd(conversationId, _ => new Conversation());
+
+        lock (conversation)
+        {
+            conversation.Messages.Clear();
+            conversation.Messages.AddRange(messages);
+
+            // Honor the same rolling window as Append (a summary message is tiny, but stay safe).
+            var overflow = conversation.Messages.Count - _options.MaxMessages;
+            if (overflow > 0)
+                conversation.Messages.RemoveRange(0, overflow);
+
+            conversation.LastActivityUtc = DateTime.UtcNow;
+        }
+    }
+
     private bool IsIdle(Conversation conversation)
     {
         if (conversation.Messages.Count == 0)

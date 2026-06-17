@@ -34,6 +34,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ILlmClient, OllamaLlmClient>();
         services.AddSingleton<IConversationStore, InMemoryConversationStore>();
         services.AddSingleton<ILlmAgent, LlmAgent>();
+        services.AddSingleton<IConversationCompactor, ConversationCompactor>();
 
         return services;
     }

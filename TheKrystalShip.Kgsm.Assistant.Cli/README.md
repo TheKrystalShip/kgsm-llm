@@ -39,8 +39,16 @@ Tool progress (`⚙ get_status(...)`), the REPL prompt, confirmations, and logs 
 
 ### REPL commands
 
-`/exit` (or `/quit`) leave · `/reset` start a fresh conversation · `/help` show help ·
-**Ctrl-C** cancels the current reply (stays in the REPL) · **Ctrl-D** leaves.
+`/exit` (or `/quit`) leave · `/reset` start a fresh conversation · `/compact` summarize
+this conversation in place · `/help` show help · **Ctrl-C** cancels the current reply (stays
+in the REPL) · **Ctrl-D** leaves.
+
+**`/compact`** is the conversation analogue of context compaction: it asks the model to
+summarize the conversation so far, then **replaces** the in-session history with that single
+summary — freeing context while keeping continuity (the assistant still remembers what you
+established). Unlike `/reset` (which throws the history away), `/compact` keeps the gist. It's
+a no-op on a near-empty conversation, leaves the history untouched if the summary fails, and is
+cancellable with Ctrl-C. The summary lives only in memory for the session.
 
 ## Authority
 

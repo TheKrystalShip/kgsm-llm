@@ -21,4 +21,12 @@ public interface IConversationStore
     /// has been idle, then trimming to the configured window size.
     /// </summary>
     void Append(string conversationId, params LlmMessage[] messages);
+
+    /// <summary>
+    /// Atomically replaces a conversation's entire history with the given messages
+    /// (resetting the idle timer), trimmed to the configured window size. This is the
+    /// seam compaction uses to swap a full history for a single summary message;
+    /// passing no messages clears the conversation.
+    /// </summary>
+    void Replace(string conversationId, params LlmMessage[] messages);
 }

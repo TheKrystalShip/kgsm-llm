@@ -53,4 +53,25 @@ public class InMemoryConversationStoreTests
         store.GetHistory("c1").Should().ContainSingle(m => m.Content == "for c1");
         store.GetHistory("c2").Should().ContainSingle(m => m.Content == "for c2");
     }
+
+    [Fact]
+    public void Replace_SwapsEntireHistory()
+    {
+        var store = Create();
+        store.Append("c1", LlmMessage.User("one"), LlmMessage.Assistant("two"));
+
+        store.Replace("c1", LlmMessage.Assistant("summary"));
+
+        store.GetHistory("c1").Select(m => m.Content).Should().Equal("summary");
+    }
+
+    [Fact]
+    public void Replace_OnUnknownConversation_SeedsIt()
+    {
+        var store = Create();
+
+        store.Replace("fresh", LlmMessage.Assistant("seed"));
+
+        store.GetHistory("fresh").Should().ContainSingle(m => m.Content == "seed");
+    }
 }

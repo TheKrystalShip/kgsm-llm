@@ -18,6 +18,79 @@ Two ways to read a run, use whichever fits:
 It is the codified, repeatable version of the one-off hand-evaluation in
 `~/tks/gemma-assistant-eval.md`.
 
+## Quick guide
+
+### Run it
+
+Needs live Ollama + a kgsm host with ≥ 1 instance. From the repo root:
+
+```bash
+A="dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval --"
+
+# Whole suite, shipped prompts, read every conversation:
+$A --kgsm ~/tks/kgsm/kgsm.sh --shipped-prompts --transcript
+
+# Just the cases you care about (id, id-prefix, or dimension letter), fewer reps for speed:
+$A --kgsm ~/tks/kgsm/kgsm.sh --filter G --transcript --reps 2     # the whole G group
+$A --kgsm ~/tks/kgsm/kgsm.sh --filter C8 --reps 5                 # one case
+
+# Another model:
+$A --kgsm ~/tks/kgsm/kgsm.sh --model qwen3.5:9b --shipped-prompts
+
+# Did my prompt edit help? Edit the prompt file, run twice, diff:
+$A --kgsm ~/tks/kgsm/kgsm.sh --out eval-results/before.json       # before your edit (no --shipped-prompts → live prompts)
+#   ...edit ~/.config/kgsm-assistant/prompts/preamble.md...
+$A --kgsm ~/tks/kgsm/kgsm.sh --out eval-results/after.json
+$A compare eval-results/before.json eval-results/after.json
+```
+
+(If you've set up the assistant CLI, `KGSM:Path` is inherited and you can drop `--kgsm`. `--help`
+lists every flag.)
+
+### Add a case
+
+Cases live in `BenchmarkSuite.cs`. A single-turn case is one statement:
+
+```csharp
+Single("B6", "is <game> overloaded?", authorized: true, new[] { FixtureRole.UniqueGame },
+    "is {unique_game} struggling with load?",         // the user's prompt (placeholders → real games)
+    C.CalledTool(LlmTools.RunHealthCheck, "checks health"),
+    C.ResolvedNotAsked(FixtureRole.UniqueGame)),       // …one or more checks
+```
+
+- **id** — any free label. Convention: `A`–`E` closed cases, `G` ambiguous-diagnosis. Group-runnable
+  by id-prefix (`--filter B`).
+- **roles** — the fixtures the prompt needs (below). A case whose role can't be filled on the host is
+  **skipped with a reason**, never failed.
+- **prompt** — use `{unique_game}` / `{never_game}` so it stays host-portable; the preflight fills them.
+- **checks** — the assertions, from the kit below. For an **open-ended** prompt, give it a robust floor
+  (`AnyOf(...)` + `DoesNotAskWhichServer()`) and judge the rest by reading `--transcript`.
+
+Multi-turn (clarify → follow-up on one conversation): use the full `new BenchmarkCase(id, title, auth,
+roles, new[]{ new BenchmarkStep("turn 1", checks), new BenchmarkStep("turn 2", checks) })` form — see `M1`.
+
+Roles: `UniqueGame` (the only instance of its game), `Running`, `Stopped`, `AnyInstance`,
+`NeverInstalledGame` (installable but absent), `MultipleInstances` (≥ 2 instances).
+
+The check kit (`Checks.cs`, all via `C.`):
+
+| Check | Asserts |
+|-------|---------|
+| `CalledTool(LlmTools.X, "…")` | the model called tool X (`GetStatus`, `RunHealthCheck`, `WebSearch`, `ServerCommand`, `ViewConfigFile`, …) |
+| `DidNotCallTool(X, dim, "…")` · `NoToolCalls("…")` | it didn't call X · it called nothing (e.g. declines an off-topic ask) |
+| `ReferencedRole(role, tool?, dim, "…")` | a tool call targeted that role's server |
+| `RoutedThroughStatusOrHealth()` | consulted a status/health tool (didn't invent run-state) |
+| `Stages(ConfirmationKind.X)` · `StagesNothing(dim, "…")` | staged X for confirmation (`Restart`/`Backup`/`Install`/`SetConfig`/…) · staged nothing |
+| `ResolvedNotAsked(role)` | acted on the unique match without asking which |
+| `DoesNotAskWhich()` · `DoesNotAskWhichServer()` | didn't ask any "which?" · didn't re-ask which *server* (diagnostic follow-ups still allowed) |
+| `Clarifies()` | asked which, took no action (for a *genuinely* ambiguous prompt) |
+| `FinalHas(regex, "…", dim)` · `FinalLacks(regex, "…", dim)` | the reply matches / doesn't match a pattern |
+| `AnyOf(dim, "…", checkA, checkB, …)` | passes if any sub-check passes (multiple acceptable trajectories) |
+
+Two rules: **score routing/staging, never a world fact** (the kgsm run-state bug would peg it red), and
+if you change an **existing** case's checks, **bump `BenchmarkSuite.Version`** so old result files
+compare honestly (adding a new case already does this when you mean to).
+
 ## What it measures (and what it deliberately doesn't)
 
 It scores **what the model did** — routing, propose-only staging, clarify-vs-resolve — never a

@@ -13,6 +13,10 @@
          dev box that has a newer major than 9. -->
     <RollForward>LatestMajor</RollForward>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Embed the app's own symbols into the binary so the single-file publish drops no
+         separate kgsm-assistant.pdb (stack traces stay useful). The shipped artifact is the
+         one `kgsm-assistant` file; any dependency .pdb/.xml in the publish dir are ignorable. -->
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>

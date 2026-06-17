@@ -30,6 +30,7 @@ public class ServerAssistantConfirmTests
         _inventory,
         _operations,
         new NoopToolRelevanceFilter(),
+        new PassthroughPromptOverrides(),
         NullLogger<ServerAssistant>.Instance);
 
     private void Instances(params string[] names) =>

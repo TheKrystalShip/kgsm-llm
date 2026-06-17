@@ -12,13 +12,15 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
-/// The prompt text lives in the library (<see cref="KgsmAssistantPrompts"/>) so every
-/// host shares it without copy-pasting config. These verify the builder uses those
-/// defaults when no Llm:* config is present, and still honors a host override.
+/// The prompt text lives in the library (<see cref="KgsmAssistantPrompts"/>) so every host shares it
+/// without copy-pasting config. These verify the precedence — editable file > inline Llm:* config >
+/// lib constant — and that the recorded <see cref="BuiltPrompt.TemplateHash"/> tracks the EDITABLE
+/// template (it moves when the persona changes, not when the injected live lists do).
 /// </summary>
-public class SystemPromptBuilderTests
+public sealed class SystemPromptBuilderTests : IDisposable
 {
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "kgsm-prompts-" + Guid.NewGuid().ToString("N"));
 
     public SystemPromptBuilderTests()
     {
@@ -28,12 +30,27 @@ public class SystemPromptBuilderTests
             .Returns(Task.FromResult<IReadOnlyCollection<string>>(Array.Empty<string>()));
     }
 
-    private SystemPromptBuilder Build(params (string key, string value)[] config)
+    public void Dispose()
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(config.ToDictionary(c => c.key, c => (string?)c.value))
-            .Build();
-        return new SystemPromptBuilder(_inventory, NullLogger<SystemPromptBuilder>.Instance, configuration);
+        try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); }
+        catch { /* best-effort temp cleanup */ }
+    }
+
+    private SystemPromptBuilder Build(bool withDir = false, params (string key, string value)[] config)
+    {
+        var settings = config.ToDictionary(c => c.key, c => (string?)c.value);
+        if (withDir)
+            settings[FilePromptOverrides.DirectoryKey] = _dir;
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var overrides = new FilePromptOverrides(configuration, NullLogger<FilePromptOverrides>.Instance);
+        return new SystemPromptBuilder(_inventory, NullLogger<SystemPromptBuilder>.Instance, configuration, overrides);
+    }
+
+    private void WriteSegment(string fileName, string text)
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, fileName), text);
     }
 
     [Fact]
@@ -41,9 +58,9 @@ public class SystemPromptBuilderTests
     {
         var prompt = await Build().BuildAsync(canPerformActions: false);
 
-        prompt.Should().StartWith(KgsmAssistantPrompts.Preamble);
-        prompt.Should().Contain(KgsmAssistantPrompts.ActionsDenied);
-        prompt.Should().NotContain(KgsmAssistantPrompts.ActionsAllowed);
+        prompt.Text.Should().StartWith(KgsmAssistantPrompts.Preamble);
+        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsDenied);
+        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsAllowed);
     }
 
     [Fact]
@@ -51,19 +68,77 @@ public class SystemPromptBuilderTests
     {
         var prompt = await Build().BuildAsync(canPerformActions: true);
 
-        prompt.Should().Contain(KgsmAssistantPrompts.ActionsAllowed);
-        prompt.Should().NotContain(KgsmAssistantPrompts.ActionsDenied);
+        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsAllowed);
+        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsDenied);
     }
 
     [Fact]
     public async Task ConfigOverride_TakesPrecedenceOverLibDefault()
     {
-        var prompt = await Build(
+        var prompt = await Build(config: new[]
+        {
             ("Llm:Preamble", "CUSTOM PREAMBLE"),
-            ("Llm:ActionsDenied", "CUSTOM DENIED")).BuildAsync(canPerformActions: false);
+            ("Llm:ActionsDenied", "CUSTOM DENIED"),
+        }).BuildAsync(canPerformActions: false);
 
-        prompt.Should().StartWith("CUSTOM PREAMBLE");
-        prompt.Should().Contain("CUSTOM DENIED");
-        prompt.Should().NotContain(KgsmAssistantPrompts.Preamble);
+        prompt.Text.Should().StartWith("CUSTOM PREAMBLE");
+        prompt.Text.Should().Contain("CUSTOM DENIED");
+        prompt.Text.Should().NotContain(KgsmAssistantPrompts.Preamble);
+    }
+
+    [Fact]
+    public async Task FileOverride_BeatsConfigAndConstant()
+    {
+        WriteSegment("preamble.md", "FILE PREAMBLE");
+        var prompt = await Build(withDir: true, config: new[] { ("Llm:Preamble", "CONFIG PREAMBLE") })
+            .BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().StartWith("FILE PREAMBLE");
+        prompt.Text.Should().NotContain("CONFIG PREAMBLE");
+    }
+
+    [Fact]
+    public async Task BlankFile_FallsBackToConfigThenConstant()   // mid-save safety
+    {
+        WriteSegment("preamble.md", "   \n");   // whitespace-only ⇒ treated as absent
+        var prompt = await Build(withDir: true, config: new[] { ("Llm:Preamble", "CONFIG PREAMBLE") })
+            .BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().StartWith("CONFIG PREAMBLE");
+    }
+
+    [Fact]
+    public async Task EditingAFile_AppliesOnTheNextBuild_SameInstance()   // hot reload, no restart
+    {
+        WriteSegment("preamble.md", "VERSION ONE");
+        var builder = Build(withDir: true);
+
+        var first = await builder.BuildAsync(canPerformActions: false);
+        first.Text.Should().StartWith("VERSION ONE");
+
+        // Edit the file; the SAME builder must pick it up on the next turn (it re-reads per build).
+        WriteSegment("preamble.md", "VERSION TWO");
+        var second = await builder.BuildAsync(canPerformActions: false);
+
+        second.Text.Should().StartWith("VERSION TWO");
+        second.TemplateHash.Should().NotBe(first.TemplateHash);
+    }
+
+    [Fact]
+    public async Task TemplateHash_MovesOnPersonaEdit_NotOnInventoryChange()
+    {
+        var baseline = (await Build().BuildAsync(canPerformActions: false)).TemplateHash;
+
+        // Same persona, different live inventory → SAME template hash (lists are excluded).
+        _inventory.GetInstancesAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(
+                new Dictionary<string, string> { ["terraria"] = "Terraria" }));
+        var afterInstall = (await Build().BuildAsync(canPerformActions: false)).TemplateHash;
+        afterInstall.Should().Be(baseline);
+
+        // Edited persona → DIFFERENT hash.
+        var edited = (await Build(config: new[] { ("Llm:Preamble", "REWORDED") })
+            .BuildAsync(canPerformActions: false)).TemplateHash;
+        edited.Should().NotBe(baseline);
     }
 }

@@ -42,6 +42,15 @@ public sealed record AgentTurn
     public required string SystemPrompt { get; init; }
 
     /// <summary>
+    /// Optional fingerprint of the <i>tunable</i> part of the system prompt — the editable template,
+    /// excluding any per-turn injected data (e.g. live inventory lists). When set, the recorder
+    /// stamps it instead of hashing the whole assembled <see cref="SystemPrompt"/>, so the id moves
+    /// only when the operator edits the prompt, not when inventory changes. Null ⇒ the agent loop
+    /// falls back to hashing <see cref="SystemPrompt"/>.
+    /// </summary>
+    public string? SystemPromptHash { get; init; }
+
+    /// <summary>
     /// Tools the model may call this turn. This set IS the whitelist — the host
     /// decides what to offer (e.g. read-only vs. full) per caller.
     /// </summary>

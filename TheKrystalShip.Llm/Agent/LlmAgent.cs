@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
 using System.Text;
 
 using Microsoft.Extensions.Logging;
@@ -326,7 +325,9 @@ public class LlmAgent : ILlmAgent
                 StartedAt = startedAt,
                 CompletedAt = DateTimeOffset.UtcNow,
                 UserPrompt = turn.UserPrompt,
-                SystemPromptHash = ShortHash(turn.SystemPrompt),
+                // Prefer the host's template fingerprint (tracks prompt EDITS, not injected lists);
+                // fall back to hashing the whole assembled prompt for hosts that don't supply one.
+                SystemPromptHash = turn.SystemPromptHash ?? PromptHash.Short(turn.SystemPrompt),
                 Tools = trajectory ?? Array.Empty<RecordedToolCall>(),
                 Iterations = iterations,
                 Outcome = outcome,
@@ -340,12 +341,6 @@ public class LlmAgent : ILlmAgent
             // Defence in depth on top of the recorder's own guard: never fail a turn over its record.
             _logger.LogWarning(ex, "Failed to build conversation turn record for {Conversation}", turn.ConversationId);
         }
-    }
-
-    private static string ShortHash(string text)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-        return Convert.ToHexString(hash, 0, 4).ToLowerInvariant();   // 8 hex chars — enough to bucket
     }
 
     private static string Truncate(string text, int max)

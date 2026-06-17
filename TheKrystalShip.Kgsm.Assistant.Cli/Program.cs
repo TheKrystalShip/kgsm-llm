@@ -69,6 +69,36 @@ if (builder.Configuration.GetValue("Recording:Enabled", false)
     builder.Configuration["Recording:Directory"] = DefaultRecordingDir();
 }
 
+// Prompt-tuning artifacts (editable prompt segments + tool descriptions) default to an XDG config
+// location, re-read each turn so an edit applies to the next turn with no restart.
+if (string.IsNullOrWhiteSpace(builder.Configuration["Prompts:Directory"]))
+    builder.Configuration["Prompts:Directory"] = DefaultPromptsDir();
+
+// --label tags this run's recorded turns, so a prompt/tool-description edit can be A/B'd against the
+// transcript corpus (filter by it later). Maps onto the recorder's Recording:Label knob.
+if (!string.IsNullOrWhiteSpace(cli.Label))
+    builder.Configuration["Recording:Label"] = cli.Label;
+
+// --dump-prompts: seed editable DEFAULT prompt + tool-description files (never clobbering edits),
+// then exit. Pure file IO — needs neither kgsm nor Ollama, so it runs before any validation below.
+if (cli.DumpPrompts)
+{
+    var promptsDir = builder.Configuration["Prompts:Directory"]!;
+    try
+    {
+        var dump = TheKrystalShip.Kgsm.Assistant.PromptScaffold.WriteDefaults(promptsDir);
+        foreach (var p in dump.Written) Console.Error.WriteLine($"wrote   {p}");
+        foreach (var p in dump.Skipped) Console.Error.WriteLine($"exists  {p}  (kept)");
+        Console.Error.WriteLine($"\nEdit these under {promptsDir}; changes apply on the next turn.");
+        return ExitOk;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"kgsm-assistant: could not write prompt files to '{promptsDir}' — {ex.Message}");
+        return ExitRuntime;
+    }
+}
+
 // --- Logging (§3.1): quiet by DEFAULT (floor at Warning), everything to stderr so stdout is the reply.
 var noColor = cli.NoColor || Environment.GetEnvironmentVariable("NO_COLOR") is not null;
 builder.Logging.ClearProviders();
@@ -182,4 +212,14 @@ static string DefaultRecordingDir()
         ? xdg
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
     return Path.Combine(dataHome, "kgsm-assistant", "transcripts");
+}
+
+// Editable prompt/tool-description files are settings, so they live under the XDG *config* home.
+static string DefaultPromptsDir()
+{
+    var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+    var configHome = !string.IsNullOrWhiteSpace(xdg)
+        ? xdg
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+    return Path.Combine(configHome, "kgsm-assistant", "prompts");
 }

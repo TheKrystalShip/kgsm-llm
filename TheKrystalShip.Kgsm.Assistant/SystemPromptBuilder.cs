@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant;
 
@@ -13,23 +14,33 @@ public class SystemPromptBuilder : ISystemPromptBuilder
     private readonly IServerInventory _inventory;
     private readonly ILogger<SystemPromptBuilder> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IPromptOverrides _overrides;
 
-    public SystemPromptBuilder(IServerInventory inventory, ILogger<SystemPromptBuilder> logger, IConfiguration configuration)
+    public SystemPromptBuilder(
+        IServerInventory inventory,
+        ILogger<SystemPromptBuilder> logger,
+        IConfiguration configuration,
+        IPromptOverrides overrides)
     {
         _inventory = inventory;
         _logger = logger;
         _configuration = configuration;
+        _overrides = overrides;
     }
 
-    public async Task<string> BuildAsync(bool canPerformActions, CancellationToken cancellationToken = default)
+    public async Task<BuiltPrompt> BuildAsync(bool canPerformActions, CancellationToken cancellationToken = default)
     {
-        // Config overrides the lib-owned canonical text; absent keys fall back to the
-        // shared defaults so a new host needs no Llm:* config to match every other host.
-        var preamble = _configuration["Llm:Preamble"] ?? KgsmAssistantPrompts.Preamble;
-        var builder = new StringBuilder(preamble);
-        builder.Append(canPerformActions
-            ? _configuration["Llm:ActionsAllowed"] ?? KgsmAssistantPrompts.ActionsAllowed
-            : _configuration["Llm:ActionsDenied"] ?? KgsmAssistantPrompts.ActionsDenied);
+        // The editable template: persona + authorization stance. Each segment resolves
+        // file (hot, top precedence) > inline Llm:* config > lib-owned constant default.
+        var preamble = Effective(PromptSegments.Preamble);
+        var actions = Effective(canPerformActions ? PromptSegments.ActionsAllowed : PromptSegments.ActionsDenied);
+        var template = preamble + actions;
+
+        // Hash ONLY the template — not the live lists appended below — so the recorded id moves when
+        // the prompt is tuned, not when a server is installed mid-session.
+        var templateHash = PromptHash.Short(template);
+
+        var builder = new StringBuilder(template);
 
         try
         {
@@ -58,6 +69,14 @@ public class SystemPromptBuilder : ISystemPromptBuilder
             _logger.LogWarning(ex, "Failed to inject live lists into system prompt");
         }
 
-        return builder.ToString();
+        return new BuiltPrompt(builder.ToString(), templateHash);
     }
+
+    /// <summary>Resolves a segment: editable file > inline config > lib-owned constant default.</summary>
+    private string Effective(PromptSegment segment) =>
+        _overrides.ReadText(segment.FileName)
+        ?? NullIfBlank(_configuration[segment.ConfigKey])
+        ?? segment.Default;
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 }

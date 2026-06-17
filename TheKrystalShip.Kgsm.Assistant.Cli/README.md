@@ -87,6 +87,37 @@ It records *your own* chats on *your own* host; no secrets transit tool argument
 env/config, never an argument). To turn it off, set `Recording:Enabled` to `false` (or
 `Recording__Enabled=false`); to relocate the corpus, set `Recording:Directory`.
 
+### Tuning prompts & tool descriptions (no recompile)
+
+The text that steers the model — the system prompt and the tool/parameter descriptions — lives in
+editable files so you can tune it against the recorded corpus without rebuilding. Seed the defaults:
+
+```bash
+kgsm-assistant --dump-prompts        # writes editable copies, never clobbering your edits
+```
+
+That creates, under `~/.config/kgsm-assistant/prompts/` (`$XDG_CONFIG_HOME` honored):
+
+| File | What it steers |
+|---|---|
+| `preamble.md` | The assistant's persona + how it uses the live lists. |
+| `actions-allowed.md` | Appended for authorized callers (the propose-only command stance). |
+| `actions-denied.md` | Appended for read-only callers. |
+| `tools.json` | Per-tool and per-parameter **descriptions** (the routing levers). Tool *names* are structural and not overridable here. |
+
+Edit a file and the change applies on the **next turn** — no restart (the files are re-read each
+turn). Precedence is **file > `Llm:*` config > the built-in default**, and a blank/absent file falls
+back to the default (so a mid-save read never blanks the prompt). `tools.json` overrides only the
+prose you include; anything omitted keeps its default.
+
+The loop this closes: edit → chat → read the transcripts → see whether the change actually moved the
+model's behavior → iterate. Two things make experiments comparable in the corpus:
+
+* **`--label <name>`** tags every turn of a run (e.g. `kgsm-assistant --label preamble-v2 "…"`), the
+  robust bucketing key — `jq 'select(.label=="preamble-v2")' …`.
+* **`sysHash`** auto-fingerprints the editable prompt template (excluding the live lists, so it moves
+  when you tune the persona, not when a server is installed mid-session).
+
 ### Options
 
 | Flag | Effect |
@@ -94,6 +125,8 @@ env/config, never an argument). To turn it off, set `Recording:Enabled` to `fals
 | `--read-only` | Reads only — never offer or run mutating/destructive actions. |
 | `--model <tag>` | Override the Ollama model (e.g. `gemma4:12b`). |
 | `--config <path>` | Use this config file instead of the default location. |
+| `--label <name>` | Tag this run's recorded turns, to A/B a prompt/tool-description edit. |
+| `--dump-prompts` | Write editable default prompt + `tools.json` files (then exit); never clobbers edits. |
 | `--no-color` | Disable color (also honored: the `NO_COLOR` env var). |
 | `--verbose` | Show debug logs on stderr (default is quiet — warnings only). |
 | `-h`, `--help` | Show usage and exit. |
@@ -156,6 +189,8 @@ Config layers, lowest → highest precedence (each overrides the one before it):
 | `LlmAgent:MaxToolOutputChars` | `LlmAgent__MaxToolOutputChars` | `1500` | Tool-output truncation fed back to the model. |
 | `Recording:Enabled` | `Recording__Enabled` | `true` (CLI) | Append each turn to the transcript corpus (see [Conversation recording](#conversation-recording-for-self-improvement)). |
 | `Recording:Directory` | `Recording__Directory` | *(XDG data home)* | Where daily `yyyy-MM-dd.jsonl` transcripts are written. Empty ⇒ `~/.local/share/kgsm-assistant/transcripts`. |
+| `Recording:Label` | `Recording__Label` | *(empty)* | Experiment label stamped on each recorded turn (also `--label`). |
+| `Prompts:Directory` | `Prompts__Directory` | *(XDG config home)* | Editable prompt/tool-description files (see [Tuning](#tuning-prompts--tool-descriptions-no-recompile)). Empty ⇒ `~/.config/kgsm-assistant/prompts`. |
 | `InventoryCache:InstancesTtlSeconds` | `InventoryCache__InstancesTtlSeconds` | `300` | Instance-list cache TTL. |
 | `InventoryCache:BlueprintsTtlSeconds` | `InventoryCache__BlueprintsTtlSeconds` | `600` | Blueprint-list cache TTL. |
 | `WebSearch:ApiKey` | `WebSearch__ApiKey` | *(empty)* | Tavily key. **ENV-only**; empty ⇒ web search disabled (fails closed). |

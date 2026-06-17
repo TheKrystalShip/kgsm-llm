@@ -21,4 +21,11 @@ public class RecordingOptions
     /// back to the no-op (nothing to write to).
     /// </summary>
     public string Directory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional experiment label stamped on every recorded turn (e.g. <c>preamble-v2</c>). The
+    /// robust bucketing key for A/B-ing a prompt/tool-description change against the corpus: run a
+    /// session under a label, then filter the transcripts by it. Empty ⇒ no label stamped.
+    /// </summary>
+    public string Label { get; set; } = string.Empty;
 }

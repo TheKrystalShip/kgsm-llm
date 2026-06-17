@@ -44,6 +44,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IServerInventory _inventory;
     private readonly IServerOperations _operations;
     private readonly IToolRelevanceFilter _toolFilter;
+    private readonly IPromptOverrides _promptOverrides;
     private readonly ILogger<ServerAssistant> _logger;
 
     public ServerAssistant(
@@ -53,6 +54,7 @@ public class ServerAssistant : IServerAssistant
         IServerInventory inventory,
         IServerOperations operations,
         IToolRelevanceFilter toolFilter,
+        IPromptOverrides promptOverrides,
         ILogger<ServerAssistant> logger)
     {
         _agent = agent;
@@ -61,6 +63,7 @@ public class ServerAssistant : IServerAssistant
         _inventory = inventory;
         _operations = operations;
         _toolFilter = toolFilter;
+        _promptOverrides = promptOverrides;
         _logger = logger;
     }
 
@@ -71,7 +74,9 @@ public class ServerAssistant : IServerAssistant
     private IReadOnlyList<LlmToolDefinition> SelectTools(string userPrompt, bool canPerformActions)
     {
         var authorized = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
-        return _toolFilter.GetToolsFor(new ToolSelectionContext(userPrompt, canPerformActions), authorized);
+        var selected = _toolFilter.GetToolsFor(new ToolSelectionContext(userPrompt, canPerformActions), authorized);
+        // Apply hot-editable description overrides last (names stay structural; prose is tunable).
+        return _promptOverrides.OverlayTools(selected);
     }
 
     public async Task<AssistantResult> RunAsync(
@@ -80,7 +85,7 @@ public class ServerAssistant : IServerAssistant
         bool canPerformActions,
         CancellationToken cancellationToken = default)
     {
-        var systemPrompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
 
         // Command + authorized-read tools are only offered to authorized callers; the gate re-checks.
         var tools = SelectTools(userPrompt, canPerformActions);
@@ -89,7 +94,8 @@ public class ServerAssistant : IServerAssistant
         {
             ConversationId = conversationId,
             UserPrompt = userPrompt,
-            SystemPrompt = systemPrompt,
+            SystemPrompt = prompt.Text,
+            SystemPromptHash = prompt.TemplateHash,
             Tools = tools,
             Gate = BuildGate(canPerformActions),
         };
@@ -111,7 +117,7 @@ public class ServerAssistant : IServerAssistant
         bool canPerformActions,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var systemPrompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
 
         // Identical policy to RunAsync: command + authorized-read tools only for authorized
         // callers; the gate re-checks each call and enforces the per-message staging cap.
@@ -121,7 +127,8 @@ public class ServerAssistant : IServerAssistant
         {
             ConversationId = conversationId,
             UserPrompt = userPrompt,
-            SystemPrompt = systemPrompt,
+            SystemPrompt = prompt.Text,
+            SystemPromptHash = prompt.TemplateHash,
             Tools = tools,
             Gate = BuildGate(canPerformActions),
         };

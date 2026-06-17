@@ -26,8 +26,8 @@ public sealed class JsonlConversationRecorderTests : IDisposable
         catch { /* best-effort temp cleanup */ }
     }
 
-    private JsonlConversationRecorder Make(string? dir = null) => new(
-        Options.Create(new RecordingOptions { Enabled = true, Directory = dir ?? _dir }),
+    private JsonlConversationRecorder Make(string? dir = null, string label = "") => new(
+        Options.Create(new RecordingOptions { Enabled = true, Directory = dir ?? _dir, Label = label }),
         Options.Create(new OllamaOptions { Model = "gemma4:12b", Temperature = 0.3 }),
         NullLogger<JsonlConversationRecorder>.Instance);
 
@@ -102,6 +102,20 @@ public sealed class JsonlConversationRecorderTests : IDisposable
         tools[0].GetProperty("name").GetString().Should().Be("get_status");
         tools[0].GetProperty("result").GetString().Should().Be("running, 3h12m");
         tools[0].GetProperty("args").GetProperty("instance").GetString().Should().Be("terraria");
+    }
+
+    [Fact]
+    public void Label_WhenSet_IsStamped_ElseNull()
+    {
+        Make(label: "preamble-v2").Record(Rec());
+        using (var doc = JsonDocument.Parse(File.ReadAllLines(Path.Combine(_dir, "2026-06-17.jsonl"))[0]))
+            doc.RootElement.GetProperty("label").GetString().Should().Be("preamble-v2");
+
+        // Fresh dir, no label → null (not an empty string).
+        var dir2 = Path.Combine(_dir, "nolabel");
+        Make(dir: dir2).Record(Rec());
+        using (var doc = JsonDocument.Parse(File.ReadAllLines(Path.Combine(dir2, "2026-06-17.jsonl"))[0]))
+            doc.RootElement.GetProperty("label").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
     [Fact]

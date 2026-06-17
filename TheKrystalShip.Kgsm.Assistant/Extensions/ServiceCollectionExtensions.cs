@@ -24,6 +24,9 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton<IConfirmationContext, ConfirmationContext>();
         services.AddSingleton<IToolDispatcher, ToolDispatcher>();
+        // The hot-editable prompt/tool-description layer (off unless Prompts:Directory is set). Used
+        // by the prompt builder (segments) and the assistant (tool-description overlay).
+        services.TryAddSingleton<IPromptOverrides, FilePromptOverrides>();
         services.AddSingleton<ISystemPromptBuilder, SystemPromptBuilder>();
         // The §3.2 relevance seam: a deliberate no-op today (coarse/bulk tools are the
         // small-model fix). A host can override with its own filter before this call.

@@ -32,10 +32,11 @@ public class ServerAssistantTests
 
     private ServerAssistant Create()
     {
-        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns("system");
+        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             _agent, _prompt, _confirmations, _inventory, _operations,
-            new NoopToolRelevanceFilter(), NullLogger<ServerAssistant>.Instance);
+            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), NullLogger<ServerAssistant>.Instance);
     }
 
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>

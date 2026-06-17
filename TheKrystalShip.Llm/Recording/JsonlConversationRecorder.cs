@@ -37,6 +37,7 @@ public sealed class JsonlConversationRecorder : IConversationRecorder
     private readonly string _directory;
     private readonly string _model;
     private readonly double _temperature;
+    private readonly string? _label;
     private readonly ILogger<JsonlConversationRecorder> _logger;
 
     public JsonlConversationRecorder(
@@ -49,6 +50,7 @@ public sealed class JsonlConversationRecorder : IConversationRecorder
         // can't drift) — lets analysis correlate quality with the model and sampling settings.
         _model = ollama.Value.Model;
         _temperature = ollama.Value.Temperature;
+        _label = string.IsNullOrWhiteSpace(recording.Value.Label) ? null : recording.Value.Label.Trim();
         _logger = logger;
     }
 
@@ -98,6 +100,7 @@ public sealed class JsonlConversationRecorder : IConversationRecorder
         },
         model = _model,
         temp = _temperature,
+        label = _label,
         sysHash = r.SystemPromptHash,
         outcome = r.Outcome switch
         {

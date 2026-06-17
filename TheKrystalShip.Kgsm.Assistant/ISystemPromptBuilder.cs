@@ -12,5 +12,9 @@ public interface ISystemPromptBuilder
     /// what the model is told it can do.
     /// </param>
     /// <param name="cancellationToken">Token to cancel the lookup.</param>
-    Task<string> BuildAsync(bool canPerformActions, CancellationToken cancellationToken = default);
+    /// <returns>
+    /// The assembled prompt plus a fingerprint of just its editable template (see
+    /// <see cref="BuiltPrompt"/>), so the recorded per-turn hash tracks prompt edits, not inventory.
+    /// </returns>
+    Task<BuiltPrompt> BuildAsync(bool canPerformActions, CancellationToken cancellationToken = default);
 }

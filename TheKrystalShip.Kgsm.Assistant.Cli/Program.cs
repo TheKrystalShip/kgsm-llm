@@ -93,62 +93,41 @@ using (host)
     var canPerformActions = !cli.ReadOnly;   // D1: authorized by default, --read-only opts down
     var assistant = host.Services.GetRequiredService<IServerAssistant>();
     var inventory = host.Services.GetRequiredService<IInventoryInvalidation>();
-    var interactiveStdin = !Console.IsInputRedirected;   // gates interactive confirmation (L8)
 
-    // Ctrl-C cancels the in-flight turn (aborts Ollama generation — the GPU is reserved away
-    // from the game servers, so an abandoned-but-still-generating turn is a real cost). L3.
-    using var cts = new CancellationTokenSource();
-    Console.CancelKeyPress += (_, eventArgs) =>
-    {
-        eventArgs.Cancel = true;   // don't hard-kill; let the token unwind the turn
-        cts.Cancel();
-    };
-
-    // Status lines key off stdout being a TTY: a redirected/piped reply (`assistant "…" | cat`)
-    // gets the plain text only — no color, no ⚙/✓ progress. Color on stderr keys off stderr.
-    var renderer = new TerminalRenderer(
-        Console.Out, Console.Error,
-        showStatus: !Console.IsOutputRedirected,
+    var runner = new CliRunner(
+        assistant, inventory, canPerformActions,
+        interactiveStdin: !Console.IsInputRedirected,   // gates interactive confirmation (L8)
+        showStatus: !Console.IsOutputRedirected,        // ⚙/✓ progress only when stdout is a TTY
         color: !Console.IsErrorRedirected && !noColor);
 
-    // Step 2 surface: one-shot, STREAMING. (Interactive confirmation + the REPL land in later
-    // steps; for now an absent prompt prints usage.)
-    if (cli.Prompt is null)
+    // Ctrl-C cancels the running turn (aborts Ollama generation, L3) rather than the process.
+    using var interruptor = new TurnInterruptor();
+
+    // --- Mode dispatch (L5): one-shot (positional arg OR piped stdin) vs interactive REPL. ------
+    var oneShotPrompt = cli.Prompt ?? (Console.IsInputRedirected ? Console.In.ReadToEnd() : null);
+
+    if (oneShotPrompt is not null)
     {
-        Console.Error.WriteLine("kgsm-assistant: no prompt given.");
-        Console.Error.WriteLine("Try 'kgsm-assistant --help'.");
-        return ExitUsage;
+        if (string.IsNullOrWhiteSpace(oneShotPrompt))
+        {
+            Console.Error.WriteLine("kgsm-assistant: empty prompt.");
+            Console.Error.WriteLine("Try 'kgsm-assistant --help'.");
+            return ExitUsage;
+        }
+
+        var (completed, ok) = await interruptor.RunAsync(
+            ct => runner.RunTurnAsync($"cli:{Guid.NewGuid():N}", oneShotPrompt.Trim(), ct));
+        if (!completed)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("cancelled.");
+            return ExitCancelled;
+        }
+        return ok ? ExitOk : ExitRuntime;
     }
 
-    var conversationId = $"cli:{Guid.NewGuid():N}";
-    try
-    {
-        await foreach (var ev in assistant
-                           .RunStreamAsync(conversationId, cli.Prompt, canPerformActions, cts.Token))
-            renderer.Handle(ev);
-    }
-    catch (OperationCanceledException)
-    {
-        Console.Error.WriteLine();
-        Console.Error.WriteLine("cancelled.");
-        return ExitCancelled;
-    }
-
-    if (renderer.HadError)
-        return ExitRuntime;
-
-    // Drain any staged destructive ops: interactive y/N (a TTY) or print-only (piped, L8).
-    if (renderer.Confirmations.Count > 0)
-    {
-        var allOk = await ConfirmationFlow.DrainAsync(
-            renderer.Confirmations, assistant, inventory, canPerformActions,
-            interactiveStdin, color: !Console.IsErrorRedirected && !noColor,
-            Console.In, Console.Error, cts.Token);
-        if (!allOk)
-            return ExitRuntime;
-    }
-
-    return ExitOk;
+    // No prompt + interactive stdin → the REPL.
+    return await Repl.RunAsync(runner, interruptor, canPerformActions);
 }
 
 // --- helpers ---------------------------------------------------------------------------------

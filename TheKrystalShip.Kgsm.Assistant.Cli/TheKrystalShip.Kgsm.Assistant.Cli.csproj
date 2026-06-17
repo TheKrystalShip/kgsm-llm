@@ -34,6 +34,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The single canonical config surface. Embedded as a manifest resource so the lone
+         self-contained binary carries its full defaults (it stands on its own legs with zero
+         sidecar files), AND copied next to the binary so it ships as a readable, editable
+         template the operator can tune. No magic-string defaults live in C# any more — this
+         file is the one place the CLI's configurable surface is declared. -->
+    <EmbeddedResource Include="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <LogicalName>kgsm-assistant.appsettings.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Let the test project exercise the arg parser + renderer (both internal). -->
     <InternalsVisibleTo Include="TheKrystalShip.Kgsm.Assistant.Cli.Tests" />
   </ItemGroup>

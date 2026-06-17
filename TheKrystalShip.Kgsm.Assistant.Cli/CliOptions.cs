@@ -129,8 +129,9 @@ internal sealed record CliOptions
           -h, --help         show this help and exit
 
         CONFIG (low → high precedence):
-          built-in defaults  →  $KGSM_ASSISTANT_CONFIG or ~/.config/kgsm-assistant/appsettings.json
-          →  environment variables (Section__Key, e.g. KGSM__Path, Ollama__Model, WebSearch__ApiKey)
+          embedded defaults  →  appsettings.json beside the binary  →  $KGSM_ASSISTANT_CONFIG
+          or ~/.config/kgsm-assistant/appsettings.json  →  environment (Section__Key, e.g.
+          KGSM__Path, Ollama__Model, WebSearch__ApiKey)  →  --model
 
         """;
 }

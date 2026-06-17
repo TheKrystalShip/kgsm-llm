@@ -1,3 +1,5 @@
+using System.Reflection;
+
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -28,17 +30,34 @@ if (cli.Help)
     return ExitOk;
 }
 
-// --- Config resolution (§3.2): defaults → optional file → env → CLI override (low → high) ----
-var configPath = cli.ConfigPath
+// --- Config resolution (§3.2): a single layered surface, low → high precedence:
+//     embedded defaults → sidecar appsettings.json (next to the binary) → operator's file →
+//     environment → --model flag. No defaults are hardcoded in C#; every knob lives in the one
+//     canonical appsettings.json (embedded for self-sufficiency, copied beside the binary to edit).
+var userConfigPath = cli.ConfigPath
     ?? Environment.GetEnvironmentVariable("KGSM_ASSISTANT_CONFIG")
     ?? DefaultConfigPath();
 
 var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
-builder.Configuration.AddInMemoryCollection(BuiltInDefaults());
-builder.Configuration.AddJsonFile(configPath, optional: true, reloadOnChange: false);
+
+// 1. Baked-in defaults: the appsettings.json embedded at build time. Guarantees the lone binary
+//    carries its full default surface even when deployed with no sidecar files at all.
+using (var embeddedDefaults = Assembly.GetExecutingAssembly()
+    .GetManifestResourceStream("kgsm-assistant.appsettings.json"))
+{
+    if (embeddedDefaults is not null)
+        builder.Configuration.AddJsonStream(embeddedDefaults);
+}
+// 2. The editable template shipped next to the binary (overrides the embedded defaults).
+builder.Configuration.AddJsonFile(
+    Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true, reloadOnChange: false);
+// 3. The operator's own config file ($KGSM_ASSISTANT_CONFIG / --config / XDG location).
+builder.Configuration.AddJsonFile(userConfigPath, optional: true, reloadOnChange: false);
+// 4. Environment (Section__Key) — the channel for secrets, e.g. WebSearch__ApiKey.
 builder.Configuration.AddEnvironmentVariables();
+// 5. An explicit --model flag beats config + env.
 if (!string.IsNullOrWhiteSpace(cli.Model))
-    builder.Configuration["Ollama:Model"] = cli.Model;   // an explicit flag beats config + env
+    builder.Configuration["Ollama:Model"] = cli.Model;
 
 // --- Logging (§3.1): quiet by DEFAULT (floor at Warning), everything to stderr so stdout is the reply.
 var noColor = cli.NoColor || Environment.GetEnvironmentVariable("NO_COLOR") is not null;
@@ -57,14 +76,14 @@ if (string.IsNullOrWhiteSpace(kgsmPath))
 {
     Console.Error.WriteLine(
         "kgsm-assistant: KGSM path not configured. Set KGSM__Path (or KGSM:Path in " +
-        $"{configPath}) to your kgsm.sh.");
+        $"{userConfigPath}) to your kgsm.sh.");
     return ExitUsage;
 }
 if (!File.Exists(kgsmPath))
 {
     Console.Error.WriteLine(
         $"kgsm-assistant: kgsm not found at '{kgsmPath}'. Set KGSM__Path (or KGSM:Path in " +
-        $"{configPath}) to your kgsm.sh.");
+        $"{userConfigPath}) to your kgsm.sh.");
     return ExitUsage;
 }
 
@@ -140,11 +159,3 @@ static string DefaultConfigPath()
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
     return Path.Combine(configHome, "kgsm-assistant", "appsettings.json");
 }
-
-// The lowest config layer. The Llm/inventory option classes already carry sensible defaults, so
-// the only built-in default worth seeding is the established host kgsm path (overridable by
-// file/env/flag); validation above still catches a wrong path.
-static Dictionary<string, string?> BuiltInDefaults() => new()
-{
-    ["KGSM:Path"] = "/opt/kgsm/kgsm.sh",
-};

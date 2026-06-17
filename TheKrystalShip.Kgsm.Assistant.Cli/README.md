@@ -54,35 +54,66 @@ Actions are attributed to `cli:<your-os-user>` in the kgsm audit trail.
 
 ## Configuration
 
-Lowest → highest precedence:
+Every knob lives in **one** place: `appsettings.json`. There are no defaults baked into the
+code. That file is shipped two ways — **embedded** in the binary (so the lone executable carries
+its full defaults and stands on its own legs with zero extra files) and **copied next to the
+binary** as a readable, editable template. You configure the CLI by editing a JSON file or
+setting environment variables; nothing requires recompiling.
 
-1. **Built-in defaults** (Ollama `http://localhost:11434` / `gemma4:12b`; `KGSM:Path`
-   defaults to `/opt/kgsm/kgsm.sh`).
-2. **A config file**, if present: `$KGSM_ASSISTANT_CONFIG`, else
-   `~/.config/kgsm-assistant/appsettings.json` (or `$XDG_CONFIG_HOME/kgsm-assistant/...`).
-3. **Environment variables** (`Section__Key`) — the path for secrets.
-4. **`--model` / `--config`** flags.
+Config layers, lowest → highest precedence (each overrides the one before it):
 
-Common settings:
+1. **Embedded defaults** — the `appsettings.json` baked into the binary at build time.
+2. **The sidecar `appsettings.json`** shipped next to the binary (edit this to change a default
+   host-wide).
+3. **Your config file**, if present: `$KGSM_ASSISTANT_CONFIG`, else
+   `~/.config/kgsm-assistant/appsettings.json` (or `$XDG_CONFIG_HOME/kgsm-assistant/...`), or
+   whatever `--config <path>` points at. Per-user overrides without touching the system file.
+4. **Environment variables** (`Section__Key`, double-underscore) — the channel for secrets.
+5. **`--model`** flag — wins over everything for the model tag.
 
-| Key | Env var | Notes |
-|---|---|---|
-| `KGSM:Path` | `KGSM__Path` | Path to `kgsm.sh` (required; defaults to `/opt/kgsm/kgsm.sh`). |
-| `Ollama:Endpoint` | `Ollama__Endpoint` | Ollama base URL. |
-| `Ollama:Model` | `Ollama__Model` | Model tag (also `--model`). |
-| `WebSearch:ApiKey` | `WebSearch__ApiKey` | Tavily key. **ENV-only**; empty ⇒ web search disabled (fails closed). |
+### The full configurable surface
 
-Example `~/.config/kgsm-assistant/appsettings.json`:
+| Key | Env var | Default | Notes |
+|---|---|---|---|
+| `KGSM:Path` | `KGSM__Path` | `/opt/kgsm/kgsm.sh` | Path to this host's `kgsm.sh` (required; validated at startup). |
+| `Ollama:Endpoint` | `Ollama__Endpoint` | `http://localhost:11434` | Ollama base URL. |
+| `Ollama:Model` | `Ollama__Model` | `gemma4:12b` | Model tag (also `--model`). |
+| `Ollama:NumCtx` | `Ollama__NumCtx` | `32768` | KV-cache context window (fixed VRAM reservation). |
+| `Ollama:TimeoutSeconds` | `Ollama__TimeoutSeconds` | `300` | Per-request generation timeout. |
+| `Ollama:Temperature` | `Ollama__Temperature` | `0.3` | Sampling temperature (low keeps tool routing reliable). |
+| `Conversation:MaxMessages` | `Conversation__MaxMessages` | `12` | REPL short-term memory depth. |
+| `Conversation:IdleTimeoutMinutes` | `Conversation__IdleTimeoutMinutes` | `15` | Idle reset window. |
+| `LlmAgent:MaxIterations` | `LlmAgent__MaxIterations` | `8` | Safety cap on model↔tool round-trips per turn. |
+| `LlmAgent:MaxToolOutputChars` | `LlmAgent__MaxToolOutputChars` | `1500` | Tool-output truncation fed back to the model. |
+| `InventoryCache:InstancesTtlSeconds` | `InventoryCache__InstancesTtlSeconds` | `300` | Instance-list cache TTL. |
+| `InventoryCache:BlueprintsTtlSeconds` | `InventoryCache__BlueprintsTtlSeconds` | `600` | Blueprint-list cache TTL. |
+| `WebSearch:ApiKey` | `WebSearch__ApiKey` | *(empty)* | Tavily key. **ENV-only**; empty ⇒ web search disabled (fails closed). |
+| `WebSearch:MaxResults` | `WebSearch__MaxResults` | `4` | Results per search. |
+| `WebSearch:SearchDepth` | `WebSearch__SearchDepth` | `basic` | `basic` (1 credit) or `advanced` (2). |
+| `WebSearch:TimeoutSeconds` | `WebSearch__TimeoutSeconds` | `10` | Per-search timeout (the agent loop blocks on it). |
+| `WebSearch:MaxCallsPerDay` | `WebSearch__MaxCallsPerDay` | `200` | Process-wide daily spend backstop. |
+
+Example per-user override `~/.config/kgsm-assistant/appsettings.json` — only the keys you want
+to change; everything else falls through to the layers below:
 
 ```json
 {
-  "KGSM":   { "Path": "/opt/kgsm/kgsm.sh" },
+  "KGSM":   { "Path": "/srv/kgsm/kgsm.sh" },
   "Ollama": { "Model": "gemma4:12b" }
 }
 ```
 
-The Tavily key should **only** ever come from the environment (`WebSearch__ApiKey=tvly-…`),
-never a committed file.
+### Secrets (the Tavily key)
+
+The Tavily API key is the one value that must **never** sit in a committed/shipped file. Supply
+it only through the environment, e.g.
+
+```bash
+export WebSearch__ApiKey=tvly-…       # web search enabled while this is set; absent ⇒ disabled
+```
+
+For a long-lived setup, put it in a systemd `EnvironmentFile=`, your shell profile, or an env
+file your launcher sources — never in `appsettings.json`.
 
 ## Build & install
 
@@ -98,7 +129,20 @@ sudo install -m 0755 \
   /usr/local/bin/kgsm-assistant
 ```
 
-Only the single `kgsm-assistant` file needs deploying (any `.pdb`/`.xml` beside it are ignorable).
+The publish dir contains two files worth deploying: the `kgsm-assistant` binary and an
+`appsettings.json` beside it (any `.pdb`/`.xml` are ignorable). The defaults are **embedded**
+in the binary, so `kgsm-assistant` runs standalone even if you deploy only the binary — but
+shipping the sidecar `appsettings.json` gives operators a documented file to tune host-wide
+(install it next to the binary, or anywhere and point `$KGSM_ASSISTANT_CONFIG` / `--config` at
+it). Edit it, or layer a per-user `~/.config/kgsm-assistant/appsettings.json` on top — see
+[Configuration](#configuration).
+
+```bash
+# optional: ship the editable template alongside the binary
+sudo install -m 0644 \
+  TheKrystalShip.Kgsm.Assistant.Cli/bin/Release/net9.0/linux-x64/publish/appsettings.json \
+  /usr/local/bin/appsettings.json
+```
 
 ## Exit codes
 

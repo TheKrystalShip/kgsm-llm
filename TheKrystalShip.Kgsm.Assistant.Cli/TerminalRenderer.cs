@@ -1,0 +1,126 @@
+using System.Text;
+
+using TheKrystalShip.Kgsm.Assistant;
+
+namespace TheKrystalShip.Kgsm.Assistant.Cli;
+
+/// <summary>
+/// The CLI analogue of the service's <c>SseTurnWriter</c>: consumes the assistant's
+/// <see cref="AssistantStreamEvent"/> stream and maps each event to the terminal.
+/// <list type="bullet">
+///   <item><c>Token</c> → the reply, streamed to <b>stdout</b> with no trailing newline.</item>
+///   <item><c>ToolStart</c>/<c>ToolResult</c> → a dim status line on <b>stderr</b>, only when
+///   stdout is a TTY (so a redirected/piped reply stays clean — that is the §4 contract:
+///   <c>assistant "…" | cat</c> emits the reply and nothing else).</item>
+///   <item><c>Confirmation</c> → <b>collected</b> (drained by the confirmation flow), never printed here.</item>
+///   <item><c>Final</c> → a single trailing newline (the tokens already carried the text).</item>
+///   <item><c>Error</c> → a red line on <b>stderr</b> (always — errors surface even when piped).</item>
+/// </list>
+/// Writers are injected so a test can capture output; the host passes <see cref="Console.Out"/> /
+/// <see cref="Console.Error"/>.
+/// </summary>
+internal sealed class TerminalRenderer
+{
+    private const string AnsiReset = "\x1b[0m";
+    private const string AnsiDim = "\x1b[2m";
+    private const string AnsiRed = "\x1b[31m";
+
+    private readonly TextWriter _out;
+    private readonly TextWriter _err;
+    private readonly bool _showStatus;   // stdout is interactive (a TTY)
+    private readonly bool _color;        // stderr is interactive AND color not disabled
+    private readonly List<PendingConfirmation> _confirmations = new();
+    private bool _wroteToken;
+
+    public TerminalRenderer(TextWriter outWriter, TextWriter errWriter, bool showStatus, bool color)
+    {
+        _out = outWriter;
+        _err = errWriter;
+        _showStatus = showStatus;
+        _color = color;
+    }
+
+    /// <summary>Confirmations staged during the turn, in arrival order (drained after the stream ends).</summary>
+    public IReadOnlyList<PendingConfirmation> Confirmations => _confirmations;
+
+    /// <summary>True if the turn ended in an <c>Error</c> event.</summary>
+    public bool HadError { get; private set; }
+
+    /// <summary>Maps one streamed event to terminal output.</summary>
+    public void Handle(AssistantStreamEvent ev)
+    {
+        switch (ev.Kind)
+        {
+            case AssistantEventKind.Token:
+                if (!string.IsNullOrEmpty(ev.Text))
+                {
+                    _out.Write(ev.Text);
+                    _out.Flush();
+                    _wroteToken = true;
+                }
+                break;
+
+            case AssistantEventKind.ToolStart:
+                if (_showStatus)
+                    Status($"⚙ {ev.ToolName}({FormatArgs(ev.ToolArguments)})");
+                break;
+
+            case AssistantEventKind.ToolResult:
+                if (_showStatus)
+                    Status($"✓ {ev.ToolName}");
+                break;
+
+            case AssistantEventKind.Confirmation:
+                if (ev.StagedConfirmation is not null)
+                    _confirmations.Add(ev.StagedConfirmation);
+                break;
+
+            case AssistantEventKind.Final:
+                // Tokens already streamed the reply; just close the line. If the turn produced no
+                // tokens but Final still carries text (e.g. a pure tool turn), print that once.
+                if (_wroteToken)
+                    _out.WriteLine();
+                else if (!string.IsNullOrEmpty(ev.Text))
+                    _out.WriteLine(ev.Text);
+                _out.Flush();
+                break;
+
+            case AssistantEventKind.Error:
+                HadError = true;
+                // If a partial reply was already streaming, break the line before the error.
+                if (_wroteToken)
+                    _out.WriteLine();
+                _out.Flush();
+                var message = string.IsNullOrWhiteSpace(ev.ErrorMessage) ? "the assistant failed." : ev.ErrorMessage;
+                _err.WriteLine(Paint($"error: {message}", AnsiRed));
+                break;
+        }
+    }
+
+    private void Status(string text) => _err.WriteLine(Paint(text, AnsiDim));
+
+    private string Paint(string text, string ansi) => _color ? $"{ansi}{text}{AnsiReset}" : text;
+
+    /// <summary>Renders tool arguments as <c>k=v, k=v</c>, trimming long values so a status line stays one line.</summary>
+    private static string FormatArgs(IReadOnlyDictionary<string, string?>? args)
+    {
+        if (args is null || args.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        var first = true;
+        foreach (var (key, value) in args)
+        {
+            if (!first) sb.Append(", ");
+            first = false;
+            sb.Append(key).Append('=').Append(Trim(value));
+        }
+        return sb.ToString();
+    }
+
+    private static string Trim(string? value)
+    {
+        var v = value ?? string.Empty;
+        return v.Length <= 40 ? v : v[..39] + "…";
+    }
+}

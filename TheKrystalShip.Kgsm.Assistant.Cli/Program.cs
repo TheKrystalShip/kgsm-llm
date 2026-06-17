@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Cli;
@@ -39,11 +40,15 @@ if (!string.IsNullOrWhiteSpace(cli.Model))
     builder.Configuration["Ollama:Model"] = cli.Model;   // an explicit flag beats config + env
 
 // --- Logging (§3.1): quiet by DEFAULT (floor at Warning), everything to stderr so stdout is the reply.
+var noColor = cli.NoColor || Environment.GetEnvironmentVariable("NO_COLOR") is not null;
 builder.Logging.ClearProviders();
 builder.Logging.SetMinimumLevel(cli.Verbose ? LogLevel.Debug : LogLevel.Warning);
-// Route EVERY level to stderr (threshold at Trace) so stdout carries only the reply. The
-// (default) simple formatter is used; LogToStandardErrorThreshold lives on the logger options.
-builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+// Simple formatter; honor --no-color / NO_COLOR for framework log lines too (not just our renderer).
+builder.Logging.AddSimpleConsole(o =>
+    o.ColorBehavior = noColor ? LoggerColorBehavior.Disabled : LoggerColorBehavior.Default);
+// Route EVERY level to stderr (threshold at Trace) so stdout carries only the reply.
+// LogToStandardErrorThreshold lives on the logger options, not the formatter options.
+builder.Services.Configure<ConsoleLoggerOptions>(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
 // --- Friendly startup validation: a bad KGSM path is a one-liner, never a stack trace. -------
 var kgsmPath = builder.Configuration["KGSM:Path"];
@@ -96,8 +101,15 @@ using (host)
         cts.Cancel();
     };
 
-    // Step 1 surface: one-shot, buffered. (Streaming renderer, interactive confirmation, and the
-    // REPL land in later steps; for now an absent prompt prints usage.)
+    // Status lines key off stdout being a TTY: a redirected/piped reply (`assistant "…" | cat`)
+    // gets the plain text only — no color, no ⚙/✓ progress. Color on stderr keys off stderr.
+    var renderer = new TerminalRenderer(
+        Console.Out, Console.Error,
+        showStatus: !Console.IsOutputRedirected,
+        color: !Console.IsErrorRedirected && !noColor);
+
+    // Step 2 surface: one-shot, STREAMING. (Interactive confirmation + the REPL land in later
+    // steps; for now an absent prompt prints usage.)
     if (cli.Prompt is null)
     {
         Console.Error.WriteLine("kgsm-assistant: no prompt given.");
@@ -108,24 +120,26 @@ using (host)
     var conversationId = $"cli:{Guid.NewGuid():N}";
     try
     {
-        var result = await assistant.RunAsync(conversationId, cli.Prompt, canPerformActions, cts.Token);
-        if (result.IsFailure)
-        {
-            Console.Error.WriteLine($"kgsm-assistant: {result.Error}");
-            return ExitRuntime;
-        }
-
-        Console.Out.WriteLine(result.Text);
-        if (result.Confirmations.Count > 0)
-            Console.Error.WriteLine(
-                $"({result.Confirmations.Count} action(s) staged — interactive confirmation is added in a later step)");
-        return ExitOk;
+        await foreach (var ev in assistant
+                           .RunStreamAsync(conversationId, cli.Prompt, canPerformActions, cts.Token))
+            renderer.Handle(ev);
     }
     catch (OperationCanceledException)
     {
+        Console.Error.WriteLine();
         Console.Error.WriteLine("cancelled.");
         return ExitCancelled;
     }
+
+    if (renderer.HadError)
+        return ExitRuntime;
+
+    // Step 3 drains renderer.Confirmations here (interactive y/N). For now, note them.
+    if (renderer.Confirmations.Count > 0)
+        Console.Error.WriteLine(
+            $"({renderer.Confirmations.Count} action(s) staged — interactive confirmation is added in the next step)");
+
+    return ExitOk;
 }
 
 // --- helpers ---------------------------------------------------------------------------------

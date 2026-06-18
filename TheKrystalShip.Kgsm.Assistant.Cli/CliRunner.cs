@@ -19,6 +19,9 @@ internal sealed class CliRunner
     private readonly bool _color;
     private readonly bool _stderrTty;
 
+    /// <summary>Whether thinking mode is enabled for the current session. Toggleable via the REPL.</summary>
+    public bool Think { get; set; }
+
     public CliRunner(
         IServerAssistant assistant,
         IInventoryInvalidation inventory,
@@ -26,7 +29,8 @@ internal sealed class CliRunner
         bool interactiveStdin,
         bool showStatus,
         bool color,
-        bool stderrTty)
+        bool stderrTty,
+        bool think = false)
     {
         _assistant = assistant;
         _inventory = inventory;
@@ -35,6 +39,7 @@ internal sealed class CliRunner
         _showStatus = showStatus;
         _color = color;
         _stderrTty = stderrTty;
+        Think = think;
     }
 
     /// <summary>
@@ -55,7 +60,7 @@ internal sealed class CliRunner
         try
         {
             await foreach (var ev in _assistant
-                               .RunStreamAsync(conversationId, prompt, _canPerformActions, cancellationToken))
+                               .RunStreamAsync(conversationId, prompt, _canPerformActions, Think, cancellationToken))
             {
                 spinner?.Stop();
                 renderer.Handle(ev);

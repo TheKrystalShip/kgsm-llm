@@ -17,10 +17,14 @@ public interface ILlmClient
     /// Tools the model is allowed to call this turn. This set is the whitelist;
     /// pass null/empty for a plain text completion.
     /// </param>
+    /// <param name="think">
+    /// When true, enables the model's thinking/reasoning mode for this request.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<Result<LlmResponse>> ChatAsync(
         IReadOnlyList<LlmMessage> messages,
         IReadOnlyList<LlmToolDefinition>? tools = null,
+        bool think = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -33,5 +37,6 @@ public interface ILlmClient
     IAsyncEnumerable<LlmStreamChunk> ChatStreamAsync(
         IReadOnlyList<LlmMessage> messages,
         IReadOnlyList<LlmToolDefinition>? tools = null,
+        bool think = false,
         CancellationToken cancellationToken = default);
 }

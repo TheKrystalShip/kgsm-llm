@@ -139,7 +139,7 @@ public class LlmAgentRecordingTests
     public async Task BufferedTurn_LlmFailure_RecordsError()
     {
         var llm = Substitute.For<ILlmClient>();
-        llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<CancellationToken>())
+        llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Result.Failure<LlmResponse>("backend down"));
 
         var result = await CreateAgent(llm).RunAsync(Turn());
@@ -154,7 +154,7 @@ public class LlmAgentRecordingTests
     public async Task BufferedTurn_IterationCap_RecordsCapHit_WithTrajectory()
     {
         var llm = Substitute.For<ILlmClient>();
-        llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<CancellationToken>())
+        llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(new LlmResponse(null, new[] { new LlmToolCall("tool_a", new Dictionary<string, string?>()) })));
 
         await CreateAgent(llm, maxIterations: 3).RunAsync(Turn());
@@ -170,7 +170,7 @@ public class LlmAgentRecordingTests
     {
         var disabled = new CapturingRecorder(enabled: false);
         var llm = Substitute.For<ILlmClient>();
-        llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<CancellationToken>())
+        llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(new LlmResponse("done", Array.Empty<LlmToolCall>())));
 
         await CreateAgent(llm, recorder: disabled).RunAsync(Turn());
@@ -200,12 +200,14 @@ public class LlmAgentRecordingTests
         public Task<Result<LlmResponse>> ChatAsync(
             IReadOnlyList<LlmMessage> messages,
             IReadOnlyList<LlmToolDefinition>? tools = null,
+            bool think = false,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("This fake only streams.");
 
         public async IAsyncEnumerable<LlmStreamChunk> ChatStreamAsync(
             IReadOnlyList<LlmMessage> messages,
             IReadOnlyList<LlmToolDefinition>? tools = null,
+            bool think = false,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var script = _scripts.Count > 0 ? _scripts.Dequeue() : Array.Empty<LlmStreamChunk>();
@@ -232,12 +234,14 @@ public class LlmAgentRecordingTests
         public Task<Result<LlmResponse>> ChatAsync(
             IReadOnlyList<LlmMessage> messages,
             IReadOnlyList<LlmToolDefinition>? tools = null,
+            bool think = false,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("This fake only streams.");
 
         public async IAsyncEnumerable<LlmStreamChunk> ChatStreamAsync(
             IReadOnlyList<LlmMessage> messages,
             IReadOnlyList<LlmToolDefinition>? tools = null,
+            bool think = false,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();

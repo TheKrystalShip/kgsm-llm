@@ -103,7 +103,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var assistant = Substitute.For<IServerAssistant>();
         // conversationId is derived server-side from the principal — NOT from the request.
-        assistant.RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        assistant.RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(AssistantResult.Ok("hello from assistant", Array.Empty<PendingConfirmation>())));
 
         var client = Authed(Factory(assistant));
@@ -113,7 +113,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var body = await response.Content.ReadFromJsonAsync<TurnResponse>();
         body!.Text.Should().Be("hello from assistant");
         body.Confirmations.Should().BeEmpty();
-        await assistant.Received(1).RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await assistant.Received(1).RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -274,7 +274,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var assistant = Substitute.For<IServerAssistant>();
         // conversationId is derived server-side from the principal, exactly like the buffered path.
-        assistant.RunStreamAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        assistant.RunStreamAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.Token("Hel"),
                 AssistantStreamEvent.Token("lo"),
@@ -295,7 +295,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Turn_StreamAccept_EmitsToolStartAndResult()
     {
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.ToolStart("get_status", new Dictionary<string, string?> { ["instance_name"] = "factorio" }),
                 AssistantStreamEvent.ToolResult("get_status", "factorio: stopped"),
@@ -317,7 +317,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Turn_StreamAccept_ConfirmationEventCarriesTokenBoundToCaller()
     {
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.Token("Staging…"),
                 AssistantStreamEvent.Confirmation(new PendingConfirmation(ConfirmationKind.Uninstall, "terraria")),
@@ -344,7 +344,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // §3.5: a generalised command (start) is propose-only too — it surfaces as
         // command.proposed, and the DTO Kind tells the surface which verb to render.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.Token("Proposing…"),
                 AssistantStreamEvent.Confirmation(new PendingConfirmation(ConfirmationKind.Start, "factorio")),

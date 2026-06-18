@@ -33,6 +33,9 @@ public enum AssistantEventKind
     /// <summary>An incremental slice of the assistant's reply text.</summary>
     Token,
 
+    /// <summary>An incremental slice of the model's internal reasoning (thinking) content.</summary>
+    Thinking,
+
     /// <summary>A tool is about to be dispatched; carries its name + arguments.</summary>
     ToolStart,
 
@@ -68,6 +71,7 @@ public sealed record AssistantStreamEvent(
     LlmUsage? Usage = null)
 {
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
+    public static AssistantStreamEvent Thinking(string delta) => new(AssistantEventKind.Thinking, Text: delta);
     public static AssistantStreamEvent ToolStart(string tool, IReadOnlyDictionary<string, string?> arguments) =>
         new(AssistantEventKind.ToolStart, ToolName: tool, ToolArguments: arguments);
     public static AssistantStreamEvent ToolResult(string tool, string summary) =>
@@ -104,6 +108,7 @@ public interface IServerAssistant
         string conversationId,
         string userPrompt,
         bool canPerformActions,
+        bool think = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -117,6 +122,7 @@ public interface IServerAssistant
         string conversationId,
         string userPrompt,
         bool canPerformActions,
+        bool think = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>

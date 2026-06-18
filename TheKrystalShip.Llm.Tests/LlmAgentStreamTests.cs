@@ -47,6 +47,7 @@ public class LlmAgentStreamTests
     };
 
     private static LlmStreamChunk Content(string delta) => new(delta, null, false);
+    private static LlmStreamChunk Thinking(string delta) => new(null, null, false, null, delta);
     private static LlmStreamChunk ToolFrame(params string[] names) =>
         new(null, names.Select(n => new LlmToolCall(n, new Dictionary<string, string?>())).ToArray(), false);
     private static LlmStreamChunk DoneFrame() => new(null, null, true);
@@ -179,6 +180,30 @@ public class LlmAgentStreamTests
         events[0].ErrorMessage.Should().Be("backend down");
     }
 
+    [Fact]
+    public async Task ThinkingTurn_YieldsThinkingThenTokenThenFinal_AndDoesNotPersistThinking()
+    {
+        var client = new ScriptedStreamClient(new[]
+        {
+            new[] { Thinking("Let me think..."), Thinking(" more..."), Content("Answer"), DoneFrame() },
+        });
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
+
+        events.Select(e => e.Kind).Should().Equal(
+            AgentEventKind.Thinking, AgentEventKind.Thinking,
+            AgentEventKind.Token, AgentEventKind.Final);
+        events[0].Text.Should().Be("Let me think...");
+        events[1].Text.Should().Be(" more...");
+        events[2].Text.Should().Be("Answer");
+        events[3].Text.Should().Be("Answer");
+
+        // Thinking is NOT persisted — only user prompt + final assistant text.
+        _store.Messages.Should().HaveCount(2);
+        _store.Messages[0].Role.Should().Be(LlmRole.User);
+        _store.Messages[1].Should().Match<LlmMessage>(m => m.Role == LlmRole.Assistant && m.Content == "Answer");
+    }
+
     /// <summary>
     /// A fake <see cref="ILlmClient"/> that yields a scripted chunk sequence per
     /// <c>ChatStreamAsync</c> call, optionally throwing (mid-stream backend failure).
@@ -197,12 +222,14 @@ public class LlmAgentStreamTests
         public Task<Result<LlmResponse>> ChatAsync(
             IReadOnlyList<LlmMessage> messages,
             IReadOnlyList<LlmToolDefinition>? tools = null,
+            bool think = false,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("This fake only streams.");
 
         public async IAsyncEnumerable<LlmStreamChunk> ChatStreamAsync(
             IReadOnlyList<LlmMessage> messages,
             IReadOnlyList<LlmToolDefinition>? tools = null,
+            bool think = false,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var script = _scripts.Count > 0 ? _scripts.Dequeue() : Array.Empty<LlmStreamChunk>();

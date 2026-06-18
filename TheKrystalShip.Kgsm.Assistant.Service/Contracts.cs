@@ -7,7 +7,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// server-side from the authenticated principal (<c>web:{discordUserId}</c>) — it is NOT
 /// client-supplied, so one caller can't read or poison another's history.
 /// </summary>
-public sealed record TurnRequest(string? Prompt);
+public sealed record TurnRequest(string? Prompt, bool? Think = null);
 
 /// <summary>
 /// Token accounting for a turn, in tokens (never a percentage): the prompt the model evaluated,
@@ -85,3 +85,6 @@ public sealed record DoneEvent(string Text, UsageDto? Usage = null);
 
 /// <summary>`event: error` — terminal failure surfaced in-band (the stream is already HTTP 200).</summary>
 public sealed record StreamErrorEvent(string Error);
+
+/// <summary>`event: thinking.delta` — one incremental slice of the model's internal reasoning.</summary>
+public sealed record ThinkingEvent(string Delta);

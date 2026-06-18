@@ -61,6 +61,11 @@ internal sealed class TerminalRenderer
                 }
                 break;
 
+            case AssistantEventKind.Thinking:
+                if (_showStatus && !string.IsNullOrEmpty(ev.Text))
+                    _err.WriteLine(Ansi.Paint(ev.Text, Ansi.Dim, _color));
+                break;
+
             case AssistantEventKind.ToolStart:
                 if (_showStatus)
                     _err.WriteLine(

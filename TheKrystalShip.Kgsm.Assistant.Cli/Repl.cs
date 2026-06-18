@@ -17,6 +17,7 @@ internal static class Repl
           /exit, /quit   leave
           /reset         start a fresh conversation (clears in-session memory)
           /compact       summarize this conversation in place to free up context
+          /think [on|off]  toggle thinking/reasoning mode (default: from config)
           /help          show this help
         keys:
           Ctrl-C         cancel the current reply (stays in the REPL)
@@ -65,6 +66,19 @@ internal static class Repl
                     continue;
                 case "/compact":
                     await CompactAsync(compactor, interruptor, conversationId, color);
+                    continue;
+                case "/think":
+                    runner.Think = !runner.Think;
+                    Console.Error.WriteLine(Ansi.Paint(
+                        $"thinking: {(runner.Think ? "on" : "off")}", Ansi.Dim, color));
+                    continue;
+                case "/think on":
+                    runner.Think = true;
+                    Console.Error.WriteLine(Ansi.Paint("thinking: on", Ansi.Dim, color));
+                    continue;
+                case "/think off":
+                    runner.Think = false;
+                    Console.Error.WriteLine(Ansi.Paint("thinking: off", Ansi.Dim, color));
                     continue;
             }
 

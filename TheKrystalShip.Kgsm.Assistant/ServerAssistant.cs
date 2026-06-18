@@ -83,6 +83,7 @@ public class ServerAssistant : IServerAssistant
         string conversationId,
         string userPrompt,
         bool canPerformActions,
+        bool think = false,
         CancellationToken cancellationToken = default)
     {
         var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
@@ -98,6 +99,7 @@ public class ServerAssistant : IServerAssistant
             SystemPromptHash = prompt.TemplateHash,
             Tools = tools,
             Gate = BuildGate(canPerformActions),
+            Think = think,
         };
 
         // The dispatcher stages any proposed commands into this per-turn scope; we drain
@@ -115,6 +117,7 @@ public class ServerAssistant : IServerAssistant
         string conversationId,
         string userPrompt,
         bool canPerformActions,
+        bool think = false,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
@@ -131,6 +134,7 @@ public class ServerAssistant : IServerAssistant
             SystemPromptHash = prompt.TemplateHash,
             Tools = tools,
             Gate = BuildGate(canPerformActions),
+            Think = think,
         };
 
         // CRUCIAL: the dispatcher stages destructive ops into an AsyncLocal confirmation scope
@@ -182,6 +186,9 @@ public class ServerAssistant : IServerAssistant
                 {
                     case AgentEventKind.Token:
                         await writer.WriteAsync(AssistantStreamEvent.Token(ev.Text ?? string.Empty), cancellationToken);
+                        break;
+                    case AgentEventKind.Thinking:
+                        await writer.WriteAsync(AssistantStreamEvent.Thinking(ev.Text ?? string.Empty), cancellationToken);
                         break;
                     case AgentEventKind.ToolStart:
                         await writer.WriteAsync(

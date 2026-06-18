@@ -10,6 +10,9 @@ internal sealed record CliOptions
     /// <summary>Demote the session to reads only (D1: authorized by default, this opts down).</summary>
     public bool ReadOnly { get; init; }
 
+    /// <summary>Enable thinking/reasoning mode for this session (model generates internal chain-of-thought).</summary>
+    public bool? Think { get; init; }
+
     /// <summary>Raise the log floor to Debug (default is quiet: Warning), all to stderr.</summary>
     public bool Verbose { get; init; }
 
@@ -41,6 +44,7 @@ internal sealed record CliOptions
     public static bool TryParse(string[] args, out CliOptions options, out string? error)
     {
         bool readOnly = false, verbose = false, help = false, noColor = false, dumpPrompts = false;
+        bool? think = null;
         string? model = null, configPath = null, label = null;
         var positional = new List<string>();
         error = null;
@@ -52,6 +56,12 @@ internal sealed record CliOptions
             {
                 case "--read-only":
                     readOnly = true;
+                    break;
+                case "--think":
+                    think = true;
+                    break;
+                case "--no-think":
+                    think = false;
                     break;
                 case "--verbose":
                     verbose = true;
@@ -100,6 +110,7 @@ internal sealed record CliOptions
         options = new CliOptions
         {
             ReadOnly = readOnly,
+            Think = think,
             Verbose = verbose,
             Help = help,
             NoColor = noColor,
@@ -138,6 +149,8 @@ internal sealed record CliOptions
 
         OPTIONS:
           --read-only        reads only — never offer or run mutating/destructive actions
+          --think            enable thinking/reasoning mode (model generates internal chain-of-thought)
+          --no-think         disable thinking/reasoning mode
           --model <tag>      override the Ollama model (e.g. gemma4:12b)
           --config <path>    use this config file instead of the default location
           --label <name>     tag this run's recorded turns (to A/B a prompt/tool edit)

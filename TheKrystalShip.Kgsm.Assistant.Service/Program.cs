@@ -12,6 +12,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.Llm.Extensions;
+using TheKrystalShip.Llm.Ollama;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -196,6 +197,8 @@ secured.MapPost("/turn", async (
     // Authority is derived fresh from the verified principal; the conversation key is
     // principal-scoped so one user can't read or poison another's memory.
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    var think = request.Think
+        ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
     var conversationId = $"web:{principal.UserId}";
 
     // Attribute any server mutation this turn runs to the asking user (origin=assistant); flows down the
@@ -211,11 +214,11 @@ secured.MapPost("/turn", async (
     if (wantsStream)
     {
         await SseTurnWriter.WriteAsync(
-            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform);
+            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform, think);
         return Results.Empty;
     }
 
-    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, ct);
+    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, ct);
 
     if (result.IsFailure)
         return Results.Problem(result.Error, statusCode: StatusCodes.Status502BadGateway);

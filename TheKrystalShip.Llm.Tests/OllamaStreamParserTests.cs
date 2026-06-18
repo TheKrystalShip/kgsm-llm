@@ -103,4 +103,58 @@ public class OllamaStreamParserTests
 
         chunk!.Usage.Should().BeNull();
     }
+
+    [Fact]
+    public void ThinkFrame_ParsesThinkingDelta()
+    {
+        var chunk = OllamaStreamParser.ParseFrame(
+            """{"message":{"role":"assistant","think":"Let me analyze this step by step.","content":""},"done":false}""");
+
+        chunk.Should().NotBeNull();
+        chunk!.ThinkingDelta.Should().Be("Let me analyze this step by step.");
+        chunk.ContentDelta.Should().BeNull();
+        chunk.Done.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ThinkAndContentFrame_ParsesBothFields()
+    {
+        var chunk = OllamaStreamParser.ParseFrame(
+            """{"message":{"role":"assistant","think":"reasoning...","content":" final answer"},"done":false}""");
+
+        chunk.Should().NotBeNull();
+        chunk!.ThinkingDelta.Should().Be("reasoning...");
+        chunk.ContentDelta.Should().Be(" final answer");
+    }
+
+    [Fact]
+    public void FrameWithoutThink_HasNullThinkingDelta()
+    {
+        var chunk = OllamaStreamParser.ParseFrame(
+            """{"message":{"role":"assistant","content":"hello"},"done":false}""");
+
+        chunk.Should().NotBeNull();
+        chunk!.ThinkingDelta.Should().BeNull();
+    }
+
+    [Fact]
+    public void EmptyThinkField_ReturnsNullThinkingDelta()
+    {
+        var chunk = OllamaStreamParser.ParseFrame(
+            """{"message":{"role":"assistant","think":"","content":"hi"},"done":false}""");
+
+        chunk.Should().NotBeNull();
+        chunk!.ThinkingDelta.Should().BeNull("an empty think string is not a delta");
+    }
+
+    [Fact]
+    public void DoneFrame_WithThink_CarriesThinkingDelta()
+    {
+        var chunk = OllamaStreamParser.ParseFrame(
+            """{"message":{"role":"assistant","think":"final reasoning","content":""},"done":true,"done_reason":"stop"}""");
+
+        chunk.Should().NotBeNull();
+        chunk!.Done.Should().BeTrue();
+        chunk.ThinkingDelta.Should().Be("final reasoning");
+    }
 }

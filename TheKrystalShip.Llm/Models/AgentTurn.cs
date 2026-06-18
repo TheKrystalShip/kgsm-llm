@@ -64,4 +64,12 @@ public sealed record AgentTurn
     /// When null, every requested tool call is dispatched.
     /// </summary>
     public Func<LlmToolCall, ToolGate>? Gate { get; init; }
+
+    /// <summary>
+    /// When true, enables the model's thinking/reasoning mode for this turn. The model
+    /// generates an internal chain-of-thought before producing its final answer.
+    /// Defaults to false (no thinking); the host resolves this from the client's request
+    /// or falls back to the server-wide <c>Ollama:Think</c> config default.
+    /// </summary>
+    public bool Think { get; init; }
 }

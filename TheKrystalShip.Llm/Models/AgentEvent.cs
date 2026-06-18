@@ -6,6 +6,9 @@ public enum AgentEventKind
     /// <summary>An incremental slice of the final assistant reply text.</summary>
     Token,
 
+    /// <summary>An incremental slice of the model's internal reasoning (thinking) content.</summary>
+    Thinking,
+
     /// <summary>A tool is about to be dispatched; carries its name + arguments.</summary>
     ToolStart,
 
@@ -36,6 +39,7 @@ public sealed record AgentEvent(
     LlmUsage? Usage = null)
 {
     public static AgentEvent Token(string delta) => new(AgentEventKind.Token, Text: delta);
+    public static AgentEvent Thinking(string delta) => new(AgentEventKind.Thinking, Text: delta);
     public static AgentEvent ToolStart(string tool, IReadOnlyDictionary<string, string?> arguments) =>
         new(AgentEventKind.ToolStart, ToolName: tool, ToolArguments: arguments);
     public static AgentEvent ToolResult(string tool, string summary) =>

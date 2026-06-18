@@ -35,4 +35,12 @@ public class OllamaOptions
     /// which is the right choice for normal use.
     /// </summary>
     public int? Seed { get; set; }
+
+    /// <summary>
+    /// When true, enables Gemma 4's thinking/reasoning mode: the model generates an internal
+    /// chain-of-thought before producing its final answer. Thinking content streams as
+    /// <see cref="LlmStreamChunk.ThinkingDelta"/> and is never persisted to conversation history.
+    /// Off by default — thinking adds latency and token cost.
+    /// </summary>
+    public bool Think { get; set; }
 }

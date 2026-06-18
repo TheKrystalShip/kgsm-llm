@@ -141,7 +141,7 @@ internal sealed class Harness
             var prompt = fx.Fill(step.Prompt);
 
             _recorder.Reset();
-            var result = await assistant.RunAsync(conversationId, prompt, bench.Authorized, ct);
+            var result = await assistant.RunAsync(conversationId, prompt, bench.Authorized, false, ct);
             var record = _recorder.Last;
             sysHash ??= record?.SystemPromptHash;
 

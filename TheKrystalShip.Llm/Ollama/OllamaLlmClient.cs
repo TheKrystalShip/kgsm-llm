@@ -46,11 +46,12 @@ public class OllamaLlmClient : ILlmClient
     public async Task<Result<LlmResponse>> ChatAsync(
         IReadOnlyList<LlmMessage> messages,
         IReadOnlyList<LlmToolDefinition>? tools = null,
+        bool think = false,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var json = JsonSerializer.Serialize(BuildBody(messages, tools, stream: false));
+            var json = JsonSerializer.Serialize(BuildBody(messages, tools, stream: false, think));
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var response = await _httpClient.PostAsync("/api/chat", content, cancellationToken);
@@ -97,9 +98,10 @@ public class OllamaLlmClient : ILlmClient
     public async IAsyncEnumerable<LlmStreamChunk> ChatStreamAsync(
         IReadOnlyList<LlmMessage> messages,
         IReadOnlyList<LlmToolDefinition>? tools = null,
+        bool think = false,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var json = JsonSerializer.Serialize(BuildBody(messages, tools, stream: true));
+        var json = JsonSerializer.Serialize(BuildBody(messages, tools, stream: true, think));
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat")
         {
@@ -158,7 +160,7 @@ public class OllamaLlmClient : ILlmClient
     }
 
     private Dictionary<string, object?> BuildBody(
-        IReadOnlyList<LlmMessage> messages, IReadOnlyList<LlmToolDefinition>? tools, bool stream)
+        IReadOnlyList<LlmMessage> messages, IReadOnlyList<LlmToolDefinition>? tools, bool stream, bool think)
     {
         var options = new Dictionary<string, object?>
         {
@@ -174,6 +176,7 @@ public class OllamaLlmClient : ILlmClient
         {
             ["model"] = _options.Model,
             ["stream"] = stream,
+            ["think"] = think,
             ["messages"] = messages.Select(BuildMessagePayload).ToArray(),
             ["options"] = options
         };

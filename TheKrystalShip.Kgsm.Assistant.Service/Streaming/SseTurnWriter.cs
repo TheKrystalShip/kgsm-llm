@@ -30,7 +30,8 @@ internal static class SseTurnWriter
         AuthPrincipal principal,
         string conversationId,
         string prompt,
-        bool canPerformActions)
+        bool canPerformActions,
+        bool think = false)
     {
         var response = http.Response;
         response.StatusCode = StatusCodes.Status200OK;
@@ -48,12 +49,16 @@ internal static class SseTurnWriter
         try
         {
             await foreach (var ev in assistant
-                               .RunStreamAsync(conversationId, prompt, canPerformActions, ct))
+                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, ct))
             {
                 switch (ev.Kind)
                 {
                     case AssistantEventKind.Token:
                         await WriteEventAsync(response, "text.delta", new TokenEvent(ev.Text ?? string.Empty), ct);
+                        break;
+
+                    case AssistantEventKind.Thinking:
+                        await WriteEventAsync(response, "thinking.delta", new ThinkingEvent(ev.Text ?? string.Empty), ct);
                         break;
 
                     case AssistantEventKind.ToolStart:

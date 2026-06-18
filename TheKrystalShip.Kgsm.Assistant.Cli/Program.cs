@@ -157,10 +157,11 @@ using (host)
     var colorErr = stderrTty && !noColor;
     var runner = new CliRunner(
         assistant, inventory, canPerformActions,
-        interactiveStdin: !Console.IsInputRedirected,   // gates interactive confirmation (L8)
-        showStatus: !Console.IsOutputRedirected,        // ⚙/✓ progress only when stdout is a TTY
+        interactiveStdin: !Console.IsInputRedirected,
+        showStatus: !Console.IsOutputRedirected,
         color: colorErr,
-        stderrTty: stderrTty);                          // spinner animates on stderr → gate on its TTY
+        stderrTty: stderrTty,
+        think: cli.Think ?? false);
 
     // Ctrl-C cancels the running turn (aborts Ollama generation, L3) rather than the process.
     using var interruptor = new TurnInterruptor();

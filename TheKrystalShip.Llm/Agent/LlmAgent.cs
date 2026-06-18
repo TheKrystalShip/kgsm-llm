@@ -75,7 +75,7 @@ public class LlmAgent : ILlmAgent
             {
                 iterationsRun = iteration + 1;
 
-                var response = await _llmClient.ChatAsync(working, tools, cancellationToken);
+                var response = await _llmClient.ChatAsync(working, tools, turn.Think, cancellationToken);
                 if (response.IsFailure)
                 {
                     Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Error, null, null, response.Error);
@@ -153,7 +153,7 @@ public class LlmAgent : ILlmAgent
                 // Drive the chunk stream through a manual enumerator: a mid-stream failure must be
                 // captured and surfaced as a terminal error event, and C# forbids `yield` in a catch.
                 await using var chunks = _llmClient
-                    .ChatStreamAsync(working, tools, cancellationToken)
+                    .ChatStreamAsync(working, tools, turn.Think, cancellationToken)
                     .GetAsyncEnumerator(cancellationToken);
 
                 while (true)
@@ -181,6 +181,9 @@ public class LlmAgent : ILlmAgent
                         content.Append(chunk.ContentDelta);
                         yield return AgentEvent.Token(chunk.ContentDelta);
                     }
+
+                    if (!string.IsNullOrEmpty(chunk.ThinkingDelta))
+                        yield return AgentEvent.Thinking(chunk.ThinkingDelta);
 
                     // Tool calls arrive complete in one frame (probe-verified) — capture, don't accumulate.
                     if (chunk.ToolCalls is { Count: > 0 })

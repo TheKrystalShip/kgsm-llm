@@ -15,4 +15,5 @@ public sealed record LlmStreamChunk(
     string? ContentDelta,
     IReadOnlyList<LlmToolCall>? ToolCalls,
     bool Done,
-    LlmUsage? Usage = null);
+    LlmUsage? Usage = null,
+    string? ThinkingDelta = null);

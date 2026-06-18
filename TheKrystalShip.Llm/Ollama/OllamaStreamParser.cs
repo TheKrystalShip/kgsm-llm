@@ -40,6 +40,7 @@ public static class OllamaStreamParser
                        doneElement.ValueKind == JsonValueKind.True;
 
             string? contentDelta = null;
+            string? thinkingDelta = null;
             List<LlmToolCall>? toolCalls = null;
 
             if (root.TryGetProperty("message", out var message))
@@ -52,13 +53,21 @@ public static class OllamaStreamParser
                         contentDelta = raw;
                 }
 
+                if (message.TryGetProperty("think", out var thinkElement) &&
+                    thinkElement.ValueKind == JsonValueKind.String)
+                {
+                    var raw = thinkElement.GetString();
+                    if (!string.IsNullOrEmpty(raw))
+                        thinkingDelta = raw;
+                }
+
                 var parsed = ParseToolCalls(message);
                 if (parsed.Count > 0)
                     toolCalls = parsed;
             }
 
             // Token counts ride the terminal `done` frame; earlier frames carry none.
-            return new LlmStreamChunk(contentDelta, toolCalls, done, ParseUsage(root, contextWindow));
+            return new LlmStreamChunk(contentDelta, toolCalls, done, ParseUsage(root, contextWindow), thinkingDelta);
         }
     }
 

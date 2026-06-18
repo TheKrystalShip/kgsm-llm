@@ -48,7 +48,7 @@ public sealed class ConversationCompactor : IConversationCompactor
             LlmMessage.User(RenderTranscript(history)),
         };
 
-        var response = await _llmClient.ChatAsync(request, tools: null, cancellationToken);
+        var response = await _llmClient.ChatAsync(request, tools: null, think: false, cancellationToken);
         if (response.IsFailure)
             return Result.Failure<CompactionOutcome>(response.Error!);
 

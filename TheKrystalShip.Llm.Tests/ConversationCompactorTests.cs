@@ -36,6 +36,7 @@ public class ConversationCompactorTests
         _llm.ChatAsync(
                 Arg.Do<IReadOnlyList<LlmMessage>>(m => { _sent = m.ToList(); _calls++; }),
                 Arg.Do<IReadOnlyList<LlmToolDefinition>?>(t => _tools = t),
+                Arg.Any<bool>(),
                 Arg.Any<CancellationToken>())
             .Returns(response);
 

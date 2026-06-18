@@ -36,6 +36,7 @@ public class LlmAgentTests
         _llm.ChatAsync(
                 Arg.Do<IReadOnlyList<LlmMessage>>(m => _seen.Add(m.ToList())),
                 Arg.Any<IReadOnlyList<LlmToolDefinition>>(),
+                Arg.Any<bool>(),
                 Arg.Any<CancellationToken>())
             .Returns(responses[0], responses.Skip(1).ToArray());
 
@@ -43,6 +44,7 @@ public class LlmAgentTests
         _llm.ChatAsync(
                 Arg.Do<IReadOnlyList<LlmMessage>>(m => _seen.Add(m.ToList())),
                 Arg.Any<IReadOnlyList<LlmToolDefinition>>(),
+                Arg.Any<bool>(),
                 Arg.Any<CancellationToken>())
             .Returns(_ => factory());
 

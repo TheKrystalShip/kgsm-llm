@@ -395,6 +395,44 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Turn_Relay_ValidSecret_AuthsAsForwardedUser()
+    {
+        // The trusted-relay path (kgsm-api): a matching X-Relay-Secret + forwarded Discord identity
+        // authenticates with NO session bearer, and the forwarded user drives the principal-scoped
+        // conversation key (web:<userId>) — per-user isolation is preserved through the relay.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var response = await StreamTurnRelayAsync(factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("event: done");
+        assistant.Received().RunStreamAsync(
+            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Turn_Relay_WrongSecret_Returns401()
+    {
+        // A present-but-wrong relay secret is a hard 401 — never a fall-through to the session path.
+        var factory = Factory(Substitute.For<IServerAssistant>(), configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var response = await StreamTurnRelayAsync(factory.CreateClient(), "hi", "WRONG-SECRET", "relayuser");
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Turn_Relay_MissingUser_Returns401()
+    {
+        // A valid secret with no forwarded identity is refused — the relay must say who it acts as.
+        var factory = Factory(Substitute.For<IServerAssistant>(), configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var response = await StreamTurnRelayAsync(factory.CreateClient(), "hi", "relay-secret", userId: null);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
     public async Task Turn_StreamAccept_NoBearer_Returns401()
     {
         // The bearer filter runs before the handler, so SSE is never opened for an anonymous caller.
@@ -420,6 +458,22 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             Content = JsonContent.Create(new { prompt }),
         };
         request.Headers.Accept.ParseAdd("text/event-stream");
+        return await client.SendAsync(request);
+    }
+
+    /// <summary>POSTs /turn over the trusted-relay path: an SSE Accept + the relay secret and
+    /// forwarded identity headers, no session bearer. A null header value is omitted.</summary>
+    private static async Task<HttpResponseMessage> StreamTurnRelayAsync(
+        HttpClient client, string prompt, string? secret, string? userId, string? userName = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt }),
+        };
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        if (secret is not null) request.Headers.Add("X-Relay-Secret", secret);
+        if (userId is not null) request.Headers.Add("X-Relay-User", userId);
+        if (userName is not null) request.Headers.Add("X-Relay-User-Name", userName);
         return await client.SendAsync(request);
     }
 

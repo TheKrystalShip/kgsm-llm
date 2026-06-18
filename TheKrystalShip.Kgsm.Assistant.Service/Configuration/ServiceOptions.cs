@@ -19,6 +19,22 @@ public sealed class AssistantServiceOptions
 
     public ConfirmationOptions Confirmation { get; set; } = new();
     public WebhookOptions Webhook { get; set; } = new();
+    public RelayOptions Relay { get; set; } = new();
+}
+
+/// <summary>
+/// Shared secret for a trusted, co-located <em>relay</em> (the per-host kgsm-api Control Panel
+/// API) that calls the assistant on a verified end-user's behalf. Mirrors <see cref="WebhookOptions"/>:
+/// when set, a request bearing a matching <c>X-Relay-Secret</c> is authenticated as the forwarded
+/// Discord identity (<c>X-Relay-User</c>/<c>X-Relay-User-Name</c>) WITHOUT a session login; when
+/// empty the relay path is disabled and only session bearers are accepted. The relay forwards
+/// IDENTITY only — authority (can-perform) is still derived server-side from the bot by user id,
+/// so the secret-holder cannot escalate a user beyond their real Discord role. The secret lives in
+/// the same co-located trust domain as the API and the bot.
+/// </summary>
+public sealed class RelayOptions
+{
+    public string Secret { get; set; } = string.Empty;
 }
 
 /// <summary>HMAC key + lifetime for stateless confirmation tokens.</summary>

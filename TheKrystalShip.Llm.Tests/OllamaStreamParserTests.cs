@@ -104,11 +104,14 @@ public class OllamaStreamParserTests
         chunk!.Usage.Should().BeNull();
     }
 
+    // The reasoning field on the wire is `thinking` (Ollama's response shape), NOT `think` (which is
+    // the request param). These frames mirror a real /api/chat stream so the parser is tested against
+    // the actual wire format, not a fabricated one.
     [Fact]
     public void ThinkFrame_ParsesThinkingDelta()
     {
         var chunk = OllamaStreamParser.ParseFrame(
-            """{"message":{"role":"assistant","think":"Let me analyze this step by step.","content":""},"done":false}""");
+            """{"message":{"role":"assistant","thinking":"Let me analyze this step by step.","content":""},"done":false}""");
 
         chunk.Should().NotBeNull();
         chunk!.ThinkingDelta.Should().Be("Let me analyze this step by step.");
@@ -120,7 +123,7 @@ public class OllamaStreamParserTests
     public void ThinkAndContentFrame_ParsesBothFields()
     {
         var chunk = OllamaStreamParser.ParseFrame(
-            """{"message":{"role":"assistant","think":"reasoning...","content":" final answer"},"done":false}""");
+            """{"message":{"role":"assistant","thinking":"reasoning...","content":" final answer"},"done":false}""");
 
         chunk.Should().NotBeNull();
         chunk!.ThinkingDelta.Should().Be("reasoning...");
@@ -141,7 +144,7 @@ public class OllamaStreamParserTests
     public void EmptyThinkField_ReturnsNullThinkingDelta()
     {
         var chunk = OllamaStreamParser.ParseFrame(
-            """{"message":{"role":"assistant","think":"","content":"hi"},"done":false}""");
+            """{"message":{"role":"assistant","thinking":"","content":"hi"},"done":false}""");
 
         chunk.Should().NotBeNull();
         chunk!.ThinkingDelta.Should().BeNull("an empty think string is not a delta");
@@ -151,7 +154,7 @@ public class OllamaStreamParserTests
     public void DoneFrame_WithThink_CarriesThinkingDelta()
     {
         var chunk = OllamaStreamParser.ParseFrame(
-            """{"message":{"role":"assistant","think":"final reasoning","content":""},"done":true,"done_reason":"stop"}""");
+            """{"message":{"role":"assistant","thinking":"final reasoning","content":""},"done":true,"done_reason":"stop"}""");
 
         chunk.Should().NotBeNull();
         chunk!.Done.Should().BeTrue();

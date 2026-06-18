@@ -53,7 +53,11 @@ public static class OllamaStreamParser
                         contentDelta = raw;
                 }
 
-                if (message.TryGetProperty("think", out var thinkElement) &&
+                // Ollama's REQUEST param is `think` (bool), but the RESPONSE field carrying the
+                // reasoning is `thinking` (verified against a live /api/chat stream:
+                // {"message":{...,"thinking":"…"}}). Reading `think` here silently dropped every
+                // reasoning delta, so thinking never reached any surface — match the wire name exactly.
+                if (message.TryGetProperty("thinking", out var thinkElement) &&
                     thinkElement.ValueKind == JsonValueKind.String)
                 {
                     var raw = thinkElement.GetString();

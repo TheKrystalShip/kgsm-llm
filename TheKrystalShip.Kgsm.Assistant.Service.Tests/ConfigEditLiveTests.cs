@@ -175,10 +175,10 @@ public sealed class ConfigEditLiveTests : IClassFixture<WebApplicationFactory<Pr
         return (result, calls);
     }
 
-    private sealed record RecordedCall(string Name, IReadOnlyDictionary<string, string?> Args, string? Result)
+    private sealed record RecordedCall(Tool Name, IReadOnlyDictionary<string, string?> Args, string? Result)
     {
-        public string Describe() => Args.Count == 0 ? Name
-            : $"{Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
+        public string Describe() => Args.Count == 0 ? Name.Name
+            : $"{Name.Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
     }
 
     /// <summary>Thread-safe sink for the tool calls (name + args + result) the dispatcher saw, in order.</summary>

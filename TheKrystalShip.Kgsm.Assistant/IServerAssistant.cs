@@ -65,16 +65,16 @@ public sealed record AssistantStreamEvent(
     string? Text = null,
     PendingConfirmation? StagedConfirmation = null,
     string? ErrorMessage = null,
-    string? ToolName = null,
+    Tool? ToolName = null,
     IReadOnlyDictionary<string, string?>? ToolArguments = null,
     string? ToolSummary = null,
     LlmUsage? Usage = null)
 {
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
     public static AssistantStreamEvent Thinking(string delta) => new(AssistantEventKind.Thinking, Text: delta);
-    public static AssistantStreamEvent ToolStart(string tool, IReadOnlyDictionary<string, string?> arguments) =>
+    public static AssistantStreamEvent ToolStart(Tool tool, IReadOnlyDictionary<string, string?> arguments) =>
         new(AssistantEventKind.ToolStart, ToolName: tool, ToolArguments: arguments);
-    public static AssistantStreamEvent ToolResult(string tool, string summary) =>
+    public static AssistantStreamEvent ToolResult(Tool tool, string summary) =>
         new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary);
     public static AssistantStreamEvent Confirmation(PendingConfirmation confirmation) =>
         new(AssistantEventKind.Confirmation, StagedConfirmation: confirmation);
@@ -103,12 +103,18 @@ public interface IServerAssistant
     /// Whether the requesting user is authorized to run mutating/destructive actions.
     /// When false, those tools are neither offered nor executed.
     /// </param>
+    /// <param name="requestedTools">
+    /// Optional tool names the client wants available this turn. When null or empty,
+    /// all authorized tools are used. Invalid names cause a hard error; names the
+    /// caller isn't authorized for are silently removed.
+    /// </param>
     /// <param name="cancellationToken">Token to cancel the turn.</param>
     Task<AssistantResult> RunAsync(
         string conversationId,
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -123,6 +129,7 @@ public interface IServerAssistant
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

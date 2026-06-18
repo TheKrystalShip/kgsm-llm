@@ -23,7 +23,7 @@ public record LlmMessage(LlmRole Role, string Content)
     public IReadOnlyList<LlmToolCall>? ToolCalls { get; init; }
 
     /// <summary>The tool this message carries the result of (tool turns only).</summary>
-    public string? ToolName { get; init; }
+    public Tool? ToolName { get; init; }
 
     public static LlmMessage System(string content) => new(LlmRole.System, content);
     public static LlmMessage User(string content) => new(LlmRole.User, content);
@@ -34,6 +34,6 @@ public record LlmMessage(LlmRole Role, string Content)
         new(LlmRole.Assistant, string.Empty) { ToolCalls = toolCalls };
 
     /// <summary>A tool-result turn feeding output back to the model.</summary>
-    public static LlmMessage Tool(string toolName, string content) =>
+    public static LlmMessage Tool(Tool toolName, string content) =>
         new(LlmRole.Tool, content) { ToolName = toolName };
 }

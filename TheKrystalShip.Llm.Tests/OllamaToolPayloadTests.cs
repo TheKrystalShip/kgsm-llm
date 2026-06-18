@@ -24,7 +24,7 @@ public class OllamaToolPayloadTests
     [Fact]
     public void Parameter_WithoutAllowedValues_OmitsEnum()
     {
-        var def = LlmToolDefinition.Create("t", "desc",
+        var def = LlmToolDefinition.Create(new Tool("t"), "desc",
             new LlmToolParameter("instance_name", "the server"));
 
         var prop = Properties(def).GetProperty("instance_name");
@@ -37,7 +37,7 @@ public class OllamaToolPayloadTests
     [Fact]
     public void Parameter_WithAllowedValues_EmitsEnumConstraintInOrder()
     {
-        var def = LlmToolDefinition.Create("server_command", "desc",
+        var def = LlmToolDefinition.Create(new Tool("server_command"), "desc",
             new LlmToolParameter("verb", "the action",
                 AllowedValues: new[] { "start", "stop", "restart", "update", "backup" }));
 
@@ -50,7 +50,7 @@ public class OllamaToolPayloadTests
     [Fact]
     public void Required_ListsOnlyRequiredParameters()
     {
-        var def = LlmToolDefinition.Create("t", "desc",
+        var def = LlmToolDefinition.Create(new Tool("t"), "desc",
             new LlmToolParameter("instance_name", "required"),
             new LlmToolParameter("verb", "optional", Required: false));
 

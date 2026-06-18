@@ -33,16 +33,16 @@ public sealed record AgentEvent(
     AgentEventKind Kind,
     string? Text = null,
     string? ErrorMessage = null,
-    string? ToolName = null,
+    Tool? ToolName = null,
     IReadOnlyDictionary<string, string?>? ToolArguments = null,
     string? ToolSummary = null,
     LlmUsage? Usage = null)
 {
     public static AgentEvent Token(string delta) => new(AgentEventKind.Token, Text: delta);
     public static AgentEvent Thinking(string delta) => new(AgentEventKind.Thinking, Text: delta);
-    public static AgentEvent ToolStart(string tool, IReadOnlyDictionary<string, string?> arguments) =>
+    public static AgentEvent ToolStart(Tool tool, IReadOnlyDictionary<string, string?> arguments) =>
         new(AgentEventKind.ToolStart, ToolName: tool, ToolArguments: arguments);
-    public static AgentEvent ToolResult(string tool, string summary) =>
+    public static AgentEvent ToolResult(Tool tool, string summary) =>
         new(AgentEventKind.ToolResult, ToolName: tool, ToolSummary: summary);
 
     /// <summary>The terminal success event: the full reply plus the producing call's token usage (if any).</summary>

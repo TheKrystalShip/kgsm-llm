@@ -38,7 +38,7 @@ public class TerminalRendererTests
         var (renderer, @out, err) = Make(showStatus: true, color: false);
 
         renderer.Handle(AssistantStreamEvent.ToolStart(
-            "get_status", new Dictionary<string, string?> { ["instance"] = "terraria" }));
+            new Tool("get_status"), new Dictionary<string, string?> { ["instance"] = "terraria" }));
 
         err.ToString().Should().Contain("⚙ get_status(instance=terraria)");
         @out.ToString().Should().BeEmpty();   // status is never on stdout
@@ -49,8 +49,8 @@ public class TerminalRendererTests
     {
         var (renderer, _, err) = Make(showStatus: false, color: false);
 
-        renderer.Handle(AssistantStreamEvent.ToolStart("get_status", new Dictionary<string, string?>()));
-        renderer.Handle(AssistantStreamEvent.ToolResult("get_status", "ok"));
+        renderer.Handle(AssistantStreamEvent.ToolStart(new Tool("get_status"), new Dictionary<string, string?>()));
+        renderer.Handle(AssistantStreamEvent.ToolResult(new Tool("get_status"), "ok"));
 
         err.ToString().Should().BeEmpty();
     }
@@ -93,7 +93,7 @@ public class TerminalRendererTests
     {
         var (renderer, _, err) = Make(showStatus: true, color: true);
 
-        renderer.Handle(AssistantStreamEvent.ToolStart("x", new Dictionary<string, string?>()));
+        renderer.Handle(AssistantStreamEvent.ToolStart(new Tool("x"), new Dictionary<string, string?>()));
 
         err.ToString().Should().Contain("\x1b[2m").And.Contain("\x1b[0m");
     }

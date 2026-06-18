@@ -39,9 +39,9 @@ public sealed class FilePromptOverridesTests : IDisposable
 
     private static IReadOnlyList<LlmToolDefinition> SampleTools() => new[]
     {
-        LlmToolDefinition.Create("get_status", "BASE status desc",
+        LlmToolDefinition.Create(new Tool("get_status"), "BASE status desc",
             new LlmToolParameter("instance_name", "BASE param desc", Required: false)),
-        LlmToolDefinition.Create("list_blueprints", "BASE list desc"),
+        LlmToolDefinition.Create(new Tool("list_blueprints"), "BASE list desc"),
     };
 
     [Fact]

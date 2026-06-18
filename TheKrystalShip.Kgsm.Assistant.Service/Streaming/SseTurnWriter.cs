@@ -31,7 +31,8 @@ internal static class SseTurnWriter
         string conversationId,
         string prompt,
         bool canPerformActions,
-        bool think = false)
+        bool think = false,
+        IReadOnlyList<string>? requestedTools = null)
     {
         var response = http.Response;
         response.StatusCode = StatusCodes.Status200OK;
@@ -49,7 +50,7 @@ internal static class SseTurnWriter
         try
         {
             await foreach (var ev in assistant
-                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, ct))
+                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, requestedTools, ct))
             {
                 switch (ev.Kind)
                 {
@@ -62,16 +63,18 @@ internal static class SseTurnWriter
                         break;
 
                     case AssistantEventKind.ToolStart:
-                        await WriteEventAsync(response, "tool.start",
-                            new ToolStartEvent(
-                                ev.ToolName ?? string.Empty,
-                                ev.ToolArguments ?? new Dictionary<string, string?>()),
-                            ct);
+                        if (ev.ToolName is not null)
+                            await WriteEventAsync(response, "tool.start",
+                                new ToolStartEvent(
+                                    ev.ToolName.Name,
+                                    ev.ToolArguments ?? new Dictionary<string, string?>()),
+                                ct);
                         break;
 
                     case AssistantEventKind.ToolResult:
-                        await WriteEventAsync(response, "tool.result",
-                            new ToolResultEvent(ev.ToolName ?? string.Empty, ev.ToolSummary ?? string.Empty), ct);
+                        if (ev.ToolName is not null)
+                            await WriteEventAsync(response, "tool.result",
+                                new ToolResultEvent(ev.ToolName.Name, ev.ToolSummary ?? string.Empty), ct);
                         break;
 
                     case AssistantEventKind.Confirmation:

@@ -199,12 +199,12 @@ public class OllamaLlmClient : ILlmClient
         {
             payload["tool_calls"] = message.ToolCalls.Select(tc => new
             {
-                function = new { name = tc.Name, arguments = tc.Arguments }
+                function = new { name = tc.Name.Name, arguments = tc.Arguments }
             }).ToArray();
         }
 
         if (message.ToolName is not null)
-            payload["tool_name"] = message.ToolName;
+            payload["tool_name"] = message.ToolName.Name;
 
         return payload;
     }

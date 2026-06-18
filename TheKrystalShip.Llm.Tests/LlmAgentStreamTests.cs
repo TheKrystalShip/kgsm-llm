@@ -49,7 +49,7 @@ public class LlmAgentStreamTests
     private static LlmStreamChunk Content(string delta) => new(delta, null, false);
     private static LlmStreamChunk Thinking(string delta) => new(null, null, false, null, delta);
     private static LlmStreamChunk ToolFrame(params string[] names) =>
-        new(null, names.Select(n => new LlmToolCall(n, new Dictionary<string, string?>())).ToArray(), false);
+        new(null, names.Select(n => new LlmToolCall(new Tool(n), new Dictionary<string, string?>())).ToArray(), false);
     private static LlmStreamChunk DoneFrame() => new(null, null, true);
     private static LlmStreamChunk DoneFrame(LlmUsage usage) => new(null, null, true, usage);
 
@@ -111,13 +111,13 @@ public class LlmAgentStreamTests
 
         events.Select(e => e.Kind).Should().Equal(
             AgentEventKind.ToolStart, AgentEventKind.ToolResult, AgentEventKind.Token, AgentEventKind.Final);
-        events[0].ToolName.Should().Be("tool_a");
-        events[1].ToolName.Should().Be("tool_a");
+        events[0].ToolName.Should().Be(new Tool("tool_a"));
+        events[1].ToolName.Should().Be(new Tool("tool_a"));
         events[1].ToolSummary.Should().Be("Done.");   // the dispatcher's output, surfaced to the stream
         events[3].Text.Should().Be("all done");
 
         await _dispatcher.Received(1).ExecuteAsync(
-            Arg.Is<LlmToolCall>(c => c.Name == "tool_a"), Arg.Any<CancellationToken>());
+            Arg.Is<LlmToolCall>(c => c.Name == new Tool("tool_a")), Arg.Any<CancellationToken>());
 
         // Persistence parity with the buffered loop: no tool messages, no tool-call turns.
         _store.Messages.Should().HaveCount(2);
@@ -143,9 +143,9 @@ public class LlmAgentStreamTests
             AgentEventKind.ToolResult, AgentEventKind.ToolResult,
             AgentEventKind.Token, AgentEventKind.Final);
         events.Where(e => e.Kind == AgentEventKind.ToolStart).Select(e => e.ToolName)
-            .Should().Equal("tool_a", "tool_b");
+            .Should().Equal(new Tool("tool_a"), new Tool("tool_b"));
         events.Where(e => e.Kind == AgentEventKind.ToolResult).Select(e => e.ToolName)
-            .Should().Equal("tool_a", "tool_b");
+            .Should().Equal(new Tool("tool_a"), new Tool("tool_b"));
     }
 
     [Fact]

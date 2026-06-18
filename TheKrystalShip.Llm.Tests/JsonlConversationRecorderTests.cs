@@ -47,7 +47,7 @@ public sealed class JsonlConversationRecorderTests : IDisposable
             Tools = new[]
             {
                 new RecordedToolCall(
-                    "get_status",
+                    new Tool("get_status"),
                     new Dictionary<string, string?> { ["instance"] = "terraria" },
                     "running, 3h12m",
                     210),

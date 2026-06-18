@@ -3,11 +3,32 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Kgsm.Assistant.Service;
 
 /// <summary>
-/// A chat turn: just the user's message. The conversation key for memory is derived
-/// server-side from the authenticated principal (<c>web:{discordUserId}</c>) — it is NOT
-/// client-supplied, so one caller can't read or poison another's history.
+/// A chat turn: the user's message and optional tool selection. The conversation key for
+/// memory is derived server-side from the authenticated principal (<c>web:{discordUserId}</c>)
+/// — it is NOT client-supplied, so one caller can't read or poison another's history.
 /// </summary>
-public sealed record TurnRequest(string? Prompt, bool? Think = null);
+public sealed record TurnRequest(
+    string? Prompt,
+    bool? Think = null,
+    IReadOnlyList<string>? Tools = null);
+
+/// <summary>
+/// A tool parameter, as returned by <c>GET /tools</c>.
+/// </summary>
+public sealed record ToolParameterDto(
+    string Name,
+    string Description,
+    bool Required,
+    string Type,
+    IReadOnlyList<string>? AllowedValues = null);
+
+/// <summary>
+/// A tool definition, as returned by <c>GET /tools</c>.
+/// </summary>
+public sealed record ToolDto(
+    string Name,
+    string Description,
+    IReadOnlyList<ToolParameterDto> Parameters);
 
 /// <summary>
 /// Token accounting for a turn, in tokens (never a percentage): the prompt the model evaluated,

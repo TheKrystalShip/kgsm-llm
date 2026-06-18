@@ -84,7 +84,7 @@ public sealed class JsonlConversationRecorder : IConversationRecorder
         user = r.UserPrompt,
         tools = r.Tools.Select(t => new
         {
-            name = t.Name,
+            name = t.Name.Name,
             args = t.Arguments,
             result = t.Result,
             ms = t.DurationMs,

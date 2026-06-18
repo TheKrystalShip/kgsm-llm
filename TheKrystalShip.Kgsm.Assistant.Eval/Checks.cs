@@ -42,17 +42,17 @@ internal sealed record Check(Rubric Dimension, string Label, Func<TurnObservatio
 /// <summary>Factory for the check vocabulary. Names read as the assertion they make.</summary>
 internal static class C
 {
-    public static Check CalledTool(string tool, string? label = null) =>
+    public static Check CalledTool(Tool tool, string? label = null) =>
         new(Rubric.B_Routing, label ?? $"calls {tool}", (o, _) => o.Tools.Any(t => Eq(t.Name, tool)));
 
-    public static Check DidNotCallTool(string tool, Rubric dim, string label) =>
+    public static Check DidNotCallTool(Tool tool, Rubric dim, string label) =>
         new(dim, label, (o, _) => !o.Tools.Any(t => Eq(t.Name, tool)));
 
     public static Check NoToolCalls(string label) =>
         new(Rubric.E_Scope, label, (o, _) => o.Tools.Count == 0);
 
     /// <summary>A (specific or any) tool call referenced the role's server — i.e. it ACTED on the right one.</summary>
-    public static Check ReferencedRole(FixtureRole role, string? tool, Rubric dim, string label) =>
+    public static Check ReferencedRole(FixtureRole role, Tool? tool, Rubric dim, string label) =>
         new(dim, label, (o, fx) => o.Tools.Any(t =>
             (tool is null || Eq(t.Name, tool)) &&
             ReferencesInstance(t.Arguments.GetValueOrDefault("instance_name"), fx.InstanceFor(role), fx.GameFor(role))));
@@ -107,7 +107,7 @@ internal static class C
 
     // --- matchers ------------------------------------------------------------------------------
 
-    private static bool Eq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    private static bool Eq(Tool a, Tool b) => string.Equals(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Did the model reference THIS server (by instance name or game word), rather than ask which?
     /// Deliberately permissive — the dispatcher resolves fuzzy names, so "factorio" and "factorio-test"

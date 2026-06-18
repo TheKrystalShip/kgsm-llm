@@ -20,7 +20,7 @@ public enum TurnOutcome
 /// duration (it never reached the dispatcher).
 /// </summary>
 public sealed record RecordedToolCall(
-    string Name,
+    Tool Name,
     IReadOnlyDictionary<string, string?> Arguments,
     string Result,
     long DurationMs);

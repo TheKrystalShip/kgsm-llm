@@ -22,11 +22,14 @@ public record LlmToolParameter(
 /// passed to the client IS the whitelist of callable tools.
 /// </summary>
 public record LlmToolDefinition(
-    string Name,
+    Tool Tool,
     string Description,
     IReadOnlyList<LlmToolParameter> Parameters)
 {
+    /// <summary>The tool's name, provided for wire-format serialization convenience.</summary>
+    public string Name => Tool.Name;
+
     public static LlmToolDefinition Create(
-        string name, string description, params LlmToolParameter[] parameters) =>
-        new(name, description, parameters);
+        Tool tool, string description, params LlmToolParameter[] parameters) =>
+        new(tool, description, parameters);
 }

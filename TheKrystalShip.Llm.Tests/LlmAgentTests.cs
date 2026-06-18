@@ -55,7 +55,7 @@ public class LlmAgentTests
         Result.Success(new LlmResponse(text, Array.Empty<LlmToolCall>()));
 
     private static LlmToolCall Call(string name) =>
-        new(name, new Dictionary<string, string?> { ["instance_name"] = "x" });
+        new(new Tool(name), new Dictionary<string, string?> { ["instance_name"] = "x" });
 
     private static AgentTurn Turn(
         IReadOnlyList<LlmToolDefinition>? tools = null,
@@ -84,9 +84,9 @@ public class LlmAgentTests
         result.Value!.Text.Should().Be("all done");
         Received.InOrder(() =>
         {
-            _ = _dispatcher.ExecuteAsync(Arg.Is<LlmToolCall>(c => c.Name == ToolA), Arg.Any<CancellationToken>());
-            _ = _dispatcher.ExecuteAsync(Arg.Is<LlmToolCall>(c => c.Name == ToolB), Arg.Any<CancellationToken>());
-            _ = _dispatcher.ExecuteAsync(Arg.Is<LlmToolCall>(c => c.Name == ToolC), Arg.Any<CancellationToken>());
+            _ = _dispatcher.ExecuteAsync(Arg.Is<LlmToolCall>(c => c.Name == new Tool(ToolA)), Arg.Any<CancellationToken>());
+            _ = _dispatcher.ExecuteAsync(Arg.Is<LlmToolCall>(c => c.Name == new Tool(ToolB)), Arg.Any<CancellationToken>());
+            _ = _dispatcher.ExecuteAsync(Arg.Is<LlmToolCall>(c => c.Name == new Tool(ToolC)), Arg.Any<CancellationToken>());
         });
     }
 
@@ -113,7 +113,7 @@ public class LlmAgentTests
         await CreateAgent().RunAsync(Turn(gate: null));
 
         await _dispatcher.Received(1).ExecuteAsync(
-            Arg.Is<LlmToolCall>(c => c.Name == ToolA), Arg.Any<CancellationToken>());
+            Arg.Is<LlmToolCall>(c => c.Name == new Tool(ToolA)), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -123,18 +123,18 @@ public class LlmAgentTests
 
         // Refuse ToolA with a specific message.
         var gate = (LlmToolCall c) =>
-            c.Name == ToolA ? ToolGate.Refuse("nope, not allowed") : ToolGate.Allow;
+            c.Name == new Tool(ToolA) ? ToolGate.Refuse("nope, not allowed") : ToolGate.Allow;
 
         var result = await CreateAgent().RunAsync(Turn(gate: gate));
 
         result.IsSuccess.Should().BeTrue();
         // The refused call must never reach the dispatcher.
         await _dispatcher.DidNotReceive().ExecuteAsync(
-            Arg.Is<LlmToolCall>(c => c.Name == ToolA), Arg.Any<CancellationToken>());
+            Arg.Is<LlmToolCall>(c => c.Name == new Tool(ToolA)), Arg.Any<CancellationToken>());
         // The refusal string must be fed back as a tool result on the next model call.
         var lastCallMessages = _seen.Last();
         lastCallMessages.Should().Contain(m =>
-            m.Role == LlmRole.Tool && m.ToolName == ToolA && m.Content == "nope, not allowed");
+            m.Role == LlmRole.Tool && m.ToolName == new Tool(ToolA) && m.Content == "nope, not allowed");
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class LlmAgentTests
         await CreateAgent().RunAsync(Turn(gate: gate));
 
         await _dispatcher.Received(2).ExecuteAsync(
-            Arg.Is<LlmToolCall>(c => c.Name == ToolA), Arg.Any<CancellationToken>());
+            Arg.Is<LlmToolCall>(c => c.Name == new Tool(ToolA)), Arg.Any<CancellationToken>());
     }
 
     [Fact]

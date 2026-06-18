@@ -156,10 +156,10 @@ public sealed class HealthCheckLiveTests : IClassFixture<WebApplicationFactory<P
         return (result, calls);
     }
 
-    private sealed record RecordedCall(string Name, IReadOnlyDictionary<string, string?> Args, string? Result)
+    private sealed record RecordedCall(Tool Name, IReadOnlyDictionary<string, string?> Args, string? Result)
     {
-        public string Describe() => Args.Count == 0 ? Name
-            : $"{Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
+        public string Describe() => Args.Count == 0 ? Name.Name
+            : $"{Name.Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
     }
 
     private sealed class ToolCallRecorder

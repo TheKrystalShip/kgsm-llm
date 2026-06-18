@@ -18,14 +18,14 @@ namespace TheKrystalShip.Kgsm.Assistant;
 public static class LlmTools
 {
     // Read-only (offered to everyone)
-    public const string GetStatus = "get_status";
-    public const string ListBlueprints = "list_blueprints";
-    public const string RunHealthCheck = "run_health_check";
-    public const string WebSearch = "web_search";
+    public static readonly Tool GetStatus = new("get_status");
+    public static readonly Tool ListBlueprints = new("list_blueprints");
+    public static readonly Tool RunHealthCheck = new("run_health_check");
+    public static readonly Tool WebSearch = new("web_search");
 
     // Authorized read (offered only to action-authorized callers — exposes file
     // contents, so gated like the command tier even though it mutates nothing)
-    public const string ViewConfigFile = "view_config_file";
+    public static readonly Tool ViewConfigFile = new("view_config_file");
 
     // Staged commands — propose-only (§3.5). The model never executes these; the
     // dispatcher resolves + STAGES them, and a human confirms before they run.
@@ -34,10 +34,10 @@ public static class LlmTools
     // `verb` parameter (§4.1) — collapsed from five near-identical tools so the small
     // local model faces fewer, less-overlapping choices (§3.2). install/uninstall stay
     // separate (different params + confirm tiers); set_config carries a key/value.
-    public const string ServerCommand = "server_command";
-    public const string InstallServer = "install_server";
-    public const string UninstallServer = "uninstall_server";
-    public const string SetConfigValue = "set_config_value";
+    public static readonly Tool ServerCommand = new("server_command");
+    public static readonly Tool InstallServer = new("install_server");
+    public static readonly Tool UninstallServer = new("uninstall_server");
+    public static readonly Tool SetConfigValue = new("set_config_value");
 
     /// <summary>
     /// The verbs <see cref="ServerCommand"/> accepts, in display order. Single source of
@@ -183,18 +183,21 @@ public static class LlmTools
     public static readonly IReadOnlyList<LlmToolDefinition> All =
         ReadOnly.Concat(AuthorizedReadOnly).Concat(StagedCommands).ToArray();
 
-    /// <summary>Names of authorized-only reads; refused for unauthorized callers, but not capped.</summary>
-    public static readonly IReadOnlySet<string> AuthorizedReadNames =
-        AuthorizedReadOnly.Select(t => t.Name).ToHashSet();
+    /// <summary>Tools of authorized-only reads; refused for unauthorized callers, but not capped.</summary>
+    public static readonly IReadOnlySet<Tool> AuthorizedReadTools =
+        AuthorizedReadOnly.Select(t => t.Tool).ToHashSet();
 
     /// <summary>
-    /// Names of the propose-only commands; offered only to authorized callers, staged
+    /// Tools of the propose-only commands; offered only to authorized callers, staged
     /// (never executed inline), and counted against the per-message staging cap.
     /// </summary>
-    public static readonly IReadOnlySet<string> StagedCommandNames =
-        StagedCommands.Select(t => t.Name).ToHashSet();
+    public static readonly IReadOnlySet<Tool> StagedCommandTools =
+        StagedCommands.Select(t => t.Tool).ToHashSet();
 
-    public static bool IsStagedCommand(string toolName) => StagedCommandNames.Contains(toolName);
+    /// <summary>All valid tool names, for validating client requests against the server catalog.</summary>
+    public static IReadOnlySet<Tool> AllToolNames => All.Select(t => t.Tool).ToHashSet();
 
-    public static bool IsAuthorizedRead(string toolName) => AuthorizedReadNames.Contains(toolName);
+    public static bool IsStagedCommand(Tool tool) => StagedCommandTools.Contains(tool);
+
+    public static bool IsAuthorizedRead(Tool tool) => AuthorizedReadTools.Contains(tool);
 }

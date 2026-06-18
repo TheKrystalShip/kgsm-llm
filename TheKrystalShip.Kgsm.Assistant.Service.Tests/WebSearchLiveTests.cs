@@ -111,10 +111,10 @@ public sealed class WebSearchLiveTests : IClassFixture<WebApplicationFactory<Pro
             });
         });
 
-    private sealed record RecordedCall(string Name, IReadOnlyDictionary<string, string?> Args)
+    private sealed record RecordedCall(Tool Name, IReadOnlyDictionary<string, string?> Args)
     {
         public string Describe() =>
-            Args.Count == 0 ? Name : $"{Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
+            Args.Count == 0 ? Name.Name : $"{Name.Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
     }
 
     private sealed class ToolCallRecorder

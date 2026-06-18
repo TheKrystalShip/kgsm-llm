@@ -43,7 +43,7 @@ public class ToolDispatcherTests
     private ToolDispatcher Create() =>
         new(_operations, _inventory, _confirmations, _webSearch, NullLogger<ToolDispatcher>.Instance);
 
-    private static LlmToolCall Call(string name, string instance) =>
+    private static LlmToolCall Call(Tool name, string instance) =>
         new(name, new Dictionary<string, string?> { ["instance_name"] = instance });
 
     private static LlmToolCall ServerCommandCall(string verb, string instance) =>
@@ -228,7 +228,7 @@ public class ToolDispatcherTests
     public async Task UnknownTool_IsRefused()
     {
         var result = await Create().ExecuteAsync(
-            new LlmToolCall("delete_everything", new Dictionary<string, string?>()));
+            new LlmToolCall(new Tool("delete_everything"), new Dictionary<string, string?>()));
 
         result.Should().Contain("not a known tool");
     }

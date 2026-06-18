@@ -51,8 +51,8 @@ public class ServerAssistantStreamTests
         var confirmations = new ConfirmationContext();
         var agent = new ScriptedAgent(confirmations, new[]
         {
-            AgentEvent.ToolStart("get_status", new Dictionary<string, string?>()),
-            AgentEvent.ToolResult("get_status", "factorio-test: stopped"),
+            AgentEvent.ToolStart(new Tool("get_status"), new Dictionary<string, string?>()),
+            AgentEvent.ToolResult(new Tool("get_status"), "factorio-test: stopped"),
             AgentEvent.Token("All "),
             AgentEvent.Token("good."),
             AgentEvent.Final("All good."),
@@ -63,7 +63,7 @@ public class ServerAssistantStreamTests
         events.Select(e => e.Kind).Should().Equal(
             AssistantEventKind.ToolStart, AssistantEventKind.ToolResult,
             AssistantEventKind.Token, AssistantEventKind.Token, AssistantEventKind.Final);
-        events[0].ToolName.Should().Be("get_status");
+        events[0].ToolName.Should().Be(new Tool("get_status"));
         events[1].ToolSummary.Should().Be("factorio-test: stopped");
         events[^1].Text.Should().Be("All good.");
     }
@@ -97,7 +97,7 @@ public class ServerAssistantStreamTests
             confirmations,
             new[]
             {
-                AgentEvent.ToolStart("uninstall_server", new Dictionary<string, string?>()),
+                AgentEvent.ToolStart(new Tool("uninstall_server"), new Dictionary<string, string?>()),
                 AgentEvent.Token("Staging…"),
                 AgentEvent.Final("Staged."),
             },
@@ -161,7 +161,7 @@ public class ServerAssistantStreamTests
             confirmations,
             new[]
             {
-                AgentEvent.ToolStart("server_command", new Dictionary<string, string?>()),
+                AgentEvent.ToolStart(new Tool("server_command"), new Dictionary<string, string?>()),
                 AgentEvent.Token("Working…"),
                 AgentEvent.Final("Done."),
             },

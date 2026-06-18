@@ -39,7 +39,7 @@ public class OllamaStreamParserTests
         chunk!.ContentDelta.Should().BeNull("an empty content string is not a delta");
         chunk.Done.Should().BeFalse();
         chunk.ToolCalls.Should().ContainSingle();
-        chunk.ToolCalls![0].Name.Should().Be("get_server_status");
+        Assert.Equal("get_server_status", chunk.ToolCalls![0].Name.Name);
         chunk.ToolCalls[0].Arg("instance").Should().Be("terraria");
     }
 

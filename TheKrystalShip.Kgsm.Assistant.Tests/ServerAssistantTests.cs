@@ -52,7 +52,7 @@ public class ServerAssistantTests
         return captured!;
     }
 
-    private static LlmToolCall Call(string name) =>
+    private static LlmToolCall Call(Tool name) =>
         new(name, new Dictionary<string, string?> { ["instance_name"] = "terraria" });
 
     [Fact]

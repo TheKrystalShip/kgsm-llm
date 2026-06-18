@@ -119,7 +119,7 @@ public static class OllamaStreamParser
             if (function.TryGetProperty("arguments", out var argsElement))
                 ExtractArguments(argsElement, arguments);
 
-            toolCalls.Add(new LlmToolCall(name, arguments));
+            toolCalls.Add(new LlmToolCall(new Tool(name), arguments));
         }
 
         return toolCalls;

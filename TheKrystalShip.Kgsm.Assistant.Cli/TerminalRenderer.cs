@@ -70,7 +70,7 @@ internal sealed class TerminalRenderer
                 if (_showStatus)
                     _err.WriteLine(
                         Ansi.Paint("⚙ ", Ansi.Dim, _color)
-                        + Ansi.Paint(ev.ToolName ?? string.Empty, Ansi.Cyan, _color)
+                        + Ansi.Paint(ev.ToolName?.Name ?? string.Empty, Ansi.Cyan, _color)
                         + Ansi.Paint($"({FormatArgs(ev.ToolArguments)})", Ansi.Dim, _color));
                 break;
 
@@ -78,7 +78,7 @@ internal sealed class TerminalRenderer
                 if (_showStatus)
                     _err.WriteLine(
                         Ansi.Paint("✓ ", Ansi.Green, _color)
-                        + Ansi.Paint(ev.ToolName ?? string.Empty, Ansi.Dim, _color));
+                        + Ansi.Paint(ev.ToolName?.Name ?? string.Empty, Ansi.Dim, _color));
                 break;
 
             case AssistantEventKind.Confirmation:

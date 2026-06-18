@@ -60,7 +60,7 @@ public sealed class FilePromptOverrides : IPromptOverrides
             return tools;
 
         var path = Path.Combine(_directory, ToolsFileName);
-        Dictionary<string, ToolTextOverride?>? overrides;
+        Dictionary<Tool, ToolTextOverride?>? overrides;
         try
         {
             if (!File.Exists(path))
@@ -70,7 +70,9 @@ public sealed class FilePromptOverrides : IPromptOverrides
             if (string.IsNullOrWhiteSpace(json))
                 return tools;
 
-            overrides = JsonSerializer.Deserialize<Dictionary<string, ToolTextOverride?>>(json, Json);
+            // JSON keys are strings; convert to Tool instances for typed lookup.
+            var raw = JsonSerializer.Deserialize<Dictionary<string, ToolTextOverride?>>(json, Json);
+            overrides = raw?.ToDictionary(kv => new Tool(kv.Key), kv => kv.Value);
         }
         catch (Exception ex)
         {
@@ -85,9 +87,9 @@ public sealed class FilePromptOverrides : IPromptOverrides
     }
 
     /// <summary>Overlays a single tool's description/param-descriptions; the name is never touched.</summary>
-    private static LlmToolDefinition Apply(LlmToolDefinition tool, IReadOnlyDictionary<string, ToolTextOverride?> overrides)
+    private static LlmToolDefinition Apply(LlmToolDefinition tool, IReadOnlyDictionary<Tool, ToolTextOverride?> overrides)
     {
-        if (!overrides.TryGetValue(tool.Name, out var o) || o is null)
+        if (!overrides.TryGetValue(tool.Tool, out var o) || o is null)
             return tool;
 
         var description = string.IsNullOrWhiteSpace(o.Description) ? tool.Description : o.Description!.Trim();

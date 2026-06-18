@@ -243,12 +243,12 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         return events;
     }
 
-    private sealed record RecordedCall(string Name, IReadOnlyDictionary<string, string?> Args)
+    private sealed record RecordedCall(Tool Name, IReadOnlyDictionary<string, string?> Args)
     {
         public string Describe() =>
             Args.Count == 0
-                ? Name
-                : $"{Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
+                ? Name.Name
+                : $"{Name.Name}({string.Join(", ", Args.Select(kv => $"{kv.Key}={kv.Value ?? "null"}"))})";
     }
 
     /// <summary>Thread-safe sink for the tool calls (name + args) the dispatcher saw, in order.</summary>

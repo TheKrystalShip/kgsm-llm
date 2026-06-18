@@ -173,6 +173,25 @@ secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, Can
     return Results.Ok(new MeResponse(principal.UserId, principal.DisplayName, canPerform));
 });
 
+// The tools the caller is authorized to use, with names/descriptions/parameters.
+// Fully server-derived — no client input. Lets the SPA populate a tool picker.
+secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IPromptOverrides promptOverrides, CancellationToken ct) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+
+    var tools = canPerform ? LlmTools.All : LlmTools.ReadOnly;
+    tools = promptOverrides.OverlayTools(tools);
+
+    var dtos = tools.Select(t => new ToolDto(
+        t.Name,
+        t.Description,
+        t.Parameters.Select(p => new ToolParameterDto(
+            p.Name, p.Description, p.Required, p.Type, p.AllowedValues)).ToArray())).ToArray();
+
+    return Results.Ok(dtos);
+});
+
 secured.MapPost("/auth/logout", (HttpContext http, DiscordAuthService auth) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
@@ -214,14 +233,22 @@ secured.MapPost("/turn", async (
     if (wantsStream)
     {
         await SseTurnWriter.WriteAsync(
-            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform, think);
+            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform, think, request.Tools);
         return Results.Empty;
     }
 
-    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, ct);
+    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, request.Tools, ct);
 
     if (result.IsFailure)
-        return Results.Problem(result.Error, statusCode: StatusCodes.Status502BadGateway);
+    {
+        // Distinguish client input errors (400) from upstream failures (502).
+        var isInvalidTool = result.Error?.StartsWith("Invalid tool") == true;
+        return Results.Problem(
+            result.Error,
+            statusCode: isInvalidTool
+                ? StatusCodes.Status400BadRequest
+                : StatusCodes.Status502BadGateway);
+    }
 
     var confirmations = result.Confirmations
         .Select(c => new ConfirmationDto(

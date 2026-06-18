@@ -47,7 +47,7 @@ public class LlmAgentRecordingTests
 
     private static LlmStreamChunk Content(string delta) => new(delta, null, false);
     private static LlmStreamChunk ToolFrame(string name, Dictionary<string, string?> args) =>
-        new(null, new[] { new LlmToolCall(name, args) }, false);
+        new(null, new[] { new LlmToolCall(new Tool(name), args) }, false);
     private static LlmStreamChunk DoneFrame() => new(null, null, true);
     private static LlmStreamChunk DoneFrame(LlmUsage usage) => new(null, null, true, usage);
 
@@ -81,7 +81,7 @@ public class LlmAgentRecordingTests
         rec.SystemPromptHash.Should().NotBeNullOrWhiteSpace();
 
         var tool = rec.Tools.Should().ContainSingle().Subject;
-        tool.Name.Should().Be("get_status");
+        Assert.Equal("get_status", tool.Name.Name);
         tool.Arguments.Should().Contain("instance", "terraria");
         tool.Result.Should().Be("Done.");   // the RAW dispatcher output, captured for analysis
     }
@@ -155,7 +155,7 @@ public class LlmAgentRecordingTests
     {
         var llm = Substitute.For<ILlmClient>();
         llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(Result.Success(new LlmResponse(null, new[] { new LlmToolCall("tool_a", new Dictionary<string, string?>()) })));
+            .Returns(Result.Success(new LlmResponse(null, new[] { new LlmToolCall(new Tool("tool_a"), new Dictionary<string, string?>()) })));
 
         await CreateAgent(llm, maxIterations: 3).RunAsync(Turn());
 

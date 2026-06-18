@@ -69,14 +69,54 @@ public class ServerAssistant : IServerAssistant
 
     /// <summary>
     /// Two-axis tool selection (§3.2): authorization picks the set the caller MAY
-    /// use (read-only vs all), then the relevance seam may narrow it (no-op today).
+    /// use (read-only vs all), then client-requested subset may narrow it further,
+    /// then the relevance seam may narrow it (no-op today).
+    ///
+    /// When <paramref name="requestedTools"/> is provided, every requested name is
+    /// validated against the server's own catalog. Unknown names cause a hard error;
+    /// names the caller isn't authorized for are silently removed (no information
+    /// disclosure). If all requested names are unknown, the full authorized set is
+    /// NOT returned — the error propagates to the caller.
     /// </summary>
-    private IReadOnlyList<LlmToolDefinition> SelectTools(string userPrompt, bool canPerformActions)
+    private Result<IReadOnlyList<LlmToolDefinition>> SelectTools(
+        string userPrompt, bool canPerformActions, IReadOnlyList<string>? requestedTools)
     {
         var authorized = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+
+        if (requestedTools is { Count: > 0 })
+        {
+            // Build the valid-name lookup from the SERVER's catalog — the trust boundary.
+            var validTools = authorized.Select(t => t.Tool).ToHashSet();
+
+            // Convert client strings to Tool instances, validating each.
+            var requestedToolInstances = new List<Tool>();
+            var invalidNames = new List<string>();
+
+            foreach (var name in requestedTools)
+            {
+                var tool = new Tool(name);
+                if (validTools.Contains(tool))
+                    requestedToolInstances.Add(tool);
+                else
+                    invalidNames.Add(name);
+            }
+
+            // Hard reject if any requested name is not in the server catalog.
+            if (invalidNames.Count > 0)
+                return Result.Failure<IReadOnlyList<LlmToolDefinition>>(
+                    $"Invalid tool(s): {string.Join(", ", invalidNames)}. " +
+                    $"Valid tools: {string.Join(", ", validTools.Select(t => t.Name))}.");
+
+            // Intersect: keep only requested tools that are in the authorized set.
+            // Silently removes unauthorized tools (no information disclosure).
+            authorized = authorized
+                .Where(t => requestedToolInstances.Contains(t.Tool))
+                .ToArray();
+        }
+
         var selected = _toolFilter.GetToolsFor(new ToolSelectionContext(userPrompt, canPerformActions), authorized);
         // Apply hot-editable description overrides last (names stay structural; prose is tunable).
-        return _promptOverrides.OverlayTools(selected);
+        return Result.Success(_promptOverrides.OverlayTools(selected));
     }
 
     public async Task<AssistantResult> RunAsync(
@@ -84,12 +124,15 @@ public class ServerAssistant : IServerAssistant
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default)
     {
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools);
+        if (toolResult.IsFailure)
+            return AssistantResult.Fail(toolResult.Error!);
 
-        // Command + authorized-read tools are only offered to authorized callers; the gate re-checks.
-        var tools = SelectTools(userPrompt, canPerformActions);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var tools = toolResult.Value!;
 
         var turn = new AgentTurn
         {
@@ -118,13 +161,18 @@ public class ServerAssistant : IServerAssistant
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        IReadOnlyList<string>? requestedTools = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools);
+        if (toolResult.IsFailure)
+        {
+            yield return AssistantStreamEvent.Error(toolResult.Error!);
+            yield break;
+        }
 
-        // Identical policy to RunAsync: command + authorized-read tools only for authorized
-        // callers; the gate re-checks each call and enforces the per-message staging cap.
-        var tools = SelectTools(userPrompt, canPerformActions);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var tools = toolResult.Value!;
 
         var turn = new AgentTurn
         {
@@ -191,16 +239,18 @@ public class ServerAssistant : IServerAssistant
                         await writer.WriteAsync(AssistantStreamEvent.Thinking(ev.Text ?? string.Empty), cancellationToken);
                         break;
                     case AgentEventKind.ToolStart:
-                        await writer.WriteAsync(
-                            AssistantStreamEvent.ToolStart(
-                                ev.ToolName ?? string.Empty,
-                                ev.ToolArguments ?? new Dictionary<string, string?>()),
-                            cancellationToken);
+                        if (ev.ToolName is not null)
+                            await writer.WriteAsync(
+                                AssistantStreamEvent.ToolStart(
+                                    ev.ToolName,
+                                    ev.ToolArguments ?? new Dictionary<string, string?>()),
+                                cancellationToken);
                         break;
                     case AgentEventKind.ToolResult:
-                        await writer.WriteAsync(
-                            AssistantStreamEvent.ToolResult(ev.ToolName ?? string.Empty, ev.ToolSummary ?? string.Empty),
-                            cancellationToken);
+                        if (ev.ToolName is not null)
+                            await writer.WriteAsync(
+                                AssistantStreamEvent.ToolResult(ev.ToolName, ev.ToolSummary ?? string.Empty),
+                                cancellationToken);
                         break;
                     case AgentEventKind.Final:
                         finalText = ev.Text ?? string.Empty;

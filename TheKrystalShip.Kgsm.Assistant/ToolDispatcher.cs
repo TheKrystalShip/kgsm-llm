@@ -49,19 +49,26 @@ public class ToolDispatcher : IToolDispatcher
 
         try
         {
-            return call.Name switch
-            {
-                LlmTools.GetStatus => await GetStatusAsync(call, cancellationToken),
-                LlmTools.ListBlueprints => await ListBlueprintsAsync(cancellationToken),
-                LlmTools.RunHealthCheck => await RunHealthCheckAsync(call, cancellationToken),
-                LlmTools.WebSearch => await WebSearchAsync(call, cancellationToken),
-                LlmTools.ViewConfigFile => await ViewConfigFileAsync(call, cancellationToken),
-                LlmTools.ServerCommand => await StageServerCommandAsync(call, cancellationToken),
-                LlmTools.UninstallServer => await StageUninstallAsync(call, cancellationToken),
-                LlmTools.InstallServer => await StageInstallAsync(call, cancellationToken),
-                LlmTools.SetConfigValue => await StageSetConfigAsync(call, cancellationToken),
-                _ => $"Error: '{call.Name}' is not a known tool."
-            };
+            if (call.Name == LlmTools.GetStatus)
+                return await GetStatusAsync(call, cancellationToken);
+            if (call.Name == LlmTools.ListBlueprints)
+                return await ListBlueprintsAsync(cancellationToken);
+            if (call.Name == LlmTools.RunHealthCheck)
+                return await RunHealthCheckAsync(call, cancellationToken);
+            if (call.Name == LlmTools.WebSearch)
+                return await WebSearchAsync(call, cancellationToken);
+            if (call.Name == LlmTools.ViewConfigFile)
+                return await ViewConfigFileAsync(call, cancellationToken);
+            if (call.Name == LlmTools.ServerCommand)
+                return await StageServerCommandAsync(call, cancellationToken);
+            if (call.Name == LlmTools.UninstallServer)
+                return await StageUninstallAsync(call, cancellationToken);
+            if (call.Name == LlmTools.InstallServer)
+                return await StageInstallAsync(call, cancellationToken);
+            if (call.Name == LlmTools.SetConfigValue)
+                return await StageSetConfigAsync(call, cancellationToken);
+
+            return $"Error: '{call.Name}' is not a known tool.";
         }
         catch (Exception ex)
         {

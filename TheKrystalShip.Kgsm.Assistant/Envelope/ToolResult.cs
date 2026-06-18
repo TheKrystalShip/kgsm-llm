@@ -1,3 +1,5 @@
+using TheKrystalShip.Llm.Models;
+
 namespace TheKrystalShip.Kgsm.Assistant.Envelope;
 
 /// <summary>
@@ -109,7 +111,7 @@ public sealed record ResultRef(ResourceKind Resource, string Id, string? Section
 /// <param name="Data">The structured card payload (surface-only).</param>
 /// <param name="Links">Optional related references for the surface to route to.</param>
 public sealed record ToolResult<TData>(
-    string Tool,
+    Tool Tool,
     Confidence Confidence,
     ResultRef Subject,
     string Summary,

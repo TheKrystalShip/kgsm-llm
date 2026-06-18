@@ -11,11 +11,12 @@ namespace TheKrystalShip.Kgsm.Assistant.Cli.Tests;
 /// </summary>
 public class TerminalRendererTests
 {
-    private static (TerminalRenderer renderer, StringWriter @out, StringWriter err) Make(bool showStatus, bool color)
+    private static (TerminalRenderer renderer, StringWriter @out, StringWriter err) Make(
+        bool showStatus, bool color, bool showThinking = true)
     {
         var @out = new StringWriter();
         var err = new StringWriter();
-        return (new TerminalRenderer(@out, err, showStatus, color), @out, err);
+        return (new TerminalRenderer(@out, err, showStatus, color, showThinking), @out, err);
     }
 
     [Fact]
@@ -168,5 +169,59 @@ public class TerminalRendererTests
         renderer.Handle(AssistantStreamEvent.Final("Run **now**"));
 
         @out.ToString().Should().Be("Run **now**" + Environment.NewLine);
+    }
+
+    [Fact]
+    public void Thinking_StreamsToStderr_AsOneBlock_NotOneFragmentPerLine()
+    {
+        var (renderer, @out, err) = Make(showStatus: true, color: false, showThinking: true);
+
+        // Thinking arrives as token fragments (the parser returns them verbatim). They must flow
+        // together, NOT print one fragment per line — the bug this fix exists to kill.
+        renderer.Handle(AssistantStreamEvent.Thinking("The"));
+        renderer.Handle(AssistantStreamEvent.Thinking(" user"));
+        renderer.Handle(AssistantStreamEvent.Thinking(" wants"));
+
+        var stderr = err.ToString();
+        stderr.Should().Contain("💭 thinking…");                              // one-time header
+        stderr.Should().Contain("The user wants");                            // deltas flow together…
+        stderr.Should().NotContain("The" + Environment.NewLine + " user");    // …not newline-per-delta
+        stderr.Split("💭 thinking").Length.Should().Be(2);                    // header printed exactly once
+        @out.ToString().Should().BeEmpty();                                   // reasoning never on stdout
+    }
+
+    [Fact]
+    public void Thinking_IsClosedBeforeReply_WithBlankSeparator_ReplyStaysCleanOnStdout()
+    {
+        var (renderer, @out, err) = Make(showStatus: true, color: false, showThinking: true);
+
+        renderer.Handle(AssistantStreamEvent.Thinking("reasoning"));
+        renderer.Handle(AssistantStreamEvent.Token("answer"));
+        renderer.Handle(AssistantStreamEvent.Final("answer"));
+
+        var nl = Environment.NewLine;
+        err.ToString().Should().Contain("reasoning" + nl + nl);   // terminated + blank separator
+        @out.ToString().Should().Be("answer" + nl);               // reply clean — no reasoning leak
+    }
+
+    [Fact]
+    public void Thinking_Suppressed_WhenStderrNotInteractive()   // 2>/dev/null (or 2>file) drops reasoning
+    {
+        var (renderer, _, err) = Make(showStatus: true, color: false, showThinking: false);
+
+        renderer.Handle(AssistantStreamEvent.Thinking("secret reasoning"));
+        renderer.Handle(AssistantStreamEvent.Final("answer"));
+
+        err.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Thinking_IsDim_WhenColorEnabled()
+    {
+        var (renderer, _, err) = Make(showStatus: true, color: true, showThinking: true);
+
+        renderer.Handle(AssistantStreamEvent.Thinking("hmm"));
+
+        err.ToString().Should().Contain("\x1b[2m");   // dim SGR
     }
 }

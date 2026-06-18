@@ -1,7 +1,5 @@
 using System.Text;
 
-using TheKrystalShip.Kgsm.Assistant;
-
 namespace TheKrystalShip.Kgsm.Assistant.Cli;
 
 /// <summary>
@@ -9,6 +7,10 @@ namespace TheKrystalShip.Kgsm.Assistant.Cli;
 /// <see cref="AssistantStreamEvent"/> stream and maps each event to the terminal.
 /// <list type="bullet">
 ///   <item><c>Token</c> → the reply, streamed to <b>stdout</b> with no trailing newline.</item>
+///   <item><c>Thinking</c> → the model's reasoning, streamed dim to <b>stderr</b> under a one-time
+///   <c>💭 thinking…</c> header (no per-delta newline — the fragments flow as one block), gated on
+///   stderr being a TTY so <c>2&gt;/dev/null</c> drops it. Any later event closes the block with a
+///   blank separator, so the reasoning never runs into the reply.</item>
 ///   <item><c>ToolStart</c>/<c>ToolResult</c> → a dim status line on <b>stderr</b>, only when
 ///   stdout is a TTY (so a redirected/piped reply stays clean — that is the §4 contract:
 ///   <c>assistant "…" | cat</c> emits the reply and nothing else).</item>
@@ -23,18 +25,22 @@ internal sealed class TerminalRenderer
 {
     private readonly TextWriter _out;
     private readonly TextWriter _err;
-    private readonly bool _showStatus;   // stdout is interactive (a TTY)
-    private readonly bool _color;        // stderr is interactive AND color not disabled
+    private readonly bool _showStatus;     // stdout is interactive (a TTY)
+    private readonly bool _color;          // stderr is interactive AND color not disabled
+    private readonly bool _showThinking;   // stderr is interactive (a TTY) — gate for streamed reasoning
     private readonly MarkdownStreamRenderer _md;
     private readonly List<PendingConfirmation> _confirmations = new();
     private bool _wroteToken;
+    private bool _inThinking;   // a reasoning block is open (header written, deltas streaming, not yet closed)
 
-    public TerminalRenderer(TextWriter outWriter, TextWriter errWriter, bool showStatus, bool color)
+    public TerminalRenderer(
+        TextWriter outWriter, TextWriter errWriter, bool showStatus, bool color, bool showThinking)
     {
         _out = outWriter;
         _err = errWriter;
         _showStatus = showStatus;
         _color = color;
+        _showThinking = showThinking;
         // The reply (stdout) is styled only when stdout is a TTY AND color is on; otherwise the
         // markdown renderer is a byte-for-byte passthrough, so a piped reply stays exactly the
         // model's raw text — the §4 pipe-clean contract.
@@ -50,6 +56,11 @@ internal sealed class TerminalRenderer
     /// <summary>Maps one streamed event to terminal output.</summary>
     public void Handle(AssistantStreamEvent ev)
     {
+        // Any non-thinking event closes an open reasoning block first, so the streamed thinking is
+        // terminated and separated before the reply, a tool line, or an error follows it.
+        if (ev.Kind != AssistantEventKind.Thinking)
+            CloseThinking();
+
         switch (ev.Kind)
         {
             case AssistantEventKind.Token:
@@ -62,8 +73,20 @@ internal sealed class TerminalRenderer
                 break;
 
             case AssistantEventKind.Thinking:
-                if (_showStatus && !string.IsNullOrEmpty(ev.Text))
-                    _err.WriteLine(Ansi.Paint(ev.Text, Ansi.Dim, _color));
+                // Stream the reasoning to stderr as it generates: a one-time dim header, then the
+                // deltas verbatim with NO per-delta newline so token fragments flow as one block
+                // (the reply path does the same via _md.Write). Gated on stderr being a TTY.
+                if (_showThinking && !string.IsNullOrEmpty(ev.Text))
+                {
+                    if (!_inThinking)
+                    {
+                        _err.Write(Ansi.Paint("💭 thinking…", Ansi.Dim, _color));
+                        _err.Write(Environment.NewLine);
+                        _inThinking = true;
+                    }
+                    _err.Write(Ansi.Paint(ev.Text, Ansi.Dim, _color));
+                    _err.Flush();
+                }
                 break;
 
             case AssistantEventKind.ToolStart:
@@ -125,6 +148,20 @@ internal sealed class TerminalRenderer
                 _err.WriteLine(Ansi.Paint($"error: {message}", Ansi.Red, _color));
                 break;
         }
+    }
+
+    /// <summary>
+    /// Closes an open reasoning block: terminate the streamed line and add a blank separator before
+    /// whatever follows (the reply, a tool line, the error). No-op when no block is open.
+    /// </summary>
+    private void CloseThinking()
+    {
+        if (!_inThinking)
+            return;
+        _err.Write(Environment.NewLine);   // end the streamed reasoning line
+        _err.Write(Environment.NewLine);   // blank separator before the reply
+        _err.Flush();
+        _inThinking = false;
     }
 
     private void Status(string text) => _err.WriteLine(Ansi.Paint(text, Ansi.Dim, _color));

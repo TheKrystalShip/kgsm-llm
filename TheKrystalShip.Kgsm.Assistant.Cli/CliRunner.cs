@@ -1,4 +1,3 @@
-using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 
 namespace TheKrystalShip.Kgsm.Assistant.Cli;
@@ -50,7 +49,9 @@ internal sealed class CliRunner
     /// </summary>
     public async Task<bool> RunTurnAsync(string conversationId, string prompt, CancellationToken cancellationToken)
     {
-        var renderer = new TerminalRenderer(Console.Out, Console.Error, _showStatus, _color);
+        // Thinking gates on stderr being a TTY (where it's written), NOT on stdout: redirecting the
+        // reply (`… > out.txt`) still shows the reasoning on the terminal, and `2>/dev/null` drops it.
+        var renderer = new TerminalRenderer(Console.Out, Console.Error, _showStatus, _color, _stderrTty);
 
         // A transient "thinking…/working…" indicator fills the gaps where there is nothing to show
         // yet — initial model latency, and the round-trip after each tool. Gated on stderr being a

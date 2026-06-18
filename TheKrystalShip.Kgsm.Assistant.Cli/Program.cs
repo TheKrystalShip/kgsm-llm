@@ -161,7 +161,9 @@ using (host)
         showStatus: !Console.IsOutputRedirected,
         color: colorErr,
         stderrTty: stderrTty,
-        think: cli.Think ?? false);
+        // --think/--no-think win; absent either, fall back to the Ollama:Think config default
+        // (so the REPL's "/think (default: from config)" is accurate and Ollama__Think is honored).
+        think: cli.Think ?? builder.Configuration.GetValue("Ollama:Think", false));
 
     // Ctrl-C cancels the running turn (aborts Ollama generation, L3) rather than the process.
     using var interruptor = new TurnInterruptor();

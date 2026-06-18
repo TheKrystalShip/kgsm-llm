@@ -146,6 +146,14 @@ public class LlmAgentStreamTests
             .Should().Equal(new Tool("tool_a"), new Tool("tool_b"));
         events.Where(e => e.Kind == AgentEventKind.ToolResult).Select(e => e.ToolName)
             .Should().Equal(new Tool("tool_a"), new Tool("tool_b"));
+
+        // Synthesised tool-call ids pair each start with its result (same index order) and are
+        // unique — so a renderer can resolve "Reading…" pills even with two calls in one round.
+        var startIds = events.Where(e => e.Kind == AgentEventKind.ToolStart).Select(e => e.ToolCallId).ToList();
+        var resultIds = events.Where(e => e.Kind == AgentEventKind.ToolResult).Select(e => e.ToolCallId).ToList();
+        startIds.Should().OnlyContain(id => !string.IsNullOrEmpty(id));
+        startIds.Should().OnlyHaveUniqueItems();
+        resultIds.Should().Equal(startIds, "each tool.result carries the SAME id as its paired tool.start");
     }
 
     [Fact]
@@ -166,6 +174,9 @@ public class LlmAgentStreamTests
         // 3 rounds, one tool each → a start+result pair per round.
         events.Count(e => e.Kind == AgentEventKind.ToolStart).Should().Be(3);
         events.Count(e => e.Kind == AgentEventKind.ToolResult).Should().Be(3);
+        // Ids stay unique ACROSS rounds (the counter is turn-level, not per-round).
+        events.Where(e => e.Kind == AgentEventKind.ToolStart).Select(e => e.ToolCallId)
+            .Should().OnlyHaveUniqueItems();
     }
 
     [Fact]

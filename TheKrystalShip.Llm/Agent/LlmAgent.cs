@@ -138,6 +138,9 @@ public class LlmAgent : ILlmAgent
 
         var tools = turn.Tools;
         var gate = turn.Gate;
+        // Monotonic across the whole turn (every round) so each tool call gets a unique, stable id
+        // that pairs its tool.start with its tool.result. Ollama supplies no native tool-call id.
+        var toolCallSeq = 0;
 
         try
         {
@@ -214,8 +217,13 @@ public class LlmAgent : ILlmAgent
                     // model-feedback append order below. (Dispatch/gate/truncate stay centralised in the
                     // shared helpers so the buffered and streaming paths can't drift.)
                     working.Add(LlmMessage.AssistantToolCalls(toolCalls));
-                    foreach (var call in toolCalls)
-                        yield return AgentEvent.ToolStart(call.Name, call.Arguments);
+                    // Mint the per-call ids once, up front, so the matching tool.start/tool.result
+                    // (emitted in separate loops, same index order) carry the SAME id.
+                    var callIds = new string[toolCalls.Count];
+                    for (int i = 0; i < toolCalls.Count; i++)
+                        callIds[i] = $"tc_{toolCallSeq++}";
+                    for (int i = 0; i < toolCalls.Count; i++)
+                        yield return AgentEvent.ToolStart(toolCalls[i].Name, toolCalls[i].Arguments, callIds[i]);
 
                     var outputs = await DispatchRoundAsync(toolCalls, gate, cancellationToken);
 
@@ -224,7 +232,7 @@ public class LlmAgent : ILlmAgent
                         working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i].Output, _options.MaxToolOutputChars)));
                         trajectory?.Add(new RecordedToolCall(
                             toolCalls[i].Name, toolCalls[i].Arguments, outputs[i].Output, outputs[i].DurationMs));
-                        yield return AgentEvent.ToolResult(toolCalls[i].Name, outputs[i].Output);
+                        yield return AgentEvent.ToolResult(toolCalls[i].Name, outputs[i].Output, callIds[i]);
                     }
                     continue;
                 }

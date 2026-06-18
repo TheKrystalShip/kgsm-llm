@@ -243,13 +243,14 @@ public class ServerAssistant : IServerAssistant
                             await writer.WriteAsync(
                                 AssistantStreamEvent.ToolStart(
                                     ev.ToolName,
-                                    ev.ToolArguments ?? new Dictionary<string, string?>()),
+                                    ev.ToolArguments ?? new Dictionary<string, string?>(),
+                                    ev.ToolCallId),
                                 cancellationToken);
                         break;
                     case AgentEventKind.ToolResult:
                         if (ev.ToolName is not null)
                             await writer.WriteAsync(
-                                AssistantStreamEvent.ToolResult(ev.ToolName, ev.ToolSummary ?? string.Empty),
+                                AssistantStreamEvent.ToolResult(ev.ToolName, ev.ToolSummary ?? string.Empty, ev.ToolCallId),
                                 cancellationToken);
                         break;
                     case AgentEventKind.Final:

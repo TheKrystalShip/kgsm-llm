@@ -286,7 +286,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         response.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("event: text.delta");
-        body.Should().Contain("\"delta\":\"Hel\"");
+        // §5·a: in-band `type` discriminator alongside the SSE `event:` name; payload key is `text` (not `delta`).
+        body.Should().Contain("\"type\":\"text.delta\"");
+        body.Should().Contain("\"text\":\"Hel\"");
         body.Should().Contain("event: done");
         body.Should().Contain("\"text\":\"Hello\"");
     }
@@ -297,8 +299,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>())
             .Returns(_ => AsyncSeq(
-                AssistantStreamEvent.ToolStart(LlmTools.GetStatus, new Dictionary<string, string?> { ["instance_name"] = "factorio" }),
-                AssistantStreamEvent.ToolResult(LlmTools.GetStatus, "factorio: stopped"),
+                AssistantStreamEvent.ToolStart(LlmTools.GetStatus, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
+                AssistantStreamEvent.ToolResult(LlmTools.GetStatus, "factorio: stopped", "tc_0"),
                 AssistantStreamEvent.Token("Stopped."),
                 AssistantStreamEvent.Final("Stopped.")));
 
@@ -306,6 +308,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var body = await response.Content.ReadAsStringAsync();
 
         body.Should().Contain("event: tool.start");
+        body.Should().Contain("\"type\":\"tool.start\"");
+        // §5·a correlation id — the SAME id rides tool.start and tool.result so a renderer pairs them.
+        body.Should().Contain("\"id\":\"tc_0\"");
         body.Should().Contain("\"tool\":\"get_status\"");
         body.Should().Contain("\"instance_name\":\"factorio\"");
         body.Should().Contain("event: tool.result");
@@ -339,10 +344,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Turn_StreamAccept_GeneralisedCommand_ProposedEventCarriesVerbKind()
+    public async Task Turn_StreamAccept_GeneralisedCommand_ProposedEventCarriesVerbAndSubject()
     {
-        // §3.5: a generalised command (start) is propose-only too — it surfaces as
-        // command.proposed, and the DTO Kind tells the surface which verb to render.
+        // §3.5 + §5·a: a generalised command (start) is propose-only and surfaces as command.proposed
+        // in the §5·a shape — `verb` (the normalised API token), `subject {resource,id}`, and a human
+        // `confirm` prompt. The host-minted `token` is retained (additive) for the /confirm surfaces.
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>())
             .Returns(_ => AsyncSeq(
@@ -355,12 +361,37 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var body = await response.Content.ReadAsStringAsync();
 
         body.Should().Contain("event: command.proposed");
-        body.Should().Contain("\"kind\":\"start\"");
+        body.Should().Contain("\"type\":\"command.proposed\"");
+        body.Should().Contain("\"verb\":\"start\"");          // normalised API verb, NOT the old `kind`
+        body.Should().Contain("\"resource\":\"server\"");     // subject.resource
+        body.Should().Contain("\"id\":\"factorio\"");         // subject.id (the resolved target)
+        body.Should().Contain("\"confirm\":\"Start factorio?\"");
 
         var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
         tokenSvc.TryValidate(ExtractConfirmationToken(body), out var confirmation, out _).Should().BeTrue();
         confirmation.Kind.Should().Be(ConfirmationKind.Start);
         confirmation.Target.Should().Be("factorio");
+    }
+
+    [Fact]
+    public async Task Turn_StreamAccept_ErrorEvent_EmitsCodeAndMessage()
+    {
+        // The error frame is a RESHAPE ({error} -> {code,message}), surfaced in-band on the
+        // already-committed 200 stream (never a status code once the first frame has flushed).
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>())
+            .Returns(_ => AsyncSeq(
+                AssistantStreamEvent.Token("…"),
+                AssistantStreamEvent.Error("boom")));
+
+        var response = await StreamTurnAsync(Authed(Factory(assistant)), "do it");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+
+        body.Should().Contain("event: error");
+        body.Should().Contain("\"type\":\"error\"");
+        body.Should().Contain("\"code\":\"assistant_failed\"");
+        body.Should().Contain("\"message\":\"boom\"");
     }
 
     [Fact]

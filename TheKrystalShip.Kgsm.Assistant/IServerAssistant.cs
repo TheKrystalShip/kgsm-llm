@@ -68,14 +68,15 @@ public sealed record AssistantStreamEvent(
     Tool? ToolName = null,
     IReadOnlyDictionary<string, string?>? ToolArguments = null,
     string? ToolSummary = null,
-    LlmUsage? Usage = null)
+    LlmUsage? Usage = null,
+    string? ToolCallId = null)
 {
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
     public static AssistantStreamEvent Thinking(string delta) => new(AssistantEventKind.Thinking, Text: delta);
-    public static AssistantStreamEvent ToolStart(Tool tool, IReadOnlyDictionary<string, string?> arguments) =>
-        new(AssistantEventKind.ToolStart, ToolName: tool, ToolArguments: arguments);
-    public static AssistantStreamEvent ToolResult(Tool tool, string summary) =>
-        new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary);
+    public static AssistantStreamEvent ToolStart(Tool tool, IReadOnlyDictionary<string, string?> arguments, string? id = null) =>
+        new(AssistantEventKind.ToolStart, ToolName: tool, ToolArguments: arguments, ToolCallId: id);
+    public static AssistantStreamEvent ToolResult(Tool tool, string summary, string? id = null) =>
+        new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id);
     public static AssistantStreamEvent Confirmation(PendingConfirmation confirmation) =>
         new(AssistantEventKind.Confirmation, StagedConfirmation: confirmation);
 

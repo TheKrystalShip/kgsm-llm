@@ -271,7 +271,7 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
             _recorder = recorder;
         }
 
-        public Task<string> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
+        public Task<ToolOutput> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
         {
             _recorder.Record(call);
             return _inner.ExecuteAsync(call, cancellationToken);

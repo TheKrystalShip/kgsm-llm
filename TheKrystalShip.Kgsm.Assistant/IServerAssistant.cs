@@ -39,7 +39,7 @@ public enum AssistantEventKind
     /// <summary>A tool is about to be dispatched; carries its name + arguments.</summary>
     ToolStart,
 
-    /// <summary>A tool finished; carries its name + a summary of the result.</summary>
+    /// <summary>A tool finished; carries its name, a summary, and an optional structured card (§5·a result).</summary>
     ToolResult,
 
     /// <summary>A destructive op staged this turn, now awaiting human confirmation.</summary>
@@ -69,14 +69,16 @@ public sealed record AssistantStreamEvent(
     IReadOnlyDictionary<string, string?>? ToolArguments = null,
     string? ToolSummary = null,
     LlmUsage? Usage = null,
-    string? ToolCallId = null)
+    string? ToolCallId = null,
+    object? ToolData = null)
 {
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
     public static AssistantStreamEvent Thinking(string delta) => new(AssistantEventKind.Thinking, Text: delta);
     public static AssistantStreamEvent ToolStart(Tool tool, IReadOnlyDictionary<string, string?> arguments, string? id = null) =>
         new(AssistantEventKind.ToolStart, ToolName: tool, ToolArguments: arguments, ToolCallId: id);
-    public static AssistantStreamEvent ToolResult(Tool tool, string summary, string? id = null) =>
-        new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id);
+    // `data` is the dispatcher's optional surface-facing card (§5·a tool.result.result), carried opaquely.
+    public static AssistantStreamEvent ToolResult(Tool tool, string summary, string? id = null, object? data = null) =>
+        new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id, ToolData: data);
     public static AssistantStreamEvent Confirmation(PendingConfirmation confirmation) =>
         new(AssistantEventKind.Confirmation, StagedConfirmation: confirmation);
 

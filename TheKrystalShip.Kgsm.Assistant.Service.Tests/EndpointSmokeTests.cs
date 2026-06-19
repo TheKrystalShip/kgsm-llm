@@ -14,6 +14,8 @@ using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant;
+using TheKrystalShip.Kgsm.Assistant.Envelope;
+using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Core.Interfaces;
@@ -315,7 +317,56 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         body.Should().Contain("\"instance_name\":\"factorio\"");
         body.Should().Contain("event: tool.result");
         body.Should().Contain("\"summary\":\"factorio: stopped\"");
+        // A summary-only tool omits `result` entirely (JsonIgnore WhenWritingNull) — not `result:null`.
+        body.Should().NotContain("\"result\":");
         body.Should().Contain("event: done");
+    }
+
+    [Fact]
+    public async Task Turn_StreamAccept_ToolResult_CarriesStructuredCard()
+    {
+        // Phase 2 (§5·c): run_health_check surfaces a structured card on tool.result. The frame KEEPS
+        // `summary` (Phase-1 clients unaffected) AND adds `result` — the ToolResultCard, with enums
+        // serialised as camelCase strings (never opaque ints) for the SPA, correlated by the same id.
+        var card = new ToolResultCard(
+            LlmTools.RunHealthCheck.Name, Confidence.Confirmed,
+            new ResultRef(ResourceKind.Server, "factorio"),
+            new HealthData(
+                CheckState.Warn,
+                new[]
+                {
+                    new HealthCheck("liveness", CheckState.Pass, Severity.Success, "Running."),
+                    new HealthCheck("updates", CheckState.Warn, Severity.Update, "Update available."),
+                },
+                Passed: 1, Total: 2, Skipped: 0));
+
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:user1", "health?", Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>())
+            .Returns(_ => AsyncSeq(
+                AssistantStreamEvent.ToolStart(
+                    LlmTools.RunHealthCheck, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
+                AssistantStreamEvent.ToolResult(
+                    LlmTools.RunHealthCheck, "factorio: passed with warnings.", "tc_0", card),
+                AssistantStreamEvent.Final("factorio has an update available.")));
+
+        var response = await StreamTurnAsync(Authed(Factory(assistant)), "health?");
+        var body = await response.Content.ReadAsStringAsync();
+
+        body.Should().Contain("event: tool.result");
+        // Phase-1 field retained — a thin client still reads `summary`:
+        body.Should().Contain("\"summary\":\"factorio: passed with warnings.\"");
+        // Phase-2 structured card present, correlated to its tool.start by the same id:
+        body.Should().Contain("\"id\":\"tc_0\"");
+        body.Should().Contain("\"result\":{");
+        body.Should().Contain("\"tool\":\"run_health_check\"");
+        // Enums serialised as camelCase strings, NOT integers:
+        body.Should().Contain("\"confidence\":\"confirmed\"");
+        body.Should().Contain("\"overall\":\"warn\"");
+        body.Should().Contain("\"state\":\"pass\"");
+        body.Should().Contain("\"severity\":\"update\"");
+        body.Should().Contain("\"resource\":\"server\"");
+        // Honest counts:
+        body.Should().Contain("\"passed\":1").And.Contain("\"total\":2").And.Contain("\"skipped\":0");
     }
 
     [Fact]

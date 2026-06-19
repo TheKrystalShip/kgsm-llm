@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 
+using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
@@ -42,7 +43,7 @@ public class ToolDispatcher : IToolDispatcher
         _logger = logger;
     }
 
-    public async Task<string> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
+    public async Task<ToolOutput> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Dispatching tool '{Tool}' args={Args}",
             call.Name, string.Join(", ", call.Arguments.Select(kv => $"{kv.Key}={kv.Value}")));
@@ -211,11 +212,15 @@ public class ToolDispatcher : IToolDispatcher
     /// <summary>
     /// The first aggregator (toolbox-plan §3.4): resolves the instance, fetches the
     /// neutral health inputs via the port, and runs the deterministic
-    /// <see cref="HealthCheckAggregator"/>. Returns the result's <c>Summary</c> — the
-    /// model's grounding text (§3.6); the structured card travels to a surface later.
-    /// All judgment lives in the aggregator, so this handler only orchestrates.
+    /// <see cref="HealthCheckAggregator"/>. Returns a <see cref="ToolOutput"/> whose
+    /// <c>Summary</c> is the model's grounding text (§3.6) AND whose <c>Data</c> carries the
+    /// structured <see cref="ToolResultCard"/> (toolbox-plan §5·c) for a streaming surface — the
+    /// only tool that has a real card today (Phase 2). The model still sees only the Summary; the
+    /// card never re-enters the conversation. All judgment lives in the aggregator, so this
+    /// handler only orchestrates. The error paths return a bare string (implicitly a summary-only
+    /// <see cref="ToolOutput"/>) — no card.
     /// </summary>
-    private async Task<string> RunHealthCheckAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<ToolOutput> RunHealthCheckAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
         if (error is not null)
@@ -225,7 +230,8 @@ public class ToolDispatcher : IToolDispatcher
         if (!result.IsSuccess)
             return $"Error: could not run a health check on '{resolved}' ({result.Error ?? "unknown error"}).";
 
-        return HealthCheckAggregator.Run(result.Value!, resolved!).Summary;
+        var health = HealthCheckAggregator.Run(result.Value!, resolved!);
+        return new ToolOutput(health.Summary, ToolResultCard.From(health));
     }
 
     /// <summary>

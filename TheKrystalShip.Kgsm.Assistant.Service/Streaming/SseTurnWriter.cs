@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 using Microsoft.AspNetCore.Http.Features;
 
@@ -25,7 +26,14 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// </summary>
 internal static class SseTurnWriter
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // Web defaults (camelCase, case-insensitive) + enums AS camelCase strings so the §5·a
+    // tool.result card's enums (Confidence/CheckState/Severity/ResourceKind) render as
+    // "warn"/"pass"/"success" — never opaque integers — for the SPA. No existing §5·a frame
+    // carries an enum, so this only affects the new card payload.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+    };
 
     public static async Task WriteAsync(
         HttpContext http,
@@ -83,7 +91,11 @@ internal static class SseTurnWriter
                     case AssistantEventKind.ToolResult:
                         if (ev.ToolName is not null)
                             await WriteEventAsync(response, TurnStream.ToolResult,
-                                new ToolResultEvent(ev.ToolCallId ?? string.Empty, ev.ToolName.Name, ev.ToolSummary ?? string.Empty), ct);
+                                // §5·a: `summary` (always) + the optional structured `result` card
+                                // (ev.ToolData — a ToolResultCard the dispatcher attached, e.g. health).
+                                new ToolResultEvent(
+                                    ev.ToolCallId ?? string.Empty, ev.ToolName.Name,
+                                    ev.ToolSummary ?? string.Empty, ev.ToolData), ct);
                         break;
 
                     case AssistantEventKind.Confirmation:

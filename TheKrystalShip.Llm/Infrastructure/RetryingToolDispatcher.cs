@@ -26,7 +26,7 @@ public class RetryingToolDispatcher : IToolDispatcher
         _initialDelay = TimeSpan.FromMilliseconds(initialDelayMs);
     }
 
-    public async Task<string> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
+    public async Task<ToolOutput> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
     {
         int attempts = 0;
         while (true)

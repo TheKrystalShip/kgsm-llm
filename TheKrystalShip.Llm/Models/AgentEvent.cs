@@ -12,7 +12,7 @@ public enum AgentEventKind
     /// <summary>A tool is about to be dispatched; carries its name + arguments.</summary>
     ToolStart,
 
-    /// <summary>A tool finished; carries its name + a summary of the result.</summary>
+    /// <summary>A tool finished; carries its name, a summary of the result, and an optional opaque card.</summary>
     ToolResult,
 
     /// <summary>The turn is complete; <see cref="AgentEvent.Text"/> holds the full final reply.</summary>
@@ -37,14 +37,16 @@ public sealed record AgentEvent(
     IReadOnlyDictionary<string, string?>? ToolArguments = null,
     string? ToolSummary = null,
     LlmUsage? Usage = null,
-    string? ToolCallId = null)
+    string? ToolCallId = null,
+    object? ToolData = null)
 {
     public static AgentEvent Token(string delta) => new(AgentEventKind.Token, Text: delta);
     public static AgentEvent Thinking(string delta) => new(AgentEventKind.Thinking, Text: delta);
     public static AgentEvent ToolStart(Tool tool, IReadOnlyDictionary<string, string?> arguments, string? id = null) =>
         new(AgentEventKind.ToolStart, ToolName: tool, ToolArguments: arguments, ToolCallId: id);
-    public static AgentEvent ToolResult(Tool tool, string summary, string? id = null) =>
-        new(AgentEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id);
+    // `data` is the dispatcher's optional surface-facing card (ToolOutput.Data), carried opaquely.
+    public static AgentEvent ToolResult(Tool tool, string summary, string? id = null, object? data = null) =>
+        new(AgentEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id, ToolData: data);
 
     /// <summary>The terminal success event: the full reply plus the producing call's token usage (if any).</summary>
     public static AgentEvent Final(string text, LlmUsage? usage = null) =>

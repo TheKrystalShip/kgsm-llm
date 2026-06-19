@@ -1,9 +1,14 @@
 # Assistant `/turn` SSE → §5·a compliance spec (kgsm-api M7 prep)
 
-> **Status:** **Phase 1 IMPLEMENTED 2026-06-19** (the §5·a envelope — WI-1/2/3/4/6/7-default;
-> full kgsm-llm suite green 345/345 + kgsm-bot builds clean against the changed lib). Phase 2
-> (the `tool.result` cards, WI-5) remains. Implementation spec for the upstream half of kgsm-api
-> **M7** (assistant turn relay / keystone **O1**); lands in **kgsm-llm** *before* the API relay.
+> **Status:** **Phase 1 + Phase 2 IMPLEMENTED 2026-06-19.** Phase 1 = the §5·a envelope
+> (WI-1/2/3/4/6/7-default). **Phase 2 (WI-5, the `tool.result` card) is now done** — but via the
+> **opaque-payload mechanism**, not the ambient capture this spec originally sketched (see WI-5 +
+> §4; `Task.WhenAll` concurrency made order-keyed ambient unreliable). Scope is honestly narrow:
+> only **`run_health_check`** has a real card today; the other §5·b "card tools" don't exist yet,
+> so the rail is plumbed and the one real card lit — fabricating cards for absent tools is
+> forbidden (never-fabricate). Full kgsm-llm suite green **353/353** + kgsm-bot **49/49** clean.
+> Implementation spec for the upstream half of kgsm-api **M7** (assistant turn relay / keystone
+> **O1**); lands in **kgsm-llm** *before* the API relay.
 > Authorities: `../../architecture.html §5·a` (the frontend's wire contract — freeze
 > from it, don't invent), `../../assistant-toolbox-plan.md §5·a/§5·d` (the canonical
 > vocabulary + where `command.verified` originates), `../../kgsm-api/PLAN.md` M7.
@@ -126,30 +131,69 @@ per-call id pairs start↔result deterministically:
   KGSM one. **Also a real correctness fix:** today two calls to the *same* tool can't be
   paired by a renderer.
 
-### WI-5 · `tool.result` card (`result`) — **substantial, staged** (domain layer)
-**Where:** the dispatcher (`IToolDispatcher` impl) + `AssistantStreamEvent` + SSE writer.
-**NOT** the generic `TheKrystalShip.Llm` package — the card is domain-specific
-(`Envelope/ToolResult.cs` `ToolResult<TData>` lives in `TheKrystalShip.Kgsm.Assistant`).
+### WI-5 · `tool.result` card (`result`) — **DONE 2026-06-19** (opaque-payload channel)
+**Where:** the dispatcher (`IToolDispatcher` impl) + the generic loop's tool-output type +
+`AgentEvent`/`AssistantStreamEvent` + SSE writer + `Envelope/ToolResultCard.cs`.
 
-The envelope exists and is built+tested, but per its own doc-comment *"the dispatcher returns
-only `Summary`; `Data` is built + tested and transported once a surface consumes it."* **The
-SPA is now that surface** — so this is finally justified. Plumbing:
+**Mechanism (revised from the original ambient sketch).** The first draft proposed an
+ambient per-turn capture (mirroring `IConfirmationContext`) so the generic loop could stay
+string-only. That breaks under the loop's **concurrent** dispatch (`DispatchRoundAsync` uses
+`Task.WhenAll`): an order-keyed ambient list can't be reliably correlated back to each
+`tool.result`, and the dispatcher never sees the synthesised `tc_<n>` id, so any reliable key
+would force a generic-layer change *anyway*. So the implemented design is the **opaque-payload
+channel** — a small, genuinely domain-agnostic enrichment of the LLM-tool abstraction:
 
-1. Dispatcher produces `ToolResult<TData>` (it can; it currently *discards* `Data` and returns
-   `Summary`). Surface the structured `Data` to `ServerAssistant` via a **per-turn capture**
-   (same ambient-scope pattern as `IConfirmationContext` — the generic loop stays string-only).
-2. `ServerAssistant.RunStreamAsync` attaches the captured card to the `ToolResult` event.
-3. SSE writer serialises `result` = the card.
+1. `IToolDispatcher.ExecuteAsync` now returns **`ToolOutput(string Summary, object? Data = null)`**
+   (`TheKrystalShip.Llm/Models/ToolOutput.cs`) with an implicit `string → ToolOutput` conversion,
+   so every summary-only `return "…";` in the dispatcher is unchanged. A tool legitimately has
+   two outputs: model-facing text and an optional surface-facing card.
+2. The loop carries `Data` opaquely: `ToolExecution` gains `object? Data`, sourced from the
+   dispatcher return; `AgentEvent.ToolResult(tool, summary, id, data)` carries it. **`Task.WhenAll`
+   preserves input order**, so `outputs[i].Data` is index-aligned to its call, id, and summary
+   with **zero keying** — concurrency-proof by construction. The loop **never inspects** `Data`
+   and the model is **never** shown it (line 232 still feeds only the string to `LlmMessage.Tool`).
+3. The KGSM `ToolDispatcher` builds the card: `RunHealthCheckAsync` returns
+   `new ToolOutput(health.Summary, ToolResultCard.From(health))`. `ToolResultCard` (in
+   `Envelope/`) is a non-generic projection of `ToolResult<TData>` — `{ tool, confidence,
+   subject, data, links }`, the model-facing `Summary` **dropped** (it's already on the frame's
+   `summary`; two readers, one result). `Data` is boxed and serialised by runtime type.
+4. `ServerAssistant.RunStreamAsync` forwards `ev.ToolData` verbatim (relays, never inspects);
+   the SSE writer emits it as `result` (omitted from the frame when null) and adds a
+   `JsonStringEnumConverter` so the card's enums render as camelCase strings (`"warn"`/`"pass"`),
+   never opaque ints.
 
-**Stage it** — do **not** block the §5·a envelope on cards:
-- **Phase 1:** `tool.result` carries `{ id, tool, summary }` (the honest string we have today).
-  Documented divergence: §5·a names the field `result` (a card); we emit `summary` until the
-  card lands — the same rename-not-fabricate pattern as M1·b `cpu`→`cpuPctCore`.
-- **Phase 2:** light up `result` (the card `Data`) **per tool**, in the toolbox-plan §5·b
-  card-mapped order (`get_server_status`, `get_performance`, `get_console`, `get_config`,
-  `get_host_diagnostics`, `get_network`, `run_health_check`, `trace_root_cause` → the 8 with
-  cards; the 2 cardless reads stay summary-only). Each tool's card is one increment the SPA
-  consumes as it renders that card kind.
+> **This overrides the original §4 layering line "(NO card here — card is domain)."** The generic
+> `TheKrystalShip.Llm` package *does* now carry the card — but only as an uninterpreted `object?`
+> passenger (`ToolOutput.Data` / `AgentEvent.ToolData`); it never takes a domain dependency.
+>
+> **Versioning:** bumped `TheKrystalShip.Llm` 1.0.0 → **1.1.0**. Strict SemVer would call a
+> return-type change on a published interface (`Task<string>` → `Task<ToolOutput>`) **major
+> (2.0.0)**. We bump **minor** deliberately: every consumer in the workspace is a
+> `ProjectReference` (kgsm-llm Assistant/Service/Cli, kgsm-bot), the nupkg has **no external
+> consumers**, and the implicit `string → ToolOutput` keeps summary-only call sites
+> source-compatible. The caveat, recorded so it isn't a surprise: if anyone ever pins the package
+> by version, the minor bump hides a breaking interface change — revisit to 2.0.0 if it gains an
+> external consumer.
+
+**Scope — honestly narrow (one real card, not eight).** The original Phase-2 list named eight
+§5·b "card tools" (`get_server_status`, `get_performance`, `get_console`, `get_config`,
+`get_host_diagnostics`, `get_network`, `run_health_check`, `trace_root_cause`). **Five of those
+don't exist as implemented tools, and `get_status`/`view_config_file` have no structured source.**
+The only tool that produces a real `ToolResult<TData>` today is **`run_health_check`**
+(`HealthCheckAggregator → HealthData`). So Phase 2 = **plumb the rail end-to-end + light the one
+real card.** Building cards for absent tools would fabricate data — forbidden.
+
+**Adding the next card** is one line **in its handler** — `return new ToolOutput(summary,
+ToolResultCard.From(theResult))` — *for a tool that already produces a `ToolResult<TData>`*. A
+tool that returns a bare string today (most of them) needs its card type + aggregator built
+**first** (then the one-liner). The natural next card is **`get_status` fleet mode**: it already
+has structured data (`FleetStatusEntry[]`) — wrap it in a `ToolResult<…>`/card and it lights up.
+The rail (transport, serialisation, relay, SPA contract) does not change for any of them.
+
+- **Phase 1 (shipped):** `tool.result` carried `{ id, tool, summary }`. Documented divergence:
+  §5·a names the field `result`; we emitted only `summary` until the card landed.
+- **Phase 2 (shipped):** `tool.result` carries `{ id, tool, summary, result? }` — `summary` always
+  (Phase-1 clients unaffected), `result` present only when the tool has a card (today: health).
 
 ### WI-6 · envelope + key normalisation — **cheap** (Service SSE writer)
 - Emit an in-band **`type`** field on every event's `data` (matching `architecture.html`'s
@@ -175,17 +219,21 @@ label.** Two options for sign-off (§7):
 TheKrystalShip.Llm  (generic, domain-agnostic)
   └─ AgentEvent gains ToolCallId          ← WI-4 (a tool-call id is a generic LLM concept)
      LlmAgent mints + pairs the id        ← WI-4
-     (NO card here — card is domain)
+     ToolOutput(Summary, object? Data)    ← WI-5  (IToolDispatcher returns it; implicit string→ToolOutput)
+     AgentEvent gains object? ToolData    ← WI-5  (an OPAQUE passenger — loop never inspects it)
+     LlmAgent threads outputs[i].Data → ToolResult event (index-aligned by Task.WhenAll order)
 
 TheKrystalShip.Kgsm.Assistant  (KGSM domain)
-  └─ AssistantStreamEvent gains ToolCallId + card payload   ← WI-4, WI-5
-     dispatcher captures ToolResult<TData>.Data per turn    ← WI-5
-     ServerAssistant attaches card to the ToolResult event  ← WI-5
+  └─ AssistantStreamEvent gains ToolCallId + object? ToolData   ← WI-4, WI-5
+     Envelope/ToolResultCard.cs: non-generic projection of ToolResult<TData> (Summary dropped)  ← WI-5
+     ToolDispatcher.RunHealthCheckAsync returns ToolOutput(summary, ToolResultCard.From(health)) ← WI-5
+     ServerAssistant forwards ev.ToolData verbatim (relays, never inspects)  ← WI-5
 
 TheKrystalShip.Kgsm.Assistant.Service  (the SSE boundary — most shaping here)
   └─ SseTurnWriter: type+key normalisation, command.proposed
      reshape, error split, thinking key  ← WI-1, WI-2, WI-3, WI-6
-     Contracts.cs: DTO shapes
+     SseTurnWriter: tool.result `result` = ev.ToolData + JsonStringEnumConverter  ← WI-5
+     Contracts.cs: ToolResultEvent gains `object? Result` ([JsonIgnore WhenWritingNull])  ← WI-5
 ```
 
 ---
@@ -203,9 +251,18 @@ event: tool.start
 data: { "type":"tool.start", "id":"tc_0_0", "tool":"trace_root_cause",
         "arguments": { "server_id":"factorio-test" } }     # label omitted (WI-7); arguments additive
 
-event: tool.result                                     # Phase 1 (summary); Phase 2 adds "result" card
-data: { "type":"tool.result", "id":"tc_0_0", "tool":"trace_root_cause",
-        "summary":"Crash traces to disk pressure." }
+event: tool.result                                     # summary always; `result` card when the tool has one
+data: { "type":"tool.result", "id":"tc_0_0", "tool":"run_health_check",
+        "summary":"factorio: passed with warnings. …",
+        "result": {                                    # Phase 2 — ToolResultCard (enums as camelCase strings)
+          "tool":"run_health_check", "confidence":"confirmed",
+          "subject": { "resource":"server", "id":"factorio", "section":null },
+          "data": { "overall":"warn",
+                    "checks": [ { "name":"liveness","state":"pass","severity":"success","detail":"Running." },
+                                { "name":"updates","state":"warn","severity":"update","detail":"Update available." } ],
+                    "passed":1, "total":2, "skipped":0 },
+          "links":null } }
+                                                       # a summary-only tool omits `result` entirely (not null)
 
 event: command.proposed
 data: { "type":"command.proposed", "id":"cmd_0", "verb":"start",
@@ -289,7 +346,17 @@ the non-API surfaces.
   `command.proposed {id,verb,subject,confirm,token,…}`, `error {code,message}`). Tests: id-pairing
   in `LlmAgentStreamTests`, wire-shape (incl. the error reshape) in `EndpointSmokeTests`. Buffered
   `/turn` (`ConfirmationDto`/`TurnResponse`) deliberately left unchanged. 345/345 green + kgsm-bot clean.
-- **Phase 2 (cards):** WI-5 per tool, incrementally, as the SPA renders each card kind. *(not started)*
+- **Phase 2 (cards):** WI-5 — the opaque-payload card channel, plumbed end-to-end. **✅ DONE
+  2026-06-19.** `IToolDispatcher.ExecuteAsync → ToolOutput(Summary, object? Data)` (implicit
+  `string→ToolOutput`, package 1.0.0→1.1.0); `AgentEvent`/`AssistantStreamEvent` carry an opaque
+  `object? ToolData` (index-aligned by `Task.WhenAll` order, never inspected by the loop, never
+  shown to the model); `Envelope/ToolResultCard.cs` projects `ToolResult<TData>` (Summary
+  dropped); `run_health_check` is the one tool with a real card lit today
+  (`ToolResultCard.From(HealthCheckAggregator.Run(…))`); the SSE `tool.result` frame carries
+  `summary` (always) + `result?` (the card, enums as camelCase strings). Tests: dispatcher card
+  surfacing + opaque flow-through (`ToolDispatcherTests`, `ServerAssistantStreamTests`,
+  `LlmAgentStreamTests`) + the Service-boundary frame shape (`EndpointSmokeTests`). 353/353 green
+  + kgsm-bot 49/49. Future tools light their card with a one-line handler change.
 
 ## 9 · Test impact (kgsm-llm)
 

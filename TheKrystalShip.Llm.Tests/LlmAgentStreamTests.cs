@@ -126,6 +126,31 @@ public class LlmAgentStreamTests
     }
 
     [Fact]
+    public async Task ToolResult_CarriesDispatcherData_OpaquelyToTheStream()
+    {
+        // The opaque-card channel: a dispatcher returning ToolOutput(summary, data) surfaces `data` on
+        // the matching ToolResult event (index-aligned by Task.WhenAll's input-order guarantee). The loop
+        // never inspects it, and the model still only ever sees the summary string.
+        var client = new ScriptedStreamClient(new[]
+        {
+            new[] { ToolFrame("run_health_check"), DoneFrame() },
+            new[] { Content("ok"), DoneFrame() },
+        });
+        var agent = CreateAgent(client);
+
+        var card = new { kind = "health", overall = "pass" };
+        // Re-configure AFTER CreateAgent (whose default "Done." would otherwise win the last-config race).
+        _dispatcher.ExecuteAsync(Arg.Any<LlmToolCall>(), Arg.Any<CancellationToken>())
+            .Returns(new ToolOutput("Healthy.", card));
+
+        var events = await DrainAsync(agent.RunStreamAsync(Turn()));
+
+        var toolResult = events.Single(e => e.Kind == AgentEventKind.ToolResult);
+        toolResult.ToolSummary.Should().Be("Healthy.");   // model-facing string (fed back into the conversation)
+        toolResult.ToolData.Should().BeSameAs(card);      // opaque surface card (never shown to the model)
+    }
+
+    [Fact]
     public async Task MultiToolRound_EmitsAllStartsThenAllResults_InInputOrder()
     {
         // The §5a ordering invariant: all tool.start (input order) BEFORE dispatch, then all

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service;
@@ -114,11 +116,17 @@ public sealed record ToolStartEvent(string Id, string Tool, IReadOnlyDictionary<
 
 /// <summary>
 /// `tool.result` — a tool finished. <see cref="Id"/> pairs it with its <see cref="ToolStartEvent"/>.
-/// Phase 1 carries <see cref="Summary"/> (the model's grounding text — the dispatcher's string
-/// output); §5·a names this field `result` (a card) — the full <c>ToolResult&lt;K,D&gt;</c> `data`
-/// card (toolbox-plan §5·c) is the staged Phase 2 work, added once the SPA renders each card kind.
+/// <see cref="Summary"/> is the model's grounding text (the dispatcher's string output), always
+/// present. <see cref="Result"/> is the §5·a structured card (toolbox-plan §5·c, a
+/// <c>ToolResultCard</c> projected from the tool's <c>ToolResult&lt;K,D&gt;</c>) — Phase 2, present
+/// only for the tools that have a real card (today: <c>run_health_check</c>); omitted from the
+/// frame entirely (not <c>null</c>) for summary-only tools, so a thin client is unaffected.
 /// </summary>
-public sealed record ToolResultEvent(string Id, string Tool, string Summary);
+public sealed record ToolResultEvent(
+    string Id,
+    string Tool,
+    string Summary,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? Result = null);
 
 /// <summary>The §5·a <c>command.proposed.subject</c> — what the staged op is about.</summary>
 public sealed record CommandSubject(string Resource, string Id);

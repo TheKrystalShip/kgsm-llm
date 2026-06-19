@@ -250,7 +250,10 @@ public class ServerAssistant : IServerAssistant
                     case AgentEventKind.ToolResult:
                         if (ev.ToolName is not null)
                             await writer.WriteAsync(
-                                AssistantStreamEvent.ToolResult(ev.ToolName, ev.ToolSummary ?? string.Empty, ev.ToolCallId),
+                                // Forward the opaque card (ev.ToolData) through verbatim — the domain layer
+                                // produced it (ToolDispatcher) and the Service serialises it; we just relay.
+                                AssistantStreamEvent.ToolResult(
+                                    ev.ToolName, ev.ToolSummary ?? string.Empty, ev.ToolCallId, ev.ToolData),
                                 cancellationToken);
                         break;
                     case AgentEventKind.Final:

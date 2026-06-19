@@ -232,7 +232,9 @@ public class LlmAgent : ILlmAgent
                         working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i].Output, _options.MaxToolOutputChars)));
                         trajectory?.Add(new RecordedToolCall(
                             toolCalls[i].Name, toolCalls[i].Arguments, outputs[i].Output, outputs[i].DurationMs));
-                        yield return AgentEvent.ToolResult(toolCalls[i].Name, outputs[i].Output, callIds[i]);
+                        // The model only ever sees the string Output (above); Data rides the event opaquely
+                        // to a streaming surface, never back into the conversation.
+                        yield return AgentEvent.ToolResult(toolCalls[i].Name, outputs[i].Output, callIds[i], outputs[i].Data);
                     }
                     continue;
                 }
@@ -316,7 +318,8 @@ public class LlmAgent : ILlmAgent
 
             var started = Stopwatch.GetTimestamp();
             var output = await _dispatcher.ExecuteAsync(call, cancellationToken);
-            return new ToolExecution(output, (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            return new ToolExecution(
+                output.Summary, (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, output.Data);
         }));
     }
 
@@ -358,5 +361,7 @@ public class LlmAgent : ILlmAgent
         => text.Length <= max ? text : text[..max] + "\n…(truncated)";
 
     /// <summary>One tool call's raw output and how long the dispatch took.</summary>
-    private readonly record struct ToolExecution(string Output, long DurationMs);
+    // Output = the model-facing summary; Data = the dispatcher's optional opaque surface card
+    // (ToolOutput.Data), index-aligned to its call by Task.WhenAll's input-order guarantee.
+    private readonly record struct ToolExecution(string Output, long DurationMs, object? Data = null);
 }

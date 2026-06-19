@@ -181,10 +181,10 @@ public sealed class HealthCheckLiveTests : IClassFixture<WebApplicationFactory<P
             _recorder = recorder;
         }
 
-        public async Task<string> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
+        public async Task<ToolOutput> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
         {
             var result = await _inner.ExecuteAsync(call, cancellationToken);
-            _recorder.Record(call, result);
+            _recorder.Record(call, result.Summary);
             return result;
         }
     }

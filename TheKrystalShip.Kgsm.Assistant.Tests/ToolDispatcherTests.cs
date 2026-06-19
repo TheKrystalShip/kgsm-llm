@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using NSubstitute;
 
+using TheKrystalShip.Kgsm.Assistant.Envelope;
+using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Models;
 
@@ -43,6 +45,10 @@ public class ToolDispatcherTests
     private ToolDispatcher Create() =>
         new(_operations, _inventory, _confirmations, _webSearch, NullLogger<ToolDispatcher>.Instance);
 
+    // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
+    // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
+    private async Task<string> Summary(LlmToolCall call) => (await Create().ExecuteAsync(call)).Summary;
+
     private static LlmToolCall Call(Tool name, string instance) =>
         new(name, new Dictionary<string, string?> { ["instance_name"] = instance });
 
@@ -77,7 +83,7 @@ public class ToolDispatcherTests
         _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Success("running, pid 123"));
 
-        var result = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "minecraft"));
+        var result = await Summary(Call(LlmTools.GetStatus, "minecraft"));
 
         result.Should().Contain("Status for minecraft");
         await _operations.Received(1).GetStatusAsync("minecraft", Arg.Any<CancellationToken>());
@@ -90,7 +96,7 @@ public class ToolDispatcherTests
             .Returns(Result.Success("stopped"));
 
         // "pvp" is a substring of exactly one instance.
-        await Create().ExecuteAsync(Call(LlmTools.GetStatus, "pvp"));
+        await Summary(Call(LlmTools.GetStatus, "pvp"));
 
         await _operations.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
     }
@@ -99,7 +105,7 @@ public class ToolDispatcherTests
     public async Task AmbiguousName_AsksUser_AndDoesNotExecute()
     {
         // "terraria" matches two instances by game type / substring.
-        var result = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "terraria"));
+        var result = await Summary(Call(LlmTools.GetStatus, "terraria"));
 
         result.Should().Contain("Ambiguous")
             .And.Contain("terraria-pvp")
@@ -110,7 +116,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task UnknownName_ReturnsMiss_WithKnownList()
     {
-        var result = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "doesnotexist"));
+        var result = await Summary(Call(LlmTools.GetStatus, "doesnotexist"));
 
         result.Should().Contain("no instance named").And.Contain("minecraft");
         await _operations.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -126,7 +132,7 @@ public class ToolDispatcherTests
                 new FleetStatusEntry("terraria-pvp", FleetStatusAvailability.Read, false, null),
             }));
 
-        var result = await Create().ExecuteAsync(
+        var result = await Summary(
             new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
 
         result.Should().Contain("minecraft: running").And.Contain("terraria-pvp: stopped");
@@ -146,7 +152,7 @@ public class ToolDispatcherTests
                     "its management file must be regenerated to report status"),
             }));
 
-        var result = await Create().ExecuteAsync(
+        var result = await Summary(
             new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
 
         // The §3.7 guard: a could-not-read instance must not masquerade as stopped.
@@ -169,7 +175,7 @@ public class ToolDispatcherTests
                 HostDisk: new HostDisk(26, "916G", "649G"),
                 HostDiskUnavailableReason: null)));
 
-        var result = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "minecraft"));
+        var result = await Summary(Call(LlmTools.RunHealthCheck, "minecraft"));
 
         // The dispatcher returns the aggregator's deterministic summary (the model's grounding text).
         result.Should().Contain("minecraft").And.Contain("healthy");
@@ -179,7 +185,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task RunHealthCheck_UnresolvedInstance_DoesNotFetch()
     {
-        var result = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "doesnotexist"));
+        var result = await Summary(Call(LlmTools.RunHealthCheck, "doesnotexist"));
 
         result.Should().Contain("no instance named");
         await _operations.DidNotReceive()
@@ -192,9 +198,37 @@ public class ToolDispatcherTests
         _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Failure<InstanceHealthSnapshot>("kgsm unreachable"));
 
-        var result = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "minecraft"));
+        var result = await Summary(Call(LlmTools.RunHealthCheck, "minecraft"));
 
         result.Should().Contain("could not run a health check").And.Contain("kgsm unreachable");
+    }
+
+    [Fact]
+    public async Task RunHealthCheck_SurfacesStructuredCard_AlongsideSummary()
+    {
+        // Phase 2 (§5·c): run_health_check is the one tool with a real card today — it surfaces the
+        // deterministic HealthData on ToolOutput.Data for a streaming surface, while the model still
+        // gets ONLY the Summary string (the assertion above). An available update makes Overall = Warn.
+        _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new InstanceHealthSnapshot(
+                Running: true,
+                RecentLogLines: new[] { "INFO all good" },
+                UpdatesAvailable: true,
+                CurrentVersion: "1.0.0",
+                LatestVersion: "1.1.0",
+                HostDisk: new HostDisk(26, "916G", "649G"),
+                HostDiskUnavailableReason: null)));
+
+        var output = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "minecraft"));
+
+        output.Summary.Should().Contain("minecraft");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.RunHealthCheck.Name);
+        card.Confidence.Should().Be(Confidence.Confirmed);          // a deterministic read of measured facts
+        card.Subject.Should().Be(new ResultRef(ResourceKind.Server, "minecraft"));
+        var data = card.Data.Should().BeOfType<HealthData>().Subject;
+        data.Overall.Should().Be(CheckState.Warn);                  // the update check warns → worst non-skip
+        data.Checks.Should().Contain(c => c.Name == "updates" && c.State == CheckState.Warn);
     }
 
     [Fact]
@@ -203,7 +237,7 @@ public class ToolDispatcherTests
         _operations.ReadInstanceFileAsync("minecraft", "minecraft.config.ini", Arg.Any<CancellationToken>())
             .Returns(Result.Success("port = 25565\nrcon_password = hunter2\nlevel = world"));
 
-        var result = await Create().ExecuteAsync(Call(LlmTools.ViewConfigFile, "minecraft"));
+        var result = await Summary(Call(LlmTools.ViewConfigFile, "minecraft"));
 
         // The filename is derived from the resolved instance name (no model-supplied path).
         await _operations.Received(1)
@@ -217,7 +251,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task ViewConfigFile_UnknownInstance_DoesNotRead()
     {
-        var result = await Create().ExecuteAsync(Call(LlmTools.ViewConfigFile, "doesnotexist"));
+        var result = await Summary(Call(LlmTools.ViewConfigFile, "doesnotexist"));
 
         result.Should().Contain("no instance named");
         await _operations.DidNotReceive()
@@ -227,7 +261,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task UnknownTool_IsRefused()
     {
-        var result = await Create().ExecuteAsync(
+        var result = await Summary(
             new LlmToolCall(new Tool("delete_everything"), new Dictionary<string, string?>()));
 
         result.Should().Contain("not a known tool");
@@ -245,7 +279,7 @@ public class ToolDispatcherTests
                     "Terraria 1.4.5 is the latest stable release.", 0.98),
             }));
 
-        var result = await Create().ExecuteAsync(SearchCall("terraria latest version"));
+        var result = await Summary(SearchCall("terraria latest version"));
 
         // Snippet + source URL make it into the grounding text, framed as external/cite-able.
         result.Should().Contain("Terraria 1.4.5")
@@ -257,7 +291,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task WebSearch_BlankQuery_DoesNotCallProvider()
     {
-        var result = await Create().ExecuteAsync(SearchCall("   "));
+        var result = await Summary(SearchCall("   "));
 
         result.Should().Contain("needs a 'query'");
         await _webSearch.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -269,7 +303,7 @@ public class ToolDispatcherTests
         _webSearch.SearchAsync("anything", Arg.Any<CancellationToken>())
             .Returns(Result.Failure<IReadOnlyList<WebSearchHit>>("the daily web-search limit has been reached"));
 
-        var result = await Create().ExecuteAsync(SearchCall("anything"));
+        var result = await Summary(SearchCall("anything"));
 
         result.Should().Contain("didn't work")
             .And.Contain("daily web-search limit")
@@ -282,7 +316,7 @@ public class ToolDispatcherTests
         _webSearch.SearchAsync("something obscure", Arg.Any<CancellationToken>())
             .Returns(Result.Success<IReadOnlyList<WebSearchHit>>(Array.Empty<WebSearchHit>()));
 
-        var result = await Create().ExecuteAsync(SearchCall("something obscure"));
+        var result = await Summary(SearchCall("something obscure"));
 
         result.Should().Contain("No web results");
     }
@@ -305,7 +339,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Create().ExecuteAsync(ServerCommandCall(verb, "minecraft"));
+            result = await Summary(ServerCommandCall(verb, "minecraft"));
 
             _confirmations.Staged.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new PendingConfirmation(kind, "minecraft"));
@@ -331,7 +365,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Create().ExecuteAsync(ServerCommandCall(verb, "minecraft"));
+            result = await Summary(ServerCommandCall(verb, "minecraft"));
             _confirmations.Staged.Should().BeEmpty();
         }
 
@@ -345,7 +379,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Create().ExecuteAsync(ServerCommandCall("start", "doesnotexist"));
+            result = await Summary(ServerCommandCall("start", "doesnotexist"));
             _confirmations.Staged.Should().BeEmpty();
         }
 
@@ -359,7 +393,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Create().ExecuteAsync(Call(LlmTools.UninstallServer, "minecraft"));
+            result = await Summary(Call(LlmTools.UninstallServer, "minecraft"));
 
             _confirmations.Staged.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new PendingConfirmation(ConfirmationKind.Uninstall, "minecraft"));
@@ -374,7 +408,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Create().ExecuteAsync(Call(LlmTools.UninstallServer, "terraria"));
+            result = await Summary(Call(LlmTools.UninstallServer, "terraria"));
             _confirmations.Staged.Should().BeEmpty();
         }
 
@@ -386,7 +420,7 @@ public class ToolDispatcherTests
     {
         using (_confirmations.BeginTurn())
         {
-            var result = await Create().ExecuteAsync(InstallCall("valheim", "my-valheim"));
+            var result = await Summary(InstallCall("valheim", "my-valheim"));
 
             result.Should().Contain("Staged");
             _confirmations.Staged.Should().ContainSingle()
@@ -400,7 +434,7 @@ public class ToolDispatcherTests
     {
         using (_confirmations.BeginTurn())
         {
-            var result = await Create().ExecuteAsync(InstallCall("valheim", "minecraft"));
+            var result = await Summary(InstallCall("valheim", "minecraft"));
 
             result.Should().Contain("already exists");
             _confirmations.Staged.Should().BeEmpty();
@@ -413,7 +447,7 @@ public class ToolDispatcherTests
         using (_confirmations.BeginTurn())
         {
             // A value with spaces and an '=' — the prime executable_arguments case.
-            var result = await Create().ExecuteAsync(
+            var result = await Summary(
                 SetConfigCall("minecraft", "executable_arguments", "--foo=bar baz"));
 
             result.Should().Contain("Staged").And.Contain("confirm");
@@ -433,7 +467,7 @@ public class ToolDispatcherTests
     {
         using (_confirmations.BeginTurn())
         {
-            var result = await Create().ExecuteAsync(SetConfigCall("minecraft", "   ", "x"));
+            var result = await Summary(SetConfigCall("minecraft", "   ", "x"));
 
             result.Should().Contain("no config_key");
             _confirmations.Staged.Should().BeEmpty();
@@ -445,7 +479,7 @@ public class ToolDispatcherTests
     {
         using (_confirmations.BeginTurn())
         {
-            var result = await Create().ExecuteAsync(SetConfigCall("doesnotexist", "auto_update", "true"));
+            var result = await Summary(SetConfigCall("doesnotexist", "auto_update", "true"));
 
             result.Should().Contain("no instance named");
             _confirmations.Staged.Should().BeEmpty();

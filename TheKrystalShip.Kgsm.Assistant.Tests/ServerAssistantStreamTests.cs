@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using NSubstitute;
 
+using TheKrystalShip.Kgsm.Assistant.Envelope;
+using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
@@ -66,6 +68,30 @@ public class ServerAssistantStreamTests
         events[0].ToolName.Should().Be(new Tool("get_status"));
         events[1].ToolSummary.Should().Be("factorio-test: stopped");
         events[^1].Text.Should().Be("All good.");
+    }
+
+    [Fact]
+    public async Task ToolResultCard_RidesThrough_AsOpaqueToolData()
+    {
+        // Phase 2: a card attached upstream (ToolDispatcher → AgentEvent.ToolData) must ride through
+        // RunStreamAsync verbatim on the AssistantStreamEvent — the assistant relays it, never inspects
+        // it (the Service serialises it as the §5·a tool.result `result`). Same id pairs start↔result.
+        var card = new ToolResultCard(
+            "run_health_check", Confidence.Confirmed,
+            new ResultRef(ResourceKind.Server, "factorio-test"),
+            new HealthData(CheckState.Pass, Array.Empty<HealthCheck>(), 1, 1, 0));
+        var confirmations = new ConfirmationContext();
+        var agent = new ScriptedAgent(confirmations, new[]
+        {
+            AgentEvent.ToolResult(new Tool("run_health_check"), "factorio-test: healthy.", "tc_0", card),
+            AgentEvent.Final("Healthy."),
+        });
+
+        var events = await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "health?", true));
+
+        var toolResult = events.Single(e => e.Kind == AssistantEventKind.ToolResult);
+        toolResult.ToolCallId.Should().Be("tc_0");
+        toolResult.ToolData.Should().BeSameAs(card);
     }
 
     [Fact]

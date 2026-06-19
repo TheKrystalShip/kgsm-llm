@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>TheKrystalShip.Kgsm.Assistant.Service</RootNamespace>
     <AssemblyName>TheKrystalShip.Kgsm.Assistant.Service</AssemblyName>
-    <!-- This box ships the ASP.NET Core shared framework only at 10.x; the app targets
-         net9.0, so roll forward to the installed major at runtime. -->
+    <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
+         major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 

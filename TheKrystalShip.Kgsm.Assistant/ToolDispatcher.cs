@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -169,8 +170,13 @@ public class ToolDispatcher : IToolDispatcher
     /// fleet-wide summary (the one-shot replacement for fanning a per-instance
     /// liveness loop, which is the agent-loop iteration-cap cause); an
     /// instance_name → detailed status for that one server.
+    /// <para>
+    /// Only the fleet mode carries a structured card (Phase 2 §5·b): it has structured data
+    /// (<see cref="FleetStatusEntry"/>[]). The single-server mode returns kgsm's opaque status
+    /// string — no structured source — so it stays summary-only (a card would be fabricated).
+    /// </para>
     /// </summary>
-    private async Task<string> GetStatusAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<ToolOutput> GetStatusAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var name = call.Arg("instance_name")?.Trim();
         if (string.IsNullOrWhiteSpace(name))
@@ -188,25 +194,22 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// One-shot fleet status. An instance whose status could not be read is
-    /// reported as "status unavailable (reason)", never collapsed to "stopped" —
-    /// the model must not narrate a read failure as a measured state.
+    /// One-shot fleet status (Phase 2 §5·b): fetches the neutral entries and returns a
+    /// <see cref="ToolOutput"/> whose <c>Summary</c> is the model's grounding text AND whose
+    /// <c>Data</c> carries the <see cref="FleetStatusCard"/>. An instance whose status could not be
+    /// read surfaces as "status unavailable (reason)"/<see cref="ServerRunState.Unknown"/>, never
+    /// collapsed to "stopped" — the model (and the card) must not narrate a read failure as a
+    /// measured state. A read FAILURE is summary-only (no card); an empty fleet is a real measured
+    /// result → an empty card. The projection + summary live in the pure <see cref="FleetStatusCard"/>.
     /// </summary>
-    private async Task<string> GetFleetStatusAsync(CancellationToken cancellationToken)
+    private async Task<ToolOutput> GetFleetStatusAsync(CancellationToken cancellationToken)
     {
         var result = await _operations.GetFleetStatusAsync(cancellationToken);
         if (!result.IsSuccess)
             return $"Error: could not read server status ({result.Error ?? "unknown error"}).";
 
-        var entries = result.Value!;
-        if (entries.Count == 0)
-            return "There are no installed server instances.";
-
-        var lines = entries.Select(e => e.Availability == FleetStatusAvailability.Read
-            ? $"- {e.Instance}: {(e.Running == true ? "running" : "stopped")}"
-            : $"- {e.Instance}: status unavailable ({e.Reason ?? "unknown reason"})");
-
-        return $"Status of all {entries.Count} server(s):\n" + string.Join("\n", lines);
+        var card = FleetStatusCard.Build(result.Value!);
+        return new ToolOutput(card.Summary, ToolResultCard.From(card));
     }
 
     /// <summary>

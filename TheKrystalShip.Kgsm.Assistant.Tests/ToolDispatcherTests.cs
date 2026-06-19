@@ -7,6 +7,7 @@ using NSubstitute;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Models;
 
 using Xunit;
@@ -140,6 +141,48 @@ public class ToolDispatcherTests
         // The MaxIterations fix: one bulk call, never a per-instance fan-out.
         await _operations.Received(1).GetFleetStatusAsync(Arg.Any<CancellationToken>());
         await _operations.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetStatus_Fleet_SurfacesStructuredCard_WithNeverCollapsedUnknown()
+    {
+        // Phase 2 §5·b: fleet mode (no instance_name) surfaces a FleetStatusData card on
+        // ToolOutput.Data — while the model still gets only the Summary string. The single-server
+        // mode stays cardless (opaque kgsm string, no structured source — asserted by its absence).
+        _operations.GetFleetStatusAsync(Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<FleetStatusEntry>>(new[]
+            {
+                new FleetStatusEntry("minecraft", FleetStatusAvailability.Read, true, null),
+                new FleetStatusEntry("broken", FleetStatusAvailability.Unavailable, null, "needs regeneration"),
+            }));
+
+        var output = await Create().ExecuteAsync(
+            new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
+
+        output.Summary.Should().Contain("minecraft: running").And.Contain("broken: status unavailable");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.GetStatus.Name);
+        card.Subject.Should().Be(new ResultRef(ResourceKind.Host, "primary"));
+        var data = card.Data.Should().BeOfType<FleetStatusData>().Subject;
+        data.Running.Should().Be(1);
+        data.Unavailable.Should().Be(1);
+        // The §3.7 guard carried into the card: the unreadable instance is Unknown, never Stopped.
+        data.Servers.Single(s => s.Instance == "broken").State.Should().Be(ServerRunState.Unknown);
+        data.Stopped.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetStatus_SingleServer_StaysCardless()
+    {
+        // The single-server path returns kgsm's opaque status string — no structured source — so it
+        // is summary-only (Data null); carding it would fabricate structure we don't have.
+        _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("running, pid 123"));
+
+        var output = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "minecraft"));
+
+        output.Summary.Should().Contain("Status for minecraft");
+        output.Data.Should().BeNull();
     }
 
     [Fact]

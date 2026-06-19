@@ -3,10 +3,12 @@
 > **Status:** **Phase 1 + Phase 2 IMPLEMENTED 2026-06-19.** Phase 1 = the §5·a envelope
 > (WI-1/2/3/4/6/7-default). **Phase 2 (WI-5, the `tool.result` card) is now done** — but via the
 > **opaque-payload mechanism**, not the ambient capture this spec originally sketched (see WI-5 +
-> §4; `Task.WhenAll` concurrency made order-keyed ambient unreliable). Scope is honestly narrow:
-> only **`run_health_check`** has a real card today; the other §5·b "card tools" don't exist yet,
-> so the rail is plumbed and the one real card lit — fabricating cards for absent tools is
-> forbidden (never-fabricate). Full kgsm-llm suite green **353/353** + kgsm-bot **49/49** clean.
+> §4; `Task.WhenAll` concurrency made order-keyed ambient unreliable). Scope is honestly narrow —
+> a card is lit only where a tool has a **real structured source**: **`run_health_check`**
+> (`HealthData`) and **`get_status` fleet mode** (`FleetStatusData`). The other §5·b "card tools"
+> don't exist yet, and single-server `get_status`/`view_config_file` return opaque strings, so they
+> stay summary-only — fabricating cards for absent sources is forbidden (never-fabricate). Full
+> kgsm-llm suite green **358/358** + kgsm-bot **49/49** clean.
 > Implementation spec for the upstream half of kgsm-api **M7** (assistant turn relay / keystone
 > **O1**); lands in **kgsm-llm** *before* the API relay.
 > Authorities: `../../architecture.html §5·a` (the frontend's wire contract — freeze
@@ -185,10 +187,26 @@ real card.** Building cards for absent tools would fabricate data — forbidden.
 
 **Adding the next card** is one line **in its handler** — `return new ToolOutput(summary,
 ToolResultCard.From(theResult))` — *for a tool that already produces a `ToolResult<TData>`*. A
-tool that returns a bare string today (most of them) needs its card type + aggregator built
-**first** (then the one-liner). The natural next card is **`get_status` fleet mode**: it already
-has structured data (`FleetStatusEntry[]`) — wrap it in a `ToolResult<…>`/card and it lights up.
-The rail (transport, serialisation, relay, SPA contract) does not change for any of them.
+tool that returns a bare string today (most of them) needs its card type + builder built **first**
+(then the one-liner). The rail (transport, serialisation, relay, SPA contract) does not change for
+any of them.
+
+**Second card lit: `get_status` fleet mode (DONE 2026-06-19).** `Status/FleetStatusCard.cs` is a
+pure builder (mirrors `HealthCheckAggregator`) projecting the neutral `FleetStatusEntry[]` into a
+`FleetStatusData` card — `{ servers[], total, running, stopped, unavailable }`, each server
+`{ instance, state, severity, reason? }`. The load-bearing rule is the same never-collapse
+doctrine as health: an instance whose status could **not be read** maps to `ServerRunState.Unknown`
+/ `Severity.Warn` with its reason — **never** `Stopped` (a bare "not running" would masquerade as a
+measured fact). Counts are honest (the unreadable one lands in `unavailable`, never inflating
+`stopped`). The `Summary` stays **byte-identical** to the dispatcher's prior inline string (model
+grounding unchanged); an **empty fleet** is a real measured result → an empty card (not dropped); a
+read **failure** stays summary-only (no card). `ServerRunState` serialises camelCase for free via
+the converter already added — **zero rail changes**.
+
+- **`get_status` card-kind note for the SPA:** `result.tool == "get_status"` ⇒ the **fleet** card
+  shape (`FleetStatusData`). The **single-server** `get_status` (with an `instance_name`) returns
+  kgsm's opaque status string — no structured source — so it is **cardless** (summary only). One
+  tool name, one card shape; the single-server detail view renders off `summary`.
 
 - **Phase 1 (shipped):** `tool.result` carried `{ id, tool, summary }`. Documented divergence:
   §5·a names the field `result`; we emitted only `summary` until the card landed.
@@ -333,6 +351,13 @@ the non-API surfaces.
 6. **`command.verified` is SPA-composed** (§6): confirm the frontend owns the `cmd_<n>→job→verified`
    correlation client-side and accepts an **honest-thin `lines[]`** (often empty for fast verbs;
    populated only where the audit `meta` has real detail, e.g. an update's version delta).
+7. **Host-scoped card subject** (Phase 2, `get_status` fleet card): a host-wide card has no single
+   instance subject, so it uses `subject: { resource:"host", id:"primary" }` — matching
+   `architecture.html`'s `hostId:"primary"` self-reference convention ("denormalized; derived if
+   absent"). The id is **informational** (the per-host panel already knows its host), not a route
+   key. Confirm the SPA reads it that way, or name the token it wants the leaf to emit (the assistant
+   is a standalone leaf and can't borrow the API's real `hostId`). Same applies to any future
+   host/audit/metrics-scoped card.
 
 ---
 
@@ -351,12 +376,16 @@ the non-API surfaces.
   `string→ToolOutput`, package 1.0.0→1.1.0); `AgentEvent`/`AssistantStreamEvent` carry an opaque
   `object? ToolData` (index-aligned by `Task.WhenAll` order, never inspected by the loop, never
   shown to the model); `Envelope/ToolResultCard.cs` projects `ToolResult<TData>` (Summary
-  dropped); `run_health_check` is the one tool with a real card lit today
-  (`ToolResultCard.From(HealthCheckAggregator.Run(…))`); the SSE `tool.result` frame carries
-  `summary` (always) + `result?` (the card, enums as camelCase strings). Tests: dispatcher card
-  surfacing + opaque flow-through (`ToolDispatcherTests`, `ServerAssistantStreamTests`,
-  `LlmAgentStreamTests`) + the Service-boundary frame shape (`EndpointSmokeTests`). 353/353 green
-  + kgsm-bot 49/49. Future tools light their card with a one-line handler change.
+  dropped); two tools have a real card lit (each with a structured source):
+  `run_health_check` (`ToolResultCard.From(HealthCheckAggregator.Run(…))` → `HealthData`) and
+  **`get_status` fleet mode** (`Status/FleetStatusCard.cs` → `FleetStatusData`); the SSE
+  `tool.result` frame carries `summary` (always) + `result?` (the card, enums as camelCase
+  strings). Tests: dispatcher card surfacing + opaque flow-through (`ToolDispatcherTests`,
+  `ServerAssistantStreamTests`, `LlmAgentStreamTests`) + the Service-boundary frame shape
+  (`EndpointSmokeTests`) + the fleet builder's never-collapse-Unavailable invariant, byte-identical
+  summary, and empty-card (`FleetStatusCardTests`); single-server `get_status` stays cardless.
+  **358/358 green + kgsm-bot 49/49.** Future tools light their card with a one-line handler change
+  once they have a structured source.
 
 ## 9 · Test impact (kgsm-llm)
 

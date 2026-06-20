@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TheKrystalShip.Rag</RootNamespace>
+    <AssemblyName>TheKrystalShip.Rag</AssemblyName>
+
+    <!--
+      The RAG core is the one AOT-safe corner of this (otherwise JIT) repo: the standalone
+      indexer daemon (Phase 3) publishes it Native AOT, and the JIT assistant consumes it too
+      (AOT-safe code runs fine under JIT). IsAotCompatible turns on the trim/AOT analyzers so
+      reflection-based serialization is caught at *build* time here; the full ILC pass is the
+      indexer executable in Phase 3. All JSON goes through the source-generated RagJsonContext.
+    -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TheKrystalShip.Rag.Tests" />
+  </ItemGroup>
+
+</Project>

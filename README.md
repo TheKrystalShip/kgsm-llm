@@ -9,6 +9,12 @@ Authorization, rate limits, and "what to offer this turn" are decided by the hos
 handed to the loop per turn. This makes the same package usable from a Discord bot, an
 ASP.NET chatbot, a CLI, etc.
 
+> **Logging** — the hosts in this repo follow the ecosystem logging convention
+> (`../logging-convention.md`): the **Service** uses `AddSystemdConsole()` (journald `<N>`
+> priority prefix) with `appsettings.json`/env levels; the interactive **CLI**/**Eval** keep a
+> `SimpleConsole`→stderr, quiet-by-default (`--verbose`) variant. The library itself only takes
+> `ILogger<T>` from its host.
+
 ## Install
 
 ```xml

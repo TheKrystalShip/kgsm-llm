@@ -16,6 +16,14 @@ using TheKrystalShip.Llm.Ollama;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Ecosystem-standard logging (see ../tks/logging-convention.md): one journald-native SystemdConsole
+// sink (the <N> syslog priority prefix lets `journalctl -p` filter by level). CreateBuilder already
+// binds the "Logging" appsettings section + env overrides; this swaps the default providers for the
+// single Systemd sink. (The CLI/Eval entrypoints are interactive tools, not services, and deliberately
+// keep a SimpleConsole→stderr setup instead — see the convention's "CLI variant".)
+builder.Logging.ClearProviders();
+builder.Logging.AddSystemdConsole();
+
 // --- Options (web-only) ------------------------------------------------------
 // The kgsm/inventory/web-search options moved to the Infrastructure library and are bound by
 // AddKgsmAdapters below. These three stay here — they are web-host concerns (auth + webhook).

@@ -1,6 +1,7 @@
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
@@ -31,6 +32,7 @@ public class ServerAssistantConfirmTests
         _operations,
         new NoopToolRelevanceFilter(),
         new PassthroughPromptOverrides(),
+        Options.Create(new SearchOptions()),
         NullLogger<ServerAssistant>.Instance);
 
     private void Instances(params string[] names) =>

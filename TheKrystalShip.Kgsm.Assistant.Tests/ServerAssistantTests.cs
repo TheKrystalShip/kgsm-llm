@@ -1,6 +1,7 @@
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
@@ -30,23 +31,27 @@ public class ServerAssistantTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
-    private ServerAssistant Create()
+    // Default: search is AVAILABLE (a web source on), so the offered set is the unfiltered catalog
+    // (BeSameAs holds) and the gate's search cap is exercisable. Availability tests pass their own.
+    private ServerAssistant Create(SearchOptions? search = null)
     {
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             _agent, _prompt, _confirmations, _inventory, _operations,
-            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), NullLogger<ServerAssistant>.Instance);
+            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
+            Options.Create(search ?? new SearchOptions { WebEnabled = true }),
+            NullLogger<ServerAssistant>.Instance);
     }
 
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>
-    private async Task<AgentTurn> CaptureTurnAsync(bool canPerformActions)
+    private async Task<AgentTurn> CaptureTurnAsync(bool canPerformActions, SearchOptions? search = null)
     {
         AgentTurn? captured = null;
         _agent.RunAsync(Arg.Do<AgentTurn>(t => captured = t), Arg.Any<CancellationToken>())
             .Returns(Result.Success(new AgentRunResult("ok", null)));
 
-        await Create().RunAsync(Conversation, "do it", canPerformActions);
+        await Create(search).RunAsync(Conversation, "do it", canPerformActions);
 
         captured.Should().NotBeNull();
         return captured!;
@@ -164,36 +169,70 @@ public class ServerAssistantTests
     }
 
     [Fact]
-    public async Task Gate_AllowsWebSearchForUnauthorizedCaller_ButCapsItPerMessage()
+    public async Task Gate_AllowsSearchForUnauthorizedCaller_ButCapsItPerMessage()
     {
-        // web_search is offered to everyone (read-only tier), so an unauthorized caller may use it —
-        // but each call spends a credit, so the gate caps it at three per message (the in-turn
-        // runaway-spend guard; the per-day wallet cap is a separate host-side backstop).
+        // search is offered to everyone (read-only tier), so an unauthorized caller may use it — but
+        // each call adds a loop iteration (and a web fallback may spend a credit), so the gate caps it
+        // per message (the in-turn runaway guard; the per-day web wallet cap is a host-side backstop).
         var turn = await CaptureTurnAsync(canPerformActions: false);
-        var search = Call(LlmTools.WebSearch);
+        var search = Call(LlmTools.Search);
 
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < 5; i++)
             turn.Gate!(search).Allowed.Should().BeTrue($"search {i} is within the per-message cap");
 
-        var fourth = turn.Gate!(search);
-        fourth.Allowed.Should().BeFalse();
-        fourth.RefusalMessage.Should().Contain("web searches per message");
+        var sixth = turn.Gate!(search);
+        sixth.Allowed.Should().BeFalse();
+        sixth.RefusalMessage.Should().Contain("searches per message");
     }
 
     [Fact]
-    public async Task Gate_WebSearchCap_IsSeparateFromTheStagingCap()
+    public async Task Gate_SearchCap_IsSeparateFromTheStagingCap()
     {
-        // The two budgets are independent counters: exhausting web searches must not eat into the
-        // command-staging budget, and web searches never consume staging slots.
+        // The two budgets are independent counters: exhausting searches must not eat into the
+        // command-staging budget, and searches never consume staging slots.
         var turn = await CaptureTurnAsync(canPerformActions: true);
 
-        for (var i = 0; i < 3; i++)
-            turn.Gate!(Call(LlmTools.WebSearch)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.WebSearch)).Allowed.Should().BeFalse(); // web cap hit
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeFalse(); // search cap hit
 
         // The full staging budget is still intact.
         for (var i = 0; i < 5; i++)
             turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
         turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse();
+    }
+
+    // --- §D7 search availability: the tool is offered iff a source backs it -----------------------
+
+    [Fact]
+    public async Task Search_IsOffered_WhenASourceIsAvailable()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false, search: new SearchOptions { WebEnabled = true });
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.Search);
+    }
+
+    [Fact]
+    public async Task Search_IsOmitted_WhenNoSourceIsAvailable()
+    {
+        // Neither RAG nor a web provider configured → search is dropped, but the rest of the
+        // read-only catalog is still offered.
+        var turn = await CaptureTurnAsync(canPerformActions: false, search: new SearchOptions());
+        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.Search);
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.GetStatus);
+    }
+
+    [Fact]
+    public async Task RequestingSearch_WhenUnavailable_IsAnInvalidToolError()
+    {
+        // A client explicitly requesting `search` on a host where it's unavailable gets the honest
+        // invalid-tool error (it's genuinely not in this host's catalog), never a silently-dead tool.
+        _agent.RunAsync(Arg.Any<AgentTurn>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new AgentRunResult("ok", null)));
+
+        var result = await Create(new SearchOptions()).RunAsync(
+            Conversation, "find docs", canPerformActions: false, requestedTools: ["search"]);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("Invalid tool");
     }
 }

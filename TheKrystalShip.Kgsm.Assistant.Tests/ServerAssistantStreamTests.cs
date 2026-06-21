@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
@@ -36,7 +37,8 @@ public class ServerAssistantStreamTests
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             agent, _prompt, confirmations, _inventory, _operations,
-            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), NullLogger<ServerAssistant>.Instance);
+            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
+            Options.Create(new SearchOptions { WebEnabled = true }), NullLogger<ServerAssistant>.Instance);
     }
 
     private static async Task<List<AssistantStreamEvent>> DrainAsync(IAsyncEnumerable<AssistantStreamEvent> events)

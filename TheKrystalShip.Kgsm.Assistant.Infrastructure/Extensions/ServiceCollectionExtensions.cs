@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
@@ -101,6 +102,19 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<RagIndexProvider>();
             services.AddSingleton<IRetrieval, RagRetrieval>();
         }
+
+        // --- Unified `search` tool (§3.4 aggregator) -------------------------------------------
+        // The aggregator's tunable thresholds (LocalMinScore/MaxContextChars) bind from the same
+        // "Rag" section; the availability flags are COMPUTED here — the one place that knows BOTH
+        // whether RAG is on and whether a web provider is configured — and decide whether the
+        // `search` tool is offered at all (§D7). Both being off → the tool is omitted everywhere.
+        var webSearch = config.GetSection(WebSearchOptions.Section).Get<WebSearchOptions>() ?? new WebSearchOptions();
+        services.Configure<SearchOptions>(config.GetSection(SearchOptions.Section));
+        services.PostConfigure<SearchOptions>(o =>
+        {
+            o.LocalEnabled = rag.Enabled;
+            o.WebEnabled = !string.IsNullOrWhiteSpace(webSearch.ApiKey);
+        });
 
         return services;
     }

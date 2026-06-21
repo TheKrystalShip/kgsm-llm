@@ -37,6 +37,10 @@ internal sealed class Harness
         _options = options;
     }
 
+    /// <summary>Test seam: resolve a wired backend service to assert DI composition — e.g. that the
+    /// unified <c>search</c> tool is offered in the eval — without a model or a live kgsm.</summary>
+    internal T Resolve<T>() where T : notnull => _provider.GetRequiredService<T>();
+
     public static Harness Build(EvalOptions options)
     {
         var config = BuildConfiguration(options);
@@ -56,6 +60,13 @@ internal sealed class Harness
         services.AddLocalLlm(config);      // Ollama client, conversation store, agent loop, recorder
         services.AddKgsmAssistant();       // prompt builder, dispatcher, policy, IServerAssistant
         services.AddKgsmAdapters(config);  // kgsm-lib graph + ports + (unconfigured) web search
+
+        // The eval scores ROUTING, so the unified `search` tool must be OFFERED even though no real
+        // source is wired here (Rag off, no Tavily key) — otherwise the E-group search rubrics would
+        // be unsatisfiable (CalledTool(search)) or pass vacuously (DidNotCallTool(search)). Force
+        // availability LAST (after AddKgsmAdapters' PostConfigure); the underlying ports stay disabled,
+        // so an actual call just returns an honest "couldn't search" — no network, no credits spent.
+        services.PostConfigure<SearchOptions>(o => o.WebEnabled = true);
 
         // Replace whatever recorder the backend registered with our in-memory capture.
         var recorder = new CapturingRecorder();

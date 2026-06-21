@@ -23,7 +23,7 @@ public class ToolDispatcherTests
 {
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
-    private readonly IWebSearch _webSearch = Substitute.For<IWebSearch>();
+    private readonly ISearch _search = Substitute.For<ISearch>();
     private readonly ConfirmationContext _confirmations = new();
 
     public ToolDispatcherTests()
@@ -44,7 +44,7 @@ public class ToolDispatcherTests
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, _webSearch, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _search, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -76,7 +76,7 @@ public class ToolDispatcherTests
         });
 
     private static LlmToolCall SearchCall(string? query) =>
-        new(LlmTools.WebSearch, new Dictionary<string, string?> { ["query"] = query });
+        new(LlmTools.Search, new Dictionary<string, string?> { ["query"] = query });
 
     [Fact]
     public async Task ExactName_Resolves_AndExecutes()
@@ -310,58 +310,29 @@ public class ToolDispatcherTests
         result.Should().Contain("not a known tool");
     }
 
-    // --- web_search (external lookup via the IWebSearch port) ---
+    // --- search (unified lookup via the ISearch aggregator) ---
+    // The dispatcher only guards the blank query and relays the aggregator's grounding text verbatim;
+    // the local-first / web-fallback composition is exercised in SearchAggregatorTests.
 
     [Fact]
-    public async Task WebSearch_ReturnsHits_AsGroundingStringWithSourceUrls()
+    public async Task Search_RelaysTheAggregatorGroundingVerbatim()
     {
-        _webSearch.SearchAsync("terraria latest version", Arg.Any<CancellationToken>())
-            .Returns(Result.Success<IReadOnlyList<WebSearchHit>>(new[]
-            {
-                new WebSearchHit("Terraria 1.4.5", "https://terraria.org/news",
-                    "Terraria 1.4.5 is the latest stable release.", 0.98),
-            }));
+        _search.SearchAsync("terraria latest version", Arg.Any<CancellationToken>())
+            .Returns("Web results for \"terraria latest version\" … source: https://terraria.org/news");
 
         var result = await Summary(SearchCall("terraria latest version"));
 
-        // Snippet + source URL make it into the grounding text, framed as external/cite-able.
-        result.Should().Contain("Terraria 1.4.5")
-            .And.Contain("https://terraria.org/news")
-            .And.Contain("out of date");
-        await _webSearch.Received(1).SearchAsync("terraria latest version", Arg.Any<CancellationToken>());
+        result.Should().Be("Web results for \"terraria latest version\" … source: https://terraria.org/news");
+        await _search.Received(1).SearchAsync("terraria latest version", Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task WebSearch_BlankQuery_DoesNotCallProvider()
+    public async Task Search_BlankQuery_DoesNotCallTheAggregator()
     {
         var result = await Summary(SearchCall("   "));
 
         result.Should().Contain("needs a 'query'");
-        await _webSearch.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task WebSearch_ProviderFailure_ReturnsGracefulMessage_AndTellsModelNotToRetry()
-    {
-        _webSearch.SearchAsync("anything", Arg.Any<CancellationToken>())
-            .Returns(Result.Failure<IReadOnlyList<WebSearchHit>>("the daily web-search limit has been reached"));
-
-        var result = await Summary(SearchCall("anything"));
-
-        result.Should().Contain("didn't work")
-            .And.Contain("daily web-search limit")
-            .And.Contain("do not retry");
-    }
-
-    [Fact]
-    public async Task WebSearch_NoResults_SaysSo()
-    {
-        _webSearch.SearchAsync("something obscure", Arg.Any<CancellationToken>())
-            .Returns(Result.Success<IReadOnlyList<WebSearchHit>>(Array.Empty<WebSearchHit>()));
-
-        var result = await Summary(SearchCall("something obscure"));
-
-        result.Should().Contain("No web results");
+        await _search.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     public static IEnumerable<object[]> StagedCommandCases() => new[]

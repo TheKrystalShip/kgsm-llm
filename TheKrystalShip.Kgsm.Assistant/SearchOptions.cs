@@ -1,0 +1,38 @@
+namespace TheKrystalShip.Kgsm.Assistant;
+
+/// <summary>
+/// Tuning + availability for the unified <c>search</c> tool (the §3.4 aggregator). The operator-tunable
+/// thresholds bind from the "Rag" config section (the same section <c>RagOptions</c>/<c>RagEmbeddingOptions</c>
+/// read — each picks up its own keys). The two <c>*Enabled</c> flags are COMPUTED by the host wiring, not
+/// read from config: Infrastructure knows both whether RAG is on and whether a web provider is configured,
+/// so it decides — once, at composition — whether <c>search</c> is offered at all (plan §D7: a tool with no
+/// real source behind it is omitted, never shown as a dead option).
+/// </summary>
+public sealed class SearchOptions
+{
+    public const string Section = "Rag";
+
+    /// <summary>
+    /// Cosine floor at which a LOCAL hit is "good enough" to answer without falling back to the web.
+    /// Deliberately distinct from <c>RagOptions.MinScore</c> (the retrieval hard floor, kept permissive
+    /// at 0 so this aggregator sees the real top score): below this, a web lookup is preferred. Tuning
+    /// this is Phase 5's job; 0.35 is a starting guess.
+    /// </summary>
+    public double LocalMinScore { get; set; } = 0.35;
+
+    /// <summary>
+    /// Cap on the grounding text injected from local chunks, to protect the lean model's context window.
+    /// At least the single strongest chunk is always included. Web results are already few and short, so
+    /// this targets the local path.
+    /// </summary>
+    public int MaxContextChars { get; set; } = 6000;
+
+    /// <summary>Computed (not config): local RAG retrieval is enabled (<c>Rag:Enabled</c>).</summary>
+    public bool LocalEnabled { get; set; }
+
+    /// <summary>Computed (not config): a web-search provider is configured (e.g. a Tavily API key is set).</summary>
+    public bool WebEnabled { get; set; }
+
+    /// <summary>The <c>search</c> tool is offered iff at least one real source backs it (plan §D7).</summary>
+    public bool Available => LocalEnabled || WebEnabled;
+}

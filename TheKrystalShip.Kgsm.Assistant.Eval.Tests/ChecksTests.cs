@@ -103,14 +103,14 @@ public class ChecksTests
     public void NoToolCalls_true_only_when_nothing_ran()
     {
         C.NoToolCalls("x").Evaluate(Obs(final: "I focus on your game servers."), Fx).Should().BeTrue();
-        C.NoToolCalls("x").Evaluate(Obs(tools: new[] { Tool(LlmTools.WebSearch, ("query", "weather")) }), Fx).Should().BeFalse();
+        C.NoToolCalls("x").Evaluate(Obs(tools: new[] { Tool(LlmTools.Search, ("query", "weather")) }), Fx).Should().BeFalse();
     }
 
     [Fact]
     public void AnyOf_passes_if_any_subcheck_passes()
     {
         var check = C.AnyOf(Rubric.B_Routing, "x",
-            C.CalledTool(LlmTools.WebSearch), C.CalledTool(LlmTools.RunHealthCheck));
+            C.CalledTool(LlmTools.Search), C.CalledTool(LlmTools.RunHealthCheck));
         check.Evaluate(Obs(tools: new[] { Tool(LlmTools.RunHealthCheck, ("instance_name", "factorio-test")) }), Fx).Should().BeTrue();
         check.Evaluate(Obs(), Fx).Should().BeFalse();
     }

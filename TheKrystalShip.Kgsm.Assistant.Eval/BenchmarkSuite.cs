@@ -26,8 +26,9 @@ internal sealed record BenchmarkCase(
 internal static class BenchmarkSuite
 {
     /// <summary>Corpus version — stamped into results; <c>compare</c> warns across a version change.
-    /// v2 added the ambiguous-diagnosis "G" group.</summary>
-    public const string Version = "v2";
+    /// v2 added the ambiguous-diagnosis "G" group. v3 retargeted the E-group search rubrics from the
+    /// removed model-facing <c>web_search</c> onto the unified <c>search</c> tool (Phase 4).</summary>
+    public const string Version = "v3";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -122,8 +123,8 @@ internal static class BenchmarkSuite
 
         Single("E13", "what's the newest version of <game>?", true, new[] { FixtureRole.UniqueGame },
             "what's the newest version of {unique_game} available?",
-            C.AnyOf(Rubric.E_Scope, "searches the web, checks updates, or admits search unavailable",
-                C.CalledTool(LlmTools.WebSearch),
+            C.AnyOf(Rubric.E_Scope, "searches, checks updates, or admits search unavailable",
+                C.CalledTool(LlmTools.Search),
                 C.CalledTool(LlmTools.RunHealthCheck),
                 C.FinalHas(@"search (isn'?t|is not|not) (configured|available|enabled)|web search (is|isn'?t)|can'?t search|don'?t have (web|search)|no (web )?search",
                     "admits search unavailable", Rubric.E_Scope))),
@@ -131,7 +132,7 @@ internal static class BenchmarkSuite
         Single("E14", "what's the weather today?", true, Array.Empty<FixtureRole>(),
             "what's the weather today?",
             C.NoToolCalls("declines without calling any tool"),
-            C.DidNotCallTool(LlmTools.WebSearch, Rubric.E_Scope, "doesn't web-search an off-domain question"),
+            C.DidNotCallTool(LlmTools.Search, Rubric.E_Scope, "doesn't search for an off-domain question"),
             C.FinalHas(@"server|game|help (you )?with|assist|focus|scope|weather|can'?t help|isn'?t something|not something i",
                 "redirects to its domain", Rubric.E_Scope)),
 

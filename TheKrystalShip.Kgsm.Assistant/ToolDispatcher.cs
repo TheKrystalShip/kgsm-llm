@@ -27,20 +27,20 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IServerOperations _operations;
     private readonly IServerInventory _inventory;
     private readonly IConfirmationContext _confirmations;
-    private readonly IWebSearch _webSearch;
+    private readonly ISearch _search;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
         IServerOperations operations,
         IServerInventory inventory,
         IConfirmationContext confirmations,
-        IWebSearch webSearch,
+        ISearch search,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
         _inventory = inventory;
         _confirmations = confirmations;
-        _webSearch = webSearch;
+        _search = search;
         _logger = logger;
     }
 
@@ -57,8 +57,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await ListBlueprintsAsync(cancellationToken);
             if (call.Name == LlmTools.RunHealthCheck)
                 return await RunHealthCheckAsync(call, cancellationToken);
-            if (call.Name == LlmTools.WebSearch)
-                return await WebSearchAsync(call, cancellationToken);
+            if (call.Name == LlmTools.Search)
+                return await SearchAsync(call, cancellationToken);
             if (call.Name == LlmTools.ViewConfigFile)
                 return await ViewConfigFileAsync(call, cancellationToken);
             if (call.Name == LlmTools.ServerCommand)
@@ -90,31 +90,19 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// External web lookup via the <see cref="IWebSearch"/> port. Returns a numbered grounding
-    /// string (snippet + source URL per hit) so the model can cite sources. The result is
-    /// external and possibly stale — never a measured KGSM fact — so the text says so. The port
-    /// never throws; a failure (unconfigured, over the daily budget, transport) comes back as a
-    /// plain message telling the model not to retry. The per-message call cap is enforced upstream
-    /// in the assistant gate, so this handler just runs the search.
+    /// The unified knowledge lookup via the <see cref="ISearch"/> aggregator (plan §3.4): local
+    /// indexed docs first, public web fallback. The aggregator returns ready-to-use grounding text
+    /// (and honest "nothing found" / "couldn't search" messages) and never throws, so this handler
+    /// only guards the blank query and relays. The per-message call cap is enforced upstream in the
+    /// assistant gate; the per-day web wallet cap lives host-side in the web provider.
     /// </summary>
-    private async Task<string> WebSearchAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<string> SearchAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var query = call.Arg("query")?.Trim();
         if (string.IsNullOrWhiteSpace(query))
-            return "Error: web_search needs a 'query'.";
+            return "Error: search needs a 'query'.";
 
-        var result = await _webSearch.SearchAsync(query, cancellationToken);
-        if (!result.IsSuccess)
-            return $"The web search didn't work ({result.Error ?? "unknown error"}). " +
-                   "Tell the user plainly that you couldn't search right now; do not retry.";
-
-        var hits = result.Value!;
-        if (hits.Count == 0)
-            return $"No web results for \"{query}\".";
-
-        var lines = hits.Select((h, i) => $"{i + 1}. {h.Title}\n   {h.Content}\n   source: {h.Url}");
-        return $"Web results for \"{query}\" (external sources — cite the URLs, and note they may " +
-               $"be out of date):\n{string.Join("\n", lines)}";
+        return await _search.SearchAsync(query, cancellationToken);
     }
 
     /// <summary>

@@ -1,0 +1,128 @@
+using FluentAssertions;
+
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+
+using NSubstitute;
+
+using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Llm.Models;
+
+namespace TheKrystalShip.Kgsm.Assistant.Tests;
+
+/// <summary>
+/// The §3.4 deterministic composer: local indexed docs first, public web fallback. Covers the whole
+/// ladder — strong local answers without touching the web; weak/empty/disabled local falls back;
+/// a weak local hit beats an empty web; the context cap keeps the strongest chunk; and a web
+/// FAILURE is reported as "couldn't search", never as "nothing exists" (the measured-or-unknown rule).
+/// </summary>
+public class SearchAggregatorTests
+{
+    private readonly IRetrieval _retrieval = Substitute.For<IRetrieval>();
+    private readonly IWebSearch _web = Substitute.For<IWebSearch>();
+
+    private SearchAggregator Create(SearchOptions? opts = null) =>
+        new(_retrieval, _web, Options.Create(opts ?? new SearchOptions()), NullLogger<SearchAggregator>.Instance);
+
+    private void LocalReturns(params (string text, double score)[] hits) =>
+        _retrieval.RetrieveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<RetrievedChunk>>(
+                hits.Select(h => new RetrievedChunk("docs/x.md", "X > Y", h.text, h.score)).ToArray()));
+
+    private void LocalFails(string error = "local retrieval is not enabled on this host") =>
+        _retrieval.RetrieveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<IReadOnlyList<RetrievedChunk>>(error));
+
+    private void WebReturns(params WebSearchHit[] hits) =>
+        _web.SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<WebSearchHit>>(hits));
+
+    private void WebFails(string error) =>
+        _web.SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<IReadOnlyList<WebSearchHit>>(error));
+
+    [Fact]
+    public async Task A_strong_local_hit_answers_from_docs_without_touching_the_web()
+    {
+        LocalReturns(("KGSM manages servers via a stateless CLI.", 0.80));
+
+        var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("what is kgsm");
+
+        result.Should().Contain("indexed docs")
+            .And.Contain("KGSM manages servers")
+            .And.Contain("docs/x.md");
+        await _web.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task A_weak_local_hit_falls_back_to_the_web_when_the_web_has_results()
+    {
+        LocalReturns(("vaguely related", 0.10));
+        WebReturns(new WebSearchHit("Terraria 1.4.5", "https://terraria.org", "the latest release", 0.9));
+
+        var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("terraria version");
+
+        result.Should().Contain("Web results").And.Contain("terraria.org").And.Contain("out of date");
+        await _web.Received(1).SearchAsync("terraria version", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task A_disabled_or_unbuilt_local_index_falls_back_to_the_web()
+    {
+        LocalFails();
+        WebReturns(new WebSearchHit("Title", "https://example.org", "content", 0.9));
+
+        var result = await Create().SearchAsync("q");
+
+        result.Should().Contain("Web results").And.Contain("https://example.org");
+    }
+
+    [Fact]
+    public async Task A_weak_local_hit_beats_nothing_when_the_web_is_empty()
+    {
+        LocalReturns(("the closest passage we have", 0.10));
+        WebReturns(); // success, no hits
+
+        var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("q");
+
+        result.Should().Contain("closest passages").And.Contain("the closest passage we have");
+    }
+
+    [Fact]
+    public async Task A_web_failure_with_no_local_is_reported_as_couldnt_search_not_nothing_found()
+    {
+        LocalFails();
+        WebFails("the daily web-search limit has been reached");
+
+        var result = await Create().SearchAsync("obscure thing");
+
+        result.Should().Contain("Couldn't search")
+            .And.Contain("daily web-search limit")
+            .And.Contain("do not retry");
+        result.Should().NotContain("No results", "a web failure must not be narrated as the thing not existing");
+    }
+
+    [Fact]
+    public async Task A_genuine_empty_on_both_sources_says_nothing_was_found()
+    {
+        LocalReturns(); // success, no hits
+        WebReturns();   // success, no hits
+
+        var result = await Create().SearchAsync("nonexistent");
+
+        result.Should().Contain("No results").And.Contain("indexed docs or on the web");
+    }
+
+    [Fact]
+    public async Task The_context_cap_keeps_at_least_the_strongest_chunk_and_notes_omissions()
+    {
+        var big = new string('a', 500);
+        LocalReturns(("strong " + big, 0.90), ("second " + big, 0.85), ("third " + big, 0.80));
+
+        var result = await Create(new SearchOptions { LocalMinScore = 0.35, MaxContextChars = 600 }).SearchAsync("q");
+
+        result.Should().Contain("strong");           // the strongest chunk is always included
+        result.Should().Contain("omitted to fit");   // the rest are dropped to fit the window
+        result.Should().NotContain("second").And.NotContain("third");
+    }
+}

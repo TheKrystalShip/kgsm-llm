@@ -183,12 +183,17 @@ secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, Can
 
 // The tools the caller is authorized to use, with names/descriptions/parameters.
 // Fully server-derived — no client input. Lets the SPA populate a tool picker.
-secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IPromptOverrides promptOverrides, CancellationToken ct) =>
+secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IPromptOverrides promptOverrides,
+    IOptions<SearchOptions> searchOptions, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
 
     var tools = canPerform ? LlmTools.All : LlmTools.ReadOnly;
+    // Mirror ServerAssistant.SelectTools: omit `search` when no source backs it (§D7), so the SPA's
+    // picker never lists a tool the turn would reject.
+    if (!searchOptions.Value.Available)
+        tools = tools.Where(t => t.Tool != LlmTools.Search).ToArray();
     tools = promptOverrides.OverlayTools(tools);
 
     var dtos = tools.Select(t => new ToolDto(

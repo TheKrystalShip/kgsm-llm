@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
@@ -31,12 +32,12 @@ public class ServerAssistant : IServerAssistant
     private const int MaxStagedCommandsPerMessage = 5;
 
     /// <summary>
-    /// Per-message ceiling on web searches. Each search spends a provider credit and adds an
-    /// agent-loop iteration, so this stops one prompt from spraying searches (a runaway loop or
-    /// an over-eager refine). The per-day wallet cap is a separate, host-side backstop; this is
-    /// the in-turn guard. Tunable; kept small on purpose.
+    /// Per-message ceiling on <c>search</c> calls. Each adds an agent-loop iteration (and a web
+    /// fallback may spend a provider credit), so this stops one prompt from spraying lookups (a
+    /// runaway loop or an over-eager refine). It is now a loop-runaway guard, not the wallet guard —
+    /// the per-day web spend cap lives host-side in the provider. Matches the staging cap; tunable.
     /// </summary>
-    private const int MaxWebSearchesPerMessage = 3;
+    private const int MaxSearchesPerMessage = 5;
 
     private readonly ILlmAgent _agent;
     private readonly ISystemPromptBuilder _promptBuilder;
@@ -45,6 +46,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IServerOperations _operations;
     private readonly IToolRelevanceFilter _toolFilter;
     private readonly IPromptOverrides _promptOverrides;
+    private readonly SearchOptions _searchOptions;
     private readonly ILogger<ServerAssistant> _logger;
 
     public ServerAssistant(
@@ -55,6 +57,7 @@ public class ServerAssistant : IServerAssistant
         IServerOperations operations,
         IToolRelevanceFilter toolFilter,
         IPromptOverrides promptOverrides,
+        IOptions<SearchOptions> searchOptions,
         ILogger<ServerAssistant> logger)
     {
         _agent = agent;
@@ -64,6 +67,7 @@ public class ServerAssistant : IServerAssistant
         _operations = operations;
         _toolFilter = toolFilter;
         _promptOverrides = promptOverrides;
+        _searchOptions = searchOptions.Value;
         _logger = logger;
     }
 
@@ -82,6 +86,13 @@ public class ServerAssistant : IServerAssistant
         string userPrompt, bool canPerformActions, IReadOnlyList<string>? requestedTools)
     {
         var authorized = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+
+        // §D7 omit-when-disabled: the unified `search` tool is offered only when at least one source
+        // backs it (RAG enabled and/or a web provider configured). Removed BEFORE the requested-tool
+        // validation below, so a client asking for `search` on a host where it's unavailable gets the
+        // honest invalid-tool error — never a dead tool the model would call and watch fail.
+        if (!_searchOptions.Available)
+            authorized = authorized.Where(t => t.Tool != LlmTools.Search).ToArray();
 
         if (requestedTools is { Count: > 0 })
         {
@@ -447,14 +458,15 @@ public class ServerAssistant : IServerAssistant
         var searches = 0;
         return call =>
         {
-            // web_search is read-only (open to everyone), but each call spends a credit, so it
-            // carries its own per-message cap — the wallet's in-turn guard (the per-day ceiling
-            // lives host-side). Checked before the read-only pass-through below.
-            if (call.Name == LlmTools.WebSearch)
+            // search is read-only (open to everyone), but each call adds a loop iteration (and a web
+            // fallback may spend a credit), so it carries its own per-message cap — the in-turn
+            // runaway guard (the per-day web wallet ceiling lives host-side). Checked before the
+            // read-only pass-through below.
+            if (call.Name == LlmTools.Search)
             {
-                if (searches >= MaxWebSearchesPerMessage)
+                if (searches >= MaxSearchesPerMessage)
                     return ToolGate.Refuse(
-                        $"Refused: at most {MaxWebSearchesPerMessage} web searches per message. " +
+                        $"Refused: at most {MaxSearchesPerMessage} searches per message. " +
                         "Answer from what you already found, or tell the user you couldn't find it.");
 
                 searches++;

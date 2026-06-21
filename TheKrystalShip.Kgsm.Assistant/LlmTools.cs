@@ -21,7 +21,12 @@ public static class LlmTools
     public static readonly Tool GetStatus = new("get_status");
     public static readonly Tool ListBlueprints = new("list_blueprints");
     public static readonly Tool RunHealthCheck = new("run_health_check");
-    public static readonly Tool WebSearch = new("web_search");
+
+    // The unified knowledge-search tool (§3.4): the operator's indexed docs first, the public web as
+    // a fallback. Replaces the former model-facing `web_search` — IWebSearch is now an internal
+    // capability the `search` aggregator composes, not a tool the model picks directly. Offered iff a
+    // source backs it (SearchOptions.Available); the dispatcher routes it to ISearch.
+    public static readonly Tool Search = new("search");
 
     // Authorized read (offered only to action-authorized callers — exposes file
     // contents, so gated like the command tier even though it mutates nothing)
@@ -97,9 +102,10 @@ public static class LlmTools
 
     private static readonly LlmToolParameter SearchQuery = new(
         "query",
-        "What to look up on the public web. For OUTSIDE facts only — e.g. a game's latest " +
-        "version, release notes, or what a config option means. NOT for anything about this " +
-        "host's own servers (status/config/health) — use the KGSM tools for those.");
+        "What to look up. Searches the operator's own indexed documentation first, then falls back " +
+        "to the public web. For OUTSIDE/background facts that help with the games or servers — e.g. " +
+        "a game's latest version, release notes, or what a config option means. NOT for anything " +
+        "about this host's own servers (status/config/health) — use the KGSM tools for those.");
 
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
@@ -119,13 +125,13 @@ public static class LlmTools
             "instead of fetching status, logs and disk separately.",
             InstanceName),
 
-        LlmToolDefinition.Create(WebSearch,
-            "Search the public web and get back short extracted snippets, each with its source URL. " +
-            "Use it ONLY for outside facts that help with the games/servers — a game's latest " +
-            "version, patch notes, or what a setting does. The results are external and may be out " +
-            "of date, so cite the source URLs and don't state them as certain. Do NOT use this for " +
-            "anything about this host's own servers (status, config, health) — the KGSM tools are " +
-            "authoritative for those.",
+        LlmToolDefinition.Create(Search,
+            "Look something up in the knowledge base: the operator's indexed documentation first, then " +
+            "the public web as a fallback. Returns short passages, each with its source (a doc path or " +
+            "a URL). Use it ONLY for outside facts that help with the games/servers — a game's latest " +
+            "version, patch notes, or what a setting does. Results may be external and out of date, so " +
+            "cite the sources and don't state them as certain. Do NOT use this for anything about this " +
+            "host's own servers (status, config, health) — the KGSM tools are authoritative for those.",
             SearchQuery),
     };
 

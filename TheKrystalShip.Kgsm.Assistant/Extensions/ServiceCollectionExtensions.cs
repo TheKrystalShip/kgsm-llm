@@ -40,6 +40,10 @@ public static class ServiceCollectionExtensions
         // AddKgsmAdapters (with Rag:Enabled=true), which registers a concrete IRetrieval that
         // wins over this default. Without it, retrieval fails cleanly rather than breaking DI.
         services.TryAddSingleton<IRetrieval, DisabledRetrieval>();
+        // The unified `search` capability the model sees (§3.4): a deterministic composer over the two
+        // ports above (local docs first → web fallback). Always registered; whether the `search` TOOL
+        // is offered is a separate, config-driven decision (SearchOptions.Available, set by the host).
+        services.AddSingleton<ISearch, SearchAggregator>();
         services.AddSingleton<IServerAssistant, ServerAssistant>();
 
         return services;

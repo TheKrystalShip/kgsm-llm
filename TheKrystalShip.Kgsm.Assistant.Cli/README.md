@@ -193,7 +193,7 @@ Config layers, lowest → highest precedence (each overrides the one before it):
 | `Prompts:Directory` | `Prompts__Directory` | *(XDG config home)* | Editable prompt/tool-description files (see [Tuning](#tuning-prompts--tool-descriptions-no-recompile)). Empty ⇒ `~/.config/kgsm-assistant/prompts`. |
 | `InventoryCache:InstancesTtlSeconds` | `InventoryCache__InstancesTtlSeconds` | `300` | Instance-list cache TTL. |
 | `InventoryCache:BlueprintsTtlSeconds` | `InventoryCache__BlueprintsTtlSeconds` | `600` | Blueprint-list cache TTL. |
-| `WebSearch:ApiKey` | `WebSearch__ApiKey` | *(empty)* | Tavily key. **ENV-only**; empty ⇒ web search disabled (fails closed). |
+| `WebSearch:ApiKey` | `WebSearch__ApiKey` | *(empty)* | Tavily key — backs the web-fallback half of the `search` tool. **ENV-only**; empty ⇒ no web fallback (and, with RAG also off, the `search` tool is omitted entirely). |
 | `WebSearch:MaxResults` | `WebSearch__MaxResults` | `4` | Results per search. |
 | `WebSearch:SearchDepth` | `WebSearch__SearchDepth` | `basic` | `basic` (1 credit) or `advanced` (2). |
 | `WebSearch:TimeoutSeconds` | `WebSearch__TimeoutSeconds` | `10` | Per-search timeout (the agent loop blocks on it). |
@@ -215,7 +215,7 @@ The Tavily API key is the one value that must **never** sit in a committed/shipp
 it only through the environment, e.g.
 
 ```bash
-export WebSearch__ApiKey=tvly-…       # web search enabled while this is set; absent ⇒ disabled
+export WebSearch__ApiKey=tvly-…       # enables the `search` tool's web fallback while set; absent ⇒ local-only (or no `search` if RAG is also off)
 ```
 
 For a long-lived setup, put it in a systemd `EnvironmentFile=`, your shell profile, or an env

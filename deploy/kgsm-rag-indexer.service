@@ -1,0 +1,46 @@
+[Unit]
+# KGSM RAG indexer — watches the docs corpus and rebuilds the vector index on change.
+# Native-AOT standalone binary (no .NET runtime needed). Full runbook: ../docs/DEPLOYMENT.md
+Description=KGSM RAG indexer (watch mode)
+Documentation=https://github.com/TheKrystalShip/kgsm-llm
+# IMPORTANT: order AFTER Ollama. The indexer embeds via Ollama at startup; if Ollama is down
+# when it boots, the initial build fails and there is NO periodic retry (the index stays stale
+# until the next doc edit). Ordering after ollama.service is the fix for that startup gap.
+After=network-online.target ollama.service
+Wants=network-online.target
+Requires=ollama.service
+
+[Service]
+Type=simple
+User=kgsm
+Group=kgsm
+
+# --watch builds once, then re-indexes (incrementally) on any change under --source until stopped.
+# The --index file's DIRECTORY must share a filesystem with the index (atomic temp→rename swap),
+# and must be the SAME path the Service reads via Rag:IndexPath.
+ExecStart=/opt/kgsm-assistant/indexer/kgsm-rag-indexer \
+    --watch \
+    --source /opt/kgsm-assistant/docs \
+    --index /var/lib/kgsm-assistant/rag-index.krag \
+    --model embeddinggemma \
+    --debounce-ms 750
+# Override the embedder endpoint here if Ollama isn't on localhost:
+# Environment=... (the indexer takes --endpoint http://host:11434)
+
+# Graceful stop: the daemon handles SIGTERM and exits 0, so on-failure won't respawn an intended stop.
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kgsm-rag-indexer
+
+NoNewPrivileges=true
+# The index dir is the only thing it writes to.
+ReadWritePaths=/var/lib/kgsm-assistant
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,120 +1,93 @@
-# TheKrystalShip.Llm
+# kgsm-llm
 
-A small, reusable C# library for talking to a **local LLM** (Ollama) and running a
-**tool-calling agent loop** — the transport, conversation memory, and loop are generic;
-your application supplies the tools, the system prompt, and the per-call policy.
+The **LLM / assistant** layer of the [KGSM](https://github.com/TheKrystalShip) game-server
+ecosystem: a local, tool-calling AI assistant that answers questions about — and (with
+authorization) acts on — the game servers a `kgsm` engine manages. It runs entirely on a local
+**Ollama** model (no cloud LLM), so it can live on the same VRAM-budgeted box as the servers.
 
-It is deliberately application-agnostic: the library never learns what your tools *mean*.
-Authorization, rate limits, and "what to offer this turn" are decided by the host and
-handed to the loop per turn. This makes the same package usable from a Discord bot, an
-ASP.NET chatbot, a CLI, etc.
+> **New here? Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the mental model,
+> then [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) to stand it up.
 
-> **Logging** — the hosts in this repo follow the ecosystem logging convention
-> (`../logging-convention.md`): the **Service** uses `AddSystemdConsole()` (journald `<N>`
-> priority prefix) with `appsettings.json`/env levels; the interactive **CLI**/**Eval** keep a
-> `SimpleConsole`→stderr, quiet-by-default (`--verbose`) variant. The library itself only takes
-> `ILogger<T>` from its host.
+## What's in this repo
 
-## Install
+One shared backend (Ollama agent loop → KGSM tools → kgsm-lib) exposed through several surfaces,
+plus a self-contained RAG subsystem:
 
-```xml
-<PackageReference Include="TheKrystalShip.Llm" Version="1.0.0" />
-```
+| Project | Role |
+|---------|------|
+| **`TheKrystalShip.Llm`** | Generic Ollama tool-calling **agent loop** library (transport, memory, loop). Knows nothing about KGSM. → [README](TheKrystalShip.Llm/README.md) |
+| **`TheKrystalShip.Kgsm.Assistant`** | The KGSM **brain**: tool catalog, ports, system prompt, action policy, the `search` aggregator |
+| **`TheKrystalShip.Kgsm.Assistant.Infrastructure`** | **Adapters** that bind the ports to reality — kgsm-lib, Tavily web search, the RAG index |
+| **`TheKrystalShip.Kgsm.Assistant.Service`** | 🚀 **HTTP/SSE turn API** (for the web SPA), Discord-OAuth auth → [README](TheKrystalShip.Kgsm.Assistant.Service/README.md) |
+| **`TheKrystalShip.Kgsm.Assistant.Cli`** | 🚀 **`kgsm-assistant`** terminal app (one-shot / pipe / REPL) → [README](TheKrystalShip.Kgsm.Assistant.Cli/README.md) |
+| **`TheKrystalShip.Rag`** | AOT-safe **RAG core**: embed client, chunker, versioned index, cosine search |
+| **`TheKrystalShip.Rag.Indexer`** | 🚀 **`kgsm-rag-indexer`** — standalone Native-AOT indexer daemon → [README](TheKrystalShip.Rag.Indexer/README.md) |
+| **`TheKrystalShip.Kgsm.Assistant.Eval`** | Reproducible **benchmark** (routing + ground-truth RAG accuracy) → [README](TheKrystalShip.Kgsm.Assistant.Eval/README.md) |
 
-## Wire up (DI)
+🚀 = a **deployable** (the rest are libraries). Each `*.Tests` project is its xUnit suite.
 
-```csharp
-using TheKrystalShip.Llm.Extensions;
-using TheKrystalShip.Llm.Interfaces;
+## Quick start (CLI, ~5 minutes)
 
-// Registers ILlmClient (Ollama), IConversationStore (in-memory), ILlmAgent.
-// Binds options from config sections "Ollama", "Conversation", "LlmAgent".
-services.AddLocalLlm(configuration);
-
-// You MUST register your own tool dispatcher — the agent depends on it.
-services.AddSingleton<IToolDispatcher, MyToolDispatcher>();
-```
-
-Example configuration:
-
-```json
-{
-  "Ollama":       { "Endpoint": "http://localhost:11434", "Model": "gemma4:12b", "NumCtx": 32768, "TimeoutSeconds": 300, "Temperature": 0.3 },
-  "Conversation": { "MaxMessages": 12, "IdleTimeoutMinutes": 15 },
-  "LlmAgent":     { "MaxIterations": 8, "MaxToolOutputChars": 1500 }
-}
-```
-
-## Run a turn
-
-The host decides everything policy-related and passes it in an `AgentTurn`:
-
-```csharp
-// 1) Which tools to offer this turn (this set IS the whitelist).
-var tools = canPerformActions ? AllTools : ReadOnlyTools;
-
-// 2) Per-call gate — closure can hold state (e.g. an action counter for a cap).
-int actions = 0;
-Func<LlmToolCall, ToolGate> gate = call =>
-{
-    if (!IsMutating(call.Name)) return ToolGate.Allow;
-    if (!canPerformActions)     return ToolGate.Refuse("You don't have permission to do that.");
-    if (actions >= 5)           return ToolGate.Refuse("Action limit reached for this message.");
-    actions++;
-    return ToolGate.Allow;
-};
-
-var result = await agent.RunAsync(new AgentTurn
-{
-    ConversationId = $"{userId}:{channelId}",   // opaque; e.g. a web session id elsewhere
-    UserPrompt     = prompt,
-    SystemPrompt   = BuildSystemPrompt(...),     // built fresh by the host each turn
-    Tools          = tools,
-    Gate           = gate,
-});
-
-if (result.IsSuccess) Reply(result.Value!);
-```
-
-## What's in the box
-
-| Area | Types |
-|---|---|
-| DTOs | `LlmMessage`/`LlmRole`, `LlmResponse`, `LlmToolCall`, `LlmToolDefinition`/`LlmToolParameter`, `Result`/`Result<T>` |
-| Turn/policy | `AgentTurn`, `ToolGate` |
-| Interfaces | `ILlmClient`, `IConversationStore`, `IToolDispatcher`, `ILlmAgent` |
-| Ollama | `OllamaLlmClient`, `OllamaOptions` |
-| Memory | `InMemoryConversationStore`, `ConversationOptions` |
-| Loop | `LlmAgent`, `LlmAgentOptions` |
-| DI | `AddLocalLlm(IConfiguration)` |
-
-## Boundaries / responsibilities
-
-- **Library owns:** the model↔tool round-trip, the iteration cap, tool-output truncation,
-  the conversation persistence boundary (only user + final assistant text is stored).
-- **Host owns:** the tool definitions, the `IToolDispatcher` that executes them, the system
-  prompt, and the per-call `ToolGate` (authorization, caps, confirmation).
-
-The `IToolDispatcher` is expected to enforce the tool whitelist (refuse unknown tools) and
-never throw — return execution failures as result strings so the model can recover.
-
-## Local development (consuming from a folder feed)
-
-While iterating before this is published to a real feed, it's consumed from a local
-folder feed (e.g. `/home/heisen/local-nuget`) via a `nuget.config` in the consumer:
+The fastest end-to-end check. Assumes the `kgsm-lib` sibling repo, the .NET 10 SDK, Ollama with
+`gemma4:12b`, and a local `kgsm.sh` — the [deployment runbook](docs/DEPLOYMENT.md) covers each.
 
 ```bash
-dotnet pack TheKrystalShip.Llm/TheKrystalShip.Llm.csproj -c Release -o /home/heisen/local-nuget
+# In the tks workspace, with kgsm-lib checked out alongside this repo:
+cd ~/tks/kgsm-llm
+dotnet build TheKrystalShip.Llm.slnx -c Release
+# Note: -c Release on the run reuses the build above, so stdout is just the answer
+# (a bare `dotnet run` rebuilds in Debug and prints build output first).
+KGSM__Path=/opt/kgsm/kgsm.sh \
+  dotnet run -c Release --project TheKrystalShip.Kgsm.Assistant.Cli -- "How many servers do I have, and what are they?"
+# → a plain-English answer derived from a real kgsm tool call, e.g.:
+#   "You have 2 servers currently installed: factorio-test and terraria-hardmode."
 ```
 
-> ⚠️ **Cache footgun:** NuGet caches the *extracted* package by version. Re-packing the
-> **same** version (`1.0.0`) will be silently ignored by consumers — they keep using the
-> cached copy, so your edits appear to have no effect. Either **bump `<Version>`** on each
-> change, or clear the cached extraction after re-packing:
-> ```bash
-> rm -rf ~/.nuget/packages/thekrystalship.llm/<version>
-> ```
+For the HTTP service, the RAG indexer, systemd, secrets, and reverse-proxy/TLS, follow
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** start to finish.
+
+## Documentation
+
+| Doc | What it's for |
+|-----|---------------|
+| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | How the layers fit; the agent loop, ports/adapters, RAG producer/consumer split; ecosystem context |
+| **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** | Cold-start runbook: prerequisites → build → publish → run (CLI, Service, indexer) → verify |
+| **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** | Every config section/key/default, the env-var form, the secrets list |
+| **[deploy/](deploy/)** | Ready-to-copy systemd units + an env-file template |
+| Per-project `README.md` / `CLAUDE.md` | Surface-specific usage and design notes |
+| [docs/m7-sse-5a-spec.md](docs/m7-sse-5a-spec.md) | The Service `/turn` SSE event contract (for SPA integration) |
+
+## Where this sits in the ecosystem
+
+```
+kgsm (bash engine) ──┐
+kgsm-watchdog ───────┤── kgsm-lib (the only C#↔engine chokepoint) ──┐
+                     ┘                                              │
+                          ┌───────────────────────────────────────┘
+                          ▼
+   ┌──────────────── kgsm-llm (this repo) ───────────────┐
+   │  Llm loop → Assistant brain → Infrastructure adapters│
+   │      ├── Service (HTTP/SSE) ──► web SPA (kgsm-web/api)│
+   │      └── CLI (terminal)                               │
+   │  Rag core ◄── Indexer daemon (writes the index file) │
+   └──────────────────────────────────────────────────────┘
+```
+
+This repo **never** shells out to `kgsm.sh` directly — all engine access goes through
+**kgsm-lib** (a project reference to a sibling checkout; see [deployment §1.1](docs/DEPLOYMENT.md#11-the-kgsm-lib-sibling-repo-build-time--do-this-first)).
+It depends only on kgsm-lib + a local Ollama, and runs fully standalone (no other ecosystem
+service required). The broader map lives in the workspace's `system-architecture.md`.
+
+## Build & test
+
+```bash
+dotnet build TheKrystalShip.Llm.slnx -c Release
+dotnet test  TheKrystalShip.Llm.slnx                 # ~500 tests, hermetic; live-Ollama smokes are inert without KGSM_LIVE_OLLAMA=1
+```
+
+The `TheKrystalShip.Rag*` projects are Native-AOT-clean — publishing the indexer must emit
+**0 ILC warnings** (`dotnet publish TheKrystalShip.Rag.Indexer -c Release -r linux-x64`).
 
 ## License
 
-GPL-3.0-only.
+GPL-3.0-only. See [LICENSE](LICENSE).

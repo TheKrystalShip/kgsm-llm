@@ -1,0 +1,43 @@
+[Unit]
+# KGSM Assistant — HTTP/SSE turn API (framework-dependent .NET 10 app).
+# Full runbook: ../docs/DEPLOYMENT.md
+Description=KGSM Assistant HTTP/SSE service
+Documentation=https://github.com/TheKrystalShip/kgsm-llm
+# Runtime deps are LAZY (first /turn), not startup — the service boots fine without them.
+# If Ollama and/or the kgsm engine run as systemd units on this host, order after them:
+After=network-online.target
+Wants=network-online.target
+# After=ollama.service kgsm-watchdog.service
+
+[Service]
+Type=simple
+# Run as the user that OWNS the kgsm instance registry (~/.local/share/kgsm): the service
+# shells out to kgsm.sh via kgsm-lib, so it must see the same instances that user does.
+# Do NOT override XDG_DATA_HOME here — that hides every instance (see DEPLOYMENT.md gotchas).
+User=kgsm
+Group=kgsm
+
+WorkingDirectory=/opt/kgsm-assistant/service
+ExecStart=/usr/bin/dotnet /opt/kgsm-assistant/service/TheKrystalShip.Kgsm.Assistant.Service.dll
+
+# Plain HTTP on loopback — terminate TLS at a reverse proxy (nginx) in front. See DEPLOYMENT.md.
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://127.0.0.1:5180
+# Secrets + non-default config live here (chmod 600, root:root or kgsm:kgsm). Template: assistant.env.example
+EnvironmentFile=/etc/kgsm-assistant/service.env
+
+Restart=on-failure
+RestartSec=5
+
+# Journald with the ecosystem's <N> priority prefixes (the app uses AddSystemdConsole()).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kgsm-assistant
+
+# Light hardening. The service shells out to kgsm.sh (which touches the kgsm data dir, the
+# watchdog socket, and game-server processes), so do NOT add aggressive ProtectSystem/
+# ProtectHome sandboxing without testing a real action end-to-end — it will break kgsm.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

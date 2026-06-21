@@ -1,5 +1,17 @@
 # KGSM Local-LLM Discord Bridge — Project Context & Handoff
 
+> ⚠️ **HISTORICAL — partly superseded (kept for the hardware/Ollama/decision record).**
+> This was the original single-host design+handoff doc (2026-06-08), written before the repo
+> grew into its current library/Service/CLI/RAG-indexer layout. For anything operational, use
+> the current docs instead:
+> - **Run it:** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — incl. the Ollama/VRAM tuning that
+>   originated in §2/§4 here.
+> - **Config:** [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) · **Design:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+>
+> Still accurate and worth keeping: the **GPU/VRAM tuning** (§2, §4–6), the **model bake-off**
+> rationale for `gemma4:12b` (§7), and the **live-list-injection** finding (§7a). The
+> "what's left to build" / phase-status sections are a snapshot of that date, not current state.
+
 > **Purpose of this file:** a self-contained handoff so a cold session (or a future me)
 > can resume work without re-deriving anything. Captures the goal, the hardware/software
 > setup, all testing + results, the design decisions, and what's left to build.

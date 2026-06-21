@@ -223,15 +223,21 @@ file your launcher sources — never in `appsettings.json`.
 
 ## Build & install
 
-Shipped as a self-contained single-file binary (bundles the .NET runtime — runs on a host
-with no SDK installed). No trimming (the Ollama client uses `System.Text.Json` reflection).
+Two distribution options, both fine (the CLI has no daemon/`ExecStart` to keep consistent):
+
+- **Self-contained single-file** (below) — bundles the .NET runtime; runs on a host with no SDK
+  or runtime installed. Larger, fully portable. No trimming (the Ollama client uses
+  `System.Text.Json` reflection).
+- **Framework-dependent** (`dotnet publish -c Release -o out/cli`, ~4 MB) — needs the .NET 10
+  runtime present; this is what the [deployment runbook](../docs/DEPLOYMENT.md#5--the-cli-simplest-path--start-here)
+  uses since the host already has it.
 
 ```bash
 dotnet publish TheKrystalShip.Kgsm.Assistant.Cli \
   -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true
 
 sudo install -m 0755 \
-  TheKrystalShip.Kgsm.Assistant.Cli/bin/Release/net9.0/linux-x64/publish/kgsm-assistant \
+  TheKrystalShip.Kgsm.Assistant.Cli/bin/Release/net10.0/linux-x64/publish/kgsm-assistant \
   /usr/local/bin/kgsm-assistant
 ```
 
@@ -246,7 +252,7 @@ it). Edit it, or layer a per-user `~/.config/kgsm-assistant/appsettings.json` on
 ```bash
 # optional: ship the editable template alongside the binary
 sudo install -m 0644 \
-  TheKrystalShip.Kgsm.Assistant.Cli/bin/Release/net9.0/linux-x64/publish/appsettings.json \
+  TheKrystalShip.Kgsm.Assistant.Cli/bin/Release/net10.0/linux-x64/publish/appsettings.json \
   /usr/local/bin/appsettings.json
 ```
 

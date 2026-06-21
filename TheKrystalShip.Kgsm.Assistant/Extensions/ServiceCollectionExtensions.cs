@@ -36,6 +36,10 @@ public static class ServiceCollectionExtensions
         // and that later registration is the one resolved. Without one, searches fail cleanly
         // rather than breaking DI — keeps the lib embeddable by a host that doesn't use search.
         services.TryAddSingleton<IWebSearch, DisabledWebSearch>();
+        // Local RAG retrieval degrades closed the same way: a host that enables RAG calls
+        // AddKgsmAdapters (with Rag:Enabled=true), which registers a concrete IRetrieval that
+        // wins over this default. Without it, retrieval fails cleanly rather than breaking DI.
+        services.TryAddSingleton<IRetrieval, DisabledRetrieval>();
         services.AddSingleton<IServerAssistant, ServerAssistant>();
 
         return services;

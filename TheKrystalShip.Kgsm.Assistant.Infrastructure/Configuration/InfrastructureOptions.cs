@@ -52,3 +52,34 @@ public sealed class WebSearchOptions
     /// the provider's monthly free credit; given the read-only tier, this is the only spend gate.</summary>
     public int MaxCallsPerDay { get; set; } = 200;
 }
+
+/// <summary>
+/// Local RAG retrieval settings. Bound from the "Rag" section — the SAME section the core's
+/// <c>RagEmbeddingOptions</c> reads (each picks up its own keys); this is the retrieval/host half
+/// (enable switch, where the index lives, how much to return), that is the embedder half. Retrieval
+/// is off by default and fails closed (plan §D7): with <see cref="Enabled"/> false the host wires
+/// no adapter, so <c>DisabledRetrieval</c> stays and the capability is simply omitted.
+/// </summary>
+public sealed class RagOptions
+{
+    public const string Section = "Rag";
+
+    /// <summary>Master switch. False (default) → the host registers no retrieval adapter and the
+    /// library's fail-closed <c>DisabledRetrieval</c> is what resolves. Flip to true once an index exists.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Path to the on-disk <c>.krag</c> index produced by the standalone indexer. A missing
+    /// file is an expected state (indexer hasn't run yet) — retrieval fails closed until it appears.</summary>
+    public string IndexPath { get; set; } = string.Empty;
+
+    /// <summary>Chunks returned per query (the retrieval top-k). Small keeps the grounding text — and
+    /// the context the model has to read — modest.</summary>
+    public int TopK { get; set; } = 5;
+
+    /// <summary>
+    /// Cosine-similarity floor; hits below it are dropped. Default 0 — keep it permissive here. The
+    /// "results too weak, fall back to web search" decision is the Phase 4 aggregator's job and reads
+    /// the TOP score off what retrieval returns, so this stage must not pre-empt it by returning empty.
+    /// </summary>
+    public double MinScore { get; set; }
+}

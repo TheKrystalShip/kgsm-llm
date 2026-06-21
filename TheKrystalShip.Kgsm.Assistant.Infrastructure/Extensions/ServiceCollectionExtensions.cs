@@ -6,11 +6,13 @@ using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Search;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Services;
+using TheKrystalShip.Rag.Ollama;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
 
@@ -81,6 +83,24 @@ public static class ServiceCollectionExtensions
                 client.DefaultRequestHeaders.Authorization =
                     new AuthenticationHeaderValue("Bearer", options.ApiKey);
         });
+
+        // --- Local RAG retrieval ---------------------------------------------------------------
+        // Off by default and fails closed (plan §D7): only when Rag:Enabled is true do we wire the
+        // concrete IRetrieval, which — because this runs AFTER AddKgsmAssistant — wins over the
+        // library's DisabledRetrieval default. When disabled we register nothing, so the capability
+        // is simply absent. The embedder + versioned index reader come from the Native-AOT
+        // TheKrystalShip.Rag core; both RagOptions (host half) and RagEmbeddingOptions (embedder
+        // half) bind the same "Rag" section, each reading its own keys. The index file is produced
+        // out-of-band by the standalone indexer (plan §D6); the provider only reads it.
+        services.Configure<RagOptions>(config.GetSection(RagOptions.Section));
+        var rag = config.GetSection(RagOptions.Section).Get<RagOptions>() ?? new RagOptions();
+        if (rag.Enabled)
+        {
+            services.Configure<RagEmbeddingOptions>(config.GetSection(RagEmbeddingOptions.Section));
+            services.AddSingleton<IEmbeddingClient, OllamaEmbeddingClient>();
+            services.AddSingleton<RagIndexProvider>();
+            services.AddSingleton<IRetrieval, RagRetrieval>();
+        }
 
         return services;
     }

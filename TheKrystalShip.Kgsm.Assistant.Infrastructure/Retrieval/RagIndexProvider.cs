@@ -13,10 +13,13 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 /// The index is a regenerable artifact written atomically by the standalone indexer (plan §D6);
 /// this provider only ever reads it.
 /// <para>
-/// Phase 2 lazy-loads on first use and caches the FIRST successful load, re-attempting on every
-/// call while the file is still absent (the indexer may not have produced it yet — an expected
-/// state, not an error). Hot-reload on atomic swap is Phase 3b: it drops in at the marked spot in
-/// <see cref="Get"/> as a freshness check before returning the cache.
+/// Lazy-loads on first use and caches the load, re-attempting on every call while the file is still
+/// absent (the indexer may not have produced it yet — an expected state, not an error). Phase 3b adds
+/// hot-reload: every <see cref="Get"/> cheaply stats the file (last-write + length) and, when the
+/// indexer atomically swaps in a new build, reloads it. A reload that fails (a mid-swap read, a
+/// corrupt or model-mismatched new build) <em>degrades to the last good index</em> rather than going
+/// dark; the observed stamp is advanced on every attempt — success or failure — so a bad swap-in is
+/// read once, not re-read on every query, while a subsequent good build still self-heals.
 /// </para>
 /// <para>
 /// Enforces the §D9 decoupling contract between the two independently-deployed binaries: a stamped
@@ -32,6 +35,10 @@ internal sealed class RagIndexProvider
     private readonly ILogger<RagIndexProvider> _logger;
     private readonly object _gate = new();
     private RagIndex? _cached;
+
+    // The on-disk identity of the version behind <see cref="_cached"/> (or the last one we attempted
+    // to load). null = no file. Advanced on every load attempt so each distinct version is read once.
+    private (DateTime WriteUtc, long Length)? _stamp;
 
     public RagIndexProvider(
         IOptions<RagOptions> options,
@@ -51,11 +58,50 @@ internal sealed class RagIndexProvider
     {
         lock (_gate)
         {
-            // Phase 3b hot-reload hooks in here: `if (_cached is not null && !FileChanged()) ...`.
-            if (_cached is not null)
+            var current = TryStamp();
+
+            // Fast path: we have a cached index and the file on disk is the same version we loaded.
+            if (_cached is not null && current == _stamp)
                 return Result.Success(_cached);
 
-            return Load();
+            // First load, or the indexer swapped in a new build. Record the observation NOW — before
+            // the load can fail — so a bad swap-in is read once, not re-read on every subsequent call.
+            _stamp = current;
+
+            var loaded = Load();
+            if (loaded.IsSuccess)
+                return loaded;
+
+            // The new on-disk version is unreadable (mid-swap, corrupt, model-mismatched). If we have
+            // a previously-loaded index, keep serving it rather than going dark; a later good build,
+            // having a new stamp, will be picked up and replace it.
+            if (_cached is not null)
+            {
+                _logger.LogWarning(
+                    "Reload of the changed retrieval index failed ({Error}); continuing with the previously loaded index.",
+                    loaded.Error);
+                return Result.Success(_cached);
+            }
+
+            return loaded;
+        }
+    }
+
+    /// <summary>The on-disk identity of the index file (last-write + length), or null when it is
+    /// absent or unreadable. Cheap (one stat) and never throws — a missing file is just "no version".</summary>
+    private (DateTime WriteUtc, long Length)? TryStamp()
+    {
+        if (string.IsNullOrWhiteSpace(_options.IndexPath))
+            return null;
+
+        try
+        {
+            var info = new FileInfo(_options.IndexPath);
+            return info.Exists ? (info.LastWriteTimeUtc, info.Length) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

@@ -61,11 +61,20 @@ public class IndexerArgsTests
     }
 
     [Fact]
-    public void Watch_parses_so_the_host_can_message_it_as_unimplemented()
+    public void Watch_mode_parses_with_its_debounce_default()
     {
         IndexerArgs.TryParse(["--watch", "--source", "docs", "--index", "i"], out var a, out _).Should().BeTrue();
         a.Watch.Should().BeTrue();
         a.Once.Should().BeFalse();
+        a.DebounceMs.Should().Be(750);
+    }
+
+    [Fact]
+    public void Debounce_window_is_configurable()
+    {
+        IndexerArgs.TryParse(["--watch", "--source", "d", "--index", "i", "--debounce-ms", "250"], out var a, out var error)
+            .Should().BeTrue(because: error);
+        a.DebounceMs.Should().Be(250);
     }
 
     [Fact]

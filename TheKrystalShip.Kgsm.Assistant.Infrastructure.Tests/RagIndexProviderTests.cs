@@ -122,9 +122,64 @@ public sealed class RagIndexProviderTests : IDisposable
 
         provider.Get().IsSuccess.Should().BeTrue();
 
-        // Delete the file: a cached provider must still serve the loaded index.
+        // Delete the file: a cached provider must still serve the loaded index (Phase 3b: a vanished
+        // file reads as "changed" → reload fails → degrade to the last good index, never go dark).
         File.Delete(path);
         provider.Get().IsSuccess.Should().BeTrue(because: "the first successful load is cached");
+    }
+
+    [Fact]
+    public void An_atomic_swap_of_a_new_build_is_hot_reloaded()
+    {
+        var path = WriteIndex(BuildIndex(Model, dimension: 3, chunkText: "first build"));
+        var provider = ProviderFor(path, embedderModel: Model);
+
+        provider.Get().Value!.Chunks.Single().Text.Should().Be("first build");
+
+        // The indexer swaps in a new build (two chunks). The provider must pick it up on the next Get.
+        var v2 = new RagIndex
+        {
+            EmbeddingModel = Model,
+            Dimension = 3,
+            ChunkSize = 2000,
+            ChunkOverlap = 200,
+            Chunks =
+            [
+                new IndexedChunk("doc.md", "Doc", "second build", UnitVector(3)),
+                new IndexedChunk("doc2.md", "Doc2", "another chunk", UnitVector(3)),
+            ],
+            Manifest = [new SourceFileEntry("doc.md", "hash", 0, 2)],
+        };
+        SwapIn(v2, path);
+
+        var reloaded = provider.Get();
+        reloaded.IsSuccess.Should().BeTrue(because: reloaded.Error);
+        reloaded.Value!.Chunks.Should().HaveCount(2);
+        reloaded.Value!.Chunks[0].Text.Should().Be("second build");
+    }
+
+    [Fact]
+    public void A_bad_swap_in_degrades_to_the_last_good_index()
+    {
+        var path = WriteIndex(BuildIndex(Model, dimension: 3, chunkText: "good build"));
+        var provider = ProviderFor(path, embedderModel: Model);
+
+        provider.Get().IsSuccess.Should().BeTrue();
+
+        // An index built with a different embedding model swaps in — §D9 rejects it. The provider must
+        // keep serving the last good index rather than going dark.
+        SwapIn(BuildIndex("nomic-embed-text", dimension: 3, chunkText: "wrong model"), path);
+
+        var afterBadSwap = provider.Get();
+        afterBadSwap.IsSuccess.Should().BeTrue(because: "a rejected swap-in degrades to the last good index");
+        afterBadSwap.Value!.Chunks.Single().Text.Should().Be("good build");
+
+        // And the bad version is not re-read on every call — a second Get still serves the cache.
+        provider.Get().Value!.Chunks.Single().Text.Should().Be("good build");
+
+        // A subsequent GOOD build self-heals (the stamp advanced on the bad attempt didn't wedge us).
+        SwapIn(BuildIndex(Model, dimension: 3, chunkText: "healed build"), path);
+        provider.Get().Value!.Chunks.Single().Text.Should().Be("healed build");
     }
 
     private RagIndexProvider ProviderFor(string indexPath, string embedderModel)
@@ -142,13 +197,22 @@ public sealed class RagIndexProviderTests : IDisposable
         return path;
     }
 
-    private static RagIndex BuildIndex(string model, int dimension) => new()
+    /// <summary>Atomically replaces the index, then bumps its last-write time so the provider's
+    /// freshness stamp is guaranteed to change even when two builds happen to be the same length.</summary>
+    private static void SwapIn(RagIndex index, string path)
+    {
+        var before = File.GetLastWriteTimeUtc(path);
+        RagIndexFile.WriteToFile(path, index);
+        File.SetLastWriteTimeUtc(path, before.AddSeconds(5));
+    }
+
+    private static RagIndex BuildIndex(string model, int dimension, string chunkText = "hello world") => new()
     {
         EmbeddingModel = model,
         Dimension = dimension,
         ChunkSize = 2000,
         ChunkOverlap = 200,
-        Chunks = [new IndexedChunk("doc.md", "Doc", "hello world", UnitVector(dimension))],
+        Chunks = [new IndexedChunk("doc.md", "Doc", chunkText, UnitVector(dimension))],
         Manifest = [new SourceFileEntry("doc.md", "hash", 0, 1)],
     };
 

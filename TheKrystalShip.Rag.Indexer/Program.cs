@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
@@ -6,7 +8,9 @@ using TheKrystalShip.Rag.Indexer;
 using TheKrystalShip.Rag.Indexing;
 using TheKrystalShip.Rag.Ollama;
 
-// Exit codes: 0 ok · 1 runtime failure · 2 usage error · 130 cancelled (SIGINT).
+// Exit codes: 0 ok · 1 runtime failure · 2 usage error · 130 cancelled (one-shot SIGINT). A --watch
+// daemon stopping on a signal is its intended end-of-life, so it exits 0 (not 130) — that keeps a
+// systemd `Restart=on-failure` from re-spawning an intentional `systemctl stop`.
 const int ExitOk = 0, ExitRuntime = 1, ExitUsage = 2, ExitCancelled = 130;
 
 if (!IndexerArgs.TryParse(args, out var opts, out var parseError))
@@ -22,15 +26,9 @@ if (opts.Help)
     return ExitOk;
 }
 
-if (opts.Watch)
+if (opts.Once == opts.Watch) // neither, or both
 {
-    Console.Error.WriteLine("kgsm-rag-indexer: --watch (daemon mode) is not implemented yet (Phase 3b). Use --once.");
-    return ExitUsage;
-}
-
-if (!opts.Once)
-{
-    Console.Error.WriteLine("kgsm-rag-indexer: specify --once.");
+    Console.Error.WriteLine("kgsm-rag-indexer: specify exactly one of --once or --watch.");
     Console.Error.WriteLine("Try 'kgsm-rag-indexer --help'.");
     return ExitUsage;
 }
@@ -50,15 +48,29 @@ if (string.IsNullOrWhiteSpace(opts.IndexPath))
 using var loggerFactory = LoggerFactory.Create(builder =>
 {
     builder.SetMinimumLevel(opts.Verbose ? LogLevel.Debug : LogLevel.Information);
-    builder.AddSimpleConsole();
-    // Everything to stderr — stdout stays clean for any future machine-readable output.
-    builder.Services.Configure<ConsoleLoggerOptions>(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+    if (opts.Watch)
+    {
+        // Daemon mode: the journald-native sink (the <N> syslog priority prefix lets `journalctl -p`
+        // filter by level) — the ecosystem convention for a service, matching the watchdog/monitor.
+        builder.AddSystemdConsole();
+    }
+    else
+    {
+        // Interactive one-shot: simple lines, everything to stderr so stdout stays clean for any
+        // future machine-readable output (the convention's "CLI variant").
+        builder.AddSimpleConsole();
+        builder.Services.Configure<ConsoleLoggerOptions>(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+    }
 });
 var logger = loggerFactory.CreateLogger("kgsm-rag-indexer");
 
-// Ctrl-C cancels an in-flight build (embedding a large corpus can be long) rather than killing hard.
+// Cancel an in-flight build / stop the daemon gracefully on a signal rather than a hard kill.
+// SIGINT covers Ctrl-C; SIGTERM is what `systemctl stop` sends — without it the daemon would be
+// hard-killed after the stop timeout. PosixSignalRegistration is AOT-safe; keep both in `using`
+// scope so they aren't collected while the daemon runs.
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; cts.Cancel(); });
 
 var embedding = new RagEmbeddingOptions
 {
@@ -73,6 +85,25 @@ var build = new IndexBuilderOptions
     ChunkSize = opts.ChunkSize,
     ChunkOverlap = opts.ChunkOverlap,
 };
+
+if (opts.Watch)
+{
+    if (opts.Full)
+        logger.LogWarning("--full is ignored in --watch mode (the daemon always re-indexes incrementally).");
+
+    try
+    {
+        var watcher = new IndexWatcher(
+            embedding, build, opts.IndexPath!, TimeSpan.FromMilliseconds(opts.DebounceMs), loggerFactory);
+        await watcher.RunAsync(cts.Token);
+        return ExitOk;
+    }
+    catch (OperationCanceledException)
+    {
+        logger.LogInformation("Watcher stopped.");
+        return ExitOk;
+    }
+}
 
 try
 {

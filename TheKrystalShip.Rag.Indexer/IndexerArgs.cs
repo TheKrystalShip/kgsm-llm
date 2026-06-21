@@ -1,9 +1,9 @@
 namespace TheKrystalShip.Rag.Indexer;
 
 /// <summary>
-/// Parsed command line for the standalone indexer. Phase 3a ships <c>--once</c> only; <c>--watch</c>
-/// is accepted by the parser so the host can print a clear "Phase 3b" message rather than an unknown-flag
-/// error. Value flags accept both <c>--flag value</c> and <c>--flag=value</c>; <c>--source</c> repeats.
+/// Parsed command line for the standalone indexer. Two modes: <c>--once</c> (build and exit) and
+/// <c>--watch</c> (the Phase 3b daemon — re-index on source changes until signalled to stop). Value
+/// flags accept both <c>--flag value</c> and <c>--flag=value</c>; <c>--source</c> repeats.
 /// </summary>
 internal sealed record IndexerArgs
 {
@@ -15,6 +15,7 @@ internal sealed record IndexerArgs
     public int ChunkSize { get; init; } = 2000;
     public int ChunkOverlap { get; init; } = 200;
     public int TimeoutSeconds { get; init; } = 120;
+    public int DebounceMs { get; init; } = 750;
     public bool Once { get; init; }
     public bool Watch { get; init; }
     public bool Full { get; init; }
@@ -26,7 +27,7 @@ internal sealed record IndexerArgs
         var sources = new List<string>();
         string? indexPath = null;
         string model = "embeddinggemma", endpoint = "http://localhost:11434", pattern = "*.md";
-        int chunkSize = 2000, chunkOverlap = 200, timeout = 120;
+        int chunkSize = 2000, chunkOverlap = 200, timeout = 120, debounceMs = 750;
         bool once = false, watch = false, full = false, verbose = false, help = false;
         error = null;
 
@@ -66,6 +67,9 @@ internal sealed record IndexerArgs
                 case "--timeout":
                     if (!IntValue(args, ref i, inlineValue, name, out timeout, out error)) { options = Empty; return false; }
                     break;
+                case "--debounce-ms":
+                    if (!IntValue(args, ref i, inlineValue, name, out debounceMs, out error)) { options = Empty; return false; }
+                    break;
 
                 default:
                     error = $"unknown option '{args[i]}'";
@@ -84,6 +88,7 @@ internal sealed record IndexerArgs
             ChunkSize = chunkSize,
             ChunkOverlap = chunkOverlap,
             TimeoutSeconds = timeout,
+            DebounceMs = debounceMs,
             Once = once,
             Watch = watch,
             Full = full,
@@ -122,10 +127,15 @@ internal sealed record IndexerArgs
         kgsm-rag-indexer — build the KGSM RAG index from a docs corpus
 
         USAGE:
-          kgsm-rag-indexer --once --source <path> [--source <path>...] --index <file> [options]
+          kgsm-rag-indexer --once  --source <path> [--source <path>...] --index <file> [options]
+          kgsm-rag-indexer --watch --source <path> [--source <path>...] --index <file> [options]
+
+        MODE (pick one):
+          --once               build the index once and exit
+          --watch              daemon: build once, then re-index on source changes until stopped
+                               (SIGINT/SIGTERM); intended to run under systemd
 
         REQUIRED:
-          --once               build the index once and exit (the only mode in this release)
           --source <path>      a file or directory to index (repeatable; dirs walked recursively)
           --index <file>       output index path (its directory must share a filesystem for the atomic swap)
 
@@ -136,7 +146,8 @@ internal sealed record IndexerArgs
           --chunk-size <n>     chunk target size in characters (default: 2000)
           --chunk-overlap <n>  chunk overlap in characters (default: 200)
           --timeout <s>        embed request timeout in seconds (default: 120)
-          --full               ignore any existing index and rebuild from scratch
+          --debounce-ms <n>    (--watch) coalesce a burst of changes over this window (default: 750)
+          --full               ignore any existing index and rebuild from scratch (--once only)
           --verbose            show debug logs on stderr
           -h, --help           show this help and exit
 

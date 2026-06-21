@@ -154,6 +154,8 @@ static async Task<int> RunMcqAsync(EvalOptions options)
         var run = await runner.RunAsync(corpus, cts.Token);
 
         McqScorecard.Render(run, Console.Out);
+        if (options.Diagnose)
+            McqScorecard.RenderDiagnosis(run, Console.Out);
         if (options.Transcript)
             McqScorecard.RenderTranscript(run, Console.Out);
 

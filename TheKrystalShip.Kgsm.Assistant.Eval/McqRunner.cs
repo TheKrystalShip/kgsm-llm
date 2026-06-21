@@ -131,13 +131,20 @@ internal sealed class McqRunner : IDisposable
     private async Task<McqItemOutcome> ScoreItemAsync(
         McqItem item, McqCondition condition, RagTuning tuning, CancellationToken ct)
     {
-        var context = condition switch
+        string? context;
+        IReadOnlyList<SearchHit> rawHits = [];
+        switch (condition)
         {
-            McqCondition.ClosedBook => null,
-            McqCondition.Oracle => item.Gold,
-            McqCondition.WithRag => await RetrieveAsync(item.Question, tuning, ct),
-            _ => null,
-        };
+            case McqCondition.Oracle:
+                context = item.Gold;
+                break;
+            case McqCondition.WithRag:
+                (context, rawHits) = await RetrieveAsync(item.Question, tuning, ct);
+                break;
+            default:  // ClosedBook
+                context = null;
+                break;
+        }
 
         int correct = 0, parsed = 0;
         char? lastChosen = null;
@@ -163,13 +170,21 @@ internal sealed class McqRunner : IDisposable
             }
         }
 
+        var diagnostic = condition == McqCondition.WithRag
+            ? BuildDiagnostic(item, context ?? string.Empty, rawHits)
+            : null;
+
         return new McqItemOutcome(
-            item.Id, item.Topic, condition, item.AnswerLetter, correct, parsed, _config.Reps, lastChosen, lastReply);
+            item.Id, item.Topic, condition, item.AnswerLetter, correct, parsed, _config.Reps,
+            lastChosen, lastReply, diagnostic);
     }
 
     /// <summary>The with-RAG grounding text — produced by the SAME aggregator production ships, over an
-    /// in-memory index built with this run's chunk knobs and queried with its TopK/MinScore.</summary>
-    private async Task<string> RetrieveAsync(string query, RagTuning tuning, CancellationToken ct)
+    /// in-memory index built with this run's chunk knobs and queried with its TopK/MinScore. Returns the
+    /// grounding alongside the raw cosine top-k (pre-MinScore) so the diagnosis can measure recall@k and
+    /// see which chunks survived the <c>MaxContextChars</c> cap.</summary>
+    private async Task<(string Grounding, IReadOnlyList<SearchHit> RawHits)> RetrieveAsync(
+        string query, RagTuning tuning, CancellationToken ct)
     {
         var index = await GetIndexAsync(tuning.ChunkSize, tuning.ChunkOverlap, ct);
         var retrieval = new EvalRetrieval(_embeddings, index, tuning.TopK, tuning.MinScore);
@@ -181,7 +196,29 @@ internal sealed class McqRunner : IDisposable
             WebEnabled = false,
         });
         var aggregator = new SearchAggregator(retrieval, new NoWebSearch(), options, _aggregatorLogger);
-        return await aggregator.SearchAsync(query, ct);
+        var grounding = await aggregator.SearchAsync(query, ct);
+        return (grounding, retrieval.LastRawHits);
+    }
+
+    /// <summary>
+    /// Turns the raw top-k + the grounding string into a per-item retrieval diagnostic: for each hit, how
+    /// much of the gold passage it lexically covers, whether its text survived into the grounding (the
+    /// <c>MaxContextChars</c> cap), and whether it's from the gold's own source doc. This is a measurement
+    /// of retrieval only — the answer scoring above is untouched.
+    /// </summary>
+    private static RetrievalDiagnostic BuildDiagnostic(
+        McqItem item, string grounding, IReadOnlyList<SearchHit> rawHits)
+    {
+        var goldFile = Path.GetFileName(item.Source);
+        var hits = rawHits.Select(h => new RetrievedHit(
+            SourcePath: h.Chunk.SourcePath,
+            HeaderPath: h.Chunk.HeaderPath,
+            Score: h.Score,
+            GoldOverlap: TextOverlap.Coverage(item.Gold, h.Chunk.Text),
+            Survived: !string.IsNullOrEmpty(h.Chunk.Text) && grounding.Contains(h.Chunk.Text, StringComparison.Ordinal),
+            RightDoc: string.Equals(Path.GetFileName(h.Chunk.SourcePath), goldFile, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+        return new RetrievalDiagnostic(hits);
     }
 
     private async Task<RagIndex> GetIndexAsync(int chunkSize, int chunkOverlap, CancellationToken ct)
@@ -279,6 +316,9 @@ internal sealed class McqRunner : IDisposable
             ["Recording:Enabled"] = "false",
             ["Ollama:Model"] = config.Model,
             ["Ollama:Endpoint"] = endpoint,
+            // A generous ceiling so an occasional long generation doesn't truncate a question into an
+            // unparsed reply (which the diagnosis would otherwise have to set aside as inconclusive).
+            ["Ollama:TimeoutSeconds"] = "900",
             ["Ollama:Temperature"] = config.Temperature.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Rag:Endpoint"] = endpoint,
         };

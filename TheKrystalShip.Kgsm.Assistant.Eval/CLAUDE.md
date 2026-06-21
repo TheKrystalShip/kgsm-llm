@@ -88,6 +88,42 @@ model; `McqLiveTests` (gated `KGSM_LIVE_OLLAMA=1`) smokes the whole pipeline on 
 **Acceptance for the mode:** a live `mcq --seed 42` reproduces the reference chart *shape* (closed <
 with-rag ≤ oracle≈100%) and at least one `--sweep` knob moves with-RAG accuracy.
 
+### `--diagnose` — the Phase 6 retrieval read (and why no lever was built)
+
+`--diagnose` answers the question Phase 6 hinges on: *where does the with-RAG → oracle gap live, and is it
+worth a retriever change?* It is a measurement of **retrieval**, never of the answer. For each with-rag
+question it captures the raw cosine top-k (`EvalRetrieval.LastRawHits`, stashed **before** the MinScore
+filter so recall is honest), measures each chunk's lexical **gold coverage** (`TextOverlap`, a recall-flavoured
+token-overlap with the item's gold passage — diagnosis only, never scoring), and detects which chunks **survived**
+the `MaxContextChars` cap (`grounding.Contains(chunk.Text)`). From that it reports **recall@k across all
+questions** (the *powered* metric — temp-0 greedy means reps buy no statistical power, so the handful of
+accuracy-gap questions can't drive a decision) and buckets the gap into the advisor's three failure modes,
+each implying a *different* lever:
+
+1. **(a) gold missed top-k** → recall failure → a BM25+vector hybrid / larger k.
+2. **(b) gold in top-k but dropped from context** → top-k / `MaxContextChars` / re-rank.
+3. **(c) gold in context, model still wrong** → a model ceiling; **no retrieval lever helps.**
+
+Design rules that keep the read honest (don't regress them):
+- **Raw top-k is captured separately from post-cap survivors** — that's the only way (a) and (b) don't blur.
+- **Unparsed/timeout with-rag replies are split out as "inconclusive," never bucketed** as a recall miss.
+  An unparsed reply is a measurement defect (a model error/timeout), not a retrieval signal. (This bit:
+  Q7 ran the generation past even a 900 s ceiling — a real gemma4:12b runaway on one prompt — and would
+  otherwise have masqueraded as a recall failure.)
+- **The verdict refuses to recommend a lever below `MinActionableGap` (3) attributable questions** — the
+  advisor's "you can't drive a lever off two data points." A 1–2 question gap reads "WITHIN NOISE."
+
+**Phase 6 outcome (gemma4:12b, embeddinggemma, `--seed 42`): NO-GO on building a retriever.** recall@5 is
+84% — imperfect — yet **3 of the 5 top-k misses and all 3 context-cap drops were answered correctly anyway**,
+so the model is robust to imperfect retrieval. The retrieval-attributable, *parsed* accuracy gap is **one
+borderline question** (Q31, gold coverage 0.44 vs the 0.5 cut, and its *right doc was retrieved* — an
+intra-doc ranking near-miss). Oracle sits ~1 question above with-rag, capping what any retriever could buy.
+Building a hybrid here would be the speculative machinery the plan's §8 forbids. **The Phase 6 deliverable
+is this diagnosis mode plus the data-backed decision NOT to build** — the lever stays deferred until the
+corpus is re-powered (general expansion for statistical power, *not* identifier-fishing: the read found no
+lexical-recall failure to justify it). `TextOverlap` + the bucket classifier are unit-tested in
+`McqDiagnosisTests`.
+
 ## Build / test / run
 
 ```bash
@@ -98,6 +134,7 @@ dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --kgsm ~/tks/kgsm/kgs
 # A live MCQ run needs Ollama only (chat + embedder), no kgsm:
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --seed 42            # the lift chart
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --sweep min-score    # tune a knob
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --diagnose           # recall@k + gap buckets (Phase 6 read)
 ```
 
 The unit tests cover the deterministic core (checks, compare math, options, fixture resolution) and
@@ -140,7 +177,7 @@ run in CI without a model. A live run is the only thing that exercises the model
 | `EvalResult.cs` | the stamped JSON result DTOs + (de)serialization |
 | `Compare.cs` | diff two result files into regressions/improvements |
 | `EvalOptions.cs` / `Program.cs` | arg parsing + entry point (routing run vs `mcq` vs `compare`, `--filter`) |
-| `Mcq*.cs` + `AnswerParser`/`SweepGrid`/`EvalRetrieval`/`NoWebSearch` | the ground-truth MCQ mode (separate harness, flat with the routing files): `McqRunner` (3-condition runner), `McqCorpus`/`McqItem` (loader + types), `AnswerParser`, `SweepGrid`, `McqScorecard`, `McqResult` (DTOs), `EvalRetrieval`/`NoWebSearch` (drive the real `SearchAggregator`) |
+| `Mcq*.cs` + `AnswerParser`/`SweepGrid`/`EvalRetrieval`/`NoWebSearch`/`TextOverlap` | the ground-truth MCQ mode (separate harness, flat with the routing files): `McqRunner` (3-condition runner + retrieval-diagnostic capture), `McqCorpus`/`McqItem` (loader + types), `AnswerParser`, `SweepGrid`, `McqScorecard` (lift chart + `RenderDiagnosis`), `McqResult` (DTOs incl. `RetrievalDiagnostic`/`RetrievalBucket`/`RetrievalDiagnosis`), `EvalRetrieval`/`NoWebSearch` (drive the real `SearchAggregator`), `TextOverlap` (gold-coverage for the `--diagnose` read) |
 | `mcq/questions.json` + `mcq/corpus/` | the committed ground-truth corpus — hand-authored MCQs + the real-docs snapshot they're drawn from (copied next to the binary) |
 
 ## Ecosystem rules that apply here

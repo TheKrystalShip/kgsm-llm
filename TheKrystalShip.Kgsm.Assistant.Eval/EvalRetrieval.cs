@@ -22,6 +22,13 @@ internal sealed class EvalRetrieval : IRetrieval
     private readonly int _topK;
     private readonly double _minScore;
 
+    /// <summary>
+    /// The raw cosine top-k from the most recent <see cref="RetrieveAsync"/> call, captured BEFORE the
+    /// MinScore filter so the diagnosis can measure honest recall@k (Phase 6). Read by the runner right
+    /// after it drives the aggregator; not part of the port contract.
+    /// </summary>
+    public IReadOnlyList<SearchHit> LastRawHits { get; private set; } = [];
+
     public EvalRetrieval(IEmbeddingClient embeddings, RagIndex index, int topK, double minScore)
     {
         _embeddings = embeddings;
@@ -46,6 +53,7 @@ internal sealed class EvalRetrieval : IRetrieval
                 "the retrieval index dimension does not match the embedding model and must be rebuilt");
 
         var hits = VectorSearch.TopK(_index.Chunks, queryVector, _topK);
+        LastRawHits = hits;  // captured pre-MinScore-filter for the diagnosis (recall@k)
         var results = hits
             .Where(h => h.Score >= _minScore)
             .Select(h => new RetrievedChunk(h.Chunk.SourcePath, h.Chunk.HeaderPath, h.Chunk.Text, h.Score))

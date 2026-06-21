@@ -148,6 +148,9 @@ $A mcq --seed 42 --transcript
 $A mcq --sweep min-score
 $A mcq --sweep top-k
 
+# Diagnose WHERE the with-rag→oracle gap lives before touching retrieval (Phase 6 read):
+$A mcq --diagnose
+
 # Point it at the full real docs instead of the shipped snapshot, or a different embedder:
 $A mcq --corpus ~/tks --embed-model embeddinggemma
 ```
@@ -164,6 +167,15 @@ $A mcq --corpus ~/tks --embed-model embeddinggemma
 with the current chunk knobs — so the chunk/TopK/MinScore/MaxContextChars values a sweep picks
 **transfer to what ships**. The reading is: `closed → with-rag` is the retrieval *win*; `with-rag →
 oracle` is the *gap left to close* (Phase 6's target).
+
+**`--diagnose`** is the Phase 6 read: instead of guessing a lever, it measures retrieval. It reports
+**recall@k** (did the gold passage make the raw top-k, across *all* questions — the metric a retriever
+actually moves) and buckets the `with-rag → oracle` gap into *gold missed top-k* (recall — a hybrid/larger-k
+job), *gold dropped from context* (the `MaxContextChars` cap / re-rank), or *gold in context but answered
+wrong* (a model ceiling — no retriever helps). Unparsed/timeout replies are set aside as "inconclusive,"
+and the verdict refuses to recommend a lever off a 1–2 question gap. On the shipped corpus the verdict is
+**WITHIN NOISE** — recall is imperfect (84%) but the model answers correctly through most misses, so no
+retriever was built; see the eval's `CLAUDE.md` for the full finding.
 
 **The corpus** (`mcq/questions.json` + `mcq/corpus/`) is committed on purpose — a fixed baseline of
 **real** ecosystem docs (the base model genuinely lacks them) so the lift is *measured*, not

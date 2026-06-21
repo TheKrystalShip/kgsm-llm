@@ -8,6 +8,7 @@ internal sealed class EvalOptions
     public bool Help { get; private set; }
     public bool Verbose { get; private set; }
     public bool Transcript { get; private set; }
+    public bool Diagnose { get; private set; }
 
     // compare mode
     public bool IsCompare { get; private set; }
@@ -86,6 +87,8 @@ internal sealed class EvalOptions
           --max-context <int>  cap on injected grounding chars (default: 6000)
           --sweep <knob>       sweep one knob over a grid (with-rag): chunk-size | chunk-overlap |
                                top-k | min-score | local-min-score | max-context
+          --diagnose           after the lift chart, report retrieval recall@k and bucket the
+                               with-rag→oracle gap (gold missed / dropped from context / model ceiling)
           (mcq defaults to temp 0 / 1 rep for a stable accuracy number — override with --temp / --reps)
 
         The routing harness drives the real assistant in-process and only ever STAGES actions (never
@@ -108,6 +111,7 @@ internal sealed class EvalOptions
                 case "-h" or "--help": options.Help = true; return true;
                 case "-v" or "--verbose": options.Verbose = true; break;
                 case "--transcript": options.Transcript = true; break;
+                case "--diagnose": options.Diagnose = true; break;
                 case "compare": options.IsCompare = true; break;
                 case "mcq": options.IsMcq = true; break;
                 case "--shipped-prompts": options.PromptsDir = ShippedPromptsDir(); break;

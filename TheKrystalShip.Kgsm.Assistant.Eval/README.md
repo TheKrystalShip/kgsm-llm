@@ -125,11 +125,67 @@ Each check is tagged with its dimension and lives in code (`Checks.cs` / `Benchm
 because the *bar* should change deliberately and in review — the fast-tuning surface is the prompt
 files, not the eval.
 
+## MCQ mode — ground-truth answer accuracy (the RAG lift + tuning)
+
+Everything above scores **routing** ("did it call the right tool?"). `mcq` mode scores something the
+routing harness deliberately can't: **answer correctness**. It reproduces the retrieval lift chart —
+**closed-book → with-RAG → oracle** — that motivated the RAG work, *for our own corpus*, and is the
+knob-tuning surface for chunk size / TopK / MinScore.
+
+It needs **Ollama only** (chat + embedder) — **no kgsm host**. It calls the model directly with no
+tools, so there is no agent loop and no path to any action.
+
+```bash
+A="dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval --"
+
+# The lift chart over the shipped corpus (greedy, reproducible):
+$A mcq --seed 42
+
+# Read every question's reply per condition:
+$A mcq --seed 42 --transcript
+
+# Tune a query-time knob — sweep it over a grid, holding the rest at baseline (with-rag):
+$A mcq --sweep min-score
+$A mcq --sweep top-k
+
+# Point it at the full real docs instead of the shipped snapshot, or a different embedder:
+$A mcq --corpus ~/tks --embed-model embeddinggemma
+```
+
+**The three conditions:**
+
+| Condition | The model is given… | Measures |
+|-----------|---------------------|----------|
+| `closed-book` | nothing — just the question | the base model's parametric knowledge (the baseline) |
+| `with-rag` | whatever the **real `SearchAggregator`** retrieves from an index built in-process | end-to-end retrieval quality |
+| `oracle` | the gold passage shipped in the question | the ceiling (retrieval is perfect) |
+
+`with-rag` drives the *production* `SearchAggregator` over an index the runner builds from `--corpus`
+with the current chunk knobs — so the chunk/TopK/MinScore/MaxContextChars values a sweep picks
+**transfer to what ships**. The reading is: `closed → with-rag` is the retrieval *win*; `with-rag →
+oracle` is the *gap left to close* (Phase 6's target).
+
+**The corpus** (`mcq/questions.json` + `mcq/corpus/`) is committed on purpose — a fixed baseline of
+**real** ecosystem docs (the base model genuinely lacks them) so the lift is *measured*, not
+manufactured. Each question carries its own gold passage, so `oracle` is independent of retrieval and
+stable across doc edits. Add a question by appending to `questions.json` (id, topic, question,
+choices, answer letter, source filename, gold passage); the loader validates every answer key, gold,
+and source on load, and `McqCorpusTests` asserts it.
+
+**Honesty:** the model is asked to end with `Answer: X`; an unparseable reply is scored **wrong** and
+also counted in a separate **parse-failure** line, so "the model won't follow the format" never hides
+as "the model is wrong." A built-in **sanity** line flags the one failure that means the corpus can't
+measure retrieval — `with-rag ≈ oracle ≈ 100%` (no spread left). Oracle near 100% on its own is
+**expected and good**: it confirms every gold passage entails its keyed answer.
+
+> Greedy by default (`--temp 0`, `--reps 1`) for a stable number — override with `--temp`/`--reps`.
+
 ## Safety
 
-The harness only ever calls `IServerAssistant.RunAsync`, which **stages** destructive operations; it
-never calls `ConfirmAsync`, so nothing it runs can start, stop, install, or delete a server. There is
-no code path here to execution. A full run is non-destructive.
+The routing harness only ever calls `IServerAssistant.RunAsync`, which **stages** destructive
+operations; it never calls `ConfirmAsync`, so nothing it runs can start, stop, install, or delete a
+server. There is no code path here to execution. A full run is non-destructive. (`mcq` mode is
+simpler still — it calls `ILlmClient` directly with no tools, no dispatcher, and no kgsm.)
 
 It also prints a **loud inventory preflight** and aborts on an empty inventory — the one trap that
 silently turns "no servers installed" into a green run (usually a stray `XDG_DATA_HOME` override

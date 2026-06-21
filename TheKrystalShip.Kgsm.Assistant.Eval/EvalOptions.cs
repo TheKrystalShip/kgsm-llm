@@ -25,13 +25,38 @@ internal sealed class EvalOptions
     public string? OutPath { get; private set; }
     public IReadOnlyList<string> Filter { get; private set; } = Array.Empty<string>();
 
+    // mcq mode (ground-truth answer accuracy + retrieval tuning — Phase 5)
+    public bool IsMcq { get; private set; }
+    public string? CorpusDir { get; private set; }
+    public string? McqFile { get; private set; }
+    public string? EmbeddingModel { get; private set; }
+    public string? SweepKnob { get; private set; }
+    public IReadOnlyList<McqCondition> Conditions { get; private set; } =
+        new[] { McqCondition.ClosedBook, McqCondition.WithRag, McqCondition.Oracle };
+
+    // mcq retrieval/chunking knobs — initialised to the shipped defaults, overridable per run/sweep.
+    private int _chunkSize = RagTuning.Default.ChunkSize;
+    private int _chunkOverlap = RagTuning.Default.ChunkOverlap;
+    private int _topK = RagTuning.Default.TopK;
+    private double _minScore = RagTuning.Default.MinScore;
+    private double _localMinScore = RagTuning.Default.LocalMinScore;
+    private int _maxContext = RagTuning.Default.MaxContextChars;
+    public RagTuning McqTuning => new(_chunkSize, _chunkOverlap, _topK, _minScore, _localMinScore, _maxContext);
+
+    // MCQ wants greedy determinism + a single rep (a stable accuracy number), NOT the routing harness's
+    // temp 0.3 / 3 reps — so default temp 0 and reps 1 here UNLESS the user set them explicitly.
+    private bool _tempSet, _repsSet;
+    public double McqTemperature => _tempSet ? Temperature : 0.0;
+    public int McqReps => _repsSet ? Reps : 1;
+
     public const string Usage =
         """
         kgsm-assistant-eval — reproducible behavioral benchmark for the kgsm assistant.
 
         USAGE
-          kgsm-assistant-eval [options]                 run the benchmark, print a scorecard, write a result file
-          kgsm-assistant-eval compare <base> <head>     diff two result files (regressions / improvements)
+          kgsm-assistant-eval [options]                 run the ROUTING benchmark (did it call the right tool?)
+          kgsm-assistant-eval mcq [options]             run the GROUND-TRUTH MCQ benchmark (is the answer correct?)
+          kgsm-assistant-eval compare <base> <head>     diff two routing result files (regressions / improvements)
 
         RUN OPTIONS
           --model <tag>        Ollama model to benchmark (default: gemma4:12b; e.g. qwen3.5:9b)
@@ -48,8 +73,25 @@ internal sealed class EvalOptions
           -v, --verbose        backend debug logging on stderr
           -h, --help           this help
 
-        The harness drives the real assistant in-process and only ever STAGES actions (never confirms),
-        so a full run is non-destructive. It prints a loud inventory preflight and aborts on empty.
+        MCQ OPTIONS (mode: mcq) — needs Ollama (chat + embedder), NOT a kgsm host
+          --conditions <csv>   which conditions to run (default: closed-book,with-rag,oracle)
+          --corpus <dir>       docs dir to index for with-rag (default: the shipped real-docs snapshot)
+          --mcq-file <path>    the question corpus JSON (default: the shipped mcq/questions.json)
+          --embed-model <tag>  embedding model for retrieval (default: from config / embeddinggemma)
+          --chunk-size <int>   chunk target chars at index time (default: 2000)
+          --chunk-overlap <int> chunk overlap chars (default: 200)
+          --topk <int>         chunks retrieved per query (default: 5)
+          --min-score <float>  retrieval cosine floor (default: 0.0)
+          --local-min-score <float>  "answer from docs" threshold (default: 0.35)
+          --max-context <int>  cap on injected grounding chars (default: 6000)
+          --sweep <knob>       sweep one knob over a grid (with-rag): chunk-size | chunk-overlap |
+                               top-k | min-score | local-min-score | max-context
+          (mcq defaults to temp 0 / 1 rep for a stable accuracy number — override with --temp / --reps)
+
+        The routing harness drives the real assistant in-process and only ever STAGES actions (never
+        confirms), so a full run is non-destructive; it prints a loud inventory preflight and aborts on
+        empty. The mcq mode calls the model directly (no tools, no kgsm, no path to any action) and
+        scores answer correctness — closed-book vs with-rag vs oracle — to reproduce the retrieval lift.
         """;
 
     public static bool TryParse(string[] args, out EvalOptions options, out string? error)
@@ -67,7 +109,24 @@ internal sealed class EvalOptions
                 case "-v" or "--verbose": options.Verbose = true; break;
                 case "--transcript": options.Transcript = true; break;
                 case "compare": options.IsCompare = true; break;
+                case "mcq": options.IsMcq = true; break;
                 case "--shipped-prompts": options.PromptsDir = ShippedPromptsDir(); break;
+
+                case "--corpus": if (!Next(args, ref i, out var cd, out error)) return false; options.CorpusDir = cd; break;
+                case "--mcq-file": if (!Next(args, ref i, out var mf, out error)) return false; options.McqFile = mf; break;
+                case "--embed-model": if (!Next(args, ref i, out var em, out error)) return false; options.EmbeddingModel = em; break;
+                case "--sweep": if (!Next(args, ref i, out var sw, out error)) return false; options.SweepKnob = sw; break;
+                case "--conditions":
+                    if (!Next(args, ref i, out var conds, out error)) return false;
+                    if (!TryParseConditions(conds, out var parsed, out error)) return false;
+                    options.Conditions = parsed; break;
+
+                case "--chunk-size": if (!NextInt(args, ref i, out options._chunkSize, out error)) return false; break;
+                case "--chunk-overlap": if (!NextInt(args, ref i, out options._chunkOverlap, out error)) return false; break;
+                case "--topk" or "--top-k": if (!NextInt(args, ref i, out options._topK, out error)) return false; break;
+                case "--max-context": if (!NextInt(args, ref i, out options._maxContext, out error)) return false; break;
+                case "--min-score": if (!NextDouble(args, ref i, out options._minScore, out error)) return false; break;
+                case "--local-min-score": if (!NextDouble(args, ref i, out options._localMinScore, out error)) return false; break;
 
                 case "--model": if (!Next(args, ref i, out var m, out error)) return false; options.Model = m; break;
                 case "--endpoint": if (!Next(args, ref i, out var ep, out error)) return false; options.Endpoint = ep; break;
@@ -82,7 +141,7 @@ internal sealed class EvalOptions
                 case "-n" or "--reps":
                     if (!Next(args, ref i, out var r, out error)) return false;
                     if (!int.TryParse(r, out var reps) || reps < 1) { error = $"--reps expects a positive integer, got '{r}'."; return false; }
-                    options.Reps = reps; break;
+                    options.Reps = reps; options._repsSet = true; break;
 
                 case "--seed":
                     if (!Next(args, ref i, out var s, out error)) return false;
@@ -92,13 +151,19 @@ internal sealed class EvalOptions
                 case "--temp":
                     if (!Next(args, ref i, out var t, out error)) return false;
                     if (!double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var temp)) { error = $"--temp expects a number, got '{t}'."; return false; }
-                    options.Temperature = temp; break;
+                    options.Temperature = temp; options._tempSet = true; break;
 
                 default:
                     if (a.StartsWith('-')) { error = $"unknown option '{a}'."; return false; }
                     seenPositional.Add(a);
                     break;
             }
+        }
+
+        if (options.IsCompare && options.IsMcq)
+        {
+            error = "choose one mode: 'mcq' or 'compare', not both.";
+            return false;
         }
 
         if (options.IsCompare)
@@ -113,6 +178,46 @@ internal sealed class EvalOptions
             return false;
         }
 
+        return true;
+    }
+
+    private static bool NextInt(string[] args, ref int i, out int value, out string? error)
+    {
+        value = 0;
+        if (!Next(args, ref i, out var raw, out error)) return false;
+        if (!int.TryParse(raw, out value) || value < 0) { error = $"option '{args[i - 1]}' expects a non-negative integer, got '{raw}'."; return false; }
+        return true;
+    }
+
+    private static bool NextDouble(string[] args, ref int i, out double value, out string? error)
+    {
+        value = 0;
+        if (!Next(args, ref i, out var raw, out error)) return false;
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value)) { error = $"option '{args[i - 1]}' expects a number, got '{raw}'."; return false; }
+        return true;
+    }
+
+    private static bool TryParseConditions(string csv, out IReadOnlyList<McqCondition> conditions, out string? error)
+    {
+        error = null;
+        var list = new List<McqCondition>();
+        foreach (var token in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!McqConditions.TryParse(token, out var c))
+            {
+                conditions = Array.Empty<McqCondition>();
+                error = $"--conditions: unknown condition '{token}'. Use closed-book, with-rag, oracle.";
+                return false;
+            }
+            if (!list.Contains(c)) list.Add(c);
+        }
+        if (list.Count == 0)
+        {
+            conditions = Array.Empty<McqCondition>();
+            error = "--conditions needs at least one of: closed-book, with-rag, oracle.";
+            return false;
+        }
+        conditions = list;
         return true;
     }
 

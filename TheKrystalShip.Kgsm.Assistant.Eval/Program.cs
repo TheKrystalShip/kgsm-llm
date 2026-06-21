@@ -18,6 +18,12 @@ if (options.Help)
 if (options.IsCompare)
     return Compare.Run(options.CompareBase!, options.CompareHead!, Console.Out);
 
+// --- mcq mode (ground-truth answer accuracy) ---------------------------------------------------
+// Branches BEFORE the kgsm check: the MCQ mode calls the model directly and never touches a kgsm
+// host (only Ollama for chat + embeddings), so requiring kgsm here would be wrong.
+if (options.IsMcq)
+    return await RunMcqAsync(options);
+
 // --- run mode ----------------------------------------------------------------------------------
 
 var kgsmPath = Harness.ResolveKgsmPath(options);
@@ -113,4 +119,76 @@ static string DefaultOutPath(string model)
     var safeModel = model.Replace(':', '_').Replace('/', '_');
     var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     return Path.Combine("eval-results", $"{safeModel}-{stamp}.json");
+}
+
+static async Task<int> RunMcqAsync(EvalOptions options)
+{
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+    try
+    {
+        var mcqFile = options.McqFile ?? McqCorpus.DefaultPath;
+        var corpus = McqCorpus.Load(mcqFile);
+
+        var corpusDir = options.CorpusDir ?? McqCorpus.DefaultCorpusDir;
+        var needsIndex = options.Conditions.Contains(McqCondition.WithRag) || options.SweepKnob is not null;
+        if (needsIndex && !Directory.Exists(corpusDir))
+        {
+            Console.Error.WriteLine(
+                $"kgsm-assistant-eval: with-rag needs a docs dir to index, but '{corpusDir}' was not found. " +
+                "Pass --corpus <dir>, or run --conditions closed-book,oracle.");
+            return 2; // ExitUsage
+        }
+
+        var config = new McqRunConfig(
+            options.Model, options.Endpoint, options.McqTemperature, options.Seed, options.McqReps,
+            options.EmbeddingModel, corpusDir, mcqFile, options.Conditions, options.McqTuning,
+            options.SweepKnob, options.Verbose);
+
+        Console.Error.WriteLine(
+            $"MCQ eval · {corpus.Items.Count} question(s) (corpus {corpus.Version}) · model {config.Model} · " +
+            $"conditions {string.Join(",", config.Conditions.Select(c => c.Label()))} …");
+
+        using var runner = McqRunner.Build(config);
+        var run = await runner.RunAsync(corpus, cts.Token);
+
+        McqScorecard.Render(run, Console.Out);
+        if (options.Transcript)
+            McqScorecard.RenderTranscript(run, Console.Out);
+
+        var outPath = options.OutPath ?? DefaultMcqOutPath(options.Model);
+        run.Save(outPath);
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Result written to {outPath}");
+        return 0; // ExitOk
+    }
+    catch (McqCorpusException ex)
+    {
+        Console.Error.WriteLine($"kgsm-assistant-eval: {ex.Message}");
+        return 2; // ExitUsage
+    }
+    catch (McqRunException ex)
+    {
+        Console.Error.WriteLine($"kgsm-assistant-eval: {ex.Message}");
+        return 1; // ExitRuntime
+    }
+    catch (OperationCanceledException)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("cancelled.");
+        return 130; // ExitCancelled
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"kgsm-assistant-eval: MCQ run failed — {ex.Message}");
+        return 1; // ExitRuntime
+    }
+}
+
+static string DefaultMcqOutPath(string model)
+{
+    var safeModel = model.Replace(':', '_').Replace('/', '_');
+    var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+    return Path.Combine("eval-results", $"mcq-{safeModel}-{stamp}.json");
 }

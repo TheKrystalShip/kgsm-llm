@@ -49,13 +49,55 @@ and confirm the four tuning-fixed cases pass (**B5** port, **C6** max-players, *
 **D12** "the factorio one") plus the known-good ones. **If the harness disagrees with the hand-eval,
 the harness is wrong** — the hand-eval is ground truth.
 
+## MCQ mode (ground-truth accuracy) — a SECOND, separate harness
+
+`mcq` mode (the `Mcq*.cs` files) is a different instrument from the routing benchmark above, added in
+Phase 5 of the RAG work. The routing harness scores *what tool the model called* (and deliberately
+**never** a world fact — invariant #1). The lift chart the RAG work needs is **100% world-fact**: is
+the answer correct, closed-book vs with-RAG vs oracle. That can't be bolted onto the routing scorer
+without breaking invariant #1, so it's a parallel mode with its own design rules:
+
+1. **Bare `ILlmClient`, no kgsm, no tools.** `McqRunner` composes only `AddLocalLlm` (+ the RAG core's
+   embed client / `IndexBuilder`); it calls `ChatAsync` directly. There is **no dispatcher and no
+   agent loop**, so invariant #2 (no path to execution) holds even more strongly here than in the
+   routing harness — there's nothing to confirm. It needs Ollama, **not** a kgsm host; `Program`
+   branches to it *before* the kgsm check.
+2. **with-RAG drives the REAL `SearchAggregator`.** The runner builds an index in-process (so chunk
+   size is a real, tunable knob — query-time knobs don't need a rebuild) and queries it through the
+   production `SearchAggregator` over a faithful eval-local `IRetrieval` (`EvalRetrieval`, a mirror of
+   `RagRetrieval`) + a fail-closed `IWebSearch` (`NoWebSearch`, local-only). This is the load-bearing
+   choice: tune through the **same** knobs production uses (TopK, MinScore, MaxContextChars) or the
+   winning values won't transfer. Don't "simplify" with-RAG to a bespoke retrieve-and-concat.
+3. **The corpus must be REAL docs at volume.** `mcq/corpus/` is a committed snapshot of real ecosystem
+   docs; `mcq/questions.json` is hand-authored against them, each item shipping its own gold passage.
+   **Invented docs would make `closed-book ≈ 25%` and `with-rag ≈ oracle ≈ 100%` by construction — a
+   manufactured lift that measures nothing.** If you regenerate the corpus, keep it real; bump
+   `questions.json`'s `version`.
+4. **oracle ≈ 100% is the GOOD signal, not a defect.** It confirms every gold passage entails its
+   keyed answer (a wrong key would make oracle dip) — the reference benchmark's oracle was 99.3%. The
+   real "corpus too easy" alarm is `with-rag ≈ oracle ≈ 100%` (no spread left to attribute to
+   retrieval); that's the only thing the sanity line flags. Don't add hard questions just to push
+   closed-book down — that inflates the headline lift without improving retrieval (teaching to the
+   test). Widen the lift by **tuning retrieval**, which is what the sweep is for.
+5. **Unparseable = wrong AND counted.** `AnswerParser` reads the last `Answer: X` (reasoning before it
+   is allowed and helps a 12B); an out-of-range/absent letter is a parse FAILURE — scored wrong and
+   reported on a separate parse-failure line, never guessed.
+
+The deterministic core (parser, corpus load/validate, sweep grid, scoring math) is unit-tested with no
+model; `McqLiveTests` (gated `KGSM_LIVE_OLLAMA=1`) smokes the whole pipeline on a 2-question subset.
+**Acceptance for the mode:** a live `mcq --seed 42` reproduces the reference chart *shape* (closed <
+with-rag ≤ oracle≈100%) and at least one `--sweep` knob moves with-RAG accuracy.
+
 ## Build / test / run
 
 ```bash
 dotnet build TheKrystalShip.Llm.slnx                                   # whole solution
 dotnet test  TheKrystalShip.Kgsm.Assistant.Eval.Tests/*.csproj         # 30 logic tests, no live deps
-# A live run needs Ollama + a kgsm host with ≥1 instance:
+# A live ROUTING run needs Ollama + a kgsm host with ≥1 instance:
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --kgsm ~/tks/kgsm/kgsm.sh --shipped-prompts --transcript
+# A live MCQ run needs Ollama only (chat + embedder), no kgsm:
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --seed 42            # the lift chart
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --sweep min-score    # tune a knob
 ```
 
 The unit tests cover the deterministic core (checks, compare math, options, fixture resolution) and
@@ -97,7 +139,9 @@ run in CI without a model. A live run is the only thing that exercises the model
 | `Scorecard.cs` / `Transcripts.cs` | the two output renderers (summary table / full conversations) |
 | `EvalResult.cs` | the stamped JSON result DTOs + (de)serialization |
 | `Compare.cs` | diff two result files into regressions/improvements |
-| `EvalOptions.cs` / `Program.cs` | arg parsing + entry point (run vs `compare`, `--filter`) |
+| `EvalOptions.cs` / `Program.cs` | arg parsing + entry point (routing run vs `mcq` vs `compare`, `--filter`) |
+| `Mcq*.cs` + `AnswerParser`/`SweepGrid`/`EvalRetrieval`/`NoWebSearch` | the ground-truth MCQ mode (separate harness, flat with the routing files): `McqRunner` (3-condition runner), `McqCorpus`/`McqItem` (loader + types), `AnswerParser`, `SweepGrid`, `McqScorecard`, `McqResult` (DTOs), `EvalRetrieval`/`NoWebSearch` (drive the real `SearchAggregator`) |
+| `mcq/questions.json` + `mcq/corpus/` | the committed ground-truth corpus — hand-authored MCQs + the real-docs snapshot they're drawn from (copied next to the binary) |
 
 ## Ecosystem rules that apply here
 

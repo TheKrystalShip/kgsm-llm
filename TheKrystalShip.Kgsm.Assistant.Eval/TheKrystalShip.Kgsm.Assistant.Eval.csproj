@@ -18,6 +18,10 @@
     <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
+    <!-- The Native-AOT RAG core: the MCQ mode (Phase 5) builds an index in-process and queries it
+         directly, so it composes the core's embed client + chunker + cosine search, not just the
+         assistant's adapter over them. AOT-safe code runs fine under the eval's JIT. -->
+    <ProjectReference Include="..\TheKrystalShip.Rag\TheKrystalShip.Rag.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +33,10 @@
          and read at startup. Operator-specific values (KGSM:Path, model) come from the CLI config,
          env, or flags — never baked here. -->
     <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The ground-truth MCQ corpus + its real-docs snapshot (Phase 5): copied next to the binary so
+         the MCQ mode finds them by default. The snapshot is committed on purpose — a fixed baseline
+         for run over run comparison; the docs are real ecosystem content the base model genuinely lacks. -->
+    <None Include="mcq\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,453 @@
+{
+  "version": "m1",
+  "items": [
+    {
+      "id": "Q1",
+      "topic": "architecture",
+      "question": "A new C# service on the host needs to read game-server status and issue start/stop commands. Per the ecosystem's dependency rules, how should it talk to the kgsm engine?",
+      "choices": [
+        "Shell out to kgsm.sh directly with Process.Start",
+        "Go through kgsm-lib, the single C#-to-engine chokepoint",
+        "Open the kgsm event unix socket and parse the stream itself",
+        "Call the Control Panel web API and let it relay the command"
+      ],
+      "answer": "B",
+      "source": "system-architecture.md",
+      "gold": "kgsm-lib (C#, Native-AOT): The single C#-to-KGSM chokepoint — process-exec + JSON + event socket to typed C#, no matter what. Consumed by every C# component: monitor, assistant, web API, and the Discord bot."
+    },
+    {
+      "id": "Q2",
+      "topic": "architecture",
+      "question": "The ecosystem holds a hard rule that one component violated, which is the reason the original kgsm-api was scrapped. What was the violation?",
+      "choices": [
+        "It depended on a sibling leaf service instead of the aggregator",
+        "It used Native AOT where standard JIT was mandated",
+        "It invented metrics and status instead of measuring them",
+        "It bound an authenticated network socket the design forbade"
+      ],
+      "answer": "C",
+      "source": "system-architecture.md",
+      "gold": "Server is authoritative; never fabricate. No component invents a metric, status, or alert — measured or unknown. This killed kgsm-api; it's why the monitor reads /proc not top."
+    },
+    {
+      "id": "Q3",
+      "topic": "architecture",
+      "question": "The aggregator shows a server for which the monitor currently has no metrics row. What is it allowed to conclude about that server's run-state?",
+      "choices": [
+        "That the server is stopped",
+        "That the server has crashed",
+        "Nothing about run-state — absence means 'not measurable right now', not 'stopped'",
+        "That the server is running but idle"
+      ],
+      "answer": "C",
+      "source": "system-architecture.md",
+      "gold": "Metric-presence is never a status. A surface joins status-from-the-authority with metrics-from-the-monitor, and never infers run-state from whether a metrics row exists — absence means 'not measurable right now,' not 'stopped.'"
+    },
+    {
+      "id": "Q4",
+      "topic": "architecture",
+      "question": "kgsm-watchdog is described as deliberately breaking one of the system-wide invariants, accepted eyes-open. Which invariant does it break?",
+      "choices": [
+        "Never fabricate a metric or status",
+        "The kgsm CLI stays stateless",
+        "Leaves are independently deployable",
+        "Sampling stays O(1) in client count"
+      ],
+      "answer": "B",
+      "source": "system-architecture.md",
+      "gold": "The kgsm CLI stays stateless; the watchdog is the contained exception. The kgsm-watchdog is the one resident, stateful piece (desired-state + warm process) — accepted eyes-open as the engine's runtime half, not a leaf."
+    },
+    {
+      "id": "Q5",
+      "topic": "architecture",
+      "question": "How does kgsm-monitor control access to the socket it serves metrics on?",
+      "choices": [
+        "Discord-OAuth, like the network-facing services",
+        "A bearer token kept in the client's sessionStorage",
+        "It authenticates nothing; access is gated by filesystem permissions only",
+        "Mutual TLS between monitor and aggregator"
+      ],
+      "answer": "C",
+      "source": "system-architecture.md",
+      "gold": "The monitor runs root, exposes an unauthenticated socket gated by FS perms only — it authenticates nothing. The network-facing services (web API, assistant) enforce Discord-OAuth."
+    },
+    {
+      "id": "Q6",
+      "topic": "architecture",
+      "question": "When many clients want live metrics, where does the design put the fan-out, and what does the monitor itself do?",
+      "choices": [
+        "In the monitor, which pushes a stream to each connected client",
+        "In the web API; the monitor samples once and serves the latest snapshot",
+        "In the SPA, which polls the monitor socket directly",
+        "In kgsm-lib, which caches per consumer"
+      ],
+      "answer": "B",
+      "source": "system-architecture.md",
+      "gold": "Sampling stays O(1) in client count. Fan-out lives in the web API; the monitor samples once and serves latest."
+    },
+    {
+      "id": "Q7",
+      "topic": "architecture",
+      "question": "Most of the .NET ecosystem targets Native AOT. Which component is the deliberate, eyes-open exception, and what stack does it use?",
+      "choices": [
+        "kgsm-monitor, which falls back to JIT for /proc parsing",
+        "The kgsm-api web aggregator, which uses standard JIT with controllers + EF Core",
+        "kgsm-lib, which ships a JIT build specifically for the bot",
+        "The assistant CLI, which is JIT-only for plugin support"
+      ],
+      "answer": "B",
+      "source": "system-architecture.md",
+      "gold": "Built in kgsm-api on standard JIT — controllers + EF Core, the deliberate exception to the AOT ecosystem (not embedded; eyes-open maintainability trade)."
+    },
+    {
+      "id": "Q8",
+      "topic": "architecture",
+      "question": "kgsm-lib reaches the kgsm-firewall authority over a unix socket. What wire format does that seam use, and why not HTTP?",
+      "choices": [
+        "HTTP/1.1 over the unix socket, reusing the watchdog's ASP.NET stack",
+        "gRPC, for typed contracts",
+        "NDJSON over UDS, because the firewall authority carries no ASP.NET stack",
+        "Raw protobuf over a TCP loopback port"
+      ],
+      "answer": "C",
+      "source": "system-architecture.md",
+      "gold": "kgsm-lib to kgsm-firewall: NDJSON over UDS (not HTTP — the authority carries no ASP.NET stack); wire shared as the TheKrystalShip.KGSM.Firewall.Contracts package."
+    },
+    {
+      "id": "Q9",
+      "topic": "architecture",
+      "question": "A native instance is started on the host today. Which component carries out the start, and which one emits the lifecycle event observers see?",
+      "choices": [
+        "kgsm performs the start and kgsm emits the event",
+        "kgsm-watchdog performs the start, and kgsm still emits the event",
+        "kgsm-lib performs the start and the watchdog emits the event",
+        "The monitor performs the start and kgsm-lib emits the event"
+      ],
+      "answer": "B",
+      "source": "system-architecture.md",
+      "gold": "Native lifecycle (start/stop/is-active/enable) now routes through kgsm-watchdog; kgsm still owns event emission. Watchdog acts, kgsm emits, monitor/bot observe."
+    },
+    {
+      "id": "Q10",
+      "topic": "architecture",
+      "question": "What is the kgsm-web repository today?",
+      "choices": [
+        "A deprecated React/Node admin panel kept only as a dead end",
+        "The Control Panel SPA, a standard Vite + React 18 build",
+        "The per-host aggregator web API",
+        "The Discord bot surface onto the assistant"
+      ],
+      "answer": "B",
+      "source": "system-architecture.md",
+      "gold": "React SPA (Control Panel): Lives in kgsm-web — a standard Vite + React 18 (JSX) build ported from the krystal-design prototype. The stale React/Node admin panel that previously lived here was discarded and replaced in-place."
+    },
+    {
+      "id": "Q11",
+      "topic": "kgsm-engine",
+      "question": "Following XDG conventions, where do a user's deployed kgsm game-server instances live on disk?",
+      "choices": [
+        "/opt/kgsm/instances/",
+        "~/.config/kgsm/instances/",
+        "~/.local/share/kgsm/instances/",
+        "/var/lib/kgsm/servers/"
+      ],
+      "answer": "C",
+      "source": "kgsm-readme.md",
+      "gold": "KGSM follows XDG Base Directory conventions: ~/.local/share/kgsm/instances/ is where your deployed game servers live; ~/.config/kgsm/config.ini holds global settings."
+    },
+    {
+      "id": "Q12",
+      "topic": "kgsm-engine",
+      "question": "KGSM lists an optional package needed for one feature. Which package enables event handling / broadcasting?",
+      "choices": [
+        "ufw, via enable_firewall_management",
+        "socat, via enable_event_broadcasting",
+        "inotify-tools, which is required not optional",
+        "steamcmd, for SteamCMD-based games"
+      ],
+      "answer": "B",
+      "source": "kgsm-readme.md",
+      "gold": "Optional dependencies: ufw for firewall management (enable_firewall_management=true); socat for event handling (enable_event_broadcasting=true)."
+    },
+    {
+      "id": "Q13",
+      "topic": "kgsm-engine",
+      "question": "Which command installs the Minecraft blueprint under a custom instance name 'survival'?",
+      "choices": [
+        "kgsm create minecraft survival",
+        "kgsm install minecraft --name survival",
+        "kgsm blueprints install minecraft survival",
+        "kgsm new minecraft=survival"
+      ],
+      "answer": "B",
+      "source": "kgsm-readme.md",
+      "gold": "Install Minecraft with a custom name: kgsm install minecraft --name survival. Then start it: kgsm start survival."
+    },
+    {
+      "id": "Q14",
+      "topic": "kgsm-lib",
+      "question": "How does a .NET project consume kgsm-lib, according to its README?",
+      "choices": [
+        "As a git submodule built from source",
+        "As the NuGet package TheKrystalShip.KGSM.Lib",
+        "By calling a hosted REST API",
+        "By copying the .cs files into the project"
+      ],
+      "answer": "B",
+      "source": "kgsm-lib-readme.md",
+      "gold": "You can install KGSM-Lib via NuGet: dotnet add package TheKrystalShip.KGSM.Lib."
+    },
+    {
+      "id": "Q15",
+      "topic": "kgsm-lib",
+      "question": "Through what mechanism does kgsm-lib deliver real-time KGSM events (installs, startups, shutdowns) to C#?",
+      "choices": [
+        "A polling HTTP endpoint",
+        "A Unix Domain Socket",
+        "SignalR over WebSockets",
+        "A Kafka topic"
+      ],
+      "answer": "B",
+      "source": "kgsm-lib-readme.md",
+      "gold": "This library simplifies integration with KGSM, as well as listening to real-time events through a Unix Domain Socket."
+    },
+    {
+      "id": "Q16",
+      "topic": "review",
+      "question": "During the kgsm-lib migration, IBlueprintService.Create() was removed outright rather than kept or stubbed. Why?",
+      "choices": [
+        "It was renamed to ListDetailed()",
+        "kgsm exposes no command to create blueprints, so the lib carried dead code",
+        "It was folded into InstanceService.Install()",
+        "It broke Native AOT trimming analysis"
+      ],
+      "answer": "B",
+      "source": "architecture-review-findings.md",
+      "gold": "IBlueprintService.Create() removed outright — the lib carries no blueprint-create code at all and kgsm exposes no command to create blueprints, so the bot's dead CreateAsync was deleted."
+    },
+    {
+      "id": "Q17",
+      "topic": "review",
+      "question": "What is the central thesis of the architecture review about the kgsm-lib chokepoint?",
+      "choices": [
+        "The chokepoint is the wrong abstraction and should be replaced by a message bus",
+        "The chokepoint pattern is correct, but it is operated by hand — the gap is CI/publish/contract-tests, not transport",
+        "The chokepoint should be split into one library per consumer",
+        "The chokepoint should be removed so consumers talk to kgsm directly"
+      ],
+      "answer": "B",
+      "source": "architecture-review-findings.md",
+      "gold": "The chokepoint is right; it's operated by hand. The gaps are not architectural — they're the missing operational shell around the chokepoint (no CI, no publish step, no contract test). None of this argues for an added message bus."
+    },
+    {
+      "id": "Q18",
+      "topic": "review",
+      "question": "The review found the kgsm-lib 1.1.0 release was mislabeled. What was the lesson?",
+      "choices": [
+        "It was fully backward compatible, so the warning was a false alarm",
+        "A minor 1.1.0 bump silently shipped source-breaking changes; it warranted a major bump",
+        "It dropped Native AOT support without notice",
+        "It accidentally re-published 1.0.0-beta under a new number"
+      ],
+      "answer": "B",
+      "source": "architecture-review-findings.md",
+      "gold": "1.1.0 is NOT backward-compatible with the published 1.0.0-beta, despite its release notes saying 'Backward compatible with 1.0.0.' A minor-version bump silently shipped source-breaking changes; the breaking changes warranted a major bump."
+    },
+    {
+      "id": "Q19",
+      "topic": "logging",
+      "question": "Which logging framework do all the .NET projects standardize on?",
+      "choices": [
+        "Serilog with structured sinks",
+        "NLog",
+        "Microsoft.Extensions.Logging (ILogger<T>) only — no Serilog/NLog/log4net",
+        "log4net"
+      ],
+      "answer": "C",
+      "source": "logging-convention.md",
+      "gold": "Framework: Microsoft.Extensions.Logging (ILogger<T>) only. No Serilog/NLog/log4net."
+    },
+    {
+      "id": "Q20",
+      "topic": "logging",
+      "question": "The SystemdConsole formatter prefixes each line with a syslog priority. Which prefix marks an error-level line?",
+      "choices": [
+        "<3>",
+        "<4>",
+        "<6>",
+        "<7>"
+      ],
+      "answer": "A",
+      "source": "logging-convention.md",
+      "gold": "It emits <N> syslog priority prefixes (<3> err, <4> warn, <6> info, <7> debug) so journalctl -p err can filter by level."
+    },
+    {
+      "id": "Q21",
+      "topic": "logging",
+      "question": "How do you turn the log level up to Debug at runtime without editing appsettings.json?",
+      "choices": [
+        "Pass a --log-level Debug flag",
+        "Set the environment variable Logging__LogLevel__Default=Debug",
+        "Recompile with a DEBUG constant",
+        "Edit the journald configuration"
+      ],
+      "answer": "B",
+      "source": "logging-convention.md",
+      "gold": "Default level Information, overridable by environment variables: Logging__LogLevel__Default=Debug (double-underscore is the .NET config convention) wins over the file."
+    },
+    {
+      "id": "Q22",
+      "topic": "logging",
+      "question": "Why do the kgsm-llm CLI and Eval tools deliberately NOT use the SystemdConsole formatter that the services use?",
+      "choices": [
+        "They are AOT binaries that cannot load the formatter",
+        "They are interactive terminal tools; the <N> prefixes look wrong, so they use SimpleConsole routed to stderr",
+        "They write logs to a rotating file instead",
+        "They disable logging entirely"
+      ],
+      "answer": "B",
+      "source": "logging-convention.md",
+      "gold": "kgsm-llm's CLI and Eval entrypoints are interactive tools, not services. The Systemd formatter's <N> prefixes are meant for journald and look wrong in a terminal. They keep AddSimpleConsole routed to stderr so stdout stays clean."
+    },
+    {
+      "id": "Q23",
+      "topic": "logging",
+      "question": "Where do the .NET services' logs go, and how is retention handled?",
+      "choices": [
+        "Rotating files under /var/log/kgsm, rotated by the app",
+        "To journald, which owns retention; there is no file logging",
+        "To a central remote syslog collector by default",
+        "To stdout, captured to disk by each service"
+      ],
+      "answer": "B",
+      "source": "logging-convention.md",
+      "gold": "Every project is deployed as a systemd service to journald. No file logging — journald owns retention."
+    },
+    {
+      "id": "Q24",
+      "topic": "assistant",
+      "question": "The gemma4:12b assistant evaluation named the single highest-impact problem. What was it?",
+      "choices": [
+        "The model fabricated server status from the instance list",
+        "A kgsm run-state bug — a running server reported as stopped — that the assistant faithfully relays",
+        "The model refused to call any tools",
+        "Inference latency on the RTX 3060"
+      ],
+      "answer": "B",
+      "source": "gemma-assistant-eval.md",
+      "gold": "The biggest trust problem in the whole run is not the model — it's a kgsm run-state bug the assistant faithfully relays (a running server reported as stopped). It makes correct model behavior produce wrong answers."
+    },
+    {
+      "id": "Q25",
+      "topic": "assistant",
+      "question": "Concretely, how does that kgsm run-state bug manifest for one running instance?",
+      "choices": [
+        "is-active returns false even though the process is listening",
+        "The status command returns false while is-active returns true for the same instance",
+        "Both status and is-active return false",
+        "The PID file is present but empty"
+      ],
+      "answer": "B",
+      "source": "gemma-assistant-eval.md",
+      "gold": "The disagreement originates in kgsm itself: its status command returns status: false while is-active returns true for the same instance. The assistant relays the status field, so it inherits the wrong run-state."
+    },
+    {
+      "id": "Q26",
+      "topic": "assistant",
+      "question": "What did the evaluation conclude about editing gemma's system-prompt persona prose?",
+      "choices": [
+        "It never changes gemma-12B's behavior",
+        "It moves gemma for concrete, task-relevant routing guidance, though gemma ignored arbitrary style directives",
+        "Only changing the temperature changes behavior",
+        "It only helps on models above 30B parameters"
+      ],
+      "answer": "B",
+      "source": "gemma-assistant-eval.md",
+      "gold": "Persona-prose edits do move gemma-12B when the instruction is concrete and task-relevant (resolve-and-act), in contrast to arbitrary style directives ('reply in French') which it ignored. The system prompt is a real lever for behavioral routing guidance, not cosmetics."
+    },
+    {
+      "id": "Q27",
+      "topic": "assistant",
+      "question": "Besides the run-state bug, the eval flagged a secondary kgsm issue that cripples crash diagnosis. What is it?",
+      "choices": [
+        "run_health_check never reads logs at all",
+        "run_health_check skips the log scan when the instance isn't running, yet a crashed server is by definition stopped",
+        "run_health_check scans the logs of the wrong instance",
+        "run_health_check requires root and silently fails"
+      ],
+      "answer": "B",
+      "source": "gemma-assistant-eval.md",
+      "gold": "run_health_check skips the log scan when the instance isn't running. But a crashed server is, by definition, stopped — so the number-one troubleshooting case (diagnose a crash from its logs) can never scan logs."
+    },
+    {
+      "id": "Q28",
+      "topic": "rag",
+      "question": "The RAG design exposes a single `search` tool rather than separate web_search and local-docs tools. What is the stated reason?",
+      "choices": [
+        "It saves VRAM by loading one fewer model",
+        "Two overlapping 'search-for-info' tools are exactly the small-model tool-selection failure mode",
+        "Web search was removed from the product entirely",
+        "It avoids constructing a second HTTP client"
+      ],
+      "answer": "B",
+      "source": "rag-tool-plan.md",
+      "gold": "Overlapping tools are the small-model selection failure. Two 'search-for-info' tools is that failure. One tool = one 'look it up' decision; the backend decides local-vs-web deterministically."
+    },
+    {
+      "id": "Q29",
+      "topic": "rag",
+      "question": "Which embedding model is the RAG default, and what is the rationale?",
+      "choices": [
+        "nomic-embed-text, chosen for raw speed",
+        "bge-m3, chosen for multilingual coverage",
+        "embeddinggemma, Gemma-native to cohere with the gemma4 chat model",
+        "An OpenAI hosted embedding model"
+      ],
+      "answer": "C",
+      "source": "rag-tool-plan.md",
+      "gold": "embeddinggemma default embedder (Google's Gemma-native on-device model; 768-dim, Matryoshka-truncatable) to pair with gemma4. Built for on-device RAG; coheres with the chat model."
+    },
+    {
+      "id": "Q30",
+      "topic": "rag",
+      "question": "What couples the standalone indexer to the assistant's retrieval, and what happens when their versions or embedding models disagree?",
+      "choices": [
+        "A shared in-memory cache that is migrated in place",
+        "A versioned on-disk index header; on any mismatch the reader rejects it and rebuilds, never migrating",
+        "A REST call that retries on mismatch",
+        "A database whose schema auto-upgrades"
+      ],
+      "answer": "B",
+      "source": "rag-tool-plan.md",
+      "gold": "The decoupling contract is a versioned on-disk index — header carries format-version + embedding-model + dim + manifest; the reader rejects on any mismatch. Two binaries built at different times must fail loud, not mis-read."
+    },
+    {
+      "id": "Q31",
+      "topic": "rag",
+      "question": "If local retrieval finds nothing above threshold and the web fallback also returns nothing, what must the `search` tool do?",
+      "choices": [
+        "Return the closest low-relevance chunk dressed up as the answer",
+        "Return an explicit 'no relevant sources found' and never fabricate",
+        "Silently return an empty string",
+        "Keep retrying with relaxed thresholds until something matches"
+      ],
+      "answer": "B",
+      "source": "rag-tool-plan.md",
+      "gold": "If nothing clears MinScore and web fallback also returns nothing, search returns an explicit 'no relevant sources found' — never a fabricated or low-relevance chunk dressed as an answer. The model says it couldn't find that in the docs; it doesn't guess."
+    },
+    {
+      "id": "Q32",
+      "topic": "rag",
+      "question": "Why is retrieval implemented as a tool the model elects to call, instead of always-on injection before every turn?",
+      "choices": [
+        "Always-on injection is too slow for the RTX 3060",
+        "The assistant's traffic is mostly operational, not knowledge Q&A, so retrieval is gated per turn",
+        "The model cannot handle injected context windows",
+        "It avoids paying for embeddings on idle turns"
+      ],
+      "answer": "B",
+      "source": "rag-tool-plan.md",
+      "gold": "The assistant's traffic is mostly operational (get_status, server_command), not knowledge Q&A. The benchmark's always-retrieve model assumes every query is a doc question; ours aren't. Retrieval must be gated per turn."
+    }
+  ]
+}

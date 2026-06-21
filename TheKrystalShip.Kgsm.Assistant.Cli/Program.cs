@@ -18,14 +18,26 @@ using TheKrystalShip.Llm.Interfaces;
 // Exit codes: 0 ok · 1 runtime failure · 2 usage/config error · 130 cancelled (SIGINT).
 const int ExitOk = 0, ExitRuntime = 1, ExitUsage = 2, ExitCancelled = 130;
 
-if (!CliOptions.TryParse(args, out var cli, out var parseError))
+// Subcommand dispatch: `kgsm-assistant index ...` builds the RAG index via the shared core engine,
+// reusing the layered config below but NONE of the chat/KGSM backend. Detected before flag parsing
+// because its sub-flags (--full, --source) aren't chat options; only --config is pulled out here so
+// config resolution can honor it — IndexCommand parses the rest after the config is built.
+var indexMode = args.Length > 0 && args[0] == "index";
+var indexArgs = indexMode ? args[1..] : [];
+
+CliOptions cli;
+if (indexMode)
+{
+    cli = new CliOptions { ConfigPath = ConfigPathFrom(indexArgs) };
+}
+else if (!CliOptions.TryParse(args, out cli, out var parseError))
 {
     Console.Error.WriteLine($"kgsm-assistant: {parseError}");
     Console.Error.WriteLine("Try 'kgsm-assistant --help'.");
     return ExitUsage;
 }
 
-if (cli.Help)
+if (!indexMode && cli.Help)
 {
     Console.Out.Write(CliOptions.Usage);
     return ExitOk;
@@ -59,6 +71,11 @@ builder.Configuration.AddEnvironmentVariables();
 // 5. An explicit --model flag beats config + env.
 if (!string.IsNullOrWhiteSpace(cli.Model))
     builder.Configuration["Ollama:Model"] = cli.Model;
+
+// The index verb needs only the resolved config — not the chat/KGSM backend. Dispatch here, before
+// any recording/prompt/KGSM setup or backend wiring, so a host with Ollama but no kgsm can index.
+if (indexMode)
+    return await IndexCommand.RunAsync(builder.Configuration, indexArgs);
 
 // Recording (the self-improvement transcript corpus): the generic lib holds no host path knowledge,
 // so the CLI supplies the XDG data default when recording is on but no directory was set (same shape
@@ -197,6 +214,18 @@ using (host)
 }
 
 // --- helpers ---------------------------------------------------------------------------------
+
+// The `index` verb's --config must be honored during config resolution (before IndexCommand parses
+// the rest of its sub-args), so pull just that one value out of the verb's args here.
+static string? ConfigPathFrom(string[] verbArgs)
+{
+    for (var i = 0; i < verbArgs.Length; i++)
+    {
+        if (verbArgs[i] == "--config" && i + 1 < verbArgs.Length) return verbArgs[i + 1];
+        if (verbArgs[i].StartsWith("--config=", StringComparison.Ordinal)) return verbArgs[i]["--config=".Length..];
+    }
+    return null;
+}
 
 static string DefaultConfigPath()
 {

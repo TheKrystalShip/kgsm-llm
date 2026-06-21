@@ -146,6 +146,7 @@ internal sealed record CliOptions
           kgsm-assistant [options] "your question"     one-shot: prints the reply and exits
           echo "your question" | kgsm-assistant        one-shot from stdin (piped)
           kgsm-assistant [options]                     interactive REPL (a TTY with no prompt)
+          kgsm-assistant index [--full] [--source p]   build the RAG index (see 'index --help')
 
         OPTIONS:
           --read-only        reads only — never offer or run mutating/destructive actions

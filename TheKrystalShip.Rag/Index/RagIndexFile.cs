@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
 namespace TheKrystalShip.Rag.Index;
@@ -152,5 +153,31 @@ public static class RagIndexFile
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read);
         return Read(fs);
+    }
+
+    /// <summary>
+    /// Never-throw read for callers that treat "no usable existing index" as a normal state — the
+    /// indexer loading the previous index for incremental reuse, where any failure (missing,
+    /// unreadable, wrong magic/version, or a corrupt body) simply means "rebuild from scratch".
+    /// Returns false (and a null <paramref name="index"/>) instead of throwing.
+    /// </summary>
+    public static bool TryReadFromFile(string path, [NotNullWhen(true)] out RagIndex? index)
+    {
+        index = null;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            return false;
+
+        try
+        {
+            index = ReadFromFile(path);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or RagIndexFormatException or FormatException)
+        {
+            // FormatException covers a valid header over a corrupt body (a malformed 7-bit
+            // string-length prefix), the one read failure outside the IO family.
+            return false;
+        }
     }
 }

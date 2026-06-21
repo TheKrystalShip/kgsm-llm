@@ -3,6 +3,8 @@
   <Project Path="TheKrystalShip.Llm/TheKrystalShip.Llm.csproj" />
   <Project Path="TheKrystalShip.Rag/TheKrystalShip.Rag.csproj" />
   <Project Path="TheKrystalShip.Rag.Tests/TheKrystalShip.Rag.Tests.csproj" />
+  <Project Path="TheKrystalShip.Rag.Indexer/TheKrystalShip.Rag.Indexer.csproj" />
+  <Project Path="TheKrystalShip.Rag.Indexer.Tests/TheKrystalShip.Rag.Indexer.Tests.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant/TheKrystalShip.Kgsm.Assistant.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Infrastructure/TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Tests/TheKrystalShip.Kgsm.Assistant.Tests.csproj" />

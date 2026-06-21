@@ -82,4 +82,21 @@ public sealed class RagOptions
     /// the TOP score off what retrieval returns, so this stage must not pre-empt it by returning empty.
     /// </summary>
     public double MinScore { get; set; }
+
+    // --- Index-time settings (the `kgsm-assistant index` verb / standalone indexer) ----------------
+    // The retrieval path above ignores these; they configure how the index is BUILT, kept in the same
+    // "Rag" block so an operator tunes one section (plan §4). The standalone indexer takes them as CLI
+    // flags instead — it shares no config with the assistant, only the on-disk index (D6/D9).
+
+    /// <summary>Docs to index — files and/or directories (walked recursively). Default = none (D2: operator-configured).</summary>
+    public string[] Sources { get; set; } = [];
+
+    /// <summary>Glob applied when walking a source directory. Default <c>*.md</c>.</summary>
+    public string SourcePattern { get; set; } = "*.md";
+
+    /// <summary>Chunk target size in characters. Changing it forces a full re-index (the carried-over chunks differ).</summary>
+    public int ChunkSize { get; set; } = 2000;
+
+    /// <summary>Chunk overlap in characters; must be &lt; <see cref="ChunkSize"/>.</summary>
+    public int ChunkOverlap { get; set; } = 200;
 }

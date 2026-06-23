@@ -216,6 +216,76 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadInstanceFile_NonRegularFile_IsRefused()
+    {
+        // A FIFO inside the instance dir: opening it for read would block forever, so the
+        // stat()-based guard must refuse it before opening. (Skips if mkfifo is unavailable.)
+        var fifo = Path.Combine(_root, "pipe.sock");
+        if (!TryMakeFifo(fifo)) return;
+
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+
+        var result = await Create().ReadInstanceFileAsync("inst", "pipe.sock");
+
+        result.IsSuccess.Should().BeFalse("a FIFO/socket isn't a regular file and would block on open");
+        (result.Error ?? string.Empty).Should().Contain("regular file");
+    }
+
+    [Fact]
+    public async Task ReadInstanceFile_BinaryFile_IsNotDumped()
+    {
+        // A NUL byte marks the content as binary → report the size, never spray raw bytes.
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        await File.WriteAllBytesAsync(
+            Path.Combine(_root, "blob.bin"), new byte[] { 0x50, 0x4B, 0x00, 0x01, 0x02 });
+
+        var result = await Create().ReadInstanceFileAsync("inst", "blob.bin");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("binary file").And.Contain("bytes");
+    }
+
+    [Fact]
+    public async Task ListInstanceDirectory_ListsEntries_DirsAndFilesWithinJail()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        await File.WriteAllTextAsync(Path.Combine(_root, "inst.config.ini"), "port = 1\n");
+        Directory.CreateDirectory(Path.Combine(_root, "logs"));
+
+        var result = await Create().ListInstanceDirectoryAsync("inst");
+
+        result.IsSuccess.Should().BeTrue();
+        var byName = result.Value!.ToDictionary(e => e.Name);
+        byName.Should().ContainKey("inst.config.ini");
+        byName["inst.config.ini"].IsDirectory.Should().BeFalse();
+        byName.Should().ContainKey("logs");
+        byName["logs"].IsDirectory.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ListInstanceDirectory_DotDotEscape_IsRefused()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        await File.WriteAllTextAsync(Path.Combine(_outside, "secret.txt"), "TOPSECRET");
+
+        var result = await Create().ListInstanceDirectoryAsync("inst", "../outside");
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    /// <summary>Best-effort FIFO creation via the <c>mkfifo</c> CLI; false if unavailable.</summary>
+    private static bool TryMakeFifo(string path)
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.Start("mkfifo", path);
+            p?.WaitForExit(2000);
+            return File.Exists(path);
+        }
+        catch { return false; }
+    }
+
+    [Fact]
     public async Task GetFleetStatus_PreservesMeasuredVsUnavailable()
     {
         _instances.GetAllStatuses(Arg.Any<bool>()).Returns(new Dictionary<string, Reading<InstanceRuntimeStatus>>

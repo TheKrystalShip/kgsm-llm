@@ -29,8 +29,12 @@ public static class LlmTools
     public static readonly Tool Search = new("search");
 
     // Authorized read (offered only to action-authorized callers — exposes file
-    // contents, so gated like the command tier even though it mutates nothing)
-    public static readonly Tool ViewConfigFile = new("view_config_file");
+    // contents, so gated like the command tier even though it mutates nothing).
+    // read_file replaces the old single-purpose view_config_file: it reads any text file
+    // inside a server's own directory (config, logs, server.properties, mod settings …),
+    // and list_files lets the model discover what's there first.
+    public static readonly Tool ReadFile = new("read_file");
+    public static readonly Tool ListFiles = new("list_files");
 
     // Staged commands — propose-only (§3.5). The model never executes these; the
     // dispatcher resolves + STAGES them, and a human confirms before they run.
@@ -100,6 +104,19 @@ public static class LlmTools
         "Which lifecycle action to take on the server: start, stop, restart, update, or backup.",
         AllowedValues: ServerCommandVerbs);
 
+    private static readonly LlmToolParameter ReadPath = new(
+        "path",
+        "Optional. The file to read, as a path relative to the server's own directory — e.g. " +
+        "\"server.properties\" or \"logs/latest.log\". OMIT it to read the server's main " +
+        "configuration (its .config.ini). Use list_files first if you don't know the file name.",
+        Required: false);
+
+    private static readonly LlmToolParameter ListSubdir = new(
+        "subdir",
+        "Optional. A subdirectory to list, relative to the server's own directory — e.g. \"logs\" " +
+        "or \"install\". OMIT it to list the server's top-level directory.",
+        Required: false);
+
     private static readonly LlmToolParameter SearchQuery = new(
         "query",
         "What to look up. Searches the operator's own indexed documentation first, then falls back " +
@@ -137,19 +154,28 @@ public static class LlmTools
 
     /// <summary>
     /// Reads that expose file contents — offered only to action-authorized callers.
-    /// They mutate nothing (no per-message cap, no staging), but reading a config
-    /// file reveals more than the read-only tier, so the gate refuses them for
+    /// They mutate nothing (no per-message cap, no staging), but reading a server's
+    /// files reveals more than the read-only tier, so the gate refuses them for
     /// unauthorized callers as defense-in-depth. (V1 owner-decision: conservative;
     /// can be relaxed into <see cref="ReadOnly"/> later — tightening after exposure
     /// is the harder direction.)
     /// </summary>
     public static readonly IReadOnlyList<LlmToolDefinition> AuthorizedReadOnly = new[]
     {
-        LlmToolDefinition.Create(ViewConfigFile,
-            "View a game server's main configuration file (its .config.ini), with secrets " +
-            "redacted. Read-only — use it to inspect or help diagnose a server's settings; to " +
-            "CHANGE a setting, propose it with set_config_value instead.",
-            InstanceName),
+        LlmToolDefinition.Create(ReadFile,
+            "Read a text file from inside a game server's own directory — its configuration, logs, " +
+            "server.properties, mod settings, and so on. Read-only and confined to that server's " +
+            "folder. Give the file's path relative to the server's directory (use list_files first " +
+            "if you don't know it), or OMIT the path to read the server's main configuration (its " +
+            ".config.ini). Large files are truncated and binary files aren't shown. To CHANGE a " +
+            "config setting, propose it with set_config_value instead.",
+            InstanceName, ReadPath),
+
+        LlmToolDefinition.Create(ListFiles,
+            "List the files and folders inside a game server's own directory, so you can find a file " +
+            "to read with read_file. Optionally pass a subdirectory (e.g. \"logs\") to look inside it; " +
+            "omit it for the server's top level.",
+            InstanceName, ListSubdir),
     };
 
     /// <summary>

@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
@@ -108,29 +110,9 @@ internal sealed class KgsmServerOperations : IServerOperations
             // at ~/.local/share/kgsm/instances/factorio/factorio-test/… via a symlink to
             // the working dir.) Deferring to the engine keeps this drift-proof as kgsm
             // reshapes instance layout. The resolved file's directory is the read boundary.
-            var found = await Task.Run(() => _instances.FindConfigPath(instance), cancellationToken);
-            if (found.IsFailure)
-                return Result.Failure<string>(
-                    string.IsNullOrWhiteSpace(found.Stderr)
-                        ? $"'{instance}' is not a known instance."
-                        : found.Stderr.Trim());
-
-            var configPath = found.Stdout?.Trim();
-            // Guard empty (a CWD-relative read would otherwise escape into the
-            // service's own working directory).
-            if (string.IsNullOrWhiteSpace(configPath))
-                return Result.Failure<string>($"'{instance}' has no resolvable config location.");
-
-            var boundary = Path.GetDirectoryName(Path.GetFullPath(configPath));
-            if (string.IsNullOrEmpty(boundary))
-                return Result.Failure<string>($"'{instance}' has no resolvable config directory.");
-
-            var dirInfo = new DirectoryInfo(boundary);
-            if (!dirInfo.Exists)
-                return Result.Failure<string>("The instance directory does not exist.");
-
-            // Canonicalize the boundary (resolve a symlinked instance dir to its target).
-            var realDir = dirInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? dirInfo.FullName;
+            var (realDir, resolveError) = await ResolveInstanceBoundaryAsync(instance, cancellationToken);
+            if (resolveError is not null || realDir is null)
+                return Result.Failure<string>(resolveError ?? "could not resolve the instance directory.");
 
             // Combine + normalize (defeats ".."), then confine to the boundary.
             var candidate = Path.GetFullPath(Path.Combine(realDir, relativePath));
@@ -145,6 +127,13 @@ internal sealed class KgsmServerOperations : IServerOperations
             var realFile = fileInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? fileInfo.FullName;
             if (!IsWithin(realDir, realFile))
                 return Result.Failure<string>("Refused: the requested file resolves outside the instance directory.");
+
+            // Refuse non-regular files: opening a FIFO/socket blocks indefinitely, and a
+            // device/special file isn't something the model should read. (System.IO can't see
+            // the st_mode type bits, so this is a small stat() interop — see IsNonRegularFile.)
+            if (IsNonRegularFile(realFile))
+                return Result.Failure<string>(
+                    "Refused: that path isn't a regular file (it may be a directory, socket, pipe, or device).");
 
             var text = await ReadCappedTextAsync(realFile, MaxFileBytes, cancellationToken);
             return Result.Success(text);
@@ -169,14 +158,157 @@ internal sealed class KgsmServerOperations : IServerOperations
                candidate.StartsWith(normalizedDir + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
+    /// <summary>Max entries returned in one directory listing — bounds the model-facing text.</summary>
+    private const int MaxListEntries = 200;
+
     private static async Task<string> ReadCappedTextAsync(string path, int maxBytes, CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var toRead = (int)Math.Min(stream.Length, maxBytes);
+        // FileShare.ReadWrite so a live log being written by a running server can still be read.
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var total = stream.Length;
+        var toRead = (int)Math.Min(total, maxBytes);
         var buffer = new byte[toRead];
         var read = await stream.ReadAtLeastAsync(buffer, toRead, throwOnEndOfStream: false, cancellationToken);
+
+        // Binary guard: a NUL byte in the sampled bytes means this isn't text — don't dump
+        // raw bytes into the model's context; report the size honestly instead.
+        if (Array.IndexOf(buffer, (byte)0, 0, read) >= 0)
+            return $"[binary file, {total:N0} bytes — not shown]";
+
         var text = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
-        return stream.Length > maxBytes ? text + "\n… (truncated)" : text;
+        return total > maxBytes
+            ? text + $"\n… (truncated — showing the first {maxBytes / 1024} KB of {total:N0} bytes)"
+            : text;
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<IReadOnlyList<InstanceDirEntry>>> ListInstanceDirectoryAsync(
+        string instance, string? relativeSubdir = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var (realDir, resolveError) = await ResolveInstanceBoundaryAsync(instance, cancellationToken);
+            if (resolveError is not null || realDir is null)
+                return Result.Failure<IReadOnlyList<InstanceDirEntry>>(
+                    resolveError ?? "could not resolve the instance directory.");
+
+            // Combine + normalize (defeats ".."), then confine to the boundary — same jail as the read path.
+            var target = string.IsNullOrWhiteSpace(relativeSubdir)
+                ? realDir
+                : Path.GetFullPath(Path.Combine(realDir, relativeSubdir));
+            if (!IsWithin(realDir, target))
+                return Result.Failure<IReadOnlyList<InstanceDirEntry>>(
+                    "Refused: that path is outside the instance directory.");
+
+            var dirInfo = new DirectoryInfo(target);
+            if (!dirInfo.Exists)
+                return Result.Failure<IReadOnlyList<InstanceDirEntry>>(
+                    "That isn't a directory in the server's folder (omit the subdirectory to list the top level).");
+
+            // Re-check after resolving a final-component symlink (an in-dir link out).
+            var realTarget = dirInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? dirInfo.FullName;
+            if (!IsWithin(realDir, realTarget))
+                return Result.Failure<IReadOnlyList<InstanceDirEntry>>(
+                    "Refused: that path resolves outside the instance directory.");
+
+            var entries = await Task.Run(() =>
+                new DirectoryInfo(realTarget)
+                    .EnumerateFileSystemInfos()
+                    .Select(e =>
+                    {
+                        var isDir = (e.Attributes & FileAttributes.Directory) != 0;
+                        long size = 0;
+                        if (!isDir && e is FileInfo fi)
+                        {
+                            try { size = fi.Length; } catch { /* unreadable size → 0 */ }
+                        }
+                        return new InstanceDirEntry(e.Name, isDir, size);
+                    })
+                    .OrderByDescending(e => e.IsDirectory)
+                    .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                    .Take(MaxListEntries)
+                    .ToList(),
+                cancellationToken);
+
+            return Result.Success<IReadOnlyList<InstanceDirEntry>>(entries);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ListInstanceDirectory failed for {Instance} ({Subdir})", instance, relativeSubdir);
+            return Result.Failure<IReadOnlyList<InstanceDirEntry>>(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Resolves an instance's read/list boundary THROUGH kgsm (<c>instances find</c> →
+    /// __find_instance_config) — the same resolution config-get/config-set use, kept
+    /// drift-proof as kgsm reshapes instance layout. The resolved config file's DIRECTORY
+    /// (the instance root, which holds install/, logs/, saves/ …) is the boundary, with a
+    /// symlinked instance dir canonicalized to its target. Returns the real boundary path,
+    /// or a human-readable error (never both).
+    /// </summary>
+    private async Task<(string? Dir, string? Error)> ResolveInstanceBoundaryAsync(
+        string instance, CancellationToken cancellationToken)
+    {
+        var found = await Task.Run(() => _instances.FindConfigPath(instance), cancellationToken);
+        if (found.IsFailure)
+            return (null, string.IsNullOrWhiteSpace(found.Stderr)
+                ? $"'{instance}' is not a known instance."
+                : found.Stderr.Trim());
+
+        var configPath = found.Stdout?.Trim();
+        // Guard empty (a CWD-relative read would otherwise escape into the
+        // service's own working directory).
+        if (string.IsNullOrWhiteSpace(configPath))
+            return (null, $"'{instance}' has no resolvable config location.");
+
+        var boundary = Path.GetDirectoryName(Path.GetFullPath(configPath));
+        if (string.IsNullOrEmpty(boundary))
+            return (null, $"'{instance}' has no resolvable config directory.");
+
+        var dirInfo = new DirectoryInfo(boundary);
+        if (!dirInfo.Exists)
+            return (null, "The instance directory does not exist.");
+
+        var realDir = dirInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? dirInfo.FullName;
+        return (realDir, null);
+    }
+
+    // --- non-regular-file detection (Linux) ---
+    // System.IO exposes only permission bits (File.GetUnixFileMode), never the st_mode TYPE
+    // bits, so a small stat() interop is the clean way to refuse a FIFO/socket/device before
+    // we open it (opening a FIFO with no writer blocks forever). The whole stack is Linux.
+
+    private const uint S_IFMT = 0xF000;   // file-type mask in st_mode
+    private const uint S_IFREG = 0x8000;  // regular file
+    // st_mode is a 32-bit mode_t at offset 24 in glibc's LP64 struct stat
+    // (st_dev 8 + st_ino 8 + st_nlink 8). struct stat is 144 bytes there; 256 is ample.
+    private const int StModeOffset = 24;
+
+    // DllImport (not LibraryImport): the classic marshaller handles byte[]/string without
+    // /unsafe, and this assistant Infrastructure runs JIT (no Native-AOT trim concerns).
+    [DllImport("libc", EntryPoint = "stat", SetLastError = true)]
+    private static extern int NativeStat([MarshalAs(UnmanagedType.LPUTF8Str)] string pathname, byte[] statbuf);
+
+    /// <summary>
+    /// True if <paramref name="path"/> exists but is NOT a regular file (FIFO/socket/device/…).
+    /// On any interop failure returns false (don't block a legitimate read) — the read is still
+    /// size-capped, so the worst case degrades to the prior behavior, never a crash.
+    /// </summary>
+    private static bool IsNonRegularFile(string path)
+    {
+        try
+        {
+            var buf = new byte[256];
+            if (NativeStat(path, buf) != 0)
+                return false; // couldn't stat → let the normal open/read path report any error
+            var mode = BitConverter.ToUInt32(buf, StModeOffset);
+            return (mode & S_IFMT) != S_IFREG;
+        }
+        catch
+        {
+            return false; // interop unavailable → don't refuse legitimate reads
+        }
     }
 
     public async Task<Result<IReadOnlyList<FleetStatusEntry>>> GetFleetStatusAsync(CancellationToken cancellationToken = default)

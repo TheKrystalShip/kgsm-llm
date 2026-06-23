@@ -59,8 +59,10 @@ public class ToolDispatcher : IToolDispatcher
                 return await RunHealthCheckAsync(call, cancellationToken);
             if (call.Name == LlmTools.Search)
                 return await SearchAsync(call, cancellationToken);
-            if (call.Name == LlmTools.ViewConfigFile)
-                return await ViewConfigFileAsync(call, cancellationToken);
+            if (call.Name == LlmTools.ReadFile)
+                return await ReadFileAsync(call, cancellationToken);
+            if (call.Name == LlmTools.ListFiles)
+                return await ListFilesAsync(call, cancellationToken);
             if (call.Name == LlmTools.ServerCommand)
                 return await StageServerCommandAsync(call, cancellationToken);
             if (call.Name == LlmTools.UninstallServer)
@@ -106,52 +108,67 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// Reads an instance's main config file (<c>&lt;name&gt;.config.ini</c>), redacted.
-    /// V1 whitelist (§3.8): only that one file. The filename is derived from the
-    /// resolved (real-inventory-matched) instance name, so the model supplies no
-    /// path segment — there is no attacker-controlled path component. The port
-    /// enforces instance-directory path-binding as defense-in-depth.
+    /// Reads a text file from inside the resolved instance's own directory (its config,
+    /// logs, server.properties, mod settings, …). The <c>path</c> arg is relative to that
+    /// directory; an omitted/blank path defaults to the instance's main
+    /// <c>&lt;name&gt;.config.ini</c> (preserving the old view_config_file affordance — the
+    /// common "show me X's config" ask stays a single, path-free call). The port enforces
+    /// the instance-directory jail (<c>..</c>/out-of-tree-symlink refusal), refuses
+    /// non-regular files (a FIFO would otherwise block), caps size, and skips binaries.
+    /// Content is returned verbatim — no redaction (owner decision: game-server files,
+    /// trusted operators).
     /// </summary>
-    private async Task<string> ViewConfigFileAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<string> ReadFileAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
         if (error is not null)
             return error;
 
-        var file = $"{resolved}.config.ini";
+        var path = call.Arg("path")?.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+            path = $"{resolved}.config.ini";
 
-        var result = await _operations.ReadInstanceFileAsync(resolved!, file, cancellationToken);
+        var result = await _operations.ReadInstanceFileAsync(resolved!, path, cancellationToken);
         if (!result.IsSuccess)
-            return $"Error: could not read the config for '{resolved}' ({result.Error ?? "unknown error"}).";
+            return $"Error: could not read '{path}' for '{resolved}' ({result.Error ?? "unknown error"}).";
 
-        var redacted = RedactSecrets(result.Value ?? string.Empty);
-        return $"Config file ({file}) for {resolved}:\n{redacted}";
+        return $"File ({path}) for {resolved}:\n{result.Value ?? string.Empty}";
     }
-
-    /// <summary>Secret-key hints for light V1 redaction. Kept tight on purpose —
-    /// over-redaction would hide the very settings a user is trying to fix.</summary>
-    private static readonly string[] SecretKeyHints = ["password", "passwd", "secret", "token"];
 
     /// <summary>
-    /// Masks the value of any <c>key = value</c> / <c>key: value</c> line whose KEY
-    /// contains a secret hint, leaving everything else intact. Matching on the key
-    /// (not the value) avoids mangling unrelated content.
+    /// Lists one level of the resolved instance's own directory so the model can discover a
+    /// file to read with <c>read_file</c>. An omitted/blank <c>subdir</c> lists the top level;
+    /// otherwise it lists that subdirectory. Same instance-directory jail as the read path.
     /// </summary>
-    private static string RedactSecrets(string content)
+    private async Task<string> ListFilesAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
-        var lines = content.Split('\n');
-        for (var i = 0; i < lines.Length; i++)
-        {
-            var sep = lines[i].IndexOfAny(['=', ':']);
-            if (sep <= 0)
-                continue;
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
 
-            var key = lines[i][..sep];
-            if (SecretKeyHints.Any(h => key.Contains(h, StringComparison.OrdinalIgnoreCase)))
-                lines[i] = lines[i][..(sep + 1)] + " ***redacted***";
-        }
-        return string.Join('\n', lines);
+        var subdir = call.Arg("subdir")?.Trim();
+        var hasSubdir = !string.IsNullOrWhiteSpace(subdir);
+
+        var result = await _operations.ListInstanceDirectoryAsync(
+            resolved!, hasSubdir ? subdir : null, cancellationToken);
+        if (!result.IsSuccess)
+            return $"Error: could not list files for '{resolved}' ({result.Error ?? "unknown error"}).";
+
+        var where = hasSubdir ? $"{resolved}/{subdir!.Trim('/')}" : resolved;
+        var entries = result.Value!;
+        if (entries.Count == 0)
+            return $"{where} is empty.";
+
+        var lines = entries.Select(e =>
+            e.IsDirectory ? $"- {e.Name}/" : $"- {e.Name} ({FormatSize(e.Size)})");
+        return $"Files in {where}:\n{string.Join("\n", lines)}";
     }
+
+    /// <summary>Compact human size for a directory listing (B / KB / MB).</summary>
+    private static string FormatSize(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024):0.#} MB"
+        : bytes >= 1024 ? $"{bytes / 1024.0:0.#} KB"
+        : $"{bytes} B";
 
     /// <summary>
     /// Merged status read (toolbox catalog §4.1): no instance_name → a single

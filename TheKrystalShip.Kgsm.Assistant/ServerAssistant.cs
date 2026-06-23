@@ -445,7 +445,7 @@ public class ServerAssistant : IServerAssistant
     /// <summary>
     /// Per-turn gate closure.
     ///  - Read-only tools always pass.
-    ///  - Authorized reads (e.g. view_config_file): refused for unauthorized callers, but not capped.
+    ///  - Authorized reads (read_file / list_files): refused for unauthorized callers, but not capped.
     ///  - Commands (start/stop/restart/update/backup/install/uninstall): refused for unauthorized
     ///    callers; otherwise allowed through to the dispatcher, which only STAGES them (it never
     ///    executes). Every command is propose-only (§3.5), so there is one cap — the count of ops
@@ -476,7 +476,7 @@ public class ServerAssistant : IServerAssistant
             if (LlmTools.IsAuthorizedRead(call.Name))
                 return canPerformActions
                     ? ToolGate.Allow
-                    : ToolGate.Refuse("Refused: you don't have permission to view server configuration.");
+                    : ToolGate.Refuse("Refused: you don't have permission to read server files.");
 
             if (!LlmTools.IsStagedCommand(call.Name))
                 return ToolGate.Allow; // read-only

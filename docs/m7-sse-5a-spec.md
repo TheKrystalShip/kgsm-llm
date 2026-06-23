@@ -6,7 +6,7 @@
 > §4; `Task.WhenAll` concurrency made order-keyed ambient unreliable). Scope is honestly narrow —
 > a card is lit only where a tool has a **real structured source**: **`run_health_check`**
 > (`HealthData`) and **`get_status` fleet mode** (`FleetStatusData`). The other §5·b "card tools"
-> don't exist yet, and single-server `get_status`/`view_config_file` return opaque strings, so they
+> don't exist yet, and single-server `get_status`/`read_file` return opaque strings, so they
 > stay summary-only — fabricating cards for absent sources is forbidden (never-fabricate). Full
 > kgsm-llm suite green **358/358** + kgsm-bot **49/49** clean.
 > Implementation spec for the upstream half of kgsm-api **M7** (assistant turn relay / keystone
@@ -180,7 +180,7 @@ channel** — a small, genuinely domain-agnostic enrichment of the LLM-tool abst
 **Scope — honestly narrow (one real card, not eight).** The original Phase-2 list named eight
 §5·b "card tools" (`get_server_status`, `get_performance`, `get_console`, `get_config`,
 `get_host_diagnostics`, `get_network`, `run_health_check`, `trace_root_cause`). **Five of those
-don't exist as implemented tools, and `get_status`/`view_config_file` have no structured source.**
+don't exist as implemented tools, and `get_status`/`read_file` have no structured source.**
 The only tool that produces a real `ToolResult<TData>` today is **`run_health_check`**
 (`HealthCheckAggregator → HealthData`). So Phase 2 = **plumb the rail end-to-end + light the one
 real card.** Building cards for absent tools would fabricate data — forbidden.

@@ -43,6 +43,19 @@ public interface IServerOperations
     Task<Result<string>> ReadInstanceFileAsync(string instance, string relativePath, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Lists one level of an instance's own directory, <b>path-bound to that directory</b>
+    /// exactly like <see cref="ReadInstanceFileAsync"/> (same kgsm-resolved boundary, same
+    /// <c>..</c>/out-of-tree-symlink refusal). <paramref name="relativeSubdir"/> selects a
+    /// subdirectory to list (e.g. <c>logs</c>); null/blank lists the top level. The listing
+    /// is one level deep (non-recursive) and bounded in length. Read-only. Returns a failed
+    /// <see cref="Result"/> if the instance is unknown, the path escapes, or the target isn't
+    /// a directory — never throws. Powers the model-facing <c>list_files</c> discovery tool
+    /// (so it can find a file to hand to <c>read_file</c>).
+    /// </summary>
+    Task<Result<IReadOnlyList<InstanceDirEntry>>> ListInstanceDirectoryAsync(
+        string instance, string? relativeSubdir = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Live status of the whole fleet in a single kgsm invocation — the bulk read
     /// that replaces fanning a per-instance check across N instances (the cause of
     /// the agent-loop iteration cap on "which servers are running?"). An instance
@@ -104,3 +117,10 @@ public interface IServerOperations
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     Task<Result> SetInstanceConfigValueAsync(string instance, string key, string value, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// One entry in an instance directory listing (<see cref="IServerOperations.ListInstanceDirectoryAsync"/>):
+/// a file or subdirectory name, whether it's a directory, and the file size in bytes
+/// (0 for directories). Neutral data — the dispatcher formats it for the model.
+/// </summary>
+public sealed record InstanceDirEntry(string Name, bool IsDirectory, long Size);

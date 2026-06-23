@@ -138,7 +138,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
-        var gate = turn.Gate!(Call(LlmTools.ViewConfigFile));
+        var gate = turn.Gate!(Call(LlmTools.ReadFile));
 
         gate.Allowed.Should().BeFalse();
         gate.RefusalMessage.Should().Contain("permission");
@@ -148,9 +148,9 @@ public class ServerAssistantTests
     public async Task Gate_AllowsAuthorizedReadForAuthorizedCaller_WithoutConsumingStagingCap()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var view = Call(LlmTools.ViewConfigFile);
+        var view = Call(LlmTools.ReadFile);
 
-        // Many config views are allowed and none consume the staging budget...
+        // Many file reads are allowed and none consume the staging budget...
         for (var i = 0; i < 10; i++)
             turn.Gate!(view).Allowed.Should().BeTrue();
 

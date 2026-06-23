@@ -74,12 +74,41 @@ public sealed class ConfigEditLiveTests : IClassFixture<WebApplicationFactory<Pr
     }
 
     /// <summary>
-    /// Model tool-selection on top of the fix: a view request must route to view_config_file,
+    /// THE NEW read_file/list_files surface, deterministic (no model). Lists the REAL instance
+    /// directory (which is the config file's directory, so it reaches install/logs/saves under
+    /// the same boundary) and, if the runtime control socket is present (a FIFO), proves a read
+    /// of it is REFUSED rather than hanging forever.
+    /// </summary>
+    [Fact]
+    public async Task ListAndRead_RealInstanceDir_SurfacesFiles_AndRefusesTheControlSocket()
+    {
+        if (!LiveEnabled()) return;
+
+        var ops = WithDevKgsm().Services.GetRequiredService<IServerOperations>();
+
+        var list = await ops.ListInstanceDirectoryAsync(Instance);
+        list.IsSuccess.Should().BeTrue("the instance dir is the config file's directory");
+        list.Value!.Should().Contain(e => e.Name == $"{Instance}.config.ini" && !e.IsDirectory,
+            "list_files must surface the instance's own files");
+        _out.WriteLine(string.Join("\n", list.Value!.Select(e => $"{(e.IsDirectory ? "d" : "f")} {e.Name} {e.Size}")));
+
+        // The runtime control socket is a FIFO; reading it must be refused, not block.
+        var socket = list.Value!.FirstOrDefault(e => e.Name.EndsWith(".sock", StringComparison.Ordinal));
+        if (socket is not null)
+        {
+            var read = await ops.ReadInstanceFileAsync(Instance, socket.Name);
+            read.IsSuccess.Should().BeFalse("a FIFO/socket isn't a regular file and must never be opened for read");
+            (read.Error ?? string.Empty).Should().Contain("regular file");
+        }
+    }
+
+    /// <summary>
+    /// Model tool-selection on top of the fix: a view request must route to read_file,
     /// and the tool's recorded OUTPUT must carry real config content (deterministic given the
     /// call — the tool result is fixed by the fix, only the model's choice to call it varies).
     /// </summary>
     [Fact]
-    public async Task ViewConfigPrompt_CallsViewConfigFile_AndToolReturnsContent()
+    public async Task ViewConfigPrompt_CallsReadFile_AndToolReturnsContent()
     {
         if (!LiveEnabled()) return;
 
@@ -88,8 +117,8 @@ public sealed class ConfigEditLiveTests : IClassFixture<WebApplicationFactory<Pr
 
         result.IsSuccess.Should().BeTrue();
 
-        var view = calls.FirstOrDefault(c => c.Name == LlmTools.ViewConfigFile);
-        view.Should().NotBeNull("a config-view request must route to view_config_file");
+        var view = calls.FirstOrDefault(c => c.Name == LlmTools.ReadFile);
+        view.Should().NotBeNull("a config-view request must route to read_file");
         (view!.Result ?? string.Empty).Should().Contain("auto_update",
             "the fixed read path must surface real config content to the model (not a 'could not read' error)");
     }

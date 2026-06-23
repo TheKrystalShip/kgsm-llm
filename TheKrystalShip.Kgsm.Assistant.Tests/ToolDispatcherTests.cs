@@ -275,30 +275,95 @@ public class ToolDispatcherTests
     }
 
     [Fact]
-    public async Task ViewConfigFile_ReadsResolvedInstanceConfig_AndRedactsSecrets()
+    public async Task ReadFile_NoPath_DefaultsToConfig_AndReturnsContentVerbatim()
     {
+        // An omitted path falls back to <name>.config.ini (the old view_config_file affordance),
+        // and content is returned verbatim — no redaction (owner decision).
         _operations.ReadInstanceFileAsync("minecraft", "minecraft.config.ini", Arg.Any<CancellationToken>())
             .Returns(Result.Success("port = 25565\nrcon_password = hunter2\nlevel = world"));
 
-        var result = await Summary(Call(LlmTools.ViewConfigFile, "minecraft"));
+        var result = await Summary(Call(LlmTools.ReadFile, "minecraft"));
 
-        // The filename is derived from the resolved instance name (no model-supplied path).
+        // The default filename is derived from the resolved instance name (no model-supplied path).
         await _operations.Received(1)
             .ReadInstanceFileAsync("minecraft", "minecraft.config.ini", Arg.Any<CancellationToken>());
 
         result.Should().Contain("port = 25565").And.Contain("level = world");
-        result.Should().Contain("rcon_password").And.Contain("***redacted***");
-        result.Should().NotContain("hunter2");
+        result.Should().Contain("rcon_password = hunter2"); // verbatim — redaction was dropped
     }
 
     [Fact]
-    public async Task ViewConfigFile_UnknownInstance_DoesNotRead()
+    public async Task ReadFile_ExplicitPath_ReadsThatFileWithinTheInstance()
     {
-        var result = await Summary(Call(LlmTools.ViewConfigFile, "doesnotexist"));
+        _operations.ReadInstanceFileAsync("minecraft", "logs/latest.log", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("[12:00] server started"));
+
+        var call = new LlmToolCall(LlmTools.ReadFile, new Dictionary<string, string?>
+        {
+            ["instance_name"] = "minecraft",
+            ["path"] = "logs/latest.log",
+        });
+        var result = await Summary(call);
+
+        await _operations.Received(1)
+            .ReadInstanceFileAsync("minecraft", "logs/latest.log", Arg.Any<CancellationToken>());
+        result.Should().Contain("logs/latest.log").And.Contain("server started");
+    }
+
+    [Fact]
+    public async Task ReadFile_UnknownInstance_DoesNotRead()
+    {
+        var result = await Summary(Call(LlmTools.ReadFile, "doesnotexist"));
 
         result.Should().Contain("no instance named");
         await _operations.DidNotReceive()
             .ReadInstanceFileAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ListFiles_FormatsEntries_DirsFlaggedAndFilesSized()
+    {
+        _operations.ListInstanceDirectoryAsync("minecraft", null, Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<InstanceDirEntry>>(new[]
+            {
+                new InstanceDirEntry("logs", IsDirectory: true, Size: 0),
+                new InstanceDirEntry("minecraft.config.ini", IsDirectory: false, Size: 2048),
+            }));
+
+        var result = await Summary(Call(LlmTools.ListFiles, "minecraft"));
+
+        await _operations.Received(1)
+            .ListInstanceDirectoryAsync("minecraft", null, Arg.Any<CancellationToken>());
+        result.Should().Contain("logs/").And.Contain("minecraft.config.ini").And.Contain("KB");
+    }
+
+    [Fact]
+    public async Task ListFiles_WithSubdir_PassesItThrough()
+    {
+        _operations.ListInstanceDirectoryAsync("minecraft", "logs", Arg.Any<CancellationToken>())
+            .Returns(Result.Success<IReadOnlyList<InstanceDirEntry>>(
+                new[] { new InstanceDirEntry("latest.log", IsDirectory: false, Size: 10) }));
+
+        var call = new LlmToolCall(LlmTools.ListFiles, new Dictionary<string, string?>
+        {
+            ["instance_name"] = "minecraft",
+            ["subdir"] = "logs",
+        });
+        var result = await Summary(call);
+
+        await _operations.Received(1)
+            .ListInstanceDirectoryAsync("minecraft", "logs", Arg.Any<CancellationToken>());
+        result.Should().Contain("minecraft/logs").And.Contain("latest.log");
+    }
+
+    [Fact]
+    public async Task ListFiles_UnknownInstance_DoesNotList()
+    {
+        var result = await Summary(Call(LlmTools.ListFiles, "doesnotexist"));
+
+        result.Should().Contain("no instance named");
+        await _operations.DidNotReceive()
+            .ListInstanceDirectoryAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

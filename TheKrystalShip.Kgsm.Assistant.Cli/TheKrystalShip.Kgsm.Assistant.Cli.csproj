@@ -9,14 +9,20 @@
     <!-- The binary on PATH is `kgsm-assistant`, not the dotted project name. -->
     <AssemblyName>kgsm-assistant</AssemblyName>
     <!-- Dev runs (dotnet run) use the installed net10 runtime; the shipped artifact is a
-         self-contained single-file publish (Step 5), so this only helps a framework-dependent
-         dev box that has a newer major than 10. -->
+         FRAMEWORK-DEPENDENT single-file publish (the host has the runtime installed), so
+         RollForward only helps a dev box that has a newer major than 10. -->
     <RollForward>LatestMajor</RollForward>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Embed the app's own symbols into the binary so the single-file publish drops no
          separate kgsm-assistant.pdb (stack traces stay useful). The shipped artifact is the
          one `kgsm-assistant` file; any dependency .pdb/.xml in the publish dir are ignorable. -->
     <DebugType>embedded</DebugType>
+
+    <!-- Framework-dependent single file: publish-only props (build/test ignore them); the RID
+         is supplied at publish time (deploy/deploy.sh passes -r linux-x64). Not self-contained —
+         the runtime is on the host, which keeps the binary small. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>

@@ -9,6 +9,11 @@
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>
+
+    <!-- Framework-dependent single-file deploy (the host has the net10 ASP.NET Core shared
+         runtime). Publish-only props; the RID is supplied at publish time (deploy/deploy.sh). -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>

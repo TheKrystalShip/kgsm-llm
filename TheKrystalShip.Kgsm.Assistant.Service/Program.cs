@@ -90,7 +90,9 @@ app.UseCors();
          string.IsNullOrEmpty(discord.GuildId) || string.IsNullOrEmpty(discord.ActionRoleId)))
         app.Logger.LogWarning(
             "Assistant:ActionsEnabled is true but DiscordOAuth is not fully configured " +
-            "(ClientSecret/BotToken/GuildId/ActionRoleId) — no caller will be authorized for actions.");
+            "(ClientSecret/BotToken/GuildId/ActionRoleId) — direct SESSION-bearer callers can't be " +
+            "authorized for actions. The trusted relay (kgsm-api) path is unaffected: it uses the " +
+            "api's verified tier (X-Relay-Can-Act), not a Discord lookup.");
 
     // The bot token now resolves guild membership AND roles (the caller's OAuth token is
     // discarded after /users/@me), so without it no login can succeed at all.
@@ -226,9 +228,22 @@ secured.MapPost("/turn", async (
 
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
 
-    // Authority is derived fresh from the verified principal; the conversation key is
-    // principal-scoped so one user can't read or poison another's memory.
-    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    // Whether THIS turn may perform actions = the user's per-turn toggle (INTENT) ∧ their AUTHORITY.
+    //  - trusted relay (kgsm-api): authority is the api's verified tier decision (operator+), already
+    //    folded with the toggle into X-Relay-Can-Act, which BearerAuthFilter stashed. We add only our
+    //    local preconditions (ActionsEnabled + a Confirmation signing key to mint the proposal token).
+    //  - direct session bearer: authority is the caller's Discord action role, ANDed with the toggle.
+    // The conversation key is principal-scoped so one user can't read or poison another's memory.
+    bool canPerform;
+    if (http.Items.TryGetValue(BearerAuthFilter.RelayCanActKey, out var relayObj) && relayObj is bool relayCanAct)
+    {
+        var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
+        canPerform = relayCanAct && asstOpts.ActionsEnabled && tokens.IsConfigured;
+    }
+    else
+    {
+        canPerform = (request.Actions ?? false) && await auth.CanPerformActionsAsync(principal, ct);
+    }
     var think = request.Think
         ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
     var conversationId = $"web:{principal.UserId}";

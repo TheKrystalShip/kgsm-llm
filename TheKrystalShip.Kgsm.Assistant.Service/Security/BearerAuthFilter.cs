@@ -32,10 +32,19 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     /// <summary>Key under which the resolved <see cref="AuthPrincipal"/> is stored on the request.</summary>
     public const string PrincipalKey = "principal";
 
+    /// <summary>
+    /// Key under which the trusted relay's action-authority decision is stored (a <c>bool</c>), set
+    /// ONLY on the authenticated relay path. The api forwards its verified tier decision (operator+
+    /// AND the user's per-turn toggle) as <c>X-Relay-Can-Act</c>; the /turn handler trusts it instead
+    /// of a Discord role lookup. Absent ⇒ the session-bearer path (authority comes from Discord).
+    /// </summary>
+    public const string RelayCanActKey = "relayCanAct";
+
     private const string BearerPrefix = "Bearer ";
     private const string RelaySecretHeader = "X-Relay-Secret";
     private const string RelayUserHeader = "X-Relay-User";
     private const string RelayUserNameHeader = "X-Relay-User-Name";
+    private const string RelayCanActHeader = "X-Relay-Can-Act";
 
     private readonly DiscordAuthService _auth;
     private readonly AssistantServiceOptions _options;
@@ -68,6 +77,11 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             // SessionToken is a synthetic marker — the relay path has no session (logout is a no-op).
             context.HttpContext.Items[PrincipalKey] = new AuthPrincipal(
                 userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, "relay");
+            // The relay's action-authority decision (the api's verified tier ∧ the user's toggle).
+            // Trusted only because the relay secret already matched. Absent/anything-but-"true" ⇒ false,
+            // so a relay that doesn't speak this header can never silently grant actions.
+            context.HttpContext.Items[RelayCanActKey] =
+                string.Equals(request.Headers[RelayCanActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
             return await next(context);
         }
 

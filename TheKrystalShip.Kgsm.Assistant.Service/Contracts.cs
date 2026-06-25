@@ -12,7 +12,12 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 public sealed record TurnRequest(
     string? Prompt,
     bool? Think = null,
-    IReadOnlyList<string>? Tools = null);
+    IReadOnlyList<string>? Tools = null,
+    // The per-turn "let the assistant act" toggle (the SPA's chat switch). It is INTENT, not
+    // authority: actions only happen when this is true AND the caller is authorized. On the trusted
+    // relay path authority is the api's verified tier (X-Relay-Can-Act, which already folds in this
+    // toggle); on the direct session path it is the caller's Discord action role, ANDed with this flag.
+    bool? Actions = null);
 
 /// <summary>
 /// A tool parameter, as returned by <c>GET /tools</c>.

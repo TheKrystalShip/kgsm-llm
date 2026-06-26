@@ -13,17 +13,28 @@ namespace TheKrystalShip.Llm.Tests;
 
 /// <summary>
 /// Drives <see cref="ConversationCompactor"/> with a fake <see cref="ILlmClient"/> over a real
-/// <see cref="InMemoryConversationStore"/>: verifies the no-op thresholds, that a successful
-/// compaction REPLACES the history with one model-role summary, and that failures / empty
+/// <see cref="SqliteConversationStore"/> (a throwaway temp DB): verifies the no-op thresholds, that a
+/// successful compaction REPLACES the history with one model-role summary, and that failures / empty
 /// summaries leave the stored history untouched.
 /// </summary>
-public class ConversationCompactorTests
+public sealed class ConversationCompactorTests : IDisposable
 {
     private const string Conversation = "cli:abc";
 
     private readonly ILlmClient _llm = Substitute.For<ILlmClient>();
-    private readonly InMemoryConversationStore _store =
-        new(Options.Create(new ConversationOptions { MaxMessages = 12 }));
+    private readonly string _dbPath =
+        Path.Combine(Path.GetTempPath(), $"kgsm-conv-compactor-{Guid.NewGuid():N}.db");
+    private readonly SqliteConversationStore _store;
+
+    public ConversationCompactorTests() =>
+        _store = new SqliteConversationStore(
+            Options.Create(new ConversationOptions { MaxMessages = 12, DatabasePath = _dbPath }));
+
+    public void Dispose()
+    {
+        foreach (var suffix in new[] { "", "-wal", "-shm" })
+            try { File.Delete(_dbPath + suffix); } catch { /* best-effort temp cleanup */ }
+    }
 
     private IReadOnlyList<LlmMessage>? _sent;
     private IReadOnlyList<LlmToolDefinition>? _tools;

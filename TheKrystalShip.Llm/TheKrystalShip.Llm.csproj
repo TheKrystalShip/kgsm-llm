@@ -44,6 +44,11 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <!-- Durable conversation memory (SqliteConversationStore). Pinned to the same 10.0.5 native SQLite
+         the kgsm-api uses — one bundle version across the ecosystem. Consumed only by JIT hosts (the
+         Service/CLI); the AOT RAG indexer references TheKrystalShip.Rag, not this library, so it stays
+         SQLite-free. The transitive SQLitePCLRaw advisory is suppressed repo-wide in Directory.Build.props. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
   </ItemGroup>
 
 </Project>

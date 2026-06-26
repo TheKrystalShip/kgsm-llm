@@ -16,9 +16,9 @@ internal sealed record Session(
 
 /// <summary>
 /// In-memory store of active web sessions keyed by an opaque bearer token. Thread-safe;
-/// sessions are evicted lazily on read once expired (mirrors <c>InMemoryConversationStore</c> —
-/// no background reaper for a single-instance home service). Sessions are lost on restart,
-/// which simply forces a re-login.
+/// sessions are evicted lazily on read once expired (no background reaper for a single-instance
+/// home service). Sessions are lost on restart, which simply forces a re-login. (Conversation
+/// memory, by contrast, is now durable — see <c>SqliteConversationStore</c>.)
 /// </summary>
 internal sealed class SessionStore
 {

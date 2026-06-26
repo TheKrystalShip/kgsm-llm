@@ -13,7 +13,15 @@ public class ConversationOptions
     /// </summary>
     public int MaxMessages { get; set; } = 12;
 
+    /// <summary>
+    /// Filesystem path to the SQLite database that holds conversation memory
+    /// (<see cref="SqliteConversationStore"/>). A host points this at its durable state dir (the deployed
+    /// Service uses its state directory). When null/blank the store defaults to a file beside the host
+    /// binary, so it always has a home.
+    /// </summary>
+    public string? DatabasePath { get; set; }
+
     // NOTE: there is deliberately no idle-timeout / reset knob. The conversation id is the canonical
-    // scope (a fresh chat = a fresh id), so conversations are retained for the process lifetime and
-    // resumable from any past point — see InMemoryConversationStore.
+    // scope (a fresh chat = a fresh id), so conversations are retained and resumable by id — see
+    // SqliteConversationStore.
 }

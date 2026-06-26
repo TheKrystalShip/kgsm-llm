@@ -34,7 +34,9 @@ public static class ServiceCollectionExtensions
         services.Configure<RecordingOptions>(configuration.GetSection(RecordingOptions.Section));
 
         services.AddSingleton<ILlmClient, OllamaLlmClient>();
-        services.AddSingleton<IConversationStore, InMemoryConversationStore>();
+        // Durable conversation memory: SQLite-backed so a conversation's rolling context survives a
+        // restart. Path comes from ConversationOptions.DatabasePath (a host points it at its state dir).
+        services.AddSingleton<IConversationStore, SqliteConversationStore>();
         services.AddSingleton<ILlmAgent, LlmAgent>();
         services.AddSingleton<IConversationCompactor, ConversationCompactor>();
 

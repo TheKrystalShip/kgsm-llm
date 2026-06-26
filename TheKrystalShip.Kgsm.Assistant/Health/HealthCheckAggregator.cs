@@ -71,6 +71,14 @@ public static class HealthCheckAggregator
             return new HealthCheck(
                 "logs", CheckState.Skip, Severity.Info, "Log scan skipped — instance not running.");
 
+        // Honesty: with NO recent log lines there is nothing to scan, so we cannot claim
+        // "no errors" — that would assert a clean bill from zero evidence. Report an honest
+        // skip, never a fabricated pass. (Empty here means kgsm surfaced no recent_logs for
+        // a running instance — e.g. an unreadable or just-rotated-away log file.)
+        if (s.RecentLogLines.Count == 0)
+            return new HealthCheck(
+                "logs", CheckState.Skip, Severity.Info, "No recent log output to scan.");
+
         var (count, sample) = TallyErrors(s.RecentLogLines);
         if (count == 0)
             return new HealthCheck("logs", CheckState.Pass, Severity.Success, "No errors in recent logs.");

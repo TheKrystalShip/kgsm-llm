@@ -28,7 +28,9 @@ public class HealthCheckAggregatorTests
         string? diskReason = null) =>
         new(
             Running: running,
-            RecentLogLines: logs ?? Array.Empty<string>(),
+            // A healthy running server HAS clean log output; the logs check now Skips on an
+            // empty read (honest "nothing to scan"), so the baseline must carry a real line.
+            RecentLogLines: logs ?? new[] { "2026-06-14 10:00:00 INFO server running" },
             UpdatesAvailable: updatesAvailable,
             CurrentVersion: current,
             LatestVersion: latest,
@@ -85,6 +87,23 @@ public class HealthCheckAggregatorTests
         Check(r, "logs").Detail.Should().Contain("1 error line").And.Contain("failed to bind");
         r.Data.Overall.Should().Be(CheckState.Warn);
         r.Summary.Should().Contain("warnings");
+    }
+
+    [Fact]
+    public void RunningWithNoLogs_SkipsHonestly_NeverFakesClean()
+    {
+        // Honesty: a running instance with NO recent log lines has nothing to scan, so the
+        // check must Skip ("couldn't read") — asserting "no errors" from zero evidence would
+        // be a fabricated clean bill (the kgsm recent_logs=[] bug this guards against).
+        var r = HealthCheckAggregator.Run(Healthy(logs: Array.Empty<string>()), "factorio-test");
+
+        var logs = Check(r, "logs");
+        logs.State.Should().Be(CheckState.Skip);
+        logs.State.Should().NotBe(CheckState.Pass);
+        logs.Detail.Should().Contain("No recent log output");
+        r.Data.Overall.Should().Be(CheckState.Pass);   // a skip never fails the overall
+        r.Data.Skipped.Should().Be(1);
+        r.Data.Passed.Should().Be(3);                  // liveness + updates + disk
     }
 
     [Fact]

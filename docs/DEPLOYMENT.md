@@ -21,6 +21,61 @@ This repo ships **three deployables** over one shared backend:
 
 ---
 
+## 0 · What to change, and where
+
+Everything host-specific lives in **one file**: `/etc/kgsm-assistant/service.env` — the Service's
+systemd `EnvironmentFile` (`chmod 600`), seeded from
+[`../deploy/assistant.env.example`](../deploy/assistant.env.example). `deploy.sh` creates it from
+that template on the first deploy and **never overwrites it** afterward, so your secrets survive
+upgrades. Edit it, then `sudo systemctl restart kgsm-assistant-service`. (The CLI reads the same keys
+from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead — see §5.)
+
+| Set this | Required? | Notes |
+|----------|-----------|-------|
+| `KGSM__Path` | **yes** | Absolute path to **this host's** `kgsm.sh`. Without it the assistant has no engine to read or act on. |
+| `DiscordOAuth__ClientId` · `ClientSecret` · `BotToken` · `GuildId` · `RedirectUri` | **yes** for web login | From the Discord Developer Portal. `ClientSecret` + `BotToken` are **secrets**; with `BotToken` empty **all logins are denied**. (The CLI needs none of these.) |
+| `DiscordOAuth__ActionRoleId` | for actions | Guild role permitted to run mutating actions; everyone else is read-only. |
+| `Auth__AllowedOrigins__0` | **yes** for the SPA | Your panel origin (scheme + host, no trailing slash). Empty ⇒ browser calls are CORS-blocked. |
+| `Assistant__ActionsEnabled` + `Assistant__Confirmation__Key` | for actions | Set `true` + a **stable** `openssl rand -base64 48`. If the key changes or empties, pending confirmations break and actions fall back to read-only. |
+| `Assistant__Relay__Secret` | if fronted by kgsm-api | Shared secret for the trusted-relay hop (kgsm-api → assistant). Empty ⇒ that path is off. **Secret.** |
+| `WebSearch__ApiKey` | optional | Tavily key (`tvly-…`, from [tavily.com](https://tavily.com)) — enables the **web** half of the `search` tool. **Secret.** |
+| `Rag__Enabled` (template default **true**) + a doc corpus | optional | The **local-doc** half of `search`. On by default — but returns nothing until you populate a corpus and run the indexer (§8) and `ollama pull embeddinggemma`. |
+| `Ollama__Model` / `Ollama__Endpoint` | if not default | Defaults: `gemma4:12b` on `localhost:11434`. |
+| `ASPNETCORE_URLS` | if not loopback | Default `http://127.0.0.1:5180`; TLS terminates at the reverse proxy (§7). |
+
+> **The `search` tool needs at least one source.** It is offered to the model only when
+> `Rag__Enabled` has a **working index** *or* `WebSearch__ApiKey` is set. With both off it is omitted
+> entirely — the "assistant has no search tool" state. The shipped template turns RAG on, so pair it
+> with a corpus (§8), set a Tavily key, or both.
+
+Every key, its default, and its env-var form: **[`CONFIGURATION.md`](./CONFIGURATION.md)**. Secrets
+go in the env file **only** — never in a committed `appsettings.json`.
+
+## 0.1 · Deploy in one command — `deploy/deploy.sh` (recommended)
+
+Once the prerequisites in §1–2 are satisfied, the supported path is the script. It builds, publishes,
+installs the systemd units (substituting `User=`/`Group=` to **you**, the invoking user), seeds the
+env file from the template if absent, enables the service, and blocks on a real `/health` 200:
+
+```bash
+cd ~/tks/kgsm-llm
+./deploy/deploy.sh                 # Service + CLI
+./deploy/deploy.sh --with-indexer  # also build + enable the RAG indexer (needs Ollama)
+```
+
+Run it **as the service user, not root** — it builds as you and `sudo`s only the systemd/root-path
+steps. It preflight-checks the .NET 10 ASP.NET runtime and the `kgsm-lib` sibling (§1) and fails fast
+if either is missing. On the **first** run it prints a reminder to fill in
+`/etc/kgsm-assistant/service.env` (the table above) and restart; on later runs it hot-swaps the
+binaries and leaves your env untouched. Non-interactive (CI):
+`SUDO='sudo -A' SUDO_ASKPASS=/path/to/askpass ./deploy/deploy.sh`.
+
+**The numbered sections below are the manual, step-by-step equivalent** plus the deeper reference
+(Ollama tuning, RAG end-to-end, reverse proxy, troubleshooting). Read them to understand — or
+customize — what the script automates; you don't need to run them by hand when `deploy.sh` succeeds.
+
+---
+
 ## 1 · Prerequisites
 
 ### 1.1 The kgsm-lib sibling repo (build-time — **do this first**)
@@ -197,7 +252,7 @@ Set the kgsm path once in the user's config instead of per-invocation — see
 
 > **Gotcha:** the CLI validates `KGSM:Path` at startup and exits `2` if it's missing. If it
 > reports "no servers installed" despite servers existing, you've almost certainly overridden
-> `XDG_DATA_HOME` (which hides the kgsm registry) — don't. See [§9](#9--troubleshooting).
+> `XDG_DATA_HOME` (which hides the kgsm registry) — don't. See [§9](#9--troubleshooting--known-gaps).
 
 ---
 
@@ -247,8 +302,9 @@ pending confirmations are rejected and the service falls back to read-only.
 
 ### 6.3 Run under systemd
 
-Copy the unit and env template from [`../deploy/`](../deploy/) and follow
-[`../deploy/README.md`](../deploy/README.md). The short version:
+`deploy/deploy.sh` ([§0.1](#01--deploy-in-one-command--deploydeploysh-recommended)) does all of
+this for you; the manual equivalent (copy the unit + env template from [`../deploy/`](../deploy/),
+also covered in [`../deploy/README.md`](../deploy/README.md)) is:
 
 ```bash
 sudo install -d /opt/kgsm-assistant/service /etc/kgsm-assistant
@@ -294,14 +350,27 @@ Make sure the TLS hostname here matches `DiscordOAuth__RedirectUri` and is liste
 
 ---
 
-## 8 · RAG (optional)
+## 8 · RAG — local-doc search
 
-RAG lets the assistant answer from your own docs via the `search` tool. It's **off by default**
-and a three-part setup: **index the docs → enable retrieval on the consumer → keep the index
-fresh**. The producer (indexer) and consumer (Service/CLI) are coupled by exactly one thing:
-**the on-disk `.krag` index file**.
+RAG lets the assistant answer from **your own docs** via the `search` tool. The shipped env template
+**enables it by default** (`Rag__Enabled=true`); the embedded `appsettings.json` baseline stays
+`false`, so a consumer with no env override is off. It's a three-part setup — **index the docs →
+enable retrieval on the consumer → keep the index fresh** — coupled by exactly one thing: the on-disk
+`.krag` index file (the indexer writes it; the Service/CLI read it).
+
+> **Enabled ≠ working.** With `Rag__Enabled=true` but no index yet, retrieval just returns nothing (it
+> never errors) and `search` falls back to the web. To get *local* hits you must (a) `ollama pull
+> embeddinggemma`, (b) put docs where the indexer looks, and (c) run the indexer. On a host that won't
+> run the indexer, either set `Rag__Enabled=false` there or rely on a Tavily key alone — otherwise
+> `search` is offered but its local half is always empty.
 
 ### 8.1 Build the index once
+
+`/opt/kgsm-assistant/docs` is the conventional corpus dir, but it is **empty on a fresh deploy** —
+populate it first, or the index comes out empty. Drop your `.md` files there, symlink a docs tree into
+it, or just point `--source` at any directory or files (it walks dirs recursively, honors
+`Rag__SourcePattern`, and accepts multiple `--source` flags — e.g. `--source ~/tks` to index the whole
+workspace). The indexer needs neither kgsm nor the Service — only Ollama for the embeddings.
 
 ```bash
 out/indexer/kgsm-rag-indexer --once \
@@ -309,7 +378,7 @@ out/indexer/kgsm-rag-indexer --once \
   --index  /var/lib/kgsm-assistant/rag-index.krag
 ```
 
-**Acceptance (reference, indexing the 13-doc sample corpus):**
+**Acceptance (reference, indexing a 13-doc corpus):**
 
 ```
 Indexed 13 file(s) → …/rag-index.krag: 13 embedded, 0 reused, 0 removed; 251 chunks (251 newly embedded).
@@ -346,10 +415,13 @@ sudo cp deploy/kgsm-rag-indexer.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now kgsm-rag-indexer
 ```
 
-The daemon debounces bursts of edits, rebuilds incrementally, and **atomically swaps** the
-file; the Service **hot-reloads** on the swap (a failed/mid-swap read degrades to the last good
-index, never goes dark). The unit is ordered `After=ollama.service` on purpose — see the gap in
-[§9](#9--troubleshooting).
+The shipped unit watches `--source /opt/kgsm-assistant/docs` (still empty until you fill it — §8.1);
+edit that line, or add more `--source` flags, to index a different tree, and keep the unit's `--index`
+equal to the Service's `Rag__IndexPath` (that one file is the whole producer→consumer contract). The
+daemon debounces bursts of edits, rebuilds incrementally, and **atomically swaps** the file; the
+Service **hot-reloads** on the swap (a failed/mid-swap read degrades to the last good index, never
+goes dark). The unit is ordered `After=ollama.service` on purpose — see the gap in
+[§9](#9--troubleshooting--known-gaps).
 
 Full indexer reference: [`../TheKrystalShip.Rag.Indexer/README.md`](../TheKrystalShip.Rag.Indexer/README.md).
 
@@ -367,6 +439,7 @@ Full indexer reference: [`../TheKrystalShip.Rag.Indexer/README.md`](../TheKrysta
 | **Turns 502 / "couldn't reach the model"** | Ollama down or the model not pulled. `ollama ps` should show the chat model `100% GPU`. |
 | **SSE replies arrive all-at-once at the end** | The reverse proxy is buffering. Set `proxy_buffering off` ([§7](#7--reverse-proxy--tls)). |
 | **`search` tool never offered** | Both sources are off: `Rag:Enabled=false` *and* no `WebSearch:ApiKey`. Enable at least one. |
+| **`search` runs but never cites a local doc** | RAG is enabled but its local half is empty: no index yet, or the indexer's `--source` corpus is empty (`/opt/kgsm-assistant/docs` is unpopulated on a fresh deploy). Populate the corpus + run the indexer ([§8.1](#81-build-the-index-once)); until then it correctly falls back to the web. |
 
 ### Secrets hygiene
 
@@ -400,9 +473,11 @@ version** changed (the loader rejects an incompatible index loudly — re-run th
 
 ```
 PREREQS   kgsm-lib sibling clone · .NET 10 SDK+runtime · Ollama + gemma4:12b (+ embeddinggemma for RAG) · a kgsm host
-BUILD     dotnet test TheKrystalShip.Llm.slnx           → Passed!
+DEPLOY    ./deploy/deploy.sh [--with-indexer]           → builds, installs units, /health = 200 (the supported path)
+CONFIG    edit /etc/kgsm-assistant/service.env (§0)     → KGSM__Path + Discord + CORS (+ Tavily/RAG) · restart
+BUILD     dotnet test TheKrystalShip.Llm.slnx           → Passed!   (what deploy.sh gates on)
 PUBLISH   service (FD ~2MB) · cli (FD ~4MB) · indexer (AOT ~7MB, 0 ILC)
 CLI       KGSM__Path=… kgsm-assistant "…"               → an answer, exit 0
 SERVICE   systemd + reverse proxy + Discord secrets     → curl /health = {"status":"ok"}
-RAG (opt) kgsm-rag-indexer --once → .krag · Rag__Enabled=true + same path · --watch daemon to keep fresh
+RAG (opt) populate corpus → kgsm-rag-indexer --once → .krag · Rag__Enabled=true (template default) + same path · --watch to keep fresh
 ```

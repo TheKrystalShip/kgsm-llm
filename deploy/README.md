@@ -12,7 +12,24 @@ tuning, RAG end-to-end, reverse proxy, troubleshooting) is **[../docs/DEPLOYMENT
 
 The **CLI** (`kgsm-assistant`) is an interactive tool, not a daemon — it has no unit here.
 
-## Install (after building — see the runbook)
+## Install with `deploy.sh` (recommended)
+
+`deploy.sh` is the supported path — it builds, publishes, installs these units (substituting `User=`/
+`Group=` to the invoking user), creates `/etc/kgsm-assistant/service.env` from the template **only if
+absent** (your secrets survive redeploys), enables the service, and waits for a real `/health` 200.
+
+```bash
+cd ~/tks/kgsm-llm
+./deploy/deploy.sh                 # Service + CLI
+./deploy/deploy.sh --with-indexer  # also the RAG indexer (needs Ollama)
+```
+
+Run as the service user (not root). On the first run, fill in the secrets it reminds you about
+(`KGSM__Path`, Discord creds, `Auth__AllowedOrigins`, optionally `WebSearch__ApiKey`) — see
+[what to change and where](../docs/DEPLOYMENT.md#0--what-to-change-and-where) — then
+`sudo systemctl restart kgsm-assistant-service`.
+
+## Manual install — what `deploy.sh` automates (after building — see the runbook)
 
 ```bash
 # 1. Lay down the artifacts (paths match the unit files; adjust both if you change them).
@@ -41,8 +58,12 @@ journalctl -u kgsm-assistant-service -n 30 --no-pager
 
 ## Before you copy the units, read these
 
-- **`User=kgsm`** is a placeholder. Run the Service as the user that **owns the kgsm
-  instance registry** (`~/.local/share/kgsm`); otherwise the assistant sees zero servers.
+- **`User=kgsm` in the committed units is a placeholder** — run the Service as the user that
+  **owns the kgsm instance registry** (`~/.local/share/kgsm`), or it sees zero servers. `deploy.sh`
+  rewrites `User=`/`Group=` to the invoking user automatically; if you copy the units by hand, edit it.
+- **The indexer's corpus is empty on a fresh install.** The unit watches `--source
+  /opt/kgsm-assistant/docs`, which nothing populates — put `.md` docs there (or repoint `--source`)
+  or the index is empty and RAG returns nothing. See [DEPLOYMENT.md §8](../docs/DEPLOYMENT.md#8--rag--local-doc-search).
 - **The indexer is ordered `After=ollama.service`** on purpose: it embeds via Ollama at
   startup and does *not* retry a failed initial build. If your Ollama isn't a systemd unit
   named `ollama.service`, fix the ordering or the index can start stale.

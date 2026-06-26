@@ -47,9 +47,9 @@ any committed `appsettings.json`:
 | `Assistant__Relay__Secret` | Service (optional) |
 | `WebSearch__ApiKey` | Service & CLI |
 
-> An **empty** secret means "disabled," not "error": no `WebSearch:ApiKey` ⇒ web search off and
-> the tool omitted; no `Assistant:Confirmation:Key` ⇒ actions fall back to read-only; no
-> `Assistant:Webhook:Secret` ⇒ webhook signatures unverified (dev only).
+> An **empty** secret means "disabled," not "error": no `WebSearch:ApiKey` ⇒ web search off (and the
+> `search` tool omitted entirely only if `Rag:Enabled` is also off); no `Assistant:Confirmation:Key` ⇒
+> actions fall back to read-only; no `Assistant:Webhook:Secret` ⇒ webhook signatures unverified (dev only).
 
 ---
 
@@ -142,13 +142,16 @@ Append-only JSONL of turns, for prompt-tuning/eval. **On by default in the CLI**
 ### `Rag` — retrieval, embedder, and index build (one section, three consumers)
 
 The retrieval half (consumer) is read by the CLI & Service; the embedder/build half is read by
-the CLI `index` verb (the standalone indexer takes the same values as CLI flags). Off by default.
+the CLI `index` verb (the standalone indexer takes the same values as CLI flags). The embedded
+`appsettings.json` baseline is **off**, but the shipped Service env template
+(`deploy/assistant.env.example`) sets `Rag__Enabled=true`, so a default deploy is **on** — see the
+"enabled ≠ working" caveat in [DEPLOYMENT.md §8](./DEPLOYMENT.md#8--rag--local-doc-search).
 
 **Retrieval (consumer):**
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `Enabled` | `false` | `Rag__Enabled` | Master switch; false ⇒ retrieval fails closed, `search` omitted unless web is on |
+| `Enabled` | `false` baseline / **`true`** in the deploy env template | `Rag__Enabled` | Master switch; false ⇒ retrieval fails closed, `search` omitted unless web is on. On ⇒ `search` is offered but its local half is empty until an index exists |
 | `IndexPath` | _(empty)_ | `Rag__IndexPath` | Path to the `.krag` file the indexer writes; missing file is fine until it runs |
 | `TopK` | `5` | `Rag__TopK` | Chunks retrieved per query |
 | `MinScore` | `0.0` | `Rag__MinScore` | Cosine floor at retrieval (kept permissive; the aggregator decides) |

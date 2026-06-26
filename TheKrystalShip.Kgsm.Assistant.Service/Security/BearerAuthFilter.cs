@@ -50,12 +50,23 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     /// </summary>
     public const string RelayAutoActKey = "relayAutoAct";
 
+    /// <summary>
+    /// Key under which the trusted relay's per-CHAT conversation id is stored (a <c>string</c>), set
+    /// ONLY on the authenticated relay path from <c>X-Relay-Conversation-Id</c>. It is a SUB-scope of
+    /// the forwarded user's memory namespace — the /turn handler keys memory as
+    /// <c>web:{userId}[:{thisValue}]</c>, so it partitions one caller's own history into separate chats
+    /// (each "new chat" in the SPA → a fresh context window) and can NEVER reach another user (the user
+    /// id prefix is authoritative). Absent ⇒ not set ⇒ the bare per-user key (one conversation).
+    /// </summary>
+    public const string RelayConversationIdKey = "relayConversationId";
+
     private const string BearerPrefix = "Bearer ";
     private const string RelaySecretHeader = "X-Relay-Secret";
     private const string RelayUserHeader = "X-Relay-User";
     private const string RelayUserNameHeader = "X-Relay-User-Name";
     private const string RelayCanActHeader = "X-Relay-Can-Act";
     private const string RelayAutoActHeader = "X-Relay-Auto-Act";
+    private const string RelayConversationIdHeader = "X-Relay-Conversation-Id";
 
     private readonly DiscordAuthService _auth;
     private readonly AssistantServiceOptions _options;
@@ -97,6 +108,13 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             // secret already matched) and same fail-closed default — anything but "true" ⇒ propose-only.
             context.HttpContext.Items[RelayAutoActKey] =
                 string.Equals(request.Headers[RelayAutoActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            // The per-chat conversation id — a SUB-scope of THIS user's memory (the handler keys
+            // web:{userId}[:{id}]). Stored raw; the handler sanitises + caps it. Never cross-user: the
+            // user id is the authoritative prefix. Absent ⇒ unset ⇒ the handler uses the bare per-user
+            // key, so an older api/relay that doesn't send it stays single-context (unchanged behaviour).
+            var relayConversationId = request.Headers[RelayConversationIdHeader].ToString();
+            if (!string.IsNullOrWhiteSpace(relayConversationId))
+                context.HttpContext.Items[RelayConversationIdKey] = relayConversationId;
             return await next(context);
         }
 

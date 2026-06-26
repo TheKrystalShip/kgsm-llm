@@ -23,7 +23,7 @@ public class ConversationCompactorTests
 
     private readonly ILlmClient _llm = Substitute.For<ILlmClient>();
     private readonly InMemoryConversationStore _store =
-        new(Options.Create(new ConversationOptions { MaxMessages = 12, IdleTimeoutMinutes = 60 }));
+        new(Options.Create(new ConversationOptions { MaxMessages = 12 }));
 
     private IReadOnlyList<LlmMessage>? _sent;
     private IReadOnlyList<LlmToolDefinition>? _tools;

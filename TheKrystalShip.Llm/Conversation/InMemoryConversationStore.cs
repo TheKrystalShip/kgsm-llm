@@ -8,16 +8,18 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Llm.Conversation;
 
 /// <summary>
-/// In-memory <see cref="IConversationStore"/>. Conversations are keyed by an
-/// opaque conversation id, trimmed to a rolling window, and reset after idle
-/// time. Thread-safe: handlers may run on worker threads.
+/// In-memory <see cref="IConversationStore"/>. Conversations are keyed by an opaque conversation id and
+/// trimmed to a rolling window. There is NO idle reset — the conversation id is the canonical scope: a
+/// fresh chat means a fresh id (the assistant Service keys each SPA chat as <c>web:{userId}:{chatId}</c>),
+/// so context can never leak between chats and there is nothing to "time out". A conversation is therefore
+/// RETAINED for the life of the process and can be resumed from any past point as long as the caller still
+/// holds its id. Thread-safe: handlers may run on worker threads.
 /// </summary>
 public class InMemoryConversationStore : IConversationStore
 {
     private sealed class Conversation
     {
         public List<LlmMessage> Messages { get; } = new();
-        public DateTime LastActivityUtc { get; set; }
     }
 
     private readonly ConcurrentDictionary<string, Conversation> _conversations = new();
@@ -35,12 +37,6 @@ public class InMemoryConversationStore : IConversationStore
 
         lock (conversation)
         {
-            if (IsIdle(conversation))
-            {
-                conversation.Messages.Clear();
-                return Array.Empty<LlmMessage>();
-            }
-
             return conversation.Messages.ToArray();
         }
     }
@@ -54,17 +50,12 @@ public class InMemoryConversationStore : IConversationStore
 
         lock (conversation)
         {
-            if (IsIdle(conversation))
-                conversation.Messages.Clear();
-
             conversation.Messages.AddRange(messages);
 
             // Trim oldest messages beyond the rolling window.
             var overflow = conversation.Messages.Count - _options.MaxMessages;
             if (overflow > 0)
                 conversation.Messages.RemoveRange(0, overflow);
-
-            conversation.LastActivityUtc = DateTime.UtcNow;
         }
     }
 
@@ -81,17 +72,6 @@ public class InMemoryConversationStore : IConversationStore
             var overflow = conversation.Messages.Count - _options.MaxMessages;
             if (overflow > 0)
                 conversation.Messages.RemoveRange(0, overflow);
-
-            conversation.LastActivityUtc = DateTime.UtcNow;
         }
-    }
-
-    private bool IsIdle(Conversation conversation)
-    {
-        if (conversation.Messages.Count == 0)
-            return false;
-
-        var idleFor = DateTime.UtcNow - conversation.LastActivityUtc;
-        return idleFor > TimeSpan.FromMinutes(_options.IdleTimeoutMinutes);
     }
 }

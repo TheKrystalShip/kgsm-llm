@@ -254,7 +254,20 @@ secured.MapPost("/turn", async (
     }
     var think = request.Think
         ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
-    var conversationId = $"web:{principal.UserId}";
+
+    // The conversation (memory) key. ALWAYS namespaced under the server-derived user id, so one user can
+    // never read or poison another's history. An optional per-CHAT sub-id partitions THIS user's own
+    // memory into separate conversations — each "new chat" in the SPA becomes a fresh context window. It
+    // arrives on the trusted-relay path as X-Relay-Conversation-Id (stashed by BearerAuthFilter) and on
+    // the direct session path in the request body. Sanitised here (the authority that builds the key);
+    // absent/blank ⇒ the bare per-user key, unchanged for clients that don't send a chat id.
+    var chatScope = ConversationScope.Sanitize(
+        http.Items.TryGetValue(BearerAuthFilter.RelayConversationIdKey, out var relayConv) && relayConv is string rc
+            ? rc
+            : request.ConversationId);
+    var conversationId = string.IsNullOrEmpty(chatScope)
+        ? $"web:{principal.UserId}"
+        : $"web:{principal.UserId}:{chatScope}";
 
     // Attribute any server mutation this turn runs to the asking user (origin=assistant); flows down the
     // awaited turn → tool dispatch → kgsm chokepoint. Covers both the SSE and buffered paths below.

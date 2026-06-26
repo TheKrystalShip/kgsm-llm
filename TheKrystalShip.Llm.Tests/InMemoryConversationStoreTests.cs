@@ -10,7 +10,7 @@ namespace TheKrystalShip.Llm.Tests;
 public class InMemoryConversationStoreTests
 {
     private static InMemoryConversationStore Create(int maxMessages = 4) =>
-        new(Options.Create(new ConversationOptions { MaxMessages = maxMessages, IdleTimeoutMinutes = 15 }));
+        new(Options.Create(new ConversationOptions { MaxMessages = maxMessages }));
 
     [Fact]
     public void EmptyConversation_ReturnsNoHistory()

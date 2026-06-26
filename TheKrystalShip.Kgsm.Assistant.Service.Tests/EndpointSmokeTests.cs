@@ -466,6 +466,25 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Turn_Relay_ConversationId_SubScopesUserMemory()
+    {
+        // A per-chat X-Relay-Conversation-Id partitions the SAME user's memory into a fresh context
+        // window — keyed web:<userId>:<chatId> — so a "new chat" no longer leaks the previous chat's
+        // history, while staying strictly inside that user's namespace (the user id is the prefix).
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var response = await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", "chat-abc123");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        assistant.Received().RunStreamAsync(
+            "web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Turn_Relay_WrongSecret_Returns401()
     {
         // A present-but-wrong relay secret is a hard 401 — never a fall-through to the session path.
@@ -515,7 +534,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// <summary>POSTs /turn over the trusted-relay path: an SSE Accept + the relay secret and
     /// forwarded identity headers, no session bearer. A null header value is omitted.</summary>
     private static async Task<HttpResponseMessage> StreamTurnRelayAsync(
-        HttpClient client, string prompt, string? secret, string? userId, string? userName = null)
+        HttpClient client, string prompt, string? secret, string? userId, string? userName = null,
+        string? conversationId = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
         {
@@ -525,6 +545,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         if (secret is not null) request.Headers.Add("X-Relay-Secret", secret);
         if (userId is not null) request.Headers.Add("X-Relay-User", userId);
         if (userName is not null) request.Headers.Add("X-Relay-User-Name", userName);
+        if (conversationId is not null) request.Headers.Add("X-Relay-Conversation-Id", conversationId);
         return await client.SendAsync(request);
     }
 

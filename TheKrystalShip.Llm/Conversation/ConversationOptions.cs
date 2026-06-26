@@ -1,7 +1,7 @@
 namespace TheKrystalShip.Llm.Conversation;
 
 /// <summary>
-/// Configuration options for short-term conversation memory.
+/// Configuration options for conversation memory.
 /// </summary>
 public class ConversationOptions
 {
@@ -13,9 +13,7 @@ public class ConversationOptions
     /// </summary>
     public int MaxMessages { get; set; } = 12;
 
-    /// <summary>
-    /// Minutes of inactivity after which a conversation is reset, so unrelated
-    /// chats hours apart don't leak context into one another.
-    /// </summary>
-    public int IdleTimeoutMinutes { get; set; } = 15;
+    // NOTE: there is deliberately no idle-timeout / reset knob. The conversation id is the canonical
+    // scope (a fresh chat = a fresh id), so conversations are retained for the process lifetime and
+    // resumable from any past point — see InMemoryConversationStore.
 }

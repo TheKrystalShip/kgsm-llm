@@ -5,9 +5,10 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Kgsm.Assistant.Service;
 
 /// <summary>
-/// A chat turn: the user's message and optional tool selection. The conversation key for
-/// memory is derived server-side from the authenticated principal (<c>web:{discordUserId}</c>)
-/// — it is NOT client-supplied, so one caller can't read or poison another's history.
+/// A chat turn: the user's message and optional tool selection. The conversation key for memory is
+/// ALWAYS namespaced under a server-side, authenticated identity (<c>web:{discordUserId}</c>) — WHO the
+/// caller is is never client-supplied, so one caller can't read or poison another's history. An optional
+/// per-chat <see cref="ConversationId"/> sub-scopes that user's OWN memory into separate context windows.
 /// </summary>
 public sealed record TurnRequest(
     string? Prompt,
@@ -17,7 +18,14 @@ public sealed record TurnRequest(
     // authority: actions only happen when this is true AND the caller is authorized. On the trusted
     // relay path authority is the api's verified tier (X-Relay-Can-Act, which already folds in this
     // toggle); on the direct session path it is the caller's Discord action role, ANDed with this flag.
-    bool? Actions = null);
+    bool? Actions = null,
+    // The per-CHAT conversation id (the SPA's "new chat" identity). It does NOT carry identity — memory
+    // is always keyed web:{serverUserId}[:{ConversationId}], the user id resolved server-side — so it only
+    // partitions THIS user's history into separate context windows, never reaching another caller's.
+    // Sanitised + length-capped server-side; null ⇒ the bare per-user conversation (one running thread),
+    // preserving the prior single-context behaviour. On the trusted-relay path the api forwards this as
+    // the X-Relay-Conversation-Id header instead of this body field.
+    string? ConversationId = null);
 
 /// <summary>
 /// A tool parameter, as returned by <c>GET /tools</c>.

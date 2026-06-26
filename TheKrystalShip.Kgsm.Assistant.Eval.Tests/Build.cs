@@ -18,7 +18,7 @@ internal static class Build
             NeverInstalledGame: "minecraft");
 
     public static RecordedToolCall Tool(TheKrystalShip.Llm.Models.Tool name, params (string k, string? v)[] args) =>
-        new(name, args.ToDictionary(a => a.k, a => a.v), Result: "ok", DurationMs: 1);
+        new(name, args.ToDictionary(a => a.k, a => a.v), Summary: "ok", DurationMs: 1);
 
     public static PendingConfirmation Staged(ConfirmationKind kind, string instance = "factorio-test") =>
         new(kind, Target: instance, InstanceName: instance);

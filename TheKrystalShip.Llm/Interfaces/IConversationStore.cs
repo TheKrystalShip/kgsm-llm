@@ -3,29 +3,37 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Llm.Interfaces;
 
 /// <summary>
-/// Stores conversation history per conversation id so the LLM can follow multi-turn context
-/// (e.g. "the pvp one" referring to a prior question). Implementations roll the window to a fixed size.
-/// The conversation id is the canonical scope (a fresh chat is a fresh id) — there is no idle reset; a
-/// conversation is retained and resumable by id. The system prompt is NOT stored here — it is rebuilt
-/// fresh each turn.
+/// The canonical, append-only conversation history: an ordered log of per-turn deltas and compaction
+/// checkpoints (<see cref="ConversationEntry"/>). It is BOTH the model's continuity memory AND the
+/// durable, examinable record for self-improvement — one log, never trimmed, never overwritten.
+/// <para>
+/// Storage is the full history; what the model replays is a <em>projection</em>: the latest checkpoint
+/// summary plus the user/assistant text of the turns after it (<see cref="GetModelContext"/>).
+/// Compaction is non-destructive — it appends a checkpoint (<see cref="AddCheckpoint"/>), it does not
+/// erase prior turns. The system prompt is NOT stored here; it is rebuilt fresh each turn.
+/// </para>
 /// </summary>
 public interface IConversationStore
 {
     /// <summary>
-    /// Returns the current history for a conversation, oldest first. Returns an
-    /// empty list if there is no history for the id.
+    /// The full conversation history (turns and checkpoints), oldest first — for display and analysis.
+    /// Empty when the conversation is unknown.
     /// </summary>
-    IReadOnlyList<LlmMessage> GetHistory(string conversationId);
+    IReadOnlyList<ConversationEntry> GetHistory(string conversationId);
 
     /// <summary>
-    /// Appends one or more messages to a conversation, then trims to the configured window size.
+    /// The messages the model should replay as context: the latest checkpoint's summary (if any) as a
+    /// leading assistant message, then the user prompt + final reply of every turn after it (or the
+    /// whole conversation when there is no checkpoint). Tool/thinking detail is never replayed.
     /// </summary>
-    void Append(string conversationId, params LlmMessage[] messages);
+    IReadOnlyList<LlmMessage> GetModelContext(string conversationId);
+
+    /// <summary>Appends one completed turn (the canonical per-turn delta) to the history log.</summary>
+    void AppendTurn(ConversationTurnRecord turn);
 
     /// <summary>
-    /// Atomically replaces a conversation's entire history with the given messages, trimmed to the
-    /// configured window size. This is the seam compaction uses to swap a full history for a single
-    /// summary message; passing no messages clears the conversation.
+    /// Appends a compaction checkpoint carrying <paramref name="summary"/>. Non-destructive: prior
+    /// turns remain in the history; subsequent <see cref="GetModelContext"/> replays from here forward.
     /// </summary>
-    void Replace(string conversationId, params LlmMessage[] messages);
+    void AddCheckpoint(string conversationId, string summary);
 }

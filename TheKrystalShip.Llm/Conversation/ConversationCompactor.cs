@@ -8,10 +8,12 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Llm.Conversation;
 
 /// <summary>
-/// Default <see cref="IConversationCompactor"/>: reads the stored history, asks the model for a
-/// concise briefing (a plain, tool-less completion), then REPLACES the history with that single
-/// summary message so later turns keep continuity on a fraction of the context. Backend-agnostic
-/// — it depends only on <see cref="ILlmClient"/> and <see cref="IConversationStore"/>.
+/// Default <see cref="IConversationCompactor"/>: reads the model's current context, asks the model for a
+/// concise briefing (a plain, tool-less completion), then appends a <b>checkpoint</b> to the history so
+/// later turns keep continuity on a fraction of the context. <b>Non-destructive</b> — the prior turns
+/// stay in the canon history (the user still sees the whole conversation); the checkpoint only changes
+/// what the assistant replays from here forward. Backend-agnostic — it depends only on
+/// <see cref="ILlmClient"/> and <see cref="IConversationStore"/>.
 /// </summary>
 public sealed class ConversationCompactor : IConversationCompactor
 {
@@ -36,8 +38,10 @@ public sealed class ConversationCompactor : IConversationCompactor
         string conversationId,
         CancellationToken cancellationToken = default)
     {
-        var history = _store.GetHistory(conversationId);
-        if (history.Count < MinMessagesToCompact)
+        // The model's CURRENT context (latest checkpoint summary + turns since) — what we fold into a
+        // fresh checkpoint. The full history on disk is untouched.
+        var context = _store.GetModelContext(conversationId);
+        if (context.Count < MinMessagesToCompact)
             return Result.Success(CompactionOutcome.Nothing());
 
         // A tool-less completion: summarizing never calls tools. System instruction + the
@@ -45,7 +49,7 @@ public sealed class ConversationCompactor : IConversationCompactor
         var request = new List<LlmMessage>
         {
             LlmMessage.System(SummarizerPrompt),
-            LlmMessage.User(RenderTranscript(history)),
+            LlmMessage.User(RenderTranscript(context)),
         };
 
         var response = await _llmClient.ChatAsync(request, tools: null, think: false, cancellationToken);
@@ -56,16 +60,14 @@ public sealed class ConversationCompactor : IConversationCompactor
         if (summary.Length == 0)
             return Result.Failure<CompactionOutcome>("the model returned an empty summary.");
 
-        // Swap the whole history for one model-role recap. Model role (not user) keeps the
-        // strict user/assistant alternation that templated models like Gemma expect, since the
-        // user's next turn follows immediately.
-        _store.Replace(conversationId, LlmMessage.Assistant(
-            "(Summary of our conversation so far — earlier turns were compacted to save context.)\n\n"
-            + summary));
+        // Append a checkpoint (non-destructive): prior turns remain in the canon history; the model
+        // replays from this summary forward. The store wraps the raw summary as a recap message when it
+        // projects the model context, so we store the bare summary here.
+        _store.AddCheckpoint(conversationId, summary);
 
         _logger.LogDebug(
-            "Compacted {Count} messages for conversation {Conversation}", history.Count, conversationId);
-        return Result.Success(CompactionOutcome.Done(history.Count, summary));
+            "Checkpointed {Count} context messages for conversation {Conversation}", context.Count, conversationId);
+        return Result.Success(CompactionOutcome.Done(context.Count, summary));
     }
 
     /// <summary>

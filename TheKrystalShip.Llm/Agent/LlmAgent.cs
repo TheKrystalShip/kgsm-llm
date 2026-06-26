@@ -16,24 +16,20 @@ namespace TheKrystalShip.Llm.Agent;
 /// only knows how to call the model, gate-then-dispatch tool calls, feed results
 /// back, and persist the conversation.
 ///
-/// Persistence boundary: only the user's text and the final assistant text are
-/// written to the conversation store. The intermediate assistant-tool-call and
-/// tool-result messages live in the per-turn working list only — persisting them
-/// would risk the store's count-based trim splitting a tool-call/result pair,
-/// and keeps live data (e.g. uptime) out of history so follow-ups re-query fresh.
-///
-/// Recording boundary (separate concern): when an <see cref="IConversationRecorder"/>
-/// is enabled, the loop ALSO emits one append-only <see cref="ConversationTurnRecord"/>
-/// per turn — the full tool trajectory, iteration count, usage and outcome — for offline
-/// self-improvement analysis. That is distinct from the lossy working memory above; the
-/// recorder never trims, resets, or overwrites.
+/// Persistence: each completed turn is appended to the canonical <see cref="IConversationStore"/> as
+/// one rich <see cref="ConversationTurnRecord"/> — the user prompt, the model's thinking, this turn's
+/// full tool trajectory, the final reply, token usage and outcome. That single append-only log is BOTH
+/// the model's continuity memory and the durable record mined for self-improvement. The model only
+/// replays a projection of it (<see cref="IConversationStore.GetModelContext"/>): the user prompt +
+/// final reply of prior turns (plus the latest checkpoint summary). The intermediate assistant-tool-call
+/// and tool-result messages live in the per-turn working list only — they are recorded in the turn's
+/// trajectory for analysis but never replayed, so follow-ups re-query live data fresh.
 /// </summary>
 public class LlmAgent : ILlmAgent
 {
     private readonly ILlmClient _llmClient;
     private readonly IToolDispatcher _dispatcher;
     private readonly IConversationStore _conversationStore;
-    private readonly IConversationRecorder _recorder;
     private readonly LlmAgentOptions _options;
     private readonly ILogger<LlmAgent> _logger;
 
@@ -41,30 +37,27 @@ public class LlmAgent : ILlmAgent
         ILlmClient llmClient,
         IToolDispatcher dispatcher,
         IConversationStore conversationStore,
-        IConversationRecorder recorder,
         IOptions<LlmAgentOptions> options,
         ILogger<LlmAgent> logger)
     {
         _llmClient = llmClient;
         _dispatcher = dispatcher;
         _conversationStore = conversationStore;
-        _recorder = recorder;
         _options = options.Value;
         _logger = logger;
     }
 
     public async Task<Result<AgentRunResult>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default)
     {
-        // Recording is a side-channel: only build the trajectory when a recorder is listening.
         var startedAt = DateTimeOffset.UtcNow;
-        var trajectory = _recorder.Enabled ? new List<RecordedToolCall>() : null;
+        var trajectory = new List<RecordedToolCall>();
         var iterationsRun = 0;
 
-        // Record the user's turn, then assemble [fresh system, ...history].
-        _conversationStore.Append(turn.ConversationId, LlmMessage.User(turn.UserPrompt));
-
+        // Assemble [fresh system, ...projected history, this turn's user prompt]. The user prompt is
+        // not yet in the store — it is persisted with the whole turn at completion (PersistTurn).
         var working = new List<LlmMessage> { LlmMessage.System(turn.SystemPrompt) };
-        working.AddRange(_conversationStore.GetHistory(turn.ConversationId));
+        working.AddRange(_conversationStore.GetModelContext(turn.ConversationId));
+        working.Add(LlmMessage.User(turn.UserPrompt));
 
         var tools = turn.Tools;
         var gate = turn.Gate;
@@ -78,7 +71,7 @@ public class LlmAgent : ILlmAgent
                 var response = await _llmClient.ChatAsync(working, tools, turn.Think, cancellationToken);
                 if (response.IsFailure)
                 {
-                    Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Error, null, null, response.Error);
+                    PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Error, null, null, response.Error, null);
                     return Result.Failure<AgentRunResult>(response.Error!);
                 }
 
@@ -87,10 +80,8 @@ public class LlmAgent : ILlmAgent
                 if (!message.HasToolCalls)
                 {
                     var text = message.Content ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(text))
-                        _conversationStore.Append(turn.ConversationId, LlmMessage.Assistant(text));
                     // Usage of the producing (final) call — the turn's context occupancy.
-                    Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, message.Usage, null);
+                    PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, message.Usage, null, null);
                     return Result.Success(new AgentRunResult(text, message.Usage));
                 }
 
@@ -100,20 +91,20 @@ public class LlmAgent : ILlmAgent
             _logger.LogWarning(
                 "Agent hit the {Max}-iteration cap for conversation {Conversation}",
                 _options.MaxIterations, turn.ConversationId);
-            Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null);
+            PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null, null);
             return Result.Success(new AgentRunResult(_options.IterationLimitReply, null));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The user/host abandoned the turn mid-flight — analytically interesting, so capture it.
-            Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Cancelled, null, null, null);
+            PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Cancelled, null, null, null, null);
             throw;
         }
         catch (Exception ex)
         {
             // An unexpected throw (a dispatcher that doesn't swallow, or a non-token cancellation) is
             // an errored turn, not a user bail-out — record it as such, then propagate unchanged.
-            Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Error, null, null, ex.Message);
+            PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Error, null, null, ex.Message, null);
             throw;
         }
     }
@@ -123,18 +114,20 @@ public class LlmAgent : ILlmAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var startedAt = DateTimeOffset.UtcNow;
-        var trajectory = _recorder.Enabled ? new List<RecordedToolCall>() : null;
+        var trajectory = new List<RecordedToolCall>();
         var iterationsRun = 0;
+        // The model's reasoning across the WHOLE turn (every round), captured for the record only —
+        // never replayed into the model's context.
+        var thinking = new StringBuilder();
         // A terminal record was emitted (Ok/Error/CapHit). The finally then captures only the case
         // we can't reach in-body: cancellation / an exception unwinding the iterator before a finish.
         var recorded = false;
 
-        // Identical persistence boundary to RunAsync: record the user's turn, then assemble
-        // [fresh system, ...history]. Only the final no-tool-call text is persisted below.
-        _conversationStore.Append(turn.ConversationId, LlmMessage.User(turn.UserPrompt));
-
+        // Assemble [fresh system, ...projected history, this turn's user prompt]. Identical boundary to
+        // RunAsync; the whole turn (incl. the prompt) is persisted at completion via PersistTurn.
         var working = new List<LlmMessage> { LlmMessage.System(turn.SystemPrompt) };
-        working.AddRange(_conversationStore.GetHistory(turn.ConversationId));
+        working.AddRange(_conversationStore.GetModelContext(turn.ConversationId));
+        working.Add(LlmMessage.User(turn.UserPrompt));
 
         var tools = turn.Tools;
         var gate = turn.Gate;
@@ -186,7 +179,10 @@ public class LlmAgent : ILlmAgent
                     }
 
                     if (!string.IsNullOrEmpty(chunk.ThinkingDelta))
+                    {
+                        thinking.Append(chunk.ThinkingDelta);
                         yield return AgentEvent.Thinking(chunk.ThinkingDelta);
+                    }
 
                     // Tool calls arrive complete in one frame (probe-verified) — capture, don't accumulate.
                     if (chunk.ToolCalls is { Count: > 0 })
@@ -202,7 +198,7 @@ public class LlmAgent : ILlmAgent
 
                 if (error is not null)
                 {
-                    Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Error, null, null, error);
+                    PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Error, null, null, error, thinking.ToString());
                     recorded = true;
                     yield return AgentEvent.Error(error);
                     yield break;
@@ -210,12 +206,11 @@ public class LlmAgent : ILlmAgent
 
                 if (toolCalls is { Count: > 0 })
                 {
-                    // A tool round emits no user-facing prose; intermediate content is NOT persisted
-                    // (parity with RunAsync, which only ever stores the final no-tool-call text).
-                    // Surface per-tool events: all tool.start (input order) BEFORE dispatch, then all
-                    // tool.result (input order) after — a deterministic, batched order that matches the
-                    // model-feedback append order below. (Dispatch/gate/truncate stay centralised in the
-                    // shared helpers so the buffered and streaming paths can't drift.)
+                    // A tool round emits no user-facing prose; intermediate content is NOT replayed
+                    // (parity with RunAsync). Surface per-tool events: all tool.start (input order)
+                    // BEFORE dispatch, then all tool.result (input order) after — a deterministic,
+                    // batched order that matches the model-feedback append order below. (Dispatch/gate/
+                    // truncate stay centralised in the shared helpers so the paths can't drift.)
                     working.Add(LlmMessage.AssistantToolCalls(toolCalls));
                     // Mint the per-call ids once, up front, so the matching tool.start/tool.result
                     // (emitted in separate loops, same index order) carry the SAME id.
@@ -230,21 +225,20 @@ public class LlmAgent : ILlmAgent
                     for (int i = 0; i < toolCalls.Count; i++)
                     {
                         working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i].Output, _options.MaxToolOutputChars)));
-                        trajectory?.Add(new RecordedToolCall(
-                            toolCalls[i].Name, toolCalls[i].Arguments, outputs[i].Output, outputs[i].DurationMs));
-                        // The model only ever sees the string Output (above); Data rides the event opaquely
-                        // to a streaming surface, never back into the conversation.
+                        // The model only sees the string Output (above); the structured Data card is NOT
+                        // replayed to the model, but IS persisted in the trajectory so a surface can
+                        // re-scaffold the §5·a tool.result (summary + card) from history.
+                        trajectory.Add(new RecordedToolCall(
+                            toolCalls[i].Name, toolCalls[i].Arguments, outputs[i].Output, outputs[i].DurationMs, outputs[i].Data));
+                        // Data also rides the live event opaquely to the streaming surface.
                         yield return AgentEvent.ToolResult(toolCalls[i].Name, outputs[i].Output, callIds[i], outputs[i].Data);
                     }
                     continue;
                 }
 
-                // Final turn: persist only the final assistant text (trimmed, matching the buffered
-                // client which trims the whole reply), then signal completion.
+                // Final turn: persist the whole turn (the canonical record), then signal completion.
                 var text = content.ToString().Trim();
-                if (!string.IsNullOrWhiteSpace(text))
-                    _conversationStore.Append(turn.ConversationId, LlmMessage.Assistant(text));
-                Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, usage, null);
+                PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, usage, null, thinking.ToString());
                 recorded = true;
                 yield return AgentEvent.Final(text, usage);
                 yield break;
@@ -253,7 +247,7 @@ public class LlmAgent : ILlmAgent
             _logger.LogWarning(
                 "Agent hit the {Max}-iteration cap (stream) for conversation {Conversation}",
                 _options.MaxIterations, turn.ConversationId);
-            Record(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null);
+            PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null, thinking.ToString());
             recorded = true;
             yield return AgentEvent.Final(_options.IterationLimitReply);
         }
@@ -265,24 +259,24 @@ public class LlmAgent : ILlmAgent
             // token requested by now → Cancelled; an unexpected throw (e.g. a dispatcher that doesn't
             // swallow) records Error instead of masquerading as a user bail-out. The buffered path
             // discriminates the same way via its catch filter.
-            if (_recorder.Enabled && !recorded)
-                Record(turn, startedAt, trajectory, iterationsRun,
+            if (!recorded)
+                PersistTurn(turn, startedAt, trajectory, iterationsRun,
                     cancellationToken.IsCancellationRequested ? TurnOutcome.Cancelled : TurnOutcome.Error,
-                    null, null, null);
+                    null, null, null, thinking.ToString());
         }
     }
 
     /// <summary>
     /// Runs one tool round for the buffered path: append the assistant's tool-call turn,
-    /// gate-then-dispatch, then append one tool-result message per call, in order, recording each
-    /// into <paramref name="trajectory"/> when capturing. Delegates the gate/dispatch to
-    /// <see cref="DispatchRoundAsync"/> (shared with the streaming path).
+    /// gate-then-dispatch, then append one tool-result message per call, in order, recording each into
+    /// <paramref name="trajectory"/>. Delegates the gate/dispatch to <see cref="DispatchRoundAsync"/>
+    /// (shared with the streaming path).
     /// </summary>
     private async Task ExecuteToolRoundAsync(
         IReadOnlyList<LlmToolCall> toolCalls,
         List<LlmMessage> working,
         Func<LlmToolCall, ToolGate>? gate,
-        List<RecordedToolCall>? trajectory,
+        List<RecordedToolCall> trajectory,
         CancellationToken cancellationToken)
     {
         working.Add(LlmMessage.AssistantToolCalls(toolCalls));
@@ -290,8 +284,8 @@ public class LlmAgent : ILlmAgent
         for (int i = 0; i < toolCalls.Count; i++)
         {
             working.Add(LlmMessage.Tool(toolCalls[i].Name, Truncate(outputs[i].Output, _options.MaxToolOutputChars)));
-            trajectory?.Add(new RecordedToolCall(
-                toolCalls[i].Name, toolCalls[i].Arguments, outputs[i].Output, outputs[i].DurationMs));
+            trajectory.Add(new RecordedToolCall(
+                toolCalls[i].Name, toolCalls[i].Arguments, outputs[i].Output, outputs[i].DurationMs, outputs[i].Data));
         }
     }
 
@@ -323,17 +317,17 @@ public class LlmAgent : ILlmAgent
         }));
     }
 
-    /// <summary>Builds and emits one turn record, failure-isolated. No-op when recording is off.</summary>
-    private void Record(
-        AgentTurn turn, DateTimeOffset startedAt, IReadOnlyList<RecordedToolCall>? trajectory,
-        int iterations, TurnOutcome outcome, string? final, LlmUsage? usage, string? error)
+    /// <summary>
+    /// Appends one completed turn to the canonical conversation store, failure-isolated: a store write
+    /// error is logged, never propagated — a turn must not fail over its own bookkeeping.
+    /// </summary>
+    private void PersistTurn(
+        AgentTurn turn, DateTimeOffset startedAt, IReadOnlyList<RecordedToolCall> trajectory,
+        int iterations, TurnOutcome outcome, string? final, LlmUsage? usage, string? error, string? thinking)
     {
-        if (!_recorder.Enabled)
-            return;
-
         try
         {
-            _recorder.Record(new ConversationTurnRecord
+            _conversationStore.AppendTurn(new ConversationTurnRecord
             {
                 ConversationId = turn.ConversationId,
                 StartedAt = startedAt,
@@ -342,9 +336,11 @@ public class LlmAgent : ILlmAgent
                 // Prefer the host's template fingerprint (tracks prompt EDITS, not injected lists);
                 // fall back to hashing the whole assembled prompt for hosts that don't supply one.
                 SystemPromptHash = turn.SystemPromptHash ?? PromptHash.Short(turn.SystemPrompt),
-                Tools = trajectory ?? Array.Empty<RecordedToolCall>(),
+                Tools = trajectory,
                 Iterations = iterations,
                 Outcome = outcome,
+                Think = turn.Think,
+                Thinking = string.IsNullOrEmpty(thinking) ? null : thinking,
                 Final = final,
                 Usage = usage,
                 Error = error,
@@ -352,8 +348,8 @@ public class LlmAgent : ILlmAgent
         }
         catch (Exception ex)
         {
-            // Defence in depth on top of the recorder's own guard: never fail a turn over its record.
-            _logger.LogWarning(ex, "Failed to build conversation turn record for {Conversation}", turn.ConversationId);
+            // Defence in depth: never fail a turn over persisting its record.
+            _logger.LogWarning(ex, "Failed to persist conversation turn for {Conversation}", turn.ConversationId);
         }
     }
 

@@ -5,7 +5,6 @@ using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Ollama;
-using TheKrystalShip.Llm.Recording;
 
 namespace TheKrystalShip.Llm.Extensions;
 
@@ -15,7 +14,7 @@ namespace TheKrystalShip.Llm.Extensions;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the Ollama-backed LLM client, an in-memory conversation store,
+    /// Registers the Ollama-backed LLM client, the durable SQLite conversation store,
     /// and the agent loop. Options are bound from the configuration sections
     /// "Ollama", "Conversation", and "LlmAgent".
     ///
@@ -31,24 +30,15 @@ public static class ServiceCollectionExtensions
         services.Configure<OllamaOptions>(configuration.GetSection(OllamaOptions.Section));
         services.Configure<ConversationOptions>(configuration.GetSection(ConversationOptions.Section));
         services.Configure<LlmAgentOptions>(configuration.GetSection(LlmAgentOptions.Section));
-        services.Configure<RecordingOptions>(configuration.GetSection(RecordingOptions.Section));
 
         services.AddSingleton<ILlmClient, OllamaLlmClient>();
-        // Durable conversation memory: SQLite-backed so a conversation's rolling context survives a
-        // restart. Path comes from ConversationOptions.DatabasePath (a host points it at its state dir).
+        // The canonical conversation history: SQLite-backed, append-only (per-turn deltas + checkpoints).
+        // It is BOTH the model's continuity memory AND the durable record mined for self-improvement —
+        // one log, never trimmed. Path comes from ConversationOptions.DatabasePath (a host points it at
+        // its state dir). The old separate JSONL recorder is retired; the agent loop writes turns here.
         services.AddSingleton<IConversationStore, SqliteConversationStore>();
         services.AddSingleton<ILlmAgent, LlmAgent>();
         services.AddSingleton<IConversationCompactor, ConversationCompactor>();
-
-        // Conversation recording is a separate, append-only sink for offline self-improvement
-        // analysis — NOT the model's working memory. Off by default; a host opts in and supplies a
-        // writable directory. When disabled (or directory-less) the no-op keeps the agent loop's
-        // record-building short-circuited. Installed here so every surface inherits it uniformly.
-        var recording = configuration.GetSection(RecordingOptions.Section).Get<RecordingOptions>() ?? new RecordingOptions();
-        if (recording.Enabled && !string.IsNullOrWhiteSpace(recording.Directory))
-            services.AddSingleton<IConversationRecorder, JsonlConversationRecorder>();
-        else
-            services.AddSingleton<IConversationRecorder, NoopConversationRecorder>();
 
         return services;
     }

@@ -10,19 +10,27 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Llm.Conversation;
 
 /// <summary>
-/// The conversation store: a single SQLite file holding each conversation's rolling working context, so
-/// it survives a process restart/redeploy. Keyed by the opaque conversation id, oldest first, trimmed to
-/// <see cref="ConversationOptions.MaxMessages"/>.
+/// The canonical conversation history in a single SQLite file: an append-only log of per-turn deltas
+/// and compaction checkpoints (<c>conversation_entries</c>). It is BOTH the model's continuity memory
+/// and the durable, examinable record — never trimmed, never overwritten. Full history survives a
+/// restart and is resumable by conversation id.
 /// <para>
-/// The conversation id is the canonical scope — a fresh chat is a fresh id — so there is no idle reset:
-/// a conversation is retained and resumable by id until it rolls out of its own window or is replaced.
-/// Each call opens a pooled connection; writes are serialised through a process lock (SQLite is
-/// single-writer) while WAL lets reads run concurrently. Each <see cref="LlmMessage"/> is one JSON row
-/// (roles as strings so the enum can be reordered without breaking old rows).
+/// What the model replays is a projection (<see cref="GetModelContext"/>): the latest checkpoint
+/// summary plus the user/assistant text of the turns after it. Compaction is non-destructive — it
+/// appends a checkpoint, leaving prior turns intact. Each call opens a pooled connection; writes are
+/// serialised through a process lock (SQLite is single-writer) while WAL lets reads run concurrently.
 /// </para>
 /// </summary>
 public sealed class SqliteConversationStore : IConversationStore
 {
+    private const string KindTurn = "turn";
+    private const string KindCheckpoint = "checkpoint";
+
+    // The recap wording prepended to a checkpoint summary when projected into the model's context, so
+    // the model reads it as a compacted recap rather than a normal assistant message.
+    private const string CheckpointPreamble =
+        "(Summary of our conversation so far — earlier turns were compacted to save context.)\n\n";
+
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -30,14 +38,12 @@ public sealed class SqliteConversationStore : IConversationStore
     };
 
     private readonly string _connectionString;
-    private readonly int _maxMessages;
     // SQLite is single-writer; serialise writes so concurrent turns never hit "database is locked".
     private readonly object _writeGate = new();
 
     public SqliteConversationStore(IOptions<ConversationOptions> options)
     {
         var value = options.Value;
-        _maxMessages = Math.Max(1, value.MaxMessages);
 
         // A configured path wins; otherwise default beside the host binary so the store always has a
         // home (the deployed Service points this at its state dir via Conversation:DatabasePath).
@@ -68,105 +74,116 @@ public sealed class SqliteConversationStore : IConversationStore
         cmd.CommandText =
             """
             PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS conversation_messages (
+            CREATE TABLE IF NOT EXISTS conversation_entries (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id TEXT    NOT NULL,
+                kind            TEXT    NOT NULL,
+                created_at      TEXT    NOT NULL,
                 payload         TEXT    NOT NULL
             );
             CREATE INDEX IF NOT EXISTS ix_conversation
-                ON conversation_messages (conversation_id, id);
+                ON conversation_entries (conversation_id, id);
             """;
         cmd.ExecuteNonQuery();
     }
 
-    public IReadOnlyList<LlmMessage> GetHistory(string conversationId)
+    public IReadOnlyList<ConversationEntry> GetHistory(string conversationId) =>
+        LoadEntries(conversationId);
+
+    public IReadOnlyList<LlmMessage> GetModelContext(string conversationId)
+    {
+        var entries = LoadEntries(conversationId);
+
+        // Replay from the latest checkpoint forward (or the whole conversation if there is none).
+        var lastCheckpoint = -1;
+        for (var i = entries.Count - 1; i >= 0; i--)
+        {
+            if (entries[i].Kind == ConversationEntryKind.Checkpoint)
+            {
+                lastCheckpoint = i;
+                break;
+            }
+        }
+
+        var messages = new List<LlmMessage>();
+        var start = 0;
+        if (lastCheckpoint >= 0)
+        {
+            messages.Add(LlmMessage.Assistant(CheckpointPreamble + entries[lastCheckpoint].CheckpointSummary));
+            start = lastCheckpoint + 1;
+        }
+
+        for (var i = start; i < entries.Count; i++)
+        {
+            if (entries[i].Kind != ConversationEntryKind.Turn)
+                continue;
+            var turn = entries[i].Turn!;
+            messages.Add(LlmMessage.User(turn.UserPrompt));
+            if (!string.IsNullOrWhiteSpace(turn.Final))
+                messages.Add(LlmMessage.Assistant(turn.Final!));
+        }
+
+        return messages;
+    }
+
+    public void AppendTurn(ConversationTurnRecord turn)
+    {
+        Insert(turn.ConversationId, KindTurn, turn.CompletedAt, JsonSerializer.Serialize(turn, Json));
+    }
+
+    public void AddCheckpoint(string conversationId, string summary)
+    {
+        Insert(conversationId, KindCheckpoint, DateTimeOffset.UtcNow, summary);
+    }
+
+    private void Insert(string conversationId, string kind, DateTimeOffset createdAt, string payload)
+    {
+        lock (_writeGate)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText =
+                """
+                INSERT INTO conversation_entries (conversation_id, kind, created_at, payload)
+                VALUES ($cid, $kind, $createdAt, $payload);
+                """;
+            cmd.Parameters.AddWithValue("$cid", conversationId);
+            cmd.Parameters.AddWithValue("$kind", kind);
+            cmd.Parameters.AddWithValue("$createdAt", createdAt.ToString("O"));
+            cmd.Parameters.AddWithValue("$payload", payload);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    private List<ConversationEntry> LoadEntries(string conversationId)
     {
         using var connection = Open();
         using var cmd = connection.CreateCommand();
         cmd.CommandText =
-            "SELECT payload FROM conversation_messages WHERE conversation_id = $cid ORDER BY id ASC;";
+            "SELECT kind, created_at, payload FROM conversation_entries WHERE conversation_id = $cid ORDER BY id ASC;";
         cmd.Parameters.AddWithValue("$cid", conversationId);
 
-        var history = new List<LlmMessage>();
+        var entries = new List<ConversationEntry>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            var message = JsonSerializer.Deserialize<LlmMessage>(reader.GetString(0), Json);
-            if (message is not null)
-                history.Add(message);
-        }
+            var kind = reader.GetString(0);
+            var createdAt = DateTimeOffset.Parse(reader.GetString(1));
+            var payload = reader.GetString(2);
 
-        return history;
-    }
-
-    public void Append(string conversationId, params LlmMessage[] messages)
-    {
-        if (messages.Length == 0)
-            return;
-
-        lock (_writeGate)
-        {
-            using var connection = Open();
-            using var tx = connection.BeginTransaction();
-            foreach (var message in messages)
-                Insert(connection, tx, conversationId, message);
-            Trim(connection, tx, conversationId);
-            tx.Commit();
-        }
-    }
-
-    public void Replace(string conversationId, params LlmMessage[] messages)
-    {
-        lock (_writeGate)
-        {
-            using var connection = Open();
-            using var tx = connection.BeginTransaction();
-            using (var delete = connection.CreateCommand())
+            if (kind == KindCheckpoint)
             {
-                delete.Transaction = tx;
-                delete.CommandText = "DELETE FROM conversation_messages WHERE conversation_id = $cid;";
-                delete.Parameters.AddWithValue("$cid", conversationId);
-                delete.ExecuteNonQuery();
+                entries.Add(ConversationEntry.ForCheckpoint(payload, createdAt));
             }
-
-            foreach (var message in messages)
-                Insert(connection, tx, conversationId, message);
-            Trim(connection, tx, conversationId);
-            tx.Commit();
+            else
+            {
+                var turn = JsonSerializer.Deserialize<ConversationTurnRecord>(payload, Json);
+                if (turn is not null)
+                    entries.Add(ConversationEntry.ForTurn(turn));
+            }
         }
-    }
 
-    private static void Insert(SqliteConnection connection, SqliteTransaction tx, string conversationId, LlmMessage message)
-    {
-        using var cmd = connection.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText =
-            "INSERT INTO conversation_messages (conversation_id, payload) VALUES ($cid, $payload);";
-        cmd.Parameters.AddWithValue("$cid", conversationId);
-        cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(message, Json));
-        cmd.ExecuteNonQuery();
-    }
-
-    // Keep only the newest _maxMessages rows for this conversation (the rolling window) — bounds the file
-    // so durability doesn't become unbounded growth.
-    private void Trim(SqliteConnection connection, SqliteTransaction tx, string conversationId)
-    {
-        using var cmd = connection.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText =
-            """
-            DELETE FROM conversation_messages
-            WHERE conversation_id = $cid
-              AND id NOT IN (
-                  SELECT id FROM conversation_messages
-                  WHERE conversation_id = $cid
-                  ORDER BY id DESC
-                  LIMIT $keep
-              );
-            """;
-        cmd.Parameters.AddWithValue("$cid", conversationId);
-        cmd.Parameters.AddWithValue("$keep", _maxMessages);
-        cmd.ExecuteNonQuery();
+        return entries;
     }
 
     private SqliteConnection Open()

@@ -13,9 +13,10 @@ namespace TheKrystalShip.Llm.Tests;
 
 /// <summary>
 /// Drives <see cref="ConversationCompactor"/> with a fake <see cref="ILlmClient"/> over a real
-/// <see cref="SqliteConversationStore"/> (a throwaway temp DB): verifies the no-op thresholds, that a
-/// successful compaction REPLACES the history with one model-role summary, and that failures / empty
-/// summaries leave the stored history untouched.
+/// <see cref="SqliteConversationStore"/> (a throwaway temp DB): verifies the no-op threshold, that a
+/// successful compaction appends a <b>checkpoint</b> NON-DESTRUCTIVELY (prior turns stay in the
+/// history; the model context replays from the summary forward), and that failures / empty summaries
+/// add no checkpoint.
 /// </summary>
 public sealed class ConversationCompactorTests : IDisposable
 {
@@ -28,7 +29,7 @@ public sealed class ConversationCompactorTests : IDisposable
 
     public ConversationCompactorTests() =>
         _store = new SqliteConversationStore(
-            Options.Create(new ConversationOptions { MaxMessages = 12, DatabasePath = _dbPath }));
+            Options.Create(new ConversationOptions { DatabasePath = _dbPath }));
 
     public void Dispose()
     {
@@ -51,7 +52,26 @@ public sealed class ConversationCompactorTests : IDisposable
                 Arg.Any<CancellationToken>())
             .Returns(response);
 
-    private void Seed(params LlmMessage[] messages) => _store.Append(Conversation, messages);
+    private void SeedTurn(string prompt, string? final) =>
+        _store.AppendTurn(new ConversationTurnRecord
+        {
+            ConversationId = Conversation,
+            StartedAt = DateTimeOffset.UtcNow,
+            CompletedAt = DateTimeOffset.UtcNow,
+            UserPrompt = prompt,
+            SystemPromptHash = "h",
+            Tools = Array.Empty<RecordedToolCall>(),
+            Iterations = 1,
+            Outcome = final is null ? TurnOutcome.Error : TurnOutcome.Ok,
+            Think = false,
+            Final = final,
+        });
+
+    private int TurnCount() =>
+        _store.GetHistory(Conversation).Count(e => e.Kind == ConversationEntryKind.Turn);
+
+    private int CheckpointCount() =>
+        _store.GetHistory(Conversation).Count(e => e.Kind == ConversationEntryKind.Checkpoint);
 
     [Fact]
     public async Task EmptyConversation_IsNoOp_AndNeverCallsModel()
@@ -66,42 +86,45 @@ public sealed class ConversationCompactorTests : IDisposable
     }
 
     [Fact]
-    public async Task SingleMessage_IsNoOp()
+    public async Task BelowThreshold_IsNoOp()
     {
-        Seed(LlmMessage.User("is terraria up?"));
+        // A single failed turn projects to ONE context message (the user prompt, no final) — below the
+        // 2-message floor, so there is nothing worth folding.
+        SeedTurn("is terraria up?", final: null);
         ScriptModel(Result.Success(LlmResponse.Text("unused")));
 
         var result = await Create().CompactAsync(Conversation);
 
         result.Value!.Compacted.Should().BeFalse();
         _calls.Should().Be(0);
-        _store.GetHistory(Conversation).Should().HaveCount(1);   // untouched
+        CheckpointCount().Should().Be(0);
     }
 
     [Fact]
-    public async Task MultiMessage_Compacts_ReplacingHistoryWithOneModelSummary()
+    public async Task MultiTurn_Compacts_AppendsCheckpoint_NonDestructively()
     {
-        Seed(
-            LlmMessage.User("is terraria up?"),
-            LlmMessage.Assistant("Yes, terraria-1 is running."),
-            LlmMessage.User("how much RAM is it using?"),
-            LlmMessage.Assistant("About 1.2 GB."));
+        SeedTurn("is terraria up?", "Yes, terraria-1 is running.");
+        SeedTurn("how much RAM is it using?", "About 1.2 GB.");
         ScriptModel(Result.Success(LlmResponse.Text("User asked about terraria-1: it is up, ~1.2 GB RAM.")));
 
         var result = await Create().CompactAsync(Conversation);
 
-        // Outcome reports what was folded away.
+        // Outcome reports the context size folded into the checkpoint (2 turns → 4 messages).
         result.IsSuccess.Should().BeTrue();
         result.Value!.Compacted.Should().BeTrue();
         result.Value!.MessagesCompacted.Should().Be(4);
 
-        // History is now exactly one assistant-role recap carrying the summary.
-        var history = _store.GetHistory(Conversation);
-        history.Should().ContainSingle();
-        history[0].Role.Should().Be(LlmRole.Assistant);
-        history[0].Content.Should().Contain("User asked about terraria-1");
+        // NON-DESTRUCTIVE: the two original turns are STILL in the history, plus a new checkpoint.
+        TurnCount().Should().Be(2);
+        CheckpointCount().Should().Be(1);
 
-        // The summarization call was tool-less and saw a system instruction + the transcript.
+        // The model now replays from the checkpoint forward — one recap message carrying the summary.
+        var ctx = _store.GetModelContext(Conversation);
+        ctx.Should().ContainSingle();
+        ctx[0].Role.Should().Be(LlmRole.Assistant);
+        ctx[0].Content.Should().Contain("User asked about terraria-1");
+
+        // The summarization call was tool-less and saw a system instruction + the rendered transcript.
         _tools.Should().BeNull();
         _sent.Should().HaveCount(2);
         _sent![0].Role.Should().Be(LlmRole.System);
@@ -111,27 +134,31 @@ public sealed class ConversationCompactorTests : IDisposable
     }
 
     [Fact]
-    public async Task ModelFailure_ReturnsFailure_AndLeavesHistoryUntouched()
+    public async Task ModelFailure_ReturnsFailure_AndAddsNoCheckpoint()
     {
-        Seed(LlmMessage.User("a"), LlmMessage.Assistant("b"));
+        SeedTurn("a", "b");
+        SeedTurn("c", "d");
         ScriptModel(Result.Failure<LlmResponse>("ollama unreachable"));
 
         var result = await Create().CompactAsync(Conversation);
 
         result.IsFailure.Should().BeTrue();
         result.Error.Should().Contain("ollama unreachable");
-        _store.GetHistory(Conversation).Should().HaveCount(2);   // unchanged
+        TurnCount().Should().Be(2);
+        CheckpointCount().Should().Be(0);   // history untouched
     }
 
     [Fact]
-    public async Task EmptyModelSummary_Fails_AndLeavesHistoryUntouched()
+    public async Task EmptyModelSummary_Fails_AndAddsNoCheckpoint()
     {
-        Seed(LlmMessage.User("a"), LlmMessage.Assistant("b"));
+        SeedTurn("a", "b");
+        SeedTurn("c", "d");
         ScriptModel(Result.Success(LlmResponse.Text("   ")));
 
         var result = await Create().CompactAsync(Conversation);
 
         result.IsFailure.Should().BeTrue();
-        _store.GetHistory(Conversation).Should().HaveCount(2);   // unchanged
+        TurnCount().Should().Be(2);
+        CheckpointCount().Should().Be(0);   // history untouched
     }
 }

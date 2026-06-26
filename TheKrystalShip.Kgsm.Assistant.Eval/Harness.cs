@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Extensions;
@@ -16,8 +15,9 @@ namespace TheKrystalShip.Kgsm.Assistant.Eval;
 
 /// <summary>
 /// Drives the REAL assistant in-process — the same three-call backend the CLI wires — so the
-/// trajectory it scores is the one a user would get. Swaps the disk recorder for an in-memory
-/// <see cref="CapturingRecorder"/> to read each turn's tool trajectory.
+/// trajectory it scores is the one a user would get. Reads each turn's tool trajectory back from the
+/// canonical conversation store (the trajectory now lives in the history, not a side recorder),
+/// isolated to a throwaway SQLite DB so an eval run never touches the user's real transcript corpus.
 /// <para>
 /// HARD INVARIANT — non-destructive: the harness only ever calls <see cref="IServerAssistant.RunAsync"/>,
 /// which STAGES destructive ops; it never calls <c>ConfirmAsync</c>, so nothing it runs can start,
@@ -27,13 +27,13 @@ namespace TheKrystalShip.Kgsm.Assistant.Eval;
 internal sealed class Harness
 {
     private readonly ServiceProvider _provider;
-    private readonly CapturingRecorder _recorder;
+    private readonly IConversationStore _store;
     private readonly EvalOptions _options;
 
-    private Harness(ServiceProvider provider, CapturingRecorder recorder, EvalOptions options)
+    private Harness(ServiceProvider provider, IConversationStore store, EvalOptions options)
     {
         _provider = provider;
-        _recorder = recorder;
+        _store = store;
         _options = options;
     }
 
@@ -68,12 +68,11 @@ internal sealed class Harness
         // so an actual call just returns an honest "couldn't search" — no network, no credits spent.
         services.PostConfigure<SearchOptions>(o => o.WebEnabled = true);
 
-        // Replace whatever recorder the backend registered with our in-memory capture.
-        var recorder = new CapturingRecorder();
-        services.RemoveAll<IConversationRecorder>();
-        services.AddSingleton<IConversationRecorder>(recorder);
-
-        return new Harness(services.BuildServiceProvider(), recorder, options);
+        // The conversation store (SQLite) is already registered by AddLocalLlm and pointed at a throwaway
+        // temp DB (see BuildConfiguration) so eval turns never touch the user's real corpus. The harness
+        // reads each turn's trajectory back from it.
+        var provider = services.BuildServiceProvider();
+        return new Harness(provider, provider.GetRequiredService<IConversationStore>(), options);
     }
 
     /// <summary>Resolve fixtures and print the preflight. Returns null if the run must abort (empty inventory).</summary>
@@ -151,11 +150,13 @@ internal sealed class Harness
             var step = bench.Steps[si];
             var prompt = fx.Fill(step.Prompt);
 
-            _recorder.Reset();
             // autoExecute: false — the harness is non-destructive by construction (CLAUDE.md inv. #2):
             // RunAsync only STAGES; it must never run a server op, so auto-accept stays off here.
             var result = await assistant.RunAsync(conversationId, prompt, bench.Authorized, false, autoExecute: false, requestedTools: null, ct);
-            var record = _recorder.Last;
+            // Read this step's turn back from the canon store (fresh conversation per rep → the last turn
+            // entry is this step's). The trajectory now lives in the history, not a side recorder.
+            var record = _store.GetHistory(conversationId)
+                .LastOrDefault(e => e.Kind == ConversationEntryKind.Turn)?.Turn;
             sysHash ??= record?.SystemPromptHash;
 
             var obs = new TurnObservation(
@@ -267,8 +268,10 @@ internal sealed class Harness
 
         var overrides = new Dictionary<string, string?>
         {
-            // We score via the in-memory recorder; never write the user's real transcript corpus.
-            ["Recording:Enabled"] = "false",
+            // Point the conversation store at a throwaway temp DB so eval turns never touch the user's
+            // real corpus (the store is always-on now — there is no "recording off" switch).
+            ["Conversation:DatabasePath"] =
+                Path.Combine(Path.GetTempPath(), $"kgsm-eval-conv-{Guid.NewGuid():N}.db"),
             ["Ollama:Model"] = o.Model,
             ["Ollama:Temperature"] = o.Temperature.ToString(System.Globalization.CultureInfo.InvariantCulture),
             // Default the prompt dir to the SAME files the CLI tunes, so the eval measures the live

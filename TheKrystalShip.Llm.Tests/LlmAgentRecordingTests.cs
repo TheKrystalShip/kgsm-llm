@@ -16,24 +16,23 @@ using TheKrystalShip.Llm.Ollama;
 namespace TheKrystalShip.Llm.Tests;
 
 /// <summary>
-/// The recording side-channel: every turn the agent runs is captured as exactly one append-only
-/// <see cref="ConversationTurnRecord"/> at its terminal point, across all four outcomes (ok / error /
-/// cap-hit / cancelled), with the full tool trajectory (args + RAW pre-truncation result). A disabled
-/// recorder must capture nothing — the loop short-circuits on <see cref="IConversationRecorder.Enabled"/>.
+/// Turn persistence: every turn the agent runs is appended as exactly one <see cref="ConversationTurnRecord"/>
+/// to the canonical conversation store at its terminal point, across all four outcomes (ok / error /
+/// cap-hit / cancelled), with the full tool trajectory (args + RAW pre-truncation summary) and the
+/// model's thinking. The store IS the record now — there is no separate recorder to disable.
 /// </summary>
 public class LlmAgentRecordingTests
 {
     private const string Conversation = "cli:abc";
 
     private readonly IToolDispatcher _dispatcher = Substitute.For<IToolDispatcher>();
-    private readonly FakeConversationStore _store = new();
-    private readonly CapturingRecorder _recorder = new();
+    private readonly TestConversationStore _store = new();
 
-    private LlmAgent CreateAgent(ILlmClient client, int maxIterations = 8, IConversationRecorder? recorder = null)
+    private LlmAgent CreateAgent(ILlmClient client, int maxIterations = 8)
     {
         _dispatcher.ExecuteAsync(Arg.Any<LlmToolCall>(), Arg.Any<CancellationToken>()).Returns("Done.");
         var options = Options.Create(new LlmAgentOptions { MaxIterations = maxIterations });
-        return new LlmAgent(client, _dispatcher, _store, recorder ?? _recorder, options, NullLogger<LlmAgent>.Instance);
+        return new LlmAgent(client, _dispatcher, _store, options, NullLogger<LlmAgent>.Instance);
     }
 
     private static AgentTurn Turn() => new()
@@ -71,7 +70,7 @@ public class LlmAgentRecordingTests
 
         await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
 
-        var rec = _recorder.Records.Should().ContainSingle().Subject;
+        var rec = _store.Turns.Should().ContainSingle().Subject;
         rec.Outcome.Should().Be(TurnOutcome.Ok);
         rec.ConversationId.Should().Be(Conversation);
         rec.UserPrompt.Should().Be("do the thing");
@@ -83,7 +82,7 @@ public class LlmAgentRecordingTests
         var tool = rec.Tools.Should().ContainSingle().Subject;
         Assert.Equal("get_status", tool.Name.Name);
         tool.Arguments.Should().Contain("instance", "terraria");
-        tool.Result.Should().Be("Done.");   // the RAW dispatcher output, captured for analysis
+        tool.Summary.Should().Be("Done.");   // the RAW dispatcher output, captured for analysis
     }
 
     [Fact]
@@ -97,7 +96,7 @@ public class LlmAgentRecordingTests
         var drain = async () => await DrainAsync(CreateAgent(client).RunStreamAsync(Turn(), cts.Token));
 
         await drain.Should().ThrowAsync<OperationCanceledException>();
-        var rec = _recorder.Records.Should().ContainSingle().Subject;
+        var rec = _store.Turns.Should().ContainSingle().Subject;
         rec.Outcome.Should().Be(TurnOutcome.Cancelled);
         rec.Final.Should().BeNull();
     }
@@ -119,7 +118,7 @@ public class LlmAgentRecordingTests
         var drain = async () => await DrainAsync(agent.RunStreamAsync(Turn()));
 
         await drain.Should().ThrowAsync<InvalidOperationException>();
-        _recorder.Records.Should().ContainSingle().Which.Outcome.Should().Be(TurnOutcome.Error);
+        _store.Turns.Should().ContainSingle().Which.Outcome.Should().Be(TurnOutcome.Error);
     }
 
     [Fact]
@@ -129,7 +128,7 @@ public class LlmAgentRecordingTests
 
         await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
 
-        var rec = _recorder.Records.Should().ContainSingle().Subject;
+        var rec = _store.Turns.Should().ContainSingle().Subject;
         rec.Outcome.Should().Be(TurnOutcome.Error);
         rec.Error.Should().Be("backend down");
         rec.Final.Should().BeNull();
@@ -145,7 +144,7 @@ public class LlmAgentRecordingTests
         var result = await CreateAgent(llm).RunAsync(Turn());
 
         result.IsFailure.Should().BeTrue();
-        var rec = _recorder.Records.Should().ContainSingle().Subject;
+        var rec = _store.Turns.Should().ContainSingle().Subject;
         rec.Outcome.Should().Be(TurnOutcome.Error);
         rec.Error.Should().Be("backend down");
     }
@@ -159,31 +158,10 @@ public class LlmAgentRecordingTests
 
         await CreateAgent(llm, maxIterations: 3).RunAsync(Turn());
 
-        var rec = _recorder.Records.Should().ContainSingle().Subject;
+        var rec = _store.Turns.Should().ContainSingle().Subject;
         rec.Outcome.Should().Be(TurnOutcome.CapHit);
         rec.Iterations.Should().Be(3);
         rec.Tools.Should().HaveCount(3);   // one tool dispatched per round, three rounds
-    }
-
-    [Fact]
-    public async Task DisabledRecorder_CapturesNothing()
-    {
-        var disabled = new CapturingRecorder(enabled: false);
-        var llm = Substitute.For<ILlmClient>();
-        llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(Result.Success(new LlmResponse("done", Array.Empty<LlmToolCall>())));
-
-        await CreateAgent(llm, recorder: disabled).RunAsync(Turn());
-
-        disabled.Records.Should().BeEmpty();   // Enabled=false ⇒ the loop never builds a record
-    }
-
-    private sealed class CapturingRecorder : IConversationRecorder
-    {
-        public List<ConversationTurnRecord> Records { get; } = new();
-        public bool Enabled { get; }
-        public CapturingRecorder(bool enabled = true) => Enabled = enabled;
-        public void Record(ConversationTurnRecord record) => Records.Add(record);
     }
 
     private sealed class ScriptedStreamClient : ILlmClient
@@ -248,18 +226,6 @@ public class LlmAgentRecordingTests
             yield return new LlmStreamChunk("partial", null, false);
             _cts.Cancel();
             cancellationToken.ThrowIfCancellationRequested();
-        }
-    }
-
-    private sealed class FakeConversationStore : IConversationStore
-    {
-        public List<LlmMessage> Messages { get; } = new();
-        public IReadOnlyList<LlmMessage> GetHistory(string conversationId) => Messages.ToArray();
-        public void Append(string conversationId, params LlmMessage[] messages) => Messages.AddRange(messages);
-        public void Replace(string conversationId, params LlmMessage[] messages)
-        {
-            Messages.Clear();
-            Messages.AddRange(messages);
         }
     }
 }

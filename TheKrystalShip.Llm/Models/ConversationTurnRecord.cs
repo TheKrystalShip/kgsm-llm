@@ -14,24 +14,32 @@ public enum TurnOutcome
 }
 
 /// <summary>
-/// One tool invocation within a turn, captured for offline analysis: the tool the model picked,
-/// the arguments it passed, the <b>raw, pre-truncation</b> result it got back, and how long the
-/// call took. A refused call carries the refusal string as its <see cref="Result"/> with a zero
-/// duration (it never reached the dispatcher).
+/// One tool invocation within a turn. The fields mirror the assistant's §5·a <c>tool.start</c> +
+/// <c>tool.result</c> wire events so a surface can re-scaffold the call visually from history without a
+/// second schema: the tool the model picked (<see cref="Name"/>), the <see cref="Arguments"/> it passed,
+/// the model-facing <see cref="Summary"/> string (the <b>raw, pre-truncation</b> output), and the
+/// optional structured <see cref="Card"/> (the §5·a <c>tool.result.result</c> card — present only for
+/// tools that emit one, e.g. <c>run_health_check</c>; <c>null</c> otherwise). <see cref="DurationMs"/> is
+/// analysis-only (the §5·a projection omits it). A refused call carries the refusal string as its
+/// <see cref="Summary"/> with a zero duration (it never reached the dispatcher).
 /// </summary>
 public sealed record RecordedToolCall(
     Tool Name,
     IReadOnlyDictionary<string, string?> Arguments,
-    string Result,
-    long DurationMs);
+    string Summary,
+    long DurationMs,
+    object? Card = null);
 
 /// <summary>
-/// An append-only, per-turn record of one model↔tool turn, captured at the agent loop (the one
-/// place the whole picture coexists) for the purpose of self-improvement analysis — NOT for feeding
-/// the model. It is the per-turn <i>delta</i>: the user prompt, this turn's tool trajectory, and the
-/// final reply, plus the metadata needed to bucket and compare turns over time (system-prompt hash,
-/// iteration count, token usage, outcome). Reconstruct a whole conversation by filtering on
-/// <see cref="ConversationId"/> and ordering by <see cref="CompletedAt"/>.
+/// The canonical, append-only record of one completed model↔tool turn — the per-turn <i>delta</i>
+/// (this turn's content only, never a cumulative snapshot): the user prompt, the model's thinking,
+/// this turn's tool trajectory, and the final reply, plus the metadata needed to replay and to
+/// compare turns over time (system-prompt hash, iteration count, token usage, outcome). It is BOTH
+/// the conversation history (a <see cref="ConversationEntry"/> of kind <see cref="ConversationEntryKind.Turn"/>
+/// in the store) AND the self-improvement record — one canon log, captured at the agent loop (the one
+/// place the whole picture coexists). Reconstruct a whole conversation by replaying entries for a
+/// <see cref="ConversationId"/> in order; the model only ever replays <see cref="UserPrompt"/> +
+/// <see cref="Final"/> (the rich fields are for display + analysis, never fed back).
 /// </summary>
 public sealed record ConversationTurnRecord
 {
@@ -57,6 +65,16 @@ public sealed record ConversationTurnRecord
     public required int Iterations { get; init; }
 
     public required TurnOutcome Outcome { get; init; }
+
+    /// <summary>Whether the "think" mode was enabled for this turn (the per-turn reasoning toggle).</summary>
+    public required bool Think { get; init; }
+
+    /// <summary>
+    /// The model's internal reasoning text for this turn, when <see cref="Think"/> was on and the
+    /// backend streamed it (the streaming path). <c>null</c> when thinking was off or unavailable
+    /// (e.g. the buffered path). Captured for analysis; never replayed into the model's context.
+    /// </summary>
+    public string? Thinking { get; init; }
 
     /// <summary>The final assistant reply; <c>null</c> for an error/cancelled turn with no reply.</summary>
     public string? Final { get; init; }

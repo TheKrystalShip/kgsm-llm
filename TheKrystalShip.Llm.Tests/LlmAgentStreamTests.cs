@@ -11,9 +11,6 @@ using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 using TheKrystalShip.Llm.Ollama;
-using TheKrystalShip.Llm.Recording;
-
-using Xunit;
 
 namespace TheKrystalShip.Llm.Tests;
 
@@ -28,13 +25,13 @@ public class LlmAgentStreamTests
     private const string Conversation = "user-1:channel-2";
 
     private readonly IToolDispatcher _dispatcher = Substitute.For<IToolDispatcher>();
-    private readonly FakeConversationStore _store = new();
+    private readonly TestConversationStore _store = new();
 
     private LlmAgent CreateAgent(ILlmClient client, int maxIterations = 8)
     {
         _dispatcher.ExecuteAsync(Arg.Any<LlmToolCall>(), Arg.Any<CancellationToken>()).Returns("Done.");
         var options = Options.Create(new LlmAgentOptions { MaxIterations = maxIterations });
-        return new LlmAgent(client, _dispatcher, _store, new NoopConversationRecorder(), options, NullLogger<LlmAgent>.Instance);
+        return new LlmAgent(client, _dispatcher, _store, options, NullLogger<LlmAgent>.Instance);
     }
 
     private static AgentTurn Turn() => new()
@@ -217,7 +214,7 @@ public class LlmAgentStreamTests
     }
 
     [Fact]
-    public async Task ThinkingTurn_YieldsThinkingThenTokenThenFinal_AndDoesNotPersistThinking()
+    public async Task ThinkingTurn_YieldsThinking_CapturesItInTheRecord_ButDoesNotReplayIt()
     {
         var client = new ScriptedStreamClient(new[]
         {
@@ -234,7 +231,10 @@ public class LlmAgentStreamTests
         events[2].Text.Should().Be("Answer");
         events[3].Text.Should().Be("Answer");
 
-        // Thinking is NOT persisted — only user prompt + final assistant text.
+        // Thinking IS captured in the turn record (the full reasoning, for analysis)...
+        var record = _store.Turns.Should().ContainSingle().Subject;
+        record.Thinking.Should().Be("Let me think... more...");
+        // ...but it is NOT replayed into the model context — only user prompt + final assistant text.
         _store.Messages.Should().HaveCount(2);
         _store.Messages[0].Role.Should().Be(LlmRole.User);
         _store.Messages[1].Should().Match<LlmMessage>(m => m.Role == LlmRole.Assistant && m.Content == "Answer");
@@ -277,18 +277,6 @@ public class LlmAgentStreamTests
 
             if (_throwMessage is not null)
                 throw new OllamaBackendException(_throwMessage);
-        }
-    }
-
-    private sealed class FakeConversationStore : IConversationStore
-    {
-        public List<LlmMessage> Messages { get; } = new();
-        public IReadOnlyList<LlmMessage> GetHistory(string conversationId) => Messages.ToArray();
-        public void Append(string conversationId, params LlmMessage[] messages) => Messages.AddRange(messages);
-        public void Replace(string conversationId, params LlmMessage[] messages)
-        {
-            Messages.Clear();
-            Messages.AddRange(messages);
         }
     }
 }

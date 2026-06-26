@@ -8,7 +8,6 @@ using NSubstitute;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
-using TheKrystalShip.Llm.Recording;
 
 namespace TheKrystalShip.Llm.Tests;
 
@@ -22,14 +21,14 @@ public class LlmAgentTests
 
     private readonly ILlmClient _llm = Substitute.For<ILlmClient>();
     private readonly IToolDispatcher _dispatcher = Substitute.For<IToolDispatcher>();
-    private readonly FakeConversationStore _store = new();
+    private readonly TestConversationStore _store = new();
     private readonly List<List<LlmMessage>> _seen = new();
 
     private LlmAgent CreateAgent(int maxIterations = 8)
     {
         _dispatcher.ExecuteAsync(Arg.Any<LlmToolCall>(), Arg.Any<CancellationToken>()).Returns("Done.");
         var options = Options.Create(new LlmAgentOptions { MaxIterations = maxIterations });
-        return new LlmAgent(_llm, _dispatcher, _store, new NoopConversationRecorder(), options, NullLogger<LlmAgent>.Instance);
+        return new LlmAgent(_llm, _dispatcher, _store, options, NullLogger<LlmAgent>.Instance);
     }
 
     private void ScriptLlm(params Result<LlmResponse>[] responses) =>
@@ -192,17 +191,5 @@ public class LlmAgentTests
 
         result.IsFailure.Should().BeTrue();
         result.Error.Should().Be("backend down");
-    }
-
-    private sealed class FakeConversationStore : IConversationStore
-    {
-        public List<LlmMessage> Messages { get; } = new();
-        public IReadOnlyList<LlmMessage> GetHistory(string conversationId) => Messages.ToArray();
-        public void Append(string conversationId, params LlmMessage[] messages) => Messages.AddRange(messages);
-        public void Replace(string conversationId, params LlmMessage[] messages)
-        {
-            Messages.Clear();
-            Messages.AddRange(messages);
-        }
     }
 }

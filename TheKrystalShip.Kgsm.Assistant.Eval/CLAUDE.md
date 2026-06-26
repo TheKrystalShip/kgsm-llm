@@ -8,8 +8,9 @@ guide* for mechanics; read this before changing how scoring works.
 ## What this is, in one breath
 
 A console app (`kgsm-assistant-eval`) that drives the **real** assistant in-process (the CLI's
-`AddLocalLlm` + `AddKgsmAssistant` + `AddKgsmAdapters` backend + an in-memory `CapturingRecorder`)
-over a fixed prompt corpus, captures each turn's tool trajectory, and scores it. It is the codified
+`AddLocalLlm` + `AddKgsmAssistant` + `AddKgsmAdapters` backend, with the conversation store pointed at a
+throwaway temp DB) over a fixed prompt corpus, reads each turn's tool trajectory back from the store
+(the canonical history IS the per-turn record now), and scores it. It is the codified
 version of the one-off hand-eval (`~/tks/gemma-assistant-eval.md`); the memory
 `assistant-eval-harness.md` is the durable summary. It's a **leaf** in the ecosystem (see
 `~/tks/system-architecture.md`) — depends only on the assistant + kgsm-lib, never the API/Service.
@@ -144,9 +145,9 @@ run in CI without a model. A live run is the only thing that exercises the model
 
 - **Never override `XDG_DATA_HOME`** when driving the assistant — kgsm's instance registry lives under
   `~/.local/share/kgsm`, so overriding it hides EVERY instance and the model truthfully says "no
-  servers installed". Isolate test corpora via `Recording__Directory` instead; the eval uses its own
-  in-memory recorder and is immune, but anything you script around it is not. This cost a full battery
-  once. The preflight aborting on empty is the guardrail.
+  servers installed". The eval points the conversation store at a throwaway temp DB (so eval turns
+  never touch the user's real corpus), but anything you script around it is not immune. This cost a
+  full battery once. The preflight aborting on empty is the guardrail.
 - **This host has only `factorio-test` (stopped).** So `MultipleInstances`-gated `M1` and any
   run-state-dependent richness skip or converge on "it's stopped". To exercise ambiguity + live
   run-state, install/start a second instance first. Cases that don't need run-state run fully anyway.
@@ -171,8 +172,7 @@ run in CI without a model. A live run is the only thing that exercises the model
 | `BenchmarkSuite.cs` | the corpus — cases + their checks + `Version`. **The thing you edit to add/change cases.** |
 | `Checks.cs` | the check kit (`C.*` factories) + `TurnObservation` + the `Rubric` dimensions |
 | `Fixtures.cs` | role resolution from live inventory (`IServerInventory` + `IsActiveAsync`) + the loud preflight |
-| `Harness.cs` | DI wiring (3 calls + recorder swap), the run loop, scoring aggregation, config resolution |
-| `CapturingRecorder.cs` | in-memory `IConversationRecorder` — the only seam exposing the tool trajectory |
+| `Harness.cs` | DI wiring (3 calls + a throwaway temp-DB conversation store), the run loop, scoring aggregation, config resolution. Reads each turn's `ConversationTurnRecord` back from the store (the canonical history) to score the trajectory |
 | `Scorecard.cs` / `Transcripts.cs` | the two output renderers (summary table / full conversations) |
 | `EvalResult.cs` | the stamped JSON result DTOs + (de)serialization |
 | `Compare.cs` | diff two result files into regressions/improvements |

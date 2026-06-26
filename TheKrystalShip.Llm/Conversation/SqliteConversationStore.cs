@@ -87,6 +87,93 @@ public sealed class SqliteConversationStore : IConversationStore
         cmd.ExecuteNonQuery();
     }
 
+    // The longest a derived title is kept (first prompt, single-lined). Slack over the ~40 the SPA shows.
+    private const int TitleMaxLength = 80;
+
+    public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey)
+    {
+        // Match the scope key itself (the bare per-user conversation) OR its ":"-children (per-chat ids).
+        // scopeKey is surface:userId — neither segment carries a LIKE wildcard (% or _), so the pattern
+        // is literal-safe without an ESCAPE clause.
+        var childPattern = scopeKey + ":%";
+
+        using var connection = Open();
+
+        // One row per conversation: bounds + turn count. SUM(kind='turn') counts turns, excluding
+        // checkpoints. Ordered most-recently-active first so the surface's list reads newest-down.
+        var summaries = new List<(string Id, DateTimeOffset Created, DateTimeOffset Last, int Turns)>();
+        using (var agg = connection.CreateCommand())
+        {
+            agg.CommandText =
+                """
+                SELECT conversation_id,
+                       MIN(created_at) AS created,
+                       MAX(created_at) AS last,
+                       SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns
+                FROM conversation_entries
+                WHERE conversation_id = $scope OR conversation_id LIKE $child
+                GROUP BY conversation_id
+                ORDER BY last DESC;
+                """;
+            agg.Parameters.AddWithValue("$turn", KindTurn);
+            agg.Parameters.AddWithValue("$scope", scopeKey);
+            agg.Parameters.AddWithValue("$child", childPattern);
+            using var reader = agg.ExecuteReader();
+            while (reader.Read())
+            {
+                summaries.Add((
+                    reader.GetString(0),
+                    DateTimeOffset.Parse(reader.GetString(1)),
+                    DateTimeOffset.Parse(reader.GetString(2)),
+                    reader.GetInt32(3)));
+            }
+        }
+
+        // Per conversation, the first turn's prompt → the title. Pull only the first turn's payload
+        // (one small-ish row each) rather than the whole transcript: the lowest id of kind='turn'.
+        var titles = new Dictionary<string, string>(StringComparer.Ordinal);
+        using (var firsts = connection.CreateCommand())
+        {
+            firsts.CommandText =
+                """
+                SELECT e.conversation_id, e.payload
+                FROM conversation_entries e
+                JOIN (
+                    SELECT conversation_id, MIN(id) AS first_turn_id
+                    FROM conversation_entries
+                    WHERE kind = $turn AND (conversation_id = $scope OR conversation_id LIKE $child)
+                    GROUP BY conversation_id
+                ) f ON e.id = f.first_turn_id;
+                """;
+            firsts.Parameters.AddWithValue("$turn", KindTurn);
+            firsts.Parameters.AddWithValue("$scope", scopeKey);
+            firsts.Parameters.AddWithValue("$child", childPattern);
+            using var reader = firsts.ExecuteReader();
+            while (reader.Read())
+            {
+                var turn = JsonSerializer.Deserialize<ConversationTurnRecord>(reader.GetString(1), Json);
+                if (turn is not null)
+                    titles[reader.GetString(0)] = DeriveTitle(turn.UserPrompt);
+            }
+        }
+
+        return summaries.Select(s => new ConversationSummary
+        {
+            ConversationId = s.Id,
+            Title = titles.TryGetValue(s.Id, out var t) ? t : null,
+            CreatedAt = s.Created,
+            LastActivityAt = s.Last,
+            TurnCount = s.Turns,
+        }).ToList();
+    }
+
+    // A conversation's display title: its first prompt, collapsed to a single line and length-capped.
+    private static string DeriveTitle(string prompt)
+    {
+        var oneLine = prompt.ReplaceLineEndings(" ").Trim();
+        return oneLine.Length <= TitleMaxLength ? oneLine : oneLine[..TitleMaxLength].TrimEnd() + "…";
+    }
+
     public IReadOnlyList<ConversationEntry> GetHistory(string conversationId) =>
         LoadEntries(conversationId);
 

@@ -1,0 +1,27 @@
+namespace TheKrystalShip.Llm.Models;
+
+/// <summary>
+/// A one-line index entry for a stored conversation — the shape <see cref="Interfaces.IConversationStore.ListConversations"/>
+/// returns so a surface can render a "your past chats" list without loading every transcript. Derived
+/// cheaply from the append-only log: <see cref="Title"/> is the first turn's prompt (the conversation's
+/// natural label; <c>null</c> when the conversation has no turn yet), the timestamps bound the log, and
+/// <see cref="TurnCount"/> is how many turns it holds. The full transcript is fetched separately by
+/// <see cref="Interfaces.IConversationStore.GetHistory"/>.
+/// </summary>
+public sealed record ConversationSummary
+{
+    /// <summary>The full stored conversation id (e.g. <c>web:{userId}:{chatId}</c>).</summary>
+    public required string ConversationId { get; init; }
+
+    /// <summary>The first turn's prompt, single-lined and length-capped; <c>null</c> for an empty conversation.</summary>
+    public string? Title { get; init; }
+
+    /// <summary>When the conversation's first entry was appended.</summary>
+    public required DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>When the conversation's most recent entry was appended (drives recency ordering).</summary>
+    public required DateTimeOffset LastActivityAt { get; init; }
+
+    /// <summary>Number of completed turns in the conversation (checkpoints excluded).</summary>
+    public required int TurnCount { get; init; }
+}

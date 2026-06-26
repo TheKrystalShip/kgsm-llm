@@ -125,6 +125,50 @@ public sealed class SqliteConversationStoreTests : IDisposable
     }
 
     [Fact]
+    public void ListConversations_IndexesScopeKeyAndItsChildren_MostRecentFirst_WithFirstPromptTitle()
+    {
+        var store = Create();
+        // The bare per-user conversation + two per-chat children, appended oldest→newest.
+        store.AppendTurn(Turn("web:u1", "bare-key prompt", "r"));
+        store.AppendTurn(Turn("web:u1:chatA", "first prompt of A", "ra1"));
+        store.AppendTurn(Turn("web:u1:chatA", "second prompt of A", "ra2"));
+        store.AppendTurn(Turn("web:u1:chatB", "only prompt of B", "rb"));
+
+        var list = store.ListConversations("web:u1");
+
+        // chatB is most recently active → first; titles are each conversation's FIRST prompt.
+        list.Select(c => c.ConversationId).Should().Equal("web:u1:chatB", "web:u1:chatA", "web:u1");
+        list.Single(c => c.ConversationId == "web:u1:chatA").Title.Should().Be("first prompt of A");
+        list.Single(c => c.ConversationId == "web:u1:chatA").TurnCount.Should().Be(2);
+        list.Single(c => c.ConversationId == "web:u1").Title.Should().Be("bare-key prompt");
+    }
+
+    [Fact]
+    public void ListConversations_DoesNotLeakAcrossAPrefixSharingUser()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1", "mine", "r"));
+        store.AppendTurn(Turn("web:u1:c", "mine too", "r"));
+        store.AppendTurn(Turn("web:u12", "NOT mine — u12 only shares a prefix with u1", "r"));
+        store.AppendTurn(Turn("web:u12:c", "also NOT mine", "r"));
+
+        store.ListConversations("web:u1").Select(c => c.ConversationId)
+            .Should().BeEquivalentTo("web:u1", "web:u1:c");
+    }
+
+    [Fact]
+    public void ListConversations_CountsTurnsNotCheckpoints()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:c", "q1", "a1"));
+        store.AddCheckpoint("web:u1:c", "recap");
+        store.AppendTurn(Turn("web:u1:c", "q2", "a2"));
+
+        store.ListConversations("web:u1").Should().ContainSingle()
+            .Which.TurnCount.Should().Be(2);   // the checkpoint is not a turn
+    }
+
+    [Fact]
     public void Turn_WithToolsThinkingAndCard_RoundTripsThroughHistory()
     {
         var store = Create();

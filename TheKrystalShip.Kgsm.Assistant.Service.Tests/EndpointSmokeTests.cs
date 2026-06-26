@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using NSubstitute;
 
@@ -40,7 +41,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     private WebApplicationFactory<Program> Factory(
         IServerAssistant? assistant = null,
         IDiscordOAuthClient? discord = null,
-        Action<IWebHostBuilder>? configure = null) =>
+        Action<IWebHostBuilder>? configure = null,
+        Llm.Interfaces.IConversationStore? withStore = null) =>
         _factory.WithWebHostBuilder(builder =>
         {
             // Provide kgsm settings so app startup binds the KGSM section regardless of
@@ -52,6 +54,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 if (assistant is not null) services.AddSingleton(assistant);
                 if (discord is not null) services.AddSingleton(discord);
+                // Override the real SQLite store with a fake for the reverse-path endpoint tests (last
+                // registration wins for the interface the endpoints resolve).
+                if (withStore is not null)
+                {
+                    services.RemoveAll<Llm.Interfaces.IConversationStore>();
+                    services.AddSingleton(withStore);
+                }
             });
         });
 
@@ -587,4 +596,120 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         }
         return string.Empty;
     }
+
+    // --- Conversation history read-back (the reverse path) ------------------------------------
+
+    [Fact]
+    public async Task Conversations_Relay_ListsCallersOwnScope_AndStripsChatIdPrefix()
+    {
+        // The list endpoint must scope to the FORWARDED user (web:<userId>), never client-supplied — a
+        // caller can only ever enumerate its OWN chats. The DTO id is the per-chat sub-scope (the prefix
+        // web:<userId>: stripped), i.e. exactly what the client sent as conversationId.
+        var store = new RecordingConversationStore
+        {
+            Summaries =
+            {
+                new Llm.Models.ConversationSummary
+                {
+                    ConversationId = "web:relayuser:chatA", Title = "about factorio",
+                    CreatedAt = DateTimeOffset.UnixEpoch, LastActivityAt = DateTimeOffset.UnixEpoch, TurnCount = 2,
+                },
+            },
+        };
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayGetAsync(factory.CreateClient(), "/conversations", "relay-secret", "relayuser");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        store.ListScope.Should().Be("web:relayuser");   // scoped to the forwarded id, not the client
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"id\":\"chatA\"");        // the web:relayuser: prefix stripped to the chat id
+        body.Should().Contain("\"title\":\"about factorio\"");
+        body.Should().Contain("\"turnCount\":2");
+    }
+
+    [Fact]
+    public async Task Conversation_Relay_FetchesUserScopedKey_AndMapsTurnTo5aShape()
+    {
+        // The transcript endpoint composes the key exactly as /turn does (web:<userId>:<chatId>), so {id}
+        // can only address the caller's OWN conversation. The turn maps to the §5·a vocabulary so a client
+        // re-scaffolds it through its live-turn render path.
+        var store = new RecordingConversationStore
+        {
+            History =
+            {
+                Llm.Models.ConversationEntry.ForTurn(new Llm.Models.ConversationTurnRecord
+                {
+                    ConversationId = "web:relayuser:chatA",
+                    StartedAt = DateTimeOffset.UnixEpoch, CompletedAt = DateTimeOffset.UnixEpoch,
+                    UserPrompt = "is factorio up?", SystemPromptHash = "h",
+                    Tools = new[]
+                    {
+                        new Llm.Models.RecordedToolCall(
+                            new Llm.Models.Tool("get_status"),
+                            new Dictionary<string, string?> { ["instance"] = "factorio" },
+                            "factorio is running", 12, null),
+                    },
+                    Iterations = 1, Outcome = Llm.Models.TurnOutcome.Ok,
+                    Think = true, Thinking = "let me check", Final = "Yes, it's running.",
+                }),
+            },
+        };
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayGetAsync(factory.CreateClient(), "/conversations/chatA", "relay-secret", "relayuser");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        store.HistoryKey.Should().Be("web:relayuser:chatA");
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"kind\":\"turn\"");
+        body.Should().Contain("\"prompt\":\"is factorio up?\"");
+        body.Should().Contain("\"final\":\"Yes, it's running.\"");
+        body.Should().Contain("\"think\":true");
+        body.Should().Contain("\"thinking\":\"let me check\"");
+        body.Should().Contain("\"tool\":\"get_status\"");       // §5·a field name reused
+        body.Should().Contain("\"summary\":\"factorio is running\"");
+        body.Should().Contain("\"outcome\":\"ok\"");
+    }
+
+    /// <summary>GETs a secured path over the trusted-relay path (secret + forwarded identity, no bearer).</summary>
+    private static async Task<HttpResponseMessage> RelayGetAsync(
+        HttpClient client, string path, string secret, string userId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Add("X-Relay-Secret", secret);
+        request.Headers.Add("X-Relay-User", userId);
+        return await client.SendAsync(request);
+    }
+}
+
+/// <summary>
+/// A fake <see cref="Llm.Interfaces.IConversationStore"/> for the reverse-path endpoint tests: returns
+/// canned data and records the scope/key it was asked for, so a test can assert the endpoint scopes to
+/// the forwarded principal (never a client-supplied value).
+/// </summary>
+internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationStore
+{
+    public List<Llm.Models.ConversationSummary> Summaries { get; } = new();
+    public List<Llm.Models.ConversationEntry> History { get; } = new();
+    public string? ListScope { get; private set; }
+    public string? HistoryKey { get; private set; }
+
+    public IReadOnlyList<Llm.Models.ConversationSummary> ListConversations(string scopeKey)
+    {
+        ListScope = scopeKey;
+        return Summaries;
+    }
+
+    public IReadOnlyList<Llm.Models.ConversationEntry> GetHistory(string conversationId)
+    {
+        HistoryKey = conversationId;
+        return History;
+    }
+
+    public IReadOnlyList<Llm.Models.LlmMessage> GetModelContext(string conversationId) => Array.Empty<Llm.Models.LlmMessage>();
+    public void AppendTurn(Llm.Models.ConversationTurnRecord turn) { }
+    public void AddCheckpoint(string conversationId, string summary) { }
 }

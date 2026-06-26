@@ -16,6 +16,16 @@ namespace TheKrystalShip.Llm.Interfaces;
 public interface IConversationStore
 {
     /// <summary>
+    /// One <see cref="ConversationSummary"/> per conversation under <paramref name="scopeKey"/> — the
+    /// key itself and every conversation whose id begins with <c><paramref name="scopeKey"/>:</c> (its
+    /// per-chat children), most-recently-active first. This is the reverse-path index: a surface passes
+    /// its per-user scope (e.g. <c>web:{userId}</c>) to enumerate that user's chats for a history list,
+    /// without loading any transcript. The <c>:</c> boundary keeps <c>web:{user}</c> from matching a
+    /// different <c>web:{user2}</c> whose id merely shares a prefix. Empty when nothing matches.
+    /// </summary>
+    IReadOnlyList<ConversationSummary> ListConversations(string scopeKey);
+
+    /// <summary>
     /// The full conversation history (turns and checkpoints), oldest first — for display and analysis.
     /// Empty when the conversation is unknown.
     /// </summary>

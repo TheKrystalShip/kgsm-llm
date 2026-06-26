@@ -93,6 +93,77 @@ public sealed record AuthSessionResponse(string Token, string DisplayName);
 /// <summary>Who the caller is, and whether they may perform actions right now (for the SPA's UI).</summary>
 public sealed record MeResponse(string UserId, string DisplayName, bool CanPerformActions);
 
+// --- Conversation history read-back (the reverse path) ----------------------------------------
+// The write path keys per-user, per-chat memory web:{userId}[:{chatId}] from the verified identity.
+// These read endpoints close the loop: a surface (the SPA via the api relay) lists the caller's own
+// past chats and loads one back, so history survives a new browser/device — it lives server-side, not
+// only in the client. WHO the caller is stays server-derived (the principal), so a caller can only ever
+// enumerate/read its OWN conversations. The transcript DTOs reuse the §5·a field vocabulary (tool/
+// thinking/usage) so a client re-scaffolds an old conversation through the SAME render path it uses for
+// a live turn — no second schema.
+
+/// <summary>
+/// One row of <c>GET /conversations</c>: a past chat in the caller's namespace. <see cref="Id"/> is the
+/// per-chat sub-scope the client sent as <c>conversationId</c> (empty for the legacy bare per-user
+/// conversation), so a client joins this list to its own chats by id and fetches one by it.
+/// <see cref="Title"/> is the first prompt (null for an empty conversation); the timestamps + count let
+/// the client order and label without loading the transcript.
+/// </summary>
+public sealed record ConversationSummaryDto(
+    string Id,
+    string? Title,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset LastActivityAt,
+    int TurnCount);
+
+/// <summary>
+/// <c>GET /conversations/{id}</c>: the full transcript for one chat, oldest-first — the append-only log
+/// verbatim (turns + non-destructive compaction checkpoints), so the client renders the WHOLE history as
+/// it happened (compaction affects only what the model replays, never what's shown).
+/// </summary>
+public sealed record ConversationHistoryDto(
+    string Id,
+    IReadOnlyList<ConversationHistoryEntryDto> Entries);
+
+/// <summary>
+/// One history entry. <see cref="Kind"/> is <c>turn</c> (then <see cref="Turn"/> is set) or
+/// <c>checkpoint</c> (then <see cref="CheckpointSummary"/> is set — a compaction recap the client shows
+/// as a divider).
+/// </summary>
+public sealed record ConversationHistoryEntryDto(
+    string Kind,
+    DateTimeOffset CreatedAt,
+    ConversationTurnDto? Turn = null,
+    string? CheckpointSummary = null);
+
+/// <summary>
+/// One completed turn, in the §5·a vocabulary: the user <see cref="Prompt"/>, the assistant
+/// <see cref="Final"/> reply, whether <see cref="Think"/> was on + the <see cref="Thinking"/> text it
+/// produced, the ordered <see cref="Tools"/> trajectory, the token <see cref="Usage"/>, and the
+/// <see cref="Outcome"/> ("ok"/"error"/"capHit"/"cancelled", lower-cased).
+/// </summary>
+public sealed record ConversationTurnDto(
+    string Prompt,
+    string? Final,
+    bool Think,
+    string? Thinking,
+    IReadOnlyList<ConversationToolDto> Tools,
+    UsageDto? Usage,
+    string Outcome);
+
+/// <summary>
+/// One tool call within a turn, mirroring the live <see cref="ToolResultEvent"/>: the
+/// <see cref="Tool"/> name, the <see cref="Arguments"/> the model passed, the model-facing
+/// <see cref="Summary"/> text, and the optional structured §5·a <see cref="Result"/> card (present only
+/// for tools that emit one). Same field names as the wire event so a client re-scaffolds the tool pill
+/// from history exactly as it does live.
+/// </summary>
+public sealed record ConversationToolDto(
+    string Tool,
+    IReadOnlyDictionary<string, string?> Arguments,
+    string Summary,
+    object? Result = null);
+
 // --- Server-Sent Events payloads (§5·a) -------------------------------------------------------
 // A client that sends `Accept: text/event-stream` to /turn gets these as the `data:` of the
 // canonical §5·a typed events (architecture.html §5·a / toolbox-plan §5·a / keystone O1) instead

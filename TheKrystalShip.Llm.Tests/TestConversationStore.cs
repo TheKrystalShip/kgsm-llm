@@ -12,6 +12,9 @@ namespace TheKrystalShip.Llm.Tests;
 internal sealed class TestConversationStore : IConversationStore
 {
     private readonly List<ConversationEntry> _entries = new();
+    // Per-conversation entries, in append order — backs ListConversations (the agent tests use a single
+    // conversation, so the flat _entries projection above stays equivalent for them).
+    private readonly Dictionary<string, List<ConversationEntry>> _byConversation = new(StringComparer.Ordinal);
 
     /// <summary>Every turn appended, in order.</summary>
     public List<ConversationTurnRecord> Turns { get; } = new();
@@ -20,6 +23,28 @@ internal sealed class TestConversationStore : IConversationStore
     public List<string> Checkpoints { get; } = new();
 
     public IReadOnlyList<ConversationEntry> GetHistory(string conversationId) => _entries.ToArray();
+
+    public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey)
+    {
+        // Mirror the real store: the scope key itself OR its ":"-children, most-recently-active first.
+        var prefix = scopeKey + ":";
+        return _byConversation
+            .Where(kv => kv.Key == scopeKey || kv.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(kv =>
+            {
+                var turns = kv.Value.Where(e => e.Kind == ConversationEntryKind.Turn).ToList();
+                return new ConversationSummary
+                {
+                    ConversationId = kv.Key,
+                    Title = turns.Count > 0 ? turns[0].Turn!.UserPrompt : null,
+                    CreatedAt = kv.Value[0].CreatedAt,
+                    LastActivityAt = kv.Value[^1].CreatedAt,
+                    TurnCount = turns.Count,
+                };
+            })
+            .OrderByDescending(s => s.LastActivityAt)
+            .ToList();
+    }
 
     public IReadOnlyList<LlmMessage> GetModelContext(string conversationId)
     {
@@ -48,13 +73,24 @@ internal sealed class TestConversationStore : IConversationStore
     public void AppendTurn(ConversationTurnRecord turn)
     {
         Turns.Add(turn);
-        _entries.Add(ConversationEntry.ForTurn(turn));
+        var entry = ConversationEntry.ForTurn(turn);
+        _entries.Add(entry);
+        Track(turn.ConversationId, entry);
     }
 
     public void AddCheckpoint(string conversationId, string summary)
     {
         Checkpoints.Add(summary);
-        _entries.Add(ConversationEntry.ForCheckpoint(summary, DateTimeOffset.UtcNow));
+        var entry = ConversationEntry.ForCheckpoint(summary, DateTimeOffset.UtcNow);
+        _entries.Add(entry);
+        Track(conversationId, entry);
+    }
+
+    private void Track(string conversationId, ConversationEntry entry)
+    {
+        if (!_byConversation.TryGetValue(conversationId, out var list))
+            _byConversation[conversationId] = list = new List<ConversationEntry>();
+        list.Add(entry);
     }
 
     /// <summary>The model-replay projection across all stored turns — the view the agent persists into.</summary>

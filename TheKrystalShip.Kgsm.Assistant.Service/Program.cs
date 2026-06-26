@@ -12,6 +12,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.Llm.Extensions;
+using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Ollama;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -205,6 +206,35 @@ secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IProm
             p.Name, p.Description, p.Required, p.Type, p.AllowedValues)).ToArray())).ToArray();
 
     return Results.Ok(dtos);
+});
+
+// The caller's own past chats (the reverse path): list every conversation under their server-derived
+// memory namespace web:{userId}, so a fresh browser/device can show history that lives server-side, not
+// only in the client. Principal-scoped — a caller can only ever see ITS OWN conversations.
+secured.MapGet("/conversations", (HttpContext http, IConversationStore store) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var conversations = store.ListConversations($"web:{principal.UserId}")
+        .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.UserId))
+        .ToArray();
+    return Results.Ok(conversations);
+});
+
+// One past chat's full transcript (turns + non-destructive compaction checkpoints), oldest-first, so the
+// client renders the WHOLE history as it happened. The key is composed exactly as /turn does — the
+// server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever address the caller's
+// OWN conversation. An unknown id ⇒ an empty transcript (still 200), never another user's data.
+secured.MapGet("/conversations/{id}", (string id, HttpContext http, IConversationStore store) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var chatScope = ConversationScope.Sanitize(id);
+    var conversationId = string.IsNullOrEmpty(chatScope)
+        ? $"web:{principal.UserId}"
+        : $"web:{principal.UserId}:{chatScope}";
+    var entries = store.GetHistory(conversationId)
+        .Select(ConversationHistoryMapper.ToEntryDto)
+        .ToArray();
+    return Results.Ok(new ConversationHistoryDto(chatScope ?? string.Empty, entries));
 });
 
 secured.MapPost("/auth/logout", (HttpContext http, DiscordAuthService auth) =>

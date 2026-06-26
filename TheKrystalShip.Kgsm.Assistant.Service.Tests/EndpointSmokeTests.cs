@@ -42,7 +42,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         IServerAssistant? assistant = null,
         IDiscordOAuthClient? discord = null,
         Action<IWebHostBuilder>? configure = null,
-        Llm.Interfaces.IConversationStore? withStore = null) =>
+        Llm.Interfaces.IConversationStore? withStore = null,
+        Llm.Interfaces.IConversationCompactor? withCompactor = null) =>
         _factory.WithWebHostBuilder(builder =>
         {
             // Provide kgsm settings so app startup binds the KGSM section regardless of
@@ -60,6 +61,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 {
                     services.RemoveAll<Llm.Interfaces.IConversationStore>();
                     services.AddSingleton(withStore);
+                }
+                if (withCompactor is not null)
+                {
+                    services.RemoveAll<Llm.Interfaces.IConversationCompactor>();
+                    services.AddSingleton(withCompactor);
                 }
             });
         });
@@ -691,6 +697,28 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         store.DeletedKey.Should().Be("web:relayuser:chatA");
     }
 
+    [Fact]
+    public async Task Conversation_Relay_Compact_ScopesToCallerAndReturnsOutcome()
+    {
+        // POST /conversations/{id}/compact composes the key exactly like the reads/delete
+        // (web:<userId>:<chatId>) — a caller can only ever compact its OWN conversation — and relays the
+        // CompactionOutcome JSON. The compactor is faked so the endpoint is proven hermetically (no model
+        // round-trip): we assert the principal-scoped key + the outcome shape on the wire.
+        var compactor = new RecordingCompactor(Llm.Models.CompactionOutcome.Done(7, "summary of earlier turns"));
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withCompactor: compactor);
+
+        var response = await RelaySendAsync(
+            factory.CreateClient(), HttpMethod.Post, "/conversations/chatA/compact", "relay-secret", "relayuser");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        compactor.CompactedKey.Should().Be("web:relayuser:chatA");
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"compacted\":true");
+        body.Should().Contain("\"messagesCompacted\":7");
+        body.Should().Contain("\"summary\":\"summary of earlier turns\"");
+    }
+
     /// <summary>GETs a secured path over the trusted-relay path (secret + forwarded identity, no bearer).</summary>
     private static Task<HttpResponseMessage> RelayGetAsync(
         HttpClient client, string path, string secret, string userId) =>
@@ -736,4 +764,21 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
     public void AppendTurn(Llm.Models.ConversationTurnRecord turn) { }
     public void AddCheckpoint(string conversationId, string summary) { }
     public void SoftDelete(string conversationId) => DeletedKey = conversationId;
+}
+
+/// <summary>
+/// A fake <see cref="Llm.Interfaces.IConversationCompactor"/> for the compaction endpoint test: records the
+/// scope key it was asked to compact (so the test can assert principal-scoping) and returns a canned outcome
+/// (so the endpoint is exercised without a model round-trip).
+/// </summary>
+internal sealed class RecordingCompactor(Llm.Models.CompactionOutcome outcome) : Llm.Interfaces.IConversationCompactor
+{
+    public string? CompactedKey { get; private set; }
+
+    public Task<Llm.Models.Result<Llm.Models.CompactionOutcome>> CompactAsync(
+        string conversationId, CancellationToken cancellationToken = default)
+    {
+        CompactedKey = conversationId;
+        return Task.FromResult(Llm.Models.Result<Llm.Models.CompactionOutcome>.Success(outcome));
+    }
 }

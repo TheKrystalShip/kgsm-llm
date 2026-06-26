@@ -164,6 +164,18 @@ public sealed record ConversationToolDto(
     string Summary,
     object? Result = null);
 
+/// <summary>
+/// <c>POST /conversations/{id}/compact</c>: the outcome of an on-demand compaction. Mirrors
+/// <c>CompactionOutcome</c> for the HTTP surface: <see cref="Compacted"/> is false when there was nothing
+/// worth compacting (an empty/short conversation), in which case the history was left untouched and
+/// <see cref="MessagesCompacted"/> is 0 / <see cref="Summary"/> is empty. Non-destructive either way —
+/// compaction appends a checkpoint and only changes what the model replays, never what history shows.
+/// </summary>
+public sealed record CompactionResultDto(
+    bool Compacted,
+    int MessagesCompacted,
+    string Summary);
+
 // --- Server-Sent Events payloads (§5·a) -------------------------------------------------------
 // A client that sends `Accept: text/event-stream` to /turn gets these as the `data:` of the
 // canonical §5·a typed events (architecture.html §5·a / toolbox-plan §5·a / keystone O1) instead

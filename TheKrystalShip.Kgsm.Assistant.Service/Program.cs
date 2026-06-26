@@ -252,6 +252,29 @@ secured.MapDelete("/conversations/{id}", (string id, HttpContext http, IConversa
     return Results.NoContent();
 });
 
+// Compact one of the caller's chats on demand: summarise its history in place to free up the context
+// window, returning a CompactionOutcome. The key is composed exactly as the reads/delete above — the
+// server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever address the caller's
+// OWN conversation. Non-destructive (a checkpoint is appended; the append-only transcript is preserved) and
+// idempotent-ish: a conversation with too little history to be worth a model round-trip returns
+// Compacted=false, untouched. A model/upstream failure ⇒ 502; the stored history is left as-is.
+secured.MapPost("/conversations/{id}/compact", async (
+    string id, HttpContext http, IConversationCompactor compactor, CancellationToken ct) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var chatScope = ConversationScope.Sanitize(id);
+    var conversationId = string.IsNullOrEmpty(chatScope)
+        ? $"web:{principal.UserId}"
+        : $"web:{principal.UserId}:{chatScope}";
+
+    var result = await compactor.CompactAsync(conversationId, ct);
+    if (result.IsFailure)
+        return Results.Problem(result.Error, statusCode: StatusCodes.Status502BadGateway);
+
+    var outcome = result.Value!;
+    return Results.Ok(new CompactionResultDto(outcome.Compacted, outcome.MessagesCompacted, outcome.Summary));
+});
+
 secured.MapPost("/auth/logout", (HttpContext http, DiscordAuthService auth) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;

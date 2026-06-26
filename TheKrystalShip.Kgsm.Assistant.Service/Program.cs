@@ -237,6 +237,21 @@ secured.MapGet("/conversations/{id}", (string id, HttpContext http, IConversatio
     return Results.Ok(new ConversationHistoryDto(chatScope ?? string.Empty, entries));
 });
 
+// Soft-delete one of the caller's chats: hides it from their list while keeping the full transcript in the
+// append-only history (the self-improvement corpus is never destroyed). The key is composed exactly as the
+// reads above — the server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever
+// address the caller's OWN conversation. Idempotent; a later turn on the same id (a resume) un-hides it.
+secured.MapDelete("/conversations/{id}", (string id, HttpContext http, IConversationStore store) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var chatScope = ConversationScope.Sanitize(id);
+    var conversationId = string.IsNullOrEmpty(chatScope)
+        ? $"web:{principal.UserId}"
+        : $"web:{principal.UserId}:{chatScope}";
+    store.SoftDelete(conversationId);
+    return Results.NoContent();
+});
+
 secured.MapPost("/auth/logout", (HttpContext http, DiscordAuthService auth) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;

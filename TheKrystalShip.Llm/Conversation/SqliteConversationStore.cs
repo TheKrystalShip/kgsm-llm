@@ -25,16 +25,23 @@ public sealed class SqliteConversationStore : IConversationStore
 {
     private const string KindTurn = "turn";
     private const string KindCheckpoint = "checkpoint";
+    // A soft-delete tombstone. A conversation whose newest tombstone out-ids its newest content entry is
+    // hidden from ListConversations, but every turn STAYS in the log — the corpus is never destroyed.
+    // Append-only and latest-wins: a later turn (a resume) is newer than the tombstone → it un-hides.
+    private const string KindDeleted = "deleted";
 
     // The recap wording prepended to a checkpoint summary when projected into the model's context, so
     // the model reads it as a compacted recap rather than a normal assistant message.
     private const string CheckpointPreamble =
         "(Summary of our conversation so far — earlier turns were compacted to save context.)\n\n";
 
-    private static readonly JsonSerializerOptions Json = new()
+    // Web defaults (camelCase + case-insensitive reads) with enums AS camelCase strings — the SAME shape
+    // the live /turn SSE emits (SseTurnWriter). A §5·a card stored here is therefore byte-identical to the
+    // one streamed live, so the reverse path (which re-emits the stored card verbatim) renders a replayed
+    // card through the very same client path as a live one — the whole point of the §5·a alignment.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
-        PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() },
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     private readonly string _connectionString;
@@ -113,9 +120,15 @@ public sealed class SqliteConversationStore : IConversationStore
                 FROM conversation_entries
                 WHERE conversation_id = $scope OR conversation_id LIKE $child
                 GROUP BY conversation_id
+                -- Hide soft-deleted conversations: excluded when the newest tombstone out-ids every
+                -- content (turn/checkpoint) entry. A resuming turn is newer than the tombstone → it
+                -- re-appears (latest-entry-wins). A tombstone-only id (no content) is excluded too.
+                HAVING MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
+                     < MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END)
                 ORDER BY last DESC;
                 """;
             agg.Parameters.AddWithValue("$turn", KindTurn);
+            agg.Parameters.AddWithValue("$deleted", KindDeleted);
             agg.Parameters.AddWithValue("$scope", scopeKey);
             agg.Parameters.AddWithValue("$child", childPattern);
             using var reader = agg.ExecuteReader();
@@ -223,6 +236,13 @@ public sealed class SqliteConversationStore : IConversationStore
         Insert(conversationId, KindCheckpoint, DateTimeOffset.UtcNow, summary);
     }
 
+    public void SoftDelete(string conversationId)
+    {
+        // Append-only tombstone: hides the conversation from ListConversations while keeping every turn in
+        // the log. The payload is empty — the marker's kind and position (newest id) are all that matter.
+        Insert(conversationId, KindDeleted, DateTimeOffset.UtcNow, string.Empty);
+    }
+
     private void Insert(string conversationId, string kind, DateTimeOffset createdAt, string payload)
     {
         lock (_writeGate)
@@ -258,6 +278,12 @@ public sealed class SqliteConversationStore : IConversationStore
             var createdAt = DateTimeOffset.Parse(reader.GetString(1));
             var payload = reader.GetString(2);
 
+            if (kind == KindDeleted)
+            {
+                // A soft-delete tombstone is bookkeeping, not content — never surfaced in the transcript
+                // (and its payload is empty, so it must not reach the turn deserializer below).
+                continue;
+            }
             if (kind == KindCheckpoint)
             {
                 entries.Add(ConversationEntry.ForCheckpoint(payload, createdAt));

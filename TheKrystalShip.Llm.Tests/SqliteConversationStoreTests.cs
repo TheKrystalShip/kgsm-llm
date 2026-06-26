@@ -169,6 +169,50 @@ public sealed class SqliteConversationStoreTests : IDisposable
     }
 
     [Fact]
+    public void SoftDelete_HidesFromList_ButKeepsTheTranscriptAndCorpus()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:chatA", "keep me", "ok"));
+        store.AppendTurn(Turn("web:u1:chatB", "delete me", "ok"));
+
+        store.SoftDelete("web:u1:chatB");
+
+        // Gone from the reverse-path list…
+        store.ListConversations("web:u1").Select(c => c.ConversationId).Should().Equal("web:u1:chatA");
+        // …but the append-only corpus is intact: the transcript and the model projection still have it.
+        store.GetHistory("web:u1:chatB").Should().ContainSingle()
+            .Which.Kind.Should().Be(ConversationEntryKind.Turn);
+        store.GetModelContext("web:u1:chatB").Should().Contain(m => m.Content == "delete me");
+    }
+
+    [Fact]
+    public void SoftDelete_SurvivesARestart_AndDoesNotThrowOnHistoryRead()
+    {
+        // The tombstone is durable (it's just another append-only row) and GetHistory must skip it — its
+        // empty payload must never reach the turn deserializer.
+        Create().AppendTurn(Turn("web:u1:c", "q1", "a1"));
+        Create().SoftDelete("web:u1:c");
+
+        var reopened = Create();
+        reopened.ListConversations("web:u1").Should().BeEmpty();
+        reopened.GetHistory("web:u1:c").Should().ContainSingle()        // tombstone skipped, turn kept
+            .Which.Turn!.UserPrompt.Should().Be("q1");
+    }
+
+    [Fact]
+    public void SoftDelete_ThenAResumingTurn_UnhidesTheConversation()
+    {
+        // Append-only + latest-entry-wins: a turn after the tombstone supersedes it (a resume).
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:chatA", "first", "r1"));
+        store.SoftDelete("web:u1:chatA");
+        store.ListConversations("web:u1").Should().BeEmpty();
+
+        store.AppendTurn(Turn("web:u1:chatA", "resumed", "r2"));
+        store.ListConversations("web:u1").Should().ContainSingle().Which.TurnCount.Should().Be(2);
+    }
+
+    [Fact]
     public void Turn_WithToolsThinkingAndCard_RoundTripsThroughHistory()
     {
         var store = Create();

@@ -15,6 +15,9 @@ internal sealed class TestConversationStore : IConversationStore
     // Per-conversation entries, in append order — backs ListConversations (the agent tests use a single
     // conversation, so the flat _entries projection above stays equivalent for them).
     private readonly Dictionary<string, List<ConversationEntry>> _byConversation = new(StringComparer.Ordinal);
+    // Soft-deleted conversation ids (hidden from ListConversations). Latest-wins: appending content to a
+    // conversation un-hides it (see Track), mirroring the real store's newest-entry rule.
+    private readonly HashSet<string> _deleted = new(StringComparer.Ordinal);
 
     /// <summary>Every turn appended, in order.</summary>
     public List<ConversationTurnRecord> Turns { get; } = new();
@@ -29,7 +32,8 @@ internal sealed class TestConversationStore : IConversationStore
         // Mirror the real store: the scope key itself OR its ":"-children, most-recently-active first.
         var prefix = scopeKey + ":";
         return _byConversation
-            .Where(kv => kv.Key == scopeKey || kv.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .Where(kv => (kv.Key == scopeKey || kv.Key.StartsWith(prefix, StringComparison.Ordinal))
+                         && !_deleted.Contains(kv.Key))
             .Select(kv =>
             {
                 var turns = kv.Value.Where(e => e.Kind == ConversationEntryKind.Turn).ToList();
@@ -86,8 +90,11 @@ internal sealed class TestConversationStore : IConversationStore
         Track(conversationId, entry);
     }
 
+    public void SoftDelete(string conversationId) => _deleted.Add(conversationId);
+
     private void Track(string conversationId, ConversationEntry entry)
     {
+        _deleted.Remove(conversationId);   // new content supersedes a prior soft-delete (a resume)
         if (!_byConversation.TryGetValue(conversationId, out var list))
             _byConversation[conversationId] = list = new List<ConversationEntry>();
         list.Add(entry);

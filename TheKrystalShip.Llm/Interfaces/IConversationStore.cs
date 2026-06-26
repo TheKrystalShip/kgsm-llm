@@ -46,4 +46,12 @@ public interface IConversationStore
     /// turns remain in the history; subsequent <see cref="GetModelContext"/> replays from here forward.
     /// </summary>
     void AddCheckpoint(string conversationId, string summary);
+
+    /// <summary>
+    /// Soft-deletes a conversation: stops it appearing in <see cref="ListConversations"/> WITHOUT erasing
+    /// any turn — the append-only history (the self-improvement corpus) is preserved in full. Append-only
+    /// and idempotent; a later <see cref="AppendTurn"/> to the same id (a resume) supersedes the
+    /// soft-delete and the conversation reappears. <see cref="GetHistory"/> still returns its transcript.
+    /// </summary>
+    void SoftDelete(string conversationId);
 }

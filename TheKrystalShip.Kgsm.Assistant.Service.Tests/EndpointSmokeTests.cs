@@ -674,11 +674,33 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         body.Should().Contain("\"outcome\":\"ok\"");
     }
 
-    /// <summary>GETs a secured path over the trusted-relay path (secret + forwarded identity, no bearer).</summary>
-    private static async Task<HttpResponseMessage> RelayGetAsync(
-        HttpClient client, string path, string secret, string userId)
+    [Fact]
+    public async Task Conversation_Relay_SoftDelete_ScopesToCallerAndReturns204()
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        // DELETE composes the key exactly like the GETs (web:<userId>:<chatId>) — a caller can only ever
+        // soft-delete its OWN conversation — and returns 204. The store keeps the transcript (the corpus);
+        // only the listing hides it. Here we assert the endpoint forwarded the principal-scoped key.
+        var store = new RecordingConversationStore();
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelaySendAsync(
+            factory.CreateClient(), HttpMethod.Delete, "/conversations/chatA", "relay-secret", "relayuser");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        store.DeletedKey.Should().Be("web:relayuser:chatA");
+    }
+
+    /// <summary>GETs a secured path over the trusted-relay path (secret + forwarded identity, no bearer).</summary>
+    private static Task<HttpResponseMessage> RelayGetAsync(
+        HttpClient client, string path, string secret, string userId) =>
+        RelaySendAsync(client, HttpMethod.Get, path, secret, userId);
+
+    /// <summary>Sends any method to a secured path over the trusted-relay path (secret + forwarded id).</summary>
+    private static async Task<HttpResponseMessage> RelaySendAsync(
+        HttpClient client, HttpMethod method, string path, string secret, string userId)
+    {
+        var request = new HttpRequestMessage(method, path);
         request.Headers.Add("X-Relay-Secret", secret);
         request.Headers.Add("X-Relay-User", userId);
         return await client.SendAsync(request);
@@ -696,6 +718,7 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
     public List<Llm.Models.ConversationEntry> History { get; } = new();
     public string? ListScope { get; private set; }
     public string? HistoryKey { get; private set; }
+    public string? DeletedKey { get; private set; }
 
     public IReadOnlyList<Llm.Models.ConversationSummary> ListConversations(string scopeKey)
     {
@@ -712,4 +735,5 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
     public IReadOnlyList<Llm.Models.LlmMessage> GetModelContext(string conversationId) => Array.Empty<Llm.Models.LlmMessage>();
     public void AppendTurn(Llm.Models.ConversationTurnRecord turn) { }
     public void AddCheckpoint(string conversationId, string summary) { }
+    public void SoftDelete(string conversationId) => DeletedKey = conversationId;
 }

@@ -35,7 +35,7 @@ public class ServerAssistantTests
     // (BeSameAs holds) and the gate's search cap is exercisable. Availability tests pass their own.
     private ServerAssistant Create(SearchOptions? search = null)
     {
-        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             _agent, _prompt, _confirmations, _inventory, _operations,

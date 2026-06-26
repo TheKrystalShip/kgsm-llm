@@ -34,17 +34,28 @@ internal sealed class BearerAuthFilter : IEndpointFilter
 
     /// <summary>
     /// Key under which the trusted relay's action-authority decision is stored (a <c>bool</c>), set
-    /// ONLY on the authenticated relay path. The api forwards its verified tier decision (operator+
-    /// AND the user's per-turn toggle) as <c>X-Relay-Can-Act</c>; the /turn handler trusts it instead
+    /// ONLY on the authenticated relay path. The api forwards its verified tier decision (operator+,
+    /// the authority to PROPOSE) as <c>X-Relay-Can-Act</c>; the /turn handler trusts it instead
     /// of a Discord role lookup. Absent ⇒ the session-bearer path (authority comes from Discord).
     /// </summary>
     public const string RelayCanActKey = "relayCanAct";
+
+    /// <summary>
+    /// Key under which the trusted relay's AUTO-ACCEPT decision is stored (a <c>bool</c>), set ONLY on
+    /// the authenticated relay path. The api forwards its verified <em>admin</em>-tier ∧ per-turn
+    /// toggle decision as <c>X-Relay-Auto-Act</c>; when true the /turn handler lets the dispatcher run
+    /// lifecycle commands immediately instead of staging them. Strictly stronger than
+    /// <see cref="RelayCanActKey"/>. Absent/non-"true" ⇒ false (propose-only), so a relay that doesn't
+    /// speak this header can never silently auto-execute.
+    /// </summary>
+    public const string RelayAutoActKey = "relayAutoAct";
 
     private const string BearerPrefix = "Bearer ";
     private const string RelaySecretHeader = "X-Relay-Secret";
     private const string RelayUserHeader = "X-Relay-User";
     private const string RelayUserNameHeader = "X-Relay-User-Name";
     private const string RelayCanActHeader = "X-Relay-Can-Act";
+    private const string RelayAutoActHeader = "X-Relay-Auto-Act";
 
     private readonly DiscordAuthService _auth;
     private readonly AssistantServiceOptions _options;
@@ -82,6 +93,10 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             // so a relay that doesn't speak this header can never silently grant actions.
             context.HttpContext.Items[RelayCanActKey] =
                 string.Equals(request.Headers[RelayCanActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            // The api's auto-accept decision (its verified admin-tier ∧ toggle). Same trust basis (the
+            // secret already matched) and same fail-closed default — anything but "true" ⇒ propose-only.
+            context.HttpContext.Items[RelayAutoActKey] =
+                string.Equals(request.Headers[RelayAutoActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
             return await next(context);
         }
 

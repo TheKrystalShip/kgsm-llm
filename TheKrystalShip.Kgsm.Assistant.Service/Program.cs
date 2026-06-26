@@ -234,11 +234,19 @@ secured.MapPost("/turn", async (
     //    local preconditions (ActionsEnabled + a Confirmation signing key to mint the proposal token).
     //  - direct session bearer: authority is the caller's Discord action role, ANDed with the toggle.
     // The conversation key is principal-scoped so one user can't read or poison another's memory.
+    // autoExecute = auto-accept: on a trusted-relay turn the api ALSO forwards an admin-tier ∧ toggle
+    // decision (X-Relay-Auto-Act). When set, the dispatcher RUNS lifecycle commands immediately
+    // instead of staging them. It is gated to canPerform so the propose-gate (BuildGate) always
+    // allows what auto-execute then runs; the direct-bearer path never auto-executes (propose-only).
     bool canPerform;
+    bool autoExecute = false;
     if (http.Items.TryGetValue(BearerAuthFilter.RelayCanActKey, out var relayObj) && relayObj is bool relayCanAct)
     {
         var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
         canPerform = relayCanAct && asstOpts.ActionsEnabled && tokens.IsConfigured;
+        var relayAutoAct = http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
+            && autoObj is bool b && b;
+        autoExecute = canPerform && relayAutoAct;
     }
     else
     {
@@ -261,11 +269,11 @@ secured.MapPost("/turn", async (
     if (wantsStream)
     {
         await SseTurnWriter.WriteAsync(
-            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform, think, request.Tools);
+            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools);
         return Results.Empty;
     }
 
-    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, request.Tools, ct);
+    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct);
 
     if (result.IsFailure)
     {

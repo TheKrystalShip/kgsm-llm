@@ -73,6 +73,26 @@ public sealed class SystemPromptBuilderTests : IDisposable
     }
 
     [Fact]
+    public async Task AutoExecuteTurn_UsesAutoText_NotProposeOnlyAllowedText()
+    {
+        var prompt = await Build().BuildAsync(canPerformActions: true, autoExecute: true);
+
+        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsAuto);
+        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsAllowed);
+        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsDenied);
+    }
+
+    [Fact]
+    public async Task AutoExecute_IgnoredWhenNotAuthorized_StaysDenied()
+    {
+        // autoExecute can never widen authority: with canPerformActions=false it's still read-only.
+        var prompt = await Build().BuildAsync(canPerformActions: false, autoExecute: true);
+
+        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsDenied);
+        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsAuto);
+    }
+
+    [Fact]
     public async Task ConfigOverride_TakesPrecedenceOverLibDefault()
     {
         var prompt = await Build(config: new[]

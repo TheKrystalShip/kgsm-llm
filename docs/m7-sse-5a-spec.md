@@ -306,6 +306,18 @@ confirmed proposal depends on whether the API exposes that verb. The SPA routes 
 where it can; the assistant's `/confirm` (carried by the retained `token`) covers the rest and
 the non-API surfaces.
 
+> **Auto-accept (2026-06-26) — the one exception to "propose-only".** A turn the API marks
+> `X-Relay-Auto-Act: true` (verified **admin** tier ∧ the SPA's per-turn "Auto-run" toggle —
+> strictly stronger than `X-Relay-Can-Act`, which is now operator+ and toggle-independent) lets the
+> assistant **run the lifecycle verbs immediately** (`start`/`stop`/`restart`/`update`/`backup`)
+> instead of staging them. Such a verb emits **no `command.proposed`** — it runs in the dispatcher
+> via `IServerOperations` and surfaces as the ordinary `tool.start`/`tool.result` pair (the
+> result string is the real outcome), so the SPA needs no new frame. Install / uninstall /
+> set-config stay propose-only even on an auto-accept turn. The admin gate is enforced API-side
+> (`AssistantController` folds tier ∧ toggle); the SPA toggle is UX only (visible to operator+,
+> enabled for admin). This is the assistant executing inline — distinct from fork (a)'s SPA→M3
+> path below, which still serves every non-auto turn.
+
 | Confirmation kind | §5·a `verb` | SPA execution path | Available |
 |---|---|---|---|
 | Start / Stop / Restart | `start`/`stop`/`restart` | `POST /servers/{id}/commands` (M3) | ✅ now |

@@ -18,8 +18,11 @@ internal static class PromptSegments
     public static readonly PromptSegment ActionsAllowed =
         new("actions-allowed.md", "Llm:ActionsAllowed", KgsmAssistantPrompts.ActionsAllowed);
 
+    public static readonly PromptSegment ActionsAuto =
+        new("actions-auto.md", "Llm:ActionsAuto", KgsmAssistantPrompts.ActionsAuto);
+
     public static readonly PromptSegment ActionsDenied =
         new("actions-denied.md", "Llm:ActionsDenied", KgsmAssistantPrompts.ActionsDenied);
 
-    public static readonly IReadOnlyList<PromptSegment> All = new[] { Preamble, ActionsAllowed, ActionsDenied };
+    public static readonly IReadOnlyList<PromptSegment> All = new[] { Preamble, ActionsAllowed, ActionsAuto, ActionsDenied };
 }

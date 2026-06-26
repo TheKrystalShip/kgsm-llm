@@ -435,6 +435,86 @@ public class ToolDispatcherTests
     }
 
     [Theory]
+    [MemberData(nameof(StagedCommandCases))]
+    public async Task ServerCommand_AutoExecute_RunsImmediately_AndStagesNothing(string verb, ConfirmationKind kind)
+    {
+        // Auto-accept turn (admin + toggle, decided by the api): the lifecycle verb RUNS now via the
+        // matching IServerOperations op and reports the outcome — nothing is staged for confirmation.
+        StubOp(kind, "minecraft", Result.Success());
+
+        string result;
+        using (_confirmations.BeginTurn(autoExecute: true))
+        {
+            result = await Summary(ServerCommandCall(verb, "minecraft"));
+            _confirmations.Staged.Should().BeEmpty();
+        }
+
+        result.Should().Contain("Done").And.NotContain("awaiting");
+        await ReceivedOp(kind, "minecraft");
+    }
+
+    [Fact]
+    public async Task ServerCommand_AutoExecute_OpFailure_ReportsError()
+    {
+        // A failed op surfaces the kgsm error to the model (so it can tell the user honestly), and
+        // still stages nothing.
+        _operations.StartAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Failure("kgsm exploded")));
+
+        string result;
+        using (_confirmations.BeginTurn(autoExecute: true))
+        {
+            result = await Summary(ServerCommandCall("start", "minecraft"));
+            _confirmations.Staged.Should().BeEmpty();
+        }
+
+        result.Should().Contain("Could not start").And.Contain("kgsm exploded");
+    }
+
+    [Fact]
+    public async Task UninstallServer_AutoExecute_StillStages_NotLifecycle()
+    {
+        // "Lifecycle-only": even on an auto-accept turn, uninstall (and install / set-config) stay
+        // propose-only — they keep their own stage methods and never auto-run.
+        string result;
+        using (_confirmations.BeginTurn(autoExecute: true))
+        {
+            result = await Summary(Call(LlmTools.UninstallServer, "minecraft"));
+
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new PendingConfirmation(ConfirmationKind.Uninstall, "minecraft"));
+        }
+
+        result.Should().Contain("Staged").And.Contain("confirm");
+        await _operations.DidNotReceive().UninstallAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    private void StubOp(ConfirmationKind kind, string instance, Result result)
+    {
+        var task = Task.FromResult(result);
+        switch (kind)
+        {
+            case ConfirmationKind.Start: _operations.StartAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Stop: _operations.StopAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Restart: _operations.RestartAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Update: _operations.UpdateAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+            case ConfirmationKind.Backup: _operations.CreateBackupAsync(instance, Arg.Any<CancellationToken>()).Returns(task); break;
+        }
+    }
+
+    private async Task ReceivedOp(ConfirmationKind kind, string instance)
+    {
+        switch (kind)
+        {
+            case ConfirmationKind.Start: await _operations.Received(1).StartAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Stop: await _operations.Received(1).StopAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Restart: await _operations.Received(1).RestartAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Update: await _operations.Received(1).UpdateAsync(instance, Arg.Any<CancellationToken>()); break;
+            case ConfirmationKind.Backup: await _operations.Received(1).CreateBackupAsync(instance, Arg.Any<CancellationToken>()); break;
+        }
+    }
+
+    [Theory]
     [InlineData("boot")]   // not a verb we know
     [InlineData("")]       // blank
     public async Task ServerCommand_InvalidVerb_IsRefused_AndStagesNothing(string verb)

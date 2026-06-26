@@ -61,7 +61,7 @@ internal sealed class CliRunner
         try
         {
             await foreach (var ev in _assistant
-                               .RunStreamAsync(conversationId, prompt, _canPerformActions, Think, null, cancellationToken))
+                               .RunStreamAsync(conversationId, prompt, _canPerformActions, Think, autoExecute: false, requestedTools: null, cancellationToken))
             {
                 spinner?.Stop();
                 renderer.Handle(ev);

@@ -55,6 +55,20 @@ public static class KgsmAssistantPrompts
         "reconfigured yourself — you cannot complete any of these; only the user's confirmation can. " +
         "Installing and especially uninstalling are DESTRUCTIVE, so be clear about those.";
 
+    /// <summary>
+    /// Appended for an auto-accept turn (an admin who turned the toggle on; the api verified it).
+    /// Lifecycle commands now RUN when called — so the narration flips from "awaiting confirmation"
+    /// to reporting them as done. Install / uninstall / set-config stay propose-only even here.
+    /// </summary>
+    public const string ActionsAuto =
+        "This user is an authorized admin and has turned ON auto-accept for this turn. The lifecycle " +
+        "commands — start, stop, restart, back up, and update a server — now EXECUTE IMMEDIATELY when " +
+        "you call the tool; the tool result tells you the real outcome. So call the tool, read its " +
+        "result, and report what actually happened (e.g. \"I've started it\" or, if it failed, what " +
+        "went wrong) — do NOT say it's awaiting confirmation, because it is not. IMPORTANT: installing " +
+        "a new server, uninstalling one, and changing a configuration setting are STILL propose-only " +
+        "even now — those you stage and the user must confirm separately, so keep saying so for them.";
+
     /// <summary>Appended for unauthorized callers: read-only.</summary>
     public const string ActionsDenied =
         "This user is NOT authorized to perform actions. You can only READ information (list " +

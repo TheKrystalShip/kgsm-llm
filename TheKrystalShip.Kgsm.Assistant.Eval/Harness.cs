@@ -152,7 +152,9 @@ internal sealed class Harness
             var prompt = fx.Fill(step.Prompt);
 
             _recorder.Reset();
-            var result = await assistant.RunAsync(conversationId, prompt, bench.Authorized, false, null, ct);
+            // autoExecute: false — the harness is non-destructive by construction (CLAUDE.md inv. #2):
+            // RunAsync only STAGES; it must never run a server op, so auto-accept stays off here.
+            var result = await assistant.RunAsync(conversationId, prompt, bench.Authorized, false, autoExecute: false, requestedTools: null, ct);
             var record = _recorder.Last;
             sysHash ??= record?.SystemPromptHash;
 

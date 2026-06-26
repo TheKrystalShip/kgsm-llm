@@ -106,6 +106,15 @@ public interface IServerAssistant
     /// Whether the requesting user is authorized to run mutating/destructive actions.
     /// When false, those tools are neither offered nor executed.
     /// </param>
+    /// <param name="think">
+    /// Whether the model should stream its reasoning (thinking) for this turn.
+    /// </param>
+    /// <param name="autoExecute">
+    /// Whether this is an auto-accept turn: the host has verified the caller is an admin who turned
+    /// the toggle on, so the dispatcher RUNS lifecycle commands (start/stop/restart/update/backup)
+    /// immediately instead of staging them. Implies <paramref name="canPerformActions"/>; install /
+    /// uninstall / set-config stay propose-only even when true.
+    /// </param>
     /// <param name="requestedTools">
     /// Optional tool names the client wants available this turn. When null or empty,
     /// all authorized tools are used. Invalid names cause a hard error; names the
@@ -117,6 +126,7 @@ public interface IServerAssistant
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default);
 
@@ -126,12 +136,15 @@ public interface IServerAssistant
     /// unfolds — reply <c>Token</c>s, tool-round <c>Status</c>, then any staged
     /// <c>Confirmation</c>s, ending with one terminal <c>Final</c> or <c>Error</c>. Authority is
     /// still passed in (the host derives it from the verified principal), never inferred here.
+    /// On an auto-accept turn (<paramref name="autoExecute"/>) lifecycle commands run immediately,
+    /// surfacing as a <c>tool.result</c> rather than a staged <c>Confirmation</c>.
     /// </summary>
     IAsyncEnumerable<AssistantStreamEvent> RunStreamAsync(
         string conversationId,
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default);
 

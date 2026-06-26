@@ -44,6 +44,7 @@ internal static class SseTurnWriter
         string prompt,
         bool canPerformActions,
         bool think = false,
+        bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null)
     {
         var response = http.Response;
@@ -66,7 +67,7 @@ internal static class SseTurnWriter
         try
         {
             await foreach (var ev in assistant
-                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, requestedTools, ct))
+                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, autoExecute, requestedTools, ct))
             {
                 switch (ev.Kind)
                 {

@@ -135,6 +135,7 @@ public class ServerAssistant : IServerAssistant
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default)
     {
@@ -142,7 +143,7 @@ public class ServerAssistant : IServerAssistant
         if (toolResult.IsFailure)
             return AssistantResult.Fail(toolResult.Error!);
 
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken);
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn
@@ -157,8 +158,9 @@ public class ServerAssistant : IServerAssistant
         };
 
         // The dispatcher stages any proposed commands into this per-turn scope; we drain
-        // them after the run so the caller can post confirmation prompts.
-        using var scope = _confirmations.BeginTurn();
+        // them after the run so the caller can post confirmation prompts. On an auto-accept
+        // turn the dispatcher runs lifecycle verbs immediately instead (scope reads back AutoExecute).
+        using var scope = _confirmations.BeginTurn(autoExecute);
         var result = await _agent.RunAsync(turn, cancellationToken);
         var confirmations = scope.Staged;
 
@@ -172,6 +174,7 @@ public class ServerAssistant : IServerAssistant
         string userPrompt,
         bool canPerformActions,
         bool think = false,
+        bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -182,7 +185,7 @@ public class ServerAssistant : IServerAssistant
             yield break;
         }
 
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, cancellationToken);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken);
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn
@@ -205,7 +208,7 @@ public class ServerAssistant : IServerAssistant
         var channel = Channel.CreateUnbounded<AssistantStreamEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
 
-        var producer = ProduceStreamAsync(turn, channel.Writer, cancellationToken);
+        var producer = ProduceStreamAsync(turn, autoExecute, channel.Writer, cancellationToken);
         try
         {
             await foreach (var ev in channel.Reader.ReadAllAsync(cancellationToken))
@@ -228,12 +231,13 @@ public class ServerAssistant : IServerAssistant
     /// </summary>
     private async Task ProduceStreamAsync(
         AgentTurn turn,
+        bool autoExecute,
         ChannelWriter<AssistantStreamEvent> writer,
         CancellationToken cancellationToken)
     {
         try
         {
-            using var scope = _confirmations.BeginTurn();
+            using var scope = _confirmations.BeginTurn(autoExecute);
             var finalText = string.Empty;
             LlmUsage? finalUsage = null;
             var errored = false;

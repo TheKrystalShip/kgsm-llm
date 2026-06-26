@@ -28,12 +28,17 @@ public class SystemPromptBuilder : ISystemPromptBuilder
         _overrides = overrides;
     }
 
-    public async Task<BuiltPrompt> BuildAsync(bool canPerformActions, CancellationToken cancellationToken = default)
+    public async Task<BuiltPrompt> BuildAsync(
+        bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default)
     {
         // The editable template: persona + authorization stance. Each segment resolves
         // file (hot, top precedence) > inline Llm:* config > lib-owned constant default.
+        // Three stances: denied (read-only) < allowed (propose-only) < auto (lifecycle runs now).
         var preamble = Effective(PromptSegments.Preamble);
-        var actions = Effective(canPerformActions ? PromptSegments.ActionsAllowed : PromptSegments.ActionsDenied);
+        var actionsSegment = !canPerformActions ? PromptSegments.ActionsDenied
+            : autoExecute ? PromptSegments.ActionsAuto
+            : PromptSegments.ActionsAllowed;
+        var actions = Effective(actionsSegment);
         var template = preamble + actions;
 
         // Hash ONLY the template — not the live lists appended below — so the recorded id moves when

@@ -21,6 +21,12 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// set_config — is propose-only (§3.5): the dispatcher resolves and STAGES it into the
 /// <see cref="IConfirmationContext"/> — it is never executed here. The matching op runs
 /// later, from <see cref="ServerAssistant.ConfirmAsync"/>, only after a human confirms.
+/// <para>
+/// The ONE exception is an auto-accept turn (<see cref="IConfirmationContext.AutoExecute"/>, set by
+/// the host after the api verified admin-tier ∧ toggle): there the <c>server_command</c> lifecycle
+/// verbs run immediately here (see <c>ExecuteCommandNowAsync</c>) instead of staging. Install /
+/// uninstall / set-config are NOT auto-executed even then — they keep their own stage methods.
+/// </para>
 /// </summary>
 public class ToolDispatcher : IToolDispatcher
 {
@@ -261,12 +267,16 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// Propose-only (§3.5): resolves the instance, then STAGES the command for human
-    /// confirmation instead of executing it — the same path uninstall/install already
-    /// take. Resolution problems (ambiguous / unknown) short-circuit to the model so it
-    /// asks the user, and nothing is staged for an unresolved target. The single-instance
-    /// op itself (<c>StartAsync</c> et al.) runs later, from
-    /// <see cref="ServerAssistant.ConfirmAsync"/>, only after a human confirms.
+    /// The lifecycle command (§4.1). Default is propose-only (§3.5): resolves the instance, then
+    /// STAGES the command for human confirmation instead of executing it — the same path
+    /// uninstall/install take. Resolution problems (ambiguous / unknown) short-circuit to the model
+    /// so it asks the user, and nothing is staged for an unresolved target.
+    /// <para>
+    /// EXCEPTION — auto-accept (<see cref="IConfirmationContext.AutoExecute"/>): the api verified the
+    /// caller is an admin who turned the toggle on, so the lifecycle verbs (only — install /
+    /// uninstall / set-config keep their own stage methods) RUN here and now, and the result string
+    /// reports the real outcome so the model narrates it as done. The propose path is unchanged.
+    /// </para>
     /// </summary>
     private async Task<string> StageCommandAsync(
         LlmToolCall call, ConfirmationKind kind, CancellationToken cancellationToken)
@@ -275,11 +285,48 @@ public class ToolDispatcher : IToolDispatcher
         if (error is not null)
             return error;
 
+        if (_confirmations.AutoExecute)
+            return await ExecuteCommandNowAsync(kind, resolved!, cancellationToken);
+
         _confirmations.Stage(new PendingConfirmation(kind, resolved!));
 
         return $"Staged a {ConfirmationKinds.Verb(kind)} of '{resolved}' for confirmation. A confirmation " +
                "prompt with a button has been shown to the user. This is NOT done yet and will only run " +
                "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
+    }
+
+    /// <summary>
+    /// Auto-accept path: runs a resolved lifecycle command immediately via the matching
+    /// single-instance <see cref="IServerOperations"/> op and returns a result string for the model.
+    /// Mirrors <see cref="ServerAssistant.ConfirmAsync"/>'s execute step (the post-confirm path) — the
+    /// authority decision was already made upstream (api admin-tier ∧ toggle → AutoExecute), so there
+    /// is no second gate here; the model's tool result IS the outcome.
+    /// </summary>
+    private async Task<string> ExecuteCommandNowAsync(
+        ConfirmationKind kind, string instance, CancellationToken cancellationToken)
+    {
+        Func<string, CancellationToken, Task<Result>>? op = kind switch
+        {
+            ConfirmationKind.Start => _operations.StartAsync,
+            ConfirmationKind.Stop => _operations.StopAsync,
+            ConfirmationKind.Restart => _operations.RestartAsync,
+            ConfirmationKind.Update => _operations.UpdateAsync,
+            ConfirmationKind.Backup => _operations.CreateBackupAsync,
+            _ => null,   // not a lifecycle verb → fall back to staging (defense in depth; server_command never maps here)
+        };
+
+        if (op is null)
+        {
+            _confirmations.Stage(new PendingConfirmation(kind, instance));
+            return $"Staged a {ConfirmationKinds.Verb(kind)} of '{instance}' for confirmation — tell the user it's awaiting their confirmation.";
+        }
+
+        _logger.LogInformation("Auto-executing {Verb} of {Instance}", ConfirmationKinds.Verb(kind), instance);
+
+        var result = await op(instance, cancellationToken);
+        return result.IsSuccess
+            ? $"Done — '{instance}' has been {ConfirmationKinds.PastTense(kind)}."
+            : $"Could not {ConfirmationKinds.Verb(kind)} '{instance}': {result.Error ?? "unknown error"}.";
     }
 
     /// <summary>

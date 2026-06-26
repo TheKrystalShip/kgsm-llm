@@ -120,8 +120,14 @@ public interface IConfirmationContext
     /// off the returned scope to drain what was staged — that reads the live backing list by
     /// reference, so it stays correct even when the ambient context is lost across the
     /// <c>yield</c>s of an async-streaming turn (where <see cref="Staged"/> would read empty).
+    /// <para>
+    /// <paramref name="autoExecute"/> marks this turn as auto-accept (the api verified the caller is
+    /// an admin who turned the toggle on): the dispatcher then RUNS a lifecycle command immediately
+    /// instead of staging it for confirmation. Read it back via <see cref="AutoExecute"/>. Like the
+    /// staged list, it is ambient for the turn (set here, read by the dispatcher mid-run).
+    /// </para>
     /// </summary>
-    IConfirmationScope BeginTurn();
+    IConfirmationScope BeginTurn(bool autoExecute = false);
 
     /// <summary>Records a staged confirmation for the current turn (no-op outside a turn).</summary>
     void Stage(PendingConfirmation confirmation);
@@ -132,6 +138,13 @@ public interface IConfirmationContext
     /// <see cref="IConfirmationScope.Staged"/> instead (this one is lost across yields).
     /// </summary>
     IReadOnlyList<PendingConfirmation> Staged { get; }
+
+    /// <summary>
+    /// Whether the CURRENT ambient turn is auto-accept (admin + toggle, decided by the api). Read by
+    /// the dispatcher to choose run-now vs stage-for-confirmation. False outside a turn, and false
+    /// for any turn started without it — so a path that doesn't opt in can never auto-run.
+    /// </summary>
+    bool AutoExecute { get; }
 }
 
 /// <summary>A per-turn confirmation scope. Its <see cref="Staged"/> reads the turn's live list.</summary>
@@ -145,11 +158,13 @@ public interface IConfirmationScope : IDisposable
 public sealed class ConfirmationContext : IConfirmationContext
 {
     private static readonly AsyncLocal<List<PendingConfirmation>?> Current = new();
+    private static readonly AsyncLocal<bool> CurrentAutoExecute = new();
 
-    public IConfirmationScope BeginTurn()
+    public IConfirmationScope BeginTurn(bool autoExecute = false)
     {
         var list = new List<PendingConfirmation>();
         Current.Value = list;
+        CurrentAutoExecute.Value = autoExecute;
         return new Scope(list);
     }
 
@@ -157,6 +172,8 @@ public sealed class ConfirmationContext : IConfirmationContext
 
     public IReadOnlyList<PendingConfirmation> Staged =>
         Current.Value is { } list ? list.ToArray() : Array.Empty<PendingConfirmation>();
+
+    public bool AutoExecute => CurrentAutoExecute.Value;
 
     private sealed class Scope : IConfirmationScope
     {
@@ -169,6 +186,10 @@ public sealed class ConfirmationContext : IConfirmationContext
 
         public IReadOnlyList<PendingConfirmation> Staged => _staged.ToArray();
 
-        public void Dispose() => Current.Value = null;
+        public void Dispose()
+        {
+            Current.Value = null;
+            CurrentAutoExecute.Value = false;
+        }
     }
 }

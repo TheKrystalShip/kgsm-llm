@@ -1,0 +1,122 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+`kgsm-llm` is the **LLM / assistant** leaf of the KGSM ecosystem: a local, tool-calling AI
+assistant (runs on a local **Ollama** model — no cloud LLM) that answers questions about, and with
+authorization acts on, the game servers a `kgsm` engine manages. The workspace keystone is
+`../system-architecture.md`; this repo's own orientation doc is **`docs/ARCHITECTURE.md`** — read it
+first for the mental model.
+
+## Commands
+
+Everything is one .NET 10 solution, `TheKrystalShip.Llm.slnx`, driven from the repo root.
+
+```bash
+dotnet build TheKrystalShip.Llm.slnx -c Release
+dotnet test  TheKrystalShip.Llm.slnx                       # ~500 tests, hermetic
+dotnet test --filter "FullyQualifiedName~SomeTestName"     # one test / class
+dotnet test TheKrystalShip.Kgsm.Assistant.Eval.Tests/*.csproj   # one suite by project
+```
+
+- **Live-Ollama smoke tests are inert by default** — they no-op unless `KGSM_LIVE_OLLAMA=1` (and
+  some need a kgsm host / pulled models). The default `dotnet test` is fully hermetic:
+  `KGSM_LIVE_OLLAMA=1 dotnet test --filter FullyQualifiedName~CliLiveSmokeTests`.
+- **`TheKrystalShip.Rag*` must publish Native-AOT-clean** — expect **0 ILC warnings**:
+  `dotnet publish TheKrystalShip.Rag.Indexer -c Release -r linux-x64`.
+
+Running the deployables (each is a thin host over the same backend; needs a reachable Ollama, and
+the assistant surfaces also need `KGSM__Path` → a real `kgsm.sh`):
+
+```bash
+# CLI — one-shot / pipe / REPL
+KGSM__Path=/opt/kgsm/kgsm.sh dotnet run -c Release --project TheKrystalShip.Kgsm.Assistant.Cli -- "what's installed?"
+# Service — HTTP/SSE; /health needs no secrets
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Service   # then curl http://127.0.0.1:5180/health
+# Eval — reproducible benchmark (live run needs Ollama; routing mode also needs a kgsm host)
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --shipped-prompts --transcript
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --seed 42   # ground-truth RAG lift chart
+```
+
+> `-c Release` on `dotnet run` reuses the Release build so stdout is just the answer; a bare
+> `dotnet run` rebuilds in Debug and prints build output first.
+
+## Architecture (the parts that span files)
+
+The layer cake — **one brain, many surfaces** (full diagram + rationale in `docs/ARCHITECTURE.md`):
+
+- **`TheKrystalShip.Llm`** — generic Ollama tool-calling **agent loop**. Knows nothing about KGSM;
+  publishable standalone (a sibling Discord bot consumes it as a package). Owns the model
+  round-trip, iteration cap, tool-output truncation, and conversation memory.
+- **`TheKrystalShip.Kgsm.Assistant`** — the **brain**: tool catalog, system prompt, action policy,
+  the `search` aggregator, and **ports** (`IRetrieval`, `IWebSearch`, kgsm command/query interfaces).
+- **`TheKrystalShip.Kgsm.Assistant.Infrastructure`** — **adapters** binding the ports to reality
+  (kgsm-lib, Tavily, the RAG index).
+- **`TheKrystalShip.Kgsm.Assistant.Service` / `.Cli`** — the two surfaces; both compose the *same
+  three DI calls* `AddLocalLlm` + `AddKgsmAssistant` + `AddKgsmAdapters` and differ only in I/O and
+  *who the user is* (auth/authority).
+- **`TheKrystalShip.Rag`** (read core) + **`TheKrystalShip.Rag.Indexer`** (write daemon) — a
+  self-contained RAG subsystem; **`.Eval`** is the benchmark.
+
+Things that bite if you don't know them:
+
+- **Policy is inverted out of the loop.** The library never learns what "mutating" or "authorized"
+  means. Every turn the *host* hands it an `AgentTurn` { prompt, fresh system prompt, the tool
+  whitelist, a per-call `Gate` closure }. The offered tool set *is* the whitelist; the `Gate`
+  authorizes each call and can hold state (e.g. an actions-per-message cap).
+- **Inject the live instance/blueprint list into the system prompt every turn.** This is
+  load-bearing, not cosmetic — without it the model wastes a round-trip calling `list_instances` to
+  "ground" itself before acting (a measured finding; see `kgsm-llm.md §7a`). The prompt is rebuilt
+  fresh each turn for this reason.
+- **Propose, then confirm — mutations never execute inside a turn.** A mutating tool call *stages*
+  the action and returns a confirmation token; the user confirms out-of-band (`/confirm` on the
+  Service, interactive y/N on the CLI). Tokens are **stateless HMACs** keyed by
+  `Assistant:Confirmation:Key` — they survive a Service restart *only if that key is stable*. A run
+  with no confirmation touches no server.
+- **One model-facing `search` tool, deterministic aggregator (no nested model calls).** Queries the
+  local RAG index first; a hit ≥ `LocalMinScore` answers from docs, else falls back to Tavily, else
+  an honest "nothing found". `web_search` is internal — the model only ever sees `search`. A web
+  *failure* is "couldn't search," never "nothing exists" (the measured-or-unknown rule).
+- **Fail-closed null adapters compose the graph.** `DisabledRetrieval` / `DisabledWebSearch` are
+  registered by default; the real adapter registers *after* and wins only when configured. This is
+  why the Service boots with nothing but Ollama + kgsm.
+- **RAG is producer/consumer coupled by one on-disk `.krag` file.** The indexer writes a *versioned*
+  index (format version + embedding model + dimension + chunk params); a mismatch is **rejected on
+  load** (a different embedder = a different vector space). The read path **hot-reloads** on atomic
+  swap and degrades to last-good on a bad read.
+- **Two Ollama clients by design.** Chat lives in `TheKrystalShip.Llm` (JIT); embeddings live in
+  `TheKrystalShip.Rag` (Native-AOT). The indexer is a resident daemon on a VRAM-budgeted box, so it
+  must be AOT — which forces the RAG core AOT-clean (source-generated JSON, zero reflection).
+  Embeddings deliberately do **not** live on `ILlmClient`. Justified duplication, not an accident.
+
+## Repo-specific invariants
+
+- **Never shell out to `kgsm.sh` (or open the watchdog socket) from C#.** All engine access goes
+  through **kgsm-lib** — a *project reference* to a sibling checkout at
+  `../kgsm-lib/kgsm-lib/kgsm-lib.csproj` (must be checked out alongside this repo to build). Need
+  more kgsm data? Extend a kgsm-lib method or an assistant port.
+- **Never fabricate a status or metric.** Measured, or explicitly "unknown" — never invented. The
+  ecosystem-wide rule; it's also why the eval scores *trajectory* (which tool was called), never a
+  world fact (`TheKrystalShip.Kgsm.Assistant.Eval/CLAUDE.md` invariant #1).
+- **This leaf depends only on kgsm-lib + a local Ollama** and runs fully standalone — no other
+  ecosystem service. Don't add a dependency on the API or a sibling leaf.
+- **`Directory.Build.props` carries a scoped NuGet-audit suppression** (one transitive SQLite
+  advisory, no fixed version yet). It's deliberate and documented inline — don't widen it to
+  `NuGetAudit=off`; delete it when a patched bundle ships.
+- Work directly on **`main`** and commit there (the `kgsm-*` repos don't auto-branch).
+
+## Where truth lives
+
+| Doc | For |
+|-----|-----|
+| `docs/ARCHITECTURE.md` | The mental model: layers, agent turn, ports/adapters, RAG split, ecosystem boundary |
+| `docs/DEPLOYMENT.md` | Cold-start runbook (prereqs → build → publish → run → verify), incl. Ollama/VRAM tuning |
+| `docs/CONFIGURATION.md` | Every config section/key/default, env-var form (`Section__Key`), the secrets list |
+| `docs/m7-sse-5a-spec.md` | The Service `/turn` SSE event contract (SPA integration) |
+| Per-project `README.md` | Surface-specific usage (`.Cli`, `.Service`, `.Llm`, `.Rag.Indexer`) |
+| `*.Eval/CLAUDE.md` | The benchmark's design integrity — read before changing how scoring works |
+| `kgsm-llm.md` | **Historical** handoff (2026-06-08). Trust it only for GPU/VRAM tuning + the `gemma4:12b` bake-off + the live-list-injection finding; its status sections are stale |
+
+Config is layered (embedded `appsettings.json` < host file < `Section__Key` env < CLI flags);
+**secrets are environment-only** (`docs/CONFIGURATION.md`). The default model is `gemma4:12b`;
+`Ollama:NumCtx` is a **fixed VRAM reservation**, not a ceiling.

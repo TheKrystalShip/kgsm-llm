@@ -120,3 +120,10 @@ Things that bite if you don't know them:
 Config is layered (embedded `appsettings.json` < host file < `Section__Key` env < CLI flags);
 **secrets are environment-only** (`docs/CONFIGURATION.md`). The default model is `gemma4:12b`;
 `Ollama:NumCtx` is a **fixed VRAM reservation**, not a ceiling.
+
+## Version tracking
+
+- **Version source:** `<Version>` in `TheKrystalShip.Llm/TheKrystalShip.Llm.csproj` and `TheKrystalShip.Kgsm.Assistant/TheKrystalShip.Kgsm.Assistant.csproj` (each versioned independently)
+- Bump the version whenever you make a user-facing change (new feature, bug fix, behaviour change). Patch for fixes, minor for new features, major for breaking changes.
+- Update `CHANGELOG.md` under `## [Unreleased]` with a brief entry for every meaningful change.
+- A git tag matching the new version should be created on release: `git tag v<version>`.

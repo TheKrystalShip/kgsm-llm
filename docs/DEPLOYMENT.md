@@ -12,8 +12,8 @@ This repo ships **three deployables** over one shared backend:
 
 | Artifact | Binary | What it is | Deploy as |
 |----------|--------|------------|-----------|
-| **Service** | `TheKrystalShip.Kgsm.Assistant.Service.dll` | HTTP/SSE turn API (for the web SPA) | systemd, framework-dependent |
-| **CLI** | `kgsm-assistant` | Terminal assistant (one-shot / pipe / REPL) | run by a user |
+| **Service** | `kgsm-assistant` | HTTP/SSE turn API (for the web SPA) | systemd, framework-dependent |
+| **CLI** | `kgsm-assistant-cli` | Terminal assistant (one-shot / pipe / REPL) | run by a user |
 | **RAG indexer** | `kgsm-rag-indexer` | Builds/refreshes the doc vector index | systemd `--watch` (Native-AOT) |
 
 > All sizes/outputs below were produced on the reference host (Arch Linux, .NET 10.0.109,
@@ -202,7 +202,7 @@ Three different publish shapes — this is deliberate (see [`ARCHITECTURE.md`](.
 dotnet publish TheKrystalShip.Kgsm.Assistant.Service/TheKrystalShip.Kgsm.Assistant.Service.csproj \
   -c Release -o out/service
 
-# CLI — framework-dependent. ~4 MB. Binary name: kgsm-assistant
+# CLI — framework-dependent. ~4 MB. Binary name: kgsm-assistant-cli
 dotnet publish TheKrystalShip.Kgsm.Assistant.Cli/TheKrystalShip.Kgsm.Assistant.Cli.csproj \
   -c Release -o out/cli
 
@@ -211,8 +211,8 @@ dotnet publish TheKrystalShip.Rag.Indexer/TheKrystalShip.Rag.Indexer.csproj \
   -c Release -r linux-x64 -o out/indexer
 ```
 
-**Acceptance:** each exits 0; `out/service/TheKrystalShip.Kgsm.Assistant.Service.dll`,
-`out/cli/kgsm-assistant`, and `out/indexer/kgsm-rag-indexer` (an `ELF … executable`) exist.
+**Acceptance:** each exits 0; `out/service/kgsm-assistant.dll`,
+`out/cli/kgsm-assistant-cli`, and `out/indexer/kgsm-rag-indexer` (an `ELF … executable`) exist.
 The indexer publish must report **0 IL/ILC warnings** — if it doesn't, an AOT-incompatibility
 crept into the RAG core; fix it before shipping (the daemon is the whole reason that core is
 AOT-clean).
@@ -225,7 +225,7 @@ The CLI is the fastest way to confirm the whole chat→tool→kgsm path works.
 
 ```bash
 # Point it at this host's kgsm engine and ask something read-only:
-KGSM__Path=/opt/kgsm/kgsm.sh  out/cli/kgsm-assistant "How many servers do I have, and what are they?"
+KGSM__Path=/opt/kgsm/kgsm.sh  out/cli/kgsm-assistant-cli "How many servers do I have, and what are they?"
 ```
 
 **Acceptance (reference output):**
@@ -236,7 +236,7 @@ You have 2 game servers installed:
 2. terraria-hardmode
 ```
 
-Exit code `0`. Other entry points: `echo "…" | kgsm-assistant` (pipe), or `kgsm-assistant`
+Exit code `0`. Other entry points: `echo "…" | kgsm-assistant-cli` (pipe), or `kgsm-assistant-cli`
 with no args in a TTY (REPL). Full usage, config layering, the `index` verb, and the
 `--dump-prompts` tuning surface are in [`../TheKrystalShip.Kgsm.Assistant.Cli/README.md`](../TheKrystalShip.Kgsm.Assistant.Cli/README.md).
 
@@ -244,7 +244,7 @@ To install it for a user, copy `out/cli/` somewhere and symlink the launcher:
 
 ```bash
 sudo cp -r out/cli /opt/kgsm-assistant/cli
-sudo ln -sf /opt/kgsm-assistant/cli/kgsm-assistant /usr/local/bin/kgsm-assistant
+sudo ln -sf /opt/kgsm-assistant/cli/kgsm-assistant-cli /usr/local/bin/kgsm-assistant-cli
 ```
 
 Set the kgsm path once in the user's config instead of per-invocation — see
@@ -477,7 +477,7 @@ DEPLOY    ./deploy/deploy.sh [--with-indexer]           → builds, installs uni
 CONFIG    edit /etc/kgsm-assistant/service.env (§0)     → KGSM__Path + Discord + CORS (+ Tavily/RAG) · restart
 BUILD     dotnet test TheKrystalShip.Llm.slnx           → Passed!   (what deploy.sh gates on)
 PUBLISH   service (FD ~2MB) · cli (FD ~4MB) · indexer (AOT ~7MB, 0 ILC)
-CLI       KGSM__Path=… kgsm-assistant "…"               → an answer, exit 0
+CLI       KGSM__Path=… kgsm-assistant-cli "…"               → an answer, exit 0
 SERVICE   systemd + reverse proxy + Discord secrets     → curl /health = {"status":"ok"}
 RAG (opt) populate corpus → kgsm-rag-indexer --once → .krag · Rag__Enabled=true (template default) + same path · --watch to keep fresh
 ```

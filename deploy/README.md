@@ -10,7 +10,7 @@ tuning, RAG end-to-end, reverse proxy, troubleshooting) is **[../docs/DEPLOYMENT
 | `kgsm-rag-indexer.service` | The RAG indexer in `--watch` mode (Native-AOT — standalone binary, no runtime) |
 | `assistant.env.example` | Secrets + non-default config for the Service (copy to `/etc/kgsm-assistant/service.env`) |
 
-The **CLI** (`kgsm-assistant`) is an interactive tool, not a daemon — it has no unit here.
+The **CLI** (`kgsm-assistant-cli`) is an interactive tool, not a daemon — it has no unit here.
 
 ## Install with `deploy.sh` (recommended)
 

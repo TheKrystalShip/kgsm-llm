@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>TheKrystalShip.Kgsm.Assistant.Service</RootNamespace>
-    <AssemblyName>TheKrystalShip.Kgsm.Assistant.Service</AssemblyName>
+    <AssemblyName>kgsm-assistant</AssemblyName>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>

@@ -1,4 +1,4 @@
-# kgsm-assistant (CLI)
+# kgsm-assistant-cli (CLI)
 
 A terminal surface onto the KGSM server assistant — ask about / act on your game servers
 straight from the shell, no Discord and no browser. It is a thin console **host** on the
@@ -12,15 +12,15 @@ search), and never depends on a sibling leaf or the web API.
 ## Usage
 
 ```bash
-kgsm-assistant "is terraria up?"          # one-shot: prints the reply, exits
-echo "what's installed?" | kgsm-assistant # one-shot from piped stdin
-kgsm-assistant                            # interactive REPL (a TTY with no prompt)
+kgsm-assistant-cli "is terraria up?"          # one-shot: prints the reply, exits
+echo "what's installed?" | kgsm-assistant-cli # one-shot from piped stdin
+kgsm-assistant-cli                            # interactive REPL (a TTY with no prompt)
 ```
 
 stdout carries **only** the assistant's reply, so it pipes cleanly:
 
 ```bash
-kgsm-assistant "list the servers" | grep minecraft
+kgsm-assistant-cli "list the servers" | grep minecraft
 ```
 
 Tool progress (`⚙ get_status(...)`), the REPL prompt, confirmations, the context line, and
@@ -38,7 +38,7 @@ after each tool — and erases itself the instant output starts. The REPL prompt
 `❯`, tool lines colorize the `⚙`/`✓`, and all of it is gated exactly like the status lines:
 
 * it's all on a **TTY only** — a redirected/piped reply is the model's **raw Markdown text**,
-  byte-for-byte (so `kgsm-assistant "…" | cat` still pipes cleanly), and
+  byte-for-byte (so `kgsm-assistant-cli "…" | cat` still pipes cleanly), and
 * `--no-color` / `NO_COLOR` drop the color (the spinner stays, just uncolored).
 
 ### Context usage
@@ -93,7 +93,7 @@ The text that steers the model — the system prompt and the tool/parameter desc
 editable files so you can tune it against the recorded corpus without rebuilding. Seed the defaults:
 
 ```bash
-kgsm-assistant --dump-prompts        # writes editable copies, never clobbering your edits
+kgsm-assistant-cli --dump-prompts        # writes editable copies, never clobbering your edits
 ```
 
 That creates, under `~/.config/kgsm-assistant/prompts/` (`$XDG_CONFIG_HOME` honored):
@@ -113,7 +113,7 @@ prose you include; anything omitted keeps its default.
 The loop this closes: edit → chat → read the transcripts → see whether the change actually moved the
 model's behavior → iterate. Two things make experiments comparable in the corpus:
 
-* **`--label <name>`** tags every turn of a run (e.g. `kgsm-assistant --label preamble-v2 "…"`), the
+* **`--label <name>`** tags every turn of a run (e.g. `kgsm-assistant-cli --label preamble-v2 "…"`), the
   robust bucketing key — `jq 'select(.label=="preamble-v2")' …`.
 * **`sysHash`** auto-fingerprints the editable prompt template (excluding the live lists, so it moves
   when you tune the persona, not when a server is installed mid-session).
@@ -237,13 +237,13 @@ dotnet publish TheKrystalShip.Kgsm.Assistant.Cli \
   -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true
 
 sudo install -m 0755 \
-  TheKrystalShip.Kgsm.Assistant.Cli/bin/Release/net10.0/linux-x64/publish/kgsm-assistant \
-  /usr/local/bin/kgsm-assistant
+  TheKrystalShip.Kgsm.Assistant.Cli/bin/Release/net10.0/linux-x64/publish/kgsm-assistant-cli \
+  /usr/local/bin/kgsm-assistant-cli
 ```
 
-The publish dir contains two files worth deploying: the `kgsm-assistant` binary and an
+The publish dir contains two files worth deploying: the `kgsm-assistant-cli` binary and an
 `appsettings.json` beside it (any `.pdb`/`.xml` are ignorable). The defaults are **embedded**
-in the binary, so `kgsm-assistant` runs standalone even if you deploy only the binary — but
+in the binary, so `kgsm-assistant-cli` runs standalone even if you deploy only the binary — but
 shipping the sidecar `appsettings.json` gives operators a documented file to tune host-wide
 (install it next to the binary, or anywhere and point `$KGSM_ASSISTANT_CONFIG` / `--config` at
 it). Edit it, or layer a per-user `~/.config/kgsm-assistant/appsettings.json` on top — see

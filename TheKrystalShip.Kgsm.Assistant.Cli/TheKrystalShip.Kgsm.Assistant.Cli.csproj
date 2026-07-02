@@ -6,8 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>TheKrystalShip.Kgsm.Assistant.Cli</RootNamespace>
-    <!-- The binary on PATH is `kgsm-assistant`, not the dotted project name. -->
-    <AssemblyName>kgsm-assistant</AssemblyName>
+    <!-- The binary on PATH is `kgsm-assistant-cli`, not the dotted project name. -->
+    <AssemblyName>kgsm-assistant-cli</AssemblyName>
     <!-- Dev runs (dotnet run) use the installed net10 runtime; the shipped artifact is a
          FRAMEWORK-DEPENDENT single-file publish (the host has the runtime installed), so
          RollForward only helps a dev box that has a newer major than 10. -->
@@ -47,7 +47,7 @@
          file is the one place the CLI's configurable surface is declared. -->
     <EmbeddedResource Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <LogicalName>kgsm-assistant.appsettings.json</LogicalName>
+      <LogicalName>kgsm-assistant-cli.appsettings.json</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 

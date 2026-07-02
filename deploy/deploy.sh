@@ -30,7 +30,7 @@ ENV_DIR="/etc/kgsm-assistant"
 ENV_FILE="$ENV_DIR/service.env"
 SVC_UNIT_DST="/etc/systemd/system/kgsm-assistant-service.service"
 IDX_UNIT_DST="/etc/systemd/system/kgsm-rag-indexer.service"
-CLI_LINK="/usr/local/bin/kgsm-assistant"
+CLI_LINK="/usr/local/bin/kgsm-assistant-cli"
 SERVICE="kgsm-assistant-service"
 INDEXER="kgsm-rag-indexer"
 
@@ -157,7 +157,7 @@ rsync -a --delete --exclude='*.pdb' --exclude='*.xml' "$PUB/cli/"     "$PREFIX/c
 [[ "$WITH_INDEXER" -eq 1 ]] && rsync -a --delete "$PUB/indexer/" "$PREFIX/indexer/"
 
 log "symlinking CLI → ${CLI_LINK}"
-$SUDO ln -sfn "$PREFIX/cli/kgsm-assistant" "$CLI_LINK"
+$SUDO ln -sfn "$PREFIX/cli/kgsm-assistant-cli" "$CLI_LINK"
 
 if [[ "$UNIT_CHANGED" -eq 1 ]]; then
     log "reloading systemd"

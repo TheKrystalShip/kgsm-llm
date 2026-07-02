@@ -174,7 +174,7 @@ the CLI `index` verb (the standalone indexer takes the same values as CLI flags)
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `Directory` | _(CLI: XDG config home)_ | `Prompts__Directory` | `preamble.md`, `actions-*.md`, `tools.json`; seed with `kgsm-assistant --dump-prompts`; re-read every turn |
+| `Directory` | _(CLI: XDG config home)_ | `Prompts__Directory` | `preamble.md`, `actions-*.md`, `tools.json`; seed with `kgsm-assistant-cli --dump-prompts`; re-read every turn |
 
 ---
 
@@ -237,7 +237,7 @@ or `Logging:LogLevel:Default=Debug` to raise).
 **CLI, no RAG, no web search** — just `KGSM__Path` and a reachable Ollama:
 
 ```bash
-KGSM__Path=/opt/kgsm/kgsm.sh kgsm-assistant "is factorio running?"
+KGSM__Path=/opt/kgsm/kgsm.sh kgsm-assistant-cli "is factorio running?"
 ```
 
 **Service, full** — see [`../deploy/assistant.env.example`](../deploy/assistant.env.example) for

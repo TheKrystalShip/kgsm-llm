@@ -21,7 +21,7 @@ Group=kgsm
 # relative to here; without it the service starts with defaults only.
 WorkingDirectory=/opt/kgsm-assistant/service
 # Framework-dependent single-file binary (deploy.sh publishes it with --no-self-contained).
-ExecStart=/opt/kgsm-assistant/service/TheKrystalShip.Kgsm.Assistant.Service
+ExecStart=/opt/kgsm-assistant/service/kgsm-assistant
 
 # Plain HTTP on loopback — terminate TLS at a reverse proxy (nginx) in front. See DEPLOYMENT.md.
 Environment=ASPNETCORE_ENVIRONMENT=Production

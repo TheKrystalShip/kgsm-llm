@@ -120,7 +120,7 @@ Append-only JSONL of turns, for prompt-tuning/eval. **On by default in the CLI**
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `Path` | `/opt/kgsm/kgsm.sh` | `KGSM__Path` | Path to `kgsm.sh`. The CLI **validates this at startup** (exits `2` if missing) |
+| `Path` | `/usr/local/bin/kgsm` | `KGSM__Path` | Path to `kgsm.sh`. The CLI **validates this at startup** (exits `2` if missing) |
 
 ### `InventoryCache` — kgsm read cache (`InventoryCacheOptions`)
 
@@ -237,7 +237,7 @@ or `Logging:LogLevel:Default=Debug` to raise).
 **CLI, no RAG, no web search** — just `KGSM__Path` and a reachable Ollama:
 
 ```bash
-KGSM__Path=/opt/kgsm/kgsm.sh kgsm-assistant-cli "is factorio running?"
+KGSM__Path=/usr/local/bin/kgsm kgsm-assistant-cli "is factorio running?"
 ```
 
 **Service, full** — see [`../deploy/assistant.env.example`](../deploy/assistant.env.example) for

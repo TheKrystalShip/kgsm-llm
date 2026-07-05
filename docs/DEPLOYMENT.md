@@ -129,7 +129,7 @@ engine manages. They need a real `kgsm.sh` and its instance registry (`~/.local/
 present at *runtime* (not to build). The RAG indexer does **not** need kgsm at all.
 
 ```bash
-ls -l /opt/kgsm/kgsm.sh        # or wherever this host's kgsm lives; note the path for KGSM:Path
+ls -l /usr/local/bin/kgsm        # or wherever this host's kgsm lives; note the path for KGSM:Path
 ```
 
 ### 1.5 Optional integrations
@@ -225,7 +225,7 @@ The CLI is the fastest way to confirm the whole chat→tool→kgsm path works.
 
 ```bash
 # Point it at this host's kgsm engine and ask something read-only:
-KGSM__Path=/opt/kgsm/kgsm.sh  out/cli/kgsm-assistant-cli "How many servers do I have, and what are they?"
+KGSM__Path=/usr/local/bin/kgsm  out/cli/kgsm-assistant-cli "How many servers do I have, and what are they?"
 ```
 
 **Acceptance (reference output):**

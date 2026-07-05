@@ -177,7 +177,7 @@ Config layers, lowest → highest precedence (each overrides the one before it):
 
 | Key | Env var | Default | Notes |
 |---|---|---|---|
-| `KGSM:Path` | `KGSM__Path` | `/opt/kgsm/kgsm.sh` | Path to this host's `kgsm.sh` (required; validated at startup). |
+| `KGSM:Path` | `KGSM__Path` | `/usr/local/bin/kgsm` | Path to this host's `kgsm.sh` (required; validated at startup). |
 | `Ollama:Endpoint` | `Ollama__Endpoint` | `http://localhost:11434` | Ollama base URL. |
 | `Ollama:Model` | `Ollama__Model` | `gemma4:12b` | Model tag (also `--model`). |
 | `Ollama:NumCtx` | `Ollama__NumCtx` | `32768` | KV-cache context window (fixed VRAM reservation). |

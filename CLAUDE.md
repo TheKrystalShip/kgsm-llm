@@ -30,7 +30,7 @@ the assistant surfaces also need `KGSM__Path` → a real `kgsm.sh`):
 
 ```bash
 # CLI — one-shot / pipe / REPL
-KGSM__Path=/opt/kgsm/kgsm.sh dotnet run -c Release --project TheKrystalShip.Kgsm.Assistant.Cli -- "what's installed?"
+KGSM__Path=/usr/local/bin/kgsm dotnet run -c Release --project TheKrystalShip.Kgsm.Assistant.Cli -- "what's installed?"
 # Service — HTTP/SSE; /health needs no secrets
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Service   # then curl http://127.0.0.1:5180/health
 # Eval — reproducible benchmark (live run needs Ollama; routing mode also needs a kgsm host)

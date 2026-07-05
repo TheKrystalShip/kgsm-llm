@@ -37,7 +37,7 @@ cd ~/tks/kgsm-llm
 dotnet build TheKrystalShip.Llm.slnx -c Release
 # Note: -c Release on the run reuses the build above, so stdout is just the answer
 # (a bare `dotnet run` rebuilds in Debug and prints build output first).
-KGSM__Path=/opt/kgsm/kgsm.sh \
+KGSM__Path=/usr/local/bin/kgsm \
   dotnet run -c Release --project TheKrystalShip.Kgsm.Assistant.Cli -- "How many servers do I have, and what are they?"
 # → a plain-English answer derived from a real kgsm tool call, e.g.:
 #   "You have 2 servers currently installed: factorio-test and terraria-hardmode."

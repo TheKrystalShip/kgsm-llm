@@ -266,12 +266,12 @@ if curl -sS -m 3 -o /dev/null "${OLLAMA:-http://localhost:11434}/api/tags" 2>/de
 else
   skip "Ollama" "unreachable — /turn & SSE will be skipped"
 fi
-if [ -f "${KGSM_PATH:-/opt/kgsm/kgsm.sh}" ]; then
+if [ -f "${KGSM_PATH:-/usr/local/bin/kgsm}" ]; then
   pass "kgsm" "present"
   # Grab one instance name so the SSE tool-round check can ask a SINGLE-instance live question
   # (exactly one tool round). "which servers are running?" would fan out to one round PER instance
   # and, on a many-instance box, blow past the agent's MaxIterations cap — see the cap check below.
-  FIRST_INSTANCE=$("${KGSM_PATH:-/opt/kgsm/kgsm.sh}" --instances 2>/dev/null | head -1 | tr -d '[:space:]')
+  FIRST_INSTANCE=$("${KGSM_PATH:-/usr/local/bin/kgsm}" --instances 2>/dev/null | head -1 | tr -d '[:space:]')
   [ -n "$FIRST_INSTANCE" ] && note "Using '$FIRST_INSTANCE' for the single-round SSE tool check."
 else
   skip "kgsm" "kgsm.sh not found — tool rounds may fail"
@@ -481,7 +481,7 @@ fi
 #  PHASE 6 — destructive confirmation path (OPT-IN; installs then cleans up)
 # ═══════════════════════════════════════════════════════════════════════════════
 step "Phase 6 — destructive confirm (opt-in)"
-KGSM="${KGSM_PATH:-/opt/kgsm/kgsm.sh}"
+KGSM="${KGSM_PATH:-/usr/local/bin/kgsm}"
 if [ "$ASSISTANT_OK" != "1" ] || [ "$CAN_PERFORM" != "true" ]; then
   skip "destructive confirm" "needs the action role + a live assistant"
 else

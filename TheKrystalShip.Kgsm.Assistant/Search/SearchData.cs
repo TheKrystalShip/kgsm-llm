@@ -1,3 +1,5 @@
+using TheKrystalShip.Kgsm.Assistant.Envelope;
+
 namespace TheKrystalShip.Kgsm.Assistant.Search;
 
 /// <summary>Where a search passage came from — the operator's local indexed docs, or the public web.</summary>

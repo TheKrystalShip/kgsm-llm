@@ -233,11 +233,15 @@ public sealed record CommandSubject(string Resource, string Id);
 /// command path — fork (a)); <see cref="Token"/> is the host-minted confirmation token, RETAINED
 /// (additive beyond §5·a) for the surfaces that execute via the assistant's own <c>/confirm</c>
 /// (Discord/CLI + verbs without an API endpoint yet). <see cref="ConfigKey"/>/<see cref="ConfigValue"/>
-/// are populated only for the <c>set_config</c> verb.
+/// are populated only for the <c>set_config</c> verb. <see cref="InstanceName"/> is the optional
+/// custom name for an <c>install</c> (the new instance the user asked for); null for every other verb
+/// and for an unnamed install (kgsm then auto-names it). A surface that creates via an API endpoint
+/// passes it through so a named install lands the name the user asked for rather than silently dropping it.
 /// </summary>
 public sealed record CommandProposedEvent(
     string Id, string Verb, CommandSubject Subject, string Confirm, string Token,
-    string? Reason = null, string? ConfigKey = null, string? ConfigValue = null);
+    string? Reason = null, string? ConfigKey = null, string? ConfigValue = null,
+    string? InstanceName = null);
 
 /// <summary>
 /// `done` — terminal success; the full assembled reply plus the turn's token <see cref="Usage"/>

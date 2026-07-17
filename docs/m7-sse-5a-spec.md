@@ -58,7 +58,7 @@ A turn is one SSE stream (`POST /assistant/turn` → `text/event-stream`). Event
 | `text.delta` | `{ text }` | streamed answer text |
 | `tool.start` | `{ id, tool, label }` | pending "Reading…" pill |
 | `tool.result` | `{ id, result }` | resolves the pill + renders its card |
-| `command.proposed` | `{ id, verb, subject, confirm, reason? }` | confirm-first action button |
+| `command.proposed` | `{ id, verb, subject, confirm, reason?, configKey?, configValue?, instanceName? }` | confirm-first action button |
 | `command.verified` | `{ id, ok, headline, lines[] }` | post-action verification block |
 | `error` | `{ code, message }` | inline error notice |
 | `done` | — | ends the turn |
@@ -96,11 +96,12 @@ Map the staged `PendingConfirmation` (already in hand) to the §5·a shape:
 |---|---|
 | `id` | synthesised `cmd_<n>` (per-proposal, turn-stable; **not** the token) |
 | `verb` | `ConfirmationKinds.Verb(kind)` — *exists already* (`start`/`stop`/`restart`/`update`/`back up`/`uninstall`/`install`/`set config on`). **Normalise to API verb tokens** for routing: `start\|stop\|restart\|update\|install\|uninstall\|backup\|set_config` (see §6 matrix) |
-| `subject` | `{ resource, id: Target }` — `resource:"server"` for the instance-targeted kinds (start/stop/restart/update/backup/uninstall/setconfig). **Caveat:** `Install` stages a *blueprint* target, not an instance → `resource:"blueprint"` for that kind (the mapping isn't a universal `"server"`). Install is M8-deferred so it doesn't bite now, but encode the per-kind resource, don't hardcode `"server"`. |
+| `subject` | `{ resource, id: Target }` — `resource:"server"` for the instance-targeted kinds (start/stop/restart/update/backup/uninstall/setconfig). `Install` stages a *blueprint* target, not an instance → `resource:"blueprint"` for that kind (the mapping isn't a universal `"server"`). Encode the per-kind resource, don't hardcode `"server"`. |
 | `confirm` | human prompt, composed from verb + target (e.g. `"Start factorio-test?"`) |
 | `reason?` | optional model rationale (omit for now — no honest source; reserve) |
 | `token` | **retained** (additive beyond §5·a) — the host-minted confirmation token for the `/confirm` surfaces (§6) |
 | `configKey?`/`configValue?` | **retained** for `set_config` (additive) |
+| `instanceName?` | **retained** for `install` (additive) — the optional custom name the user asked for. `subject.id` is the *blueprint* for an install, so the name rides its own field; a surface that installs via an API endpoint passes it through (`POST /servers { name }`) so a named install lands the name instead of dropping it. Null for every other verb and for an unnamed install (kgsm auto-names). |
 
 Honesty: `verb`/`subject`/`confirm` are all derivable from data the assistant holds — no
 fabrication. `id` is a display correlation handle, not security-bearing (the `token` is).

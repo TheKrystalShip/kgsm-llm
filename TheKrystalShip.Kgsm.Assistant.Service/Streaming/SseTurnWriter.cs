@@ -113,7 +113,8 @@ internal static class SseTurnWriter
                             Token: tokens.Create(c, principal.UserId),
                             Reason: null,
                             ConfigKey: c.ConfigKey,
-                            ConfigValue: c.ConfigValue);
+                            ConfigValue: c.ConfigValue,
+                            InstanceName: c.InstanceName);
                         await WriteEventAsync(response, TurnStream.CommandProposed, proposed, ct);
                         break;
 

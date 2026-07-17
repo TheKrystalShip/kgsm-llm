@@ -5,7 +5,9 @@ using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
+using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Search;
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
@@ -48,7 +50,7 @@ public class SearchAggregatorTests
 
         var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("what is kgsm");
 
-        result.Should().Contain("indexed docs")
+        result.Summary.Should().Contain("indexed docs")
             .And.Contain("KGSM manages servers")
             .And.Contain("docs/x.md");
         await _web.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -62,7 +64,7 @@ public class SearchAggregatorTests
 
         var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("terraria version");
 
-        result.Should().Contain("Web results").And.Contain("terraria.org").And.Contain("out of date");
+        result.Summary.Should().Contain("Web results").And.Contain("terraria.org").And.Contain("out of date");
         await _web.Received(1).SearchAsync("terraria version", Arg.Any<CancellationToken>());
     }
 
@@ -74,7 +76,7 @@ public class SearchAggregatorTests
 
         var result = await Create().SearchAsync("q");
 
-        result.Should().Contain("Web results").And.Contain("https://example.org");
+        result.Summary.Should().Contain("Web results").And.Contain("https://example.org");
     }
 
     [Fact]
@@ -85,7 +87,7 @@ public class SearchAggregatorTests
 
         var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("q");
 
-        result.Should().Contain("closest passages").And.Contain("the closest passage we have");
+        result.Summary.Should().Contain("closest passages").And.Contain("the closest passage we have");
     }
 
     [Fact]
@@ -96,10 +98,10 @@ public class SearchAggregatorTests
 
         var result = await Create().SearchAsync("obscure thing");
 
-        result.Should().Contain("Couldn't search")
+        result.Summary.Should().Contain("Couldn't search")
             .And.Contain("daily web-search limit")
             .And.Contain("do not retry");
-        result.Should().NotContain("No results", "a web failure must not be narrated as the thing not existing");
+        result.Summary.Should().NotContain("No results", "a web failure must not be narrated as the thing not existing");
     }
 
     [Fact]
@@ -110,7 +112,7 @@ public class SearchAggregatorTests
 
         var result = await Create().SearchAsync("nonexistent");
 
-        result.Should().Contain("No results").And.Contain("indexed docs or on the web");
+        result.Summary.Should().Contain("No results").And.Contain("indexed docs or on the web");
     }
 
     [Fact]
@@ -121,8 +123,63 @@ public class SearchAggregatorTests
 
         var result = await Create(new SearchOptions { LocalMinScore = 0.35, MaxContextChars = 600 }).SearchAsync("q");
 
-        result.Should().Contain("strong");           // the strongest chunk is always included
-        result.Should().Contain("omitted to fit");   // the rest are dropped to fit the window
-        result.Should().NotContain("second").And.NotContain("third");
+        result.Summary.Should().Contain("strong");           // the strongest chunk is always included
+        result.Summary.Should().Contain("omitted to fit");   // the rest are dropped to fit the window
+        result.Summary.Should().NotContain("second").And.NotContain("third");
+    }
+
+    // --- the SearchData card (the surface half of the envelope) ---
+
+    [Fact]
+    public async Task A_strong_local_hit_carries_a_LocalStrong_card_with_cited_passages()
+    {
+        LocalReturns(("KGSM manages servers via a stateless CLI.", 0.80));
+
+        var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("what is kgsm");
+
+        result.Tool.Should().Be(LlmTools.Search);
+        result.Confidence.Should().Be(Confidence.Confirmed);   // measured — the operator's own docs
+        result.Subject.Should().Be(new ResultRef(ResourceKind.Search, "what is kgsm"));
+        result.Data.State.Should().Be(SearchState.LocalStrong);
+        result.Data.Passages.Should().ContainSingle();
+        var p = result.Data.Passages[0];
+        p.Provenance.Should().Be(SearchProvenance.Local);
+        p.Source.Should().Be("docs/x.md");
+        p.Title.Should().Be("X > Y");
+        p.Text.Should().Contain("KGSM manages servers");
+        p.Score.Should().Be(0.80);
+    }
+
+    [Fact]
+    public async Task A_web_answer_carries_a_Web_card_with_the_url_and_likely_confidence()
+    {
+        LocalReturns(("vaguely related", 0.10));
+        WebReturns(new WebSearchHit("Terraria 1.4.5", "https://terraria.org", "the latest release", 0.9));
+
+        var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("terraria version");
+
+        result.Confidence.Should().Be(Confidence.Likely);       // external, possibly stale
+        result.Data.State.Should().Be(SearchState.Web);
+        result.Data.Passages.Should().ContainSingle();
+        result.Data.Passages[0].Provenance.Should().Be(SearchProvenance.Web);
+        result.Data.Passages[0].Source.Should().Be("https://terraria.org");
+        result.Data.Passages[0].Title.Should().Be("Terraria 1.4.5");
+    }
+
+    [Fact]
+    public async Task An_empty_or_failed_search_carries_no_passages_so_no_card_is_surfaced()
+    {
+        LocalReturns(); // success, no hits
+        WebReturns();   // success, no hits
+
+        var empty = await Create().SearchAsync("nonexistent");
+        empty.Data.State.Should().Be(SearchState.Empty);
+        empty.Data.Passages.Should().BeEmpty();
+
+        LocalFails();
+        WebFails("the daily web-search limit has been reached");
+        var failed = await Create().SearchAsync("obscure");
+        failed.Data.State.Should().Be(SearchState.SearchFailed);
+        failed.Data.Passages.Should().BeEmpty();
     }
 }

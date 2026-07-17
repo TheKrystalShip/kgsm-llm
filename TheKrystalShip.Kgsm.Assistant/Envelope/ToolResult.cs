@@ -80,6 +80,9 @@ public enum ResourceKind
 
     /// <summary>A metrics stream.</summary>
     Metrics,
+
+    /// <summary>A knowledge search (the operator's indexed docs / the web) — the query is its id.</summary>
+    Search,
 }
 
 /// <summary>

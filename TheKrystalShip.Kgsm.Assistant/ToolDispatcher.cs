@@ -104,13 +104,19 @@ public class ToolDispatcher : IToolDispatcher
     /// only guards the blank query and relays. The per-message call cap is enforced upstream in the
     /// assistant gate; the per-day web wallet cap lives host-side in the web provider.
     /// </summary>
-    private async Task<string> SearchAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<ToolOutput> SearchAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var query = call.Arg("query")?.Trim();
         if (string.IsNullOrWhiteSpace(query))
             return "Error: search needs a 'query'.";
 
-        return await _search.SearchAsync(query, cancellationToken);
+        // The aggregator returns the model's grounding text (Summary) plus the cited passages (Data).
+        // Attach the surface card only when there is something to cite — an empty / "couldn't search"
+        // outcome stays summary-only, exactly like a summary-only lifecycle read (mirrors run_health_check).
+        var result = await _search.SearchAsync(query, cancellationToken);
+        return result.Data.Passages.Count > 0
+            ? new ToolOutput(result.Summary, ToolResultCard.From(result))
+            : result.Summary;
     }
 
     /// <summary>

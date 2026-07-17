@@ -3,12 +3,12 @@
 > **Status:** **Phase 1 + Phase 2 IMPLEMENTED 2026-06-19.** Phase 1 = the §5·a envelope
 > (WI-1/2/3/4/6/7-default). **Phase 2 (WI-5, the `tool.result` card) is now done** — but via the
 > **opaque-payload mechanism**, not the ambient capture this spec originally sketched (see WI-5 +
-> §4; `Task.WhenAll` concurrency made order-keyed ambient unreliable). Scope is honestly narrow —
-> a card is lit only where a tool has a **real structured source**: **`run_health_check`**
-> (`HealthData`) and **`get_status` fleet mode** (`FleetStatusData`). The other §5·b "card tools"
-> don't exist yet, and single-server `get_status`/`read_file` return opaque strings, so they
-> stay summary-only — fabricating cards for absent sources is forbidden (never-fabricate). Full
-> kgsm-llm suite green **358/358** + kgsm-bot **49/49** clean.
+> §4; `Task.WhenAll` concurrency made order-keyed ambient unreliable). A card is lit only where a
+> tool has a **real structured source**: **`run_health_check`** (`HealthData`), **`get_status` fleet
+> mode** (`FleetStatusData`), and **`search`** (`SearchData` — the cited passages, when the search
+> found something to cite; an empty / "couldn't search" result stays summary-only). Single-server
+> `get_status`/`read_file` return opaque strings and stay summary-only — fabricating cards for absent
+> sources is forbidden (never-fabricate).
 > Implementation spec for the upstream half of kgsm-api **M7** (assistant turn relay / keystone
 > **O1**); lands in **kgsm-llm** *before* the API relay.
 > Authorities: `../../architecture.html §5·a` (the frontend's wire contract — freeze
@@ -181,10 +181,11 @@ channel** — a small, genuinely domain-agnostic enrichment of the LLM-tool abst
 **Scope — honestly narrow (one real card, not eight).** The original Phase-2 list named eight
 §5·b "card tools" (`get_server_status`, `get_performance`, `get_console`, `get_config`,
 `get_host_diagnostics`, `get_network`, `run_health_check`, `trace_root_cause`). **Five of those
-don't exist as implemented tools, and `get_status`/`read_file` have no structured source.**
-The only tool that produces a real `ToolResult<TData>` today is **`run_health_check`**
-(`HealthCheckAggregator → HealthData`). So Phase 2 = **plumb the rail end-to-end + light the one
-real card.** Building cards for absent tools would fabricate data — forbidden.
+don't exist as implemented tools, and single-server `get_status`/`read_file` have no structured
+source.** The tools that produce a real `ToolResult<TData>` today are **`run_health_check`**
+(`HealthCheckAggregator → HealthData`), **`get_status` fleet mode** (`FleetStatusCard → FleetStatusData`),
+and **`search`** (`SearchAggregator → SearchData`). Building cards for absent tools would fabricate
+data — forbidden.
 
 **Adding the next card** is one line **in its handler** — `return new ToolOutput(summary,
 ToolResultCard.From(theResult))` — *for a tool that already produces a `ToolResult<TData>`*. A

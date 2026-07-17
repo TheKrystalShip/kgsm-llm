@@ -196,7 +196,8 @@ internal sealed class McqRunner : IDisposable
             WebEnabled = false,
         });
         var aggregator = new SearchAggregator(retrieval, new NoWebSearch(), options, _aggregatorLogger);
-        var grounding = await aggregator.SearchAsync(query, ct);
+        // The MCQ read only wants the model-facing grounding text (the Summary half of the envelope).
+        var grounding = (await aggregator.SearchAsync(query, ct)).Summary;
         return (grounding, retrieval.LastRawHits);
     }
 

@@ -3,7 +3,9 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Search;
 
 namespace TheKrystalShip.Kgsm.Assistant;
 
@@ -18,7 +20,9 @@ namespace TheKrystalShip.Kgsm.Assistant;
 ///   <item>otherwise, honestly empty — and a web <em>failure</em> is reported as "couldn't search",
 ///         never as "nothing exists" (the ecosystem's measured-or-unknown rule).</item>
 /// </list>
-/// Returns model-facing grounding text; never throws (the ports don't either).
+/// Returns the shared <see cref="ToolResult{TData}"/> envelope: the model reads
+/// <see cref="ToolResult{TData}.Summary"/> (the grounding text — unchanged), a surface reads the
+/// <see cref="SearchData"/> card (the cited passages). Never throws (the ports don't either).
 /// </summary>
 public sealed class SearchAggregator : ISearch
 {
@@ -39,7 +43,7 @@ public sealed class SearchAggregator : ISearch
         _logger = logger;
     }
 
-    public async Task<string> SearchAsync(string query, CancellationToken cancellationToken = default)
+    public async Task<ToolResult<SearchData>> SearchAsync(string query, CancellationToken cancellationToken = default)
     {
         query = query.Trim();
 
@@ -55,29 +59,62 @@ public sealed class SearchAggregator : ISearch
         // 2. A strong local hit answers from the docs — no web call (cheaper, and the operator's own
         //    docs are more trustworthy than a third-party snippet).
         if (localHits.Length > 0 && localHits[0].Score >= _options.LocalMinScore)
-            return FormatLocal(query, localHits, weak: false);
+            return Envelope(query, SearchState.LocalStrong, FormatLocal(query, localHits, weak: false), LocalPassages(localHits));
 
         // 3. Web fallback.
         var web = await _webSearch.SearchAsync(query, cancellationToken);
         if (web.IsSuccess && web.Value!.Count > 0)
-            return FormatWeb(query, web.Value!);
+            return Envelope(query, SearchState.Web, FormatWeb(query, web.Value!), WebPassages(web.Value!));
 
         // 4. A weak local hit beats nothing when the web yielded nothing.
         if (localHits.Length > 0)
-            return FormatLocal(query, localHits, weak: true);
+            return Envelope(query, SearchState.LocalWeak, FormatLocal(query, localHits, weak: true), LocalPassages(localHits));
 
         // 5. Nothing — and be honest about WHY: a web failure (transport, over budget, not configured)
-        //    is not evidence that the thing doesn't exist.
+        //    is not evidence that the thing doesn't exist. Neither empty case carries a card (nothing to cite).
         if (web.IsFailure)
         {
             _logger.LogInformation(
                 "Search for \"{Query}\" found nothing locally and the web search failed: {Error}", query, web.Error);
-            return $"Couldn't search for \"{query}\" right now ({web.Error ?? "search unavailable"}), and the local " +
-                   "docs have nothing on it. Tell the user plainly that you couldn't look it up; do not retry.";
+            return Envelope(query, SearchState.SearchFailed,
+                $"Couldn't search for \"{query}\" right now ({web.Error ?? "search unavailable"}), and the local " +
+                "docs have nothing on it. Tell the user plainly that you couldn't look it up; do not retry.", []);
         }
 
-        return $"No results for \"{query}\" in the operator's indexed docs or on the web.";
+        return Envelope(query, SearchState.Empty,
+            $"No results for \"{query}\" in the operator's indexed docs or on the web.", []);
     }
+
+    /// <summary>Wrap the grounding <paramref name="summary"/> (what the model reads — unchanged) and the
+    /// cited <paramref name="passages"/> (what a surface renders) in the shared envelope. Confidence tracks
+    /// the rung: a strong local hit is measured (<see cref="Confidence.Confirmed"/>), the web is a
+    /// well-supported-but-possibly-stale inference (<see cref="Confidence.Likely"/>), everything else is
+    /// <see cref="Confidence.Possible"/>.</summary>
+    private static ToolResult<SearchData> Envelope(
+        string query, SearchState state, string summary, IReadOnlyList<SearchPassage> passages) =>
+        new(
+            Tool: LlmTools.Search,
+            Confidence: state switch
+            {
+                SearchState.LocalStrong => Confidence.Confirmed,
+                SearchState.Web => Confidence.Likely,
+                _ => Confidence.Possible,
+            },
+            Subject: new ResultRef(ResourceKind.Search, query),
+            Summary: summary,
+            Data: new SearchData(query, state, passages));
+
+    /// <summary>The retrieved local chunks as cited passages (doc path + heading breadcrumb + score).</summary>
+    private static IReadOnlyList<SearchPassage> LocalPassages(IReadOnlyList<RetrievedChunk> hits) =>
+        hits.Select(h => new SearchPassage(
+            SearchProvenance.Local, h.SourcePath,
+            string.IsNullOrWhiteSpace(h.HeaderPath) ? null : h.HeaderPath, h.Text, h.Score)).ToArray();
+
+    /// <summary>The web hits as cited passages (URL + page title + score).</summary>
+    private static IReadOnlyList<SearchPassage> WebPassages(IReadOnlyList<WebSearchHit> hits) =>
+        hits.Select(h => new SearchPassage(
+            SearchProvenance.Web, h.Url,
+            string.IsNullOrWhiteSpace(h.Title) ? null : h.Title, h.Content, h.Score)).ToArray();
 
     /// <summary>Numbered grounding from local chunks (heading breadcrumb + text + source path), capped at
     /// <see cref="SearchOptions.MaxContextChars"/> — the strongest chunk is always kept.</summary>

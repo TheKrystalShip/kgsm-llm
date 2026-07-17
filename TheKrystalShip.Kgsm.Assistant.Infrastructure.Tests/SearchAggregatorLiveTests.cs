@@ -73,7 +73,7 @@ public sealed class SearchAggregatorLiveTests : IDisposable
 
         var grounding = await aggregator.SearchAsync("how does kgsm manage game servers?");
 
-        grounding.Should().Contain("indexed docs").And.Contain("KGSM manages game servers");
+        grounding.Summary.Should().Contain("indexed docs").And.Contain("KGSM manages game servers");
     }
 
     /// <summary>Stand-in for a disabled web provider — the aggregator must never reach it on a strong local hit.</summary>

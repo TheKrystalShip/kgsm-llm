@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-17
+
+### Added
+- The `search` tool now emits a structured `SearchData` card alongside its grounding text, so a
+  surface (the web chat) can render the cited passages instead of a bare "searching" pill. The
+  aggregator returns the shared `ToolResult<SearchData>` envelope: the model still reads the exact
+  same `Summary`; the card carries each passage's provenance (local docs vs web), source
+  (doc path / URL), title, snippet, and score, plus which rung answered (`LocalStrong`/`LocalWeak`/
+  `Web`). An empty or "couldn't search" result carries no passages and stays summary-only — a card
+  always has something to cite (never-fabricate).
+
 ## [1.2.0] - 2026-07-17
 
 ### Added

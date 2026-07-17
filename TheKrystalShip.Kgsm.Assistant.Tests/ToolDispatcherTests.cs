@@ -7,6 +7,7 @@ using NSubstitute;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Search;
 using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Models;
 
@@ -379,16 +380,46 @@ public class ToolDispatcherTests
     // The dispatcher only guards the blank query and relays the aggregator's grounding text verbatim;
     // the local-first / web-fallback composition is exercised in SearchAggregatorTests.
 
+    private static ToolResult<SearchData> SearchEnvelope(string summary, SearchState state, params SearchPassage[] passages) =>
+        new(LlmTools.Search, Confidence.Likely, new ResultRef(ResourceKind.Search, "q"), summary, new SearchData("q", state, passages));
+
     [Fact]
     public async Task Search_RelaysTheAggregatorGroundingVerbatim()
     {
         _search.SearchAsync("terraria latest version", Arg.Any<CancellationToken>())
-            .Returns("Web results for \"terraria latest version\" … source: https://terraria.org/news");
+            .Returns(SearchEnvelope("Web results for \"terraria latest version\" … source: https://terraria.org/news",
+                SearchState.Web, new SearchPassage(SearchProvenance.Web, "https://terraria.org/news", "News", "…", 0.9)));
 
         var result = await Summary(SearchCall("terraria latest version"));
 
         result.Should().Be("Web results for \"terraria latest version\" … source: https://terraria.org/news");
         await _search.Received(1).SearchAsync("terraria latest version", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Search_WithPassages_SurfacesTheSearchCard()
+    {
+        _search.SearchAsync("what is kgsm", Arg.Any<CancellationToken>())
+            .Returns(SearchEnvelope("From the operator's indexed docs …", SearchState.LocalStrong,
+                new SearchPassage(SearchProvenance.Local, "docs/x.md", "X > Y", "KGSM …", 0.8)));
+
+        var output = await Create().ExecuteAsync(SearchCall("what is kgsm"));
+
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.Search.Name);   // the card carries the tool NAME ("search")
+        card.Data.Should().BeOfType<SearchData>().Which.State.Should().Be(SearchState.LocalStrong);
+    }
+
+    [Fact]
+    public async Task Search_WithNoPassages_StaysSummaryOnly()
+    {
+        _search.SearchAsync("nonexistent", Arg.Any<CancellationToken>())
+            .Returns(SearchEnvelope("No results …", SearchState.Empty));
+
+        var output = await Create().ExecuteAsync(SearchCall("nonexistent"));
+
+        output.Summary.Should().Be("No results …");
+        output.Data.Should().BeNull();   // nothing to cite → no card
     }
 
     [Fact]

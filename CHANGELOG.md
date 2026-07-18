@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CPU + memory avg/peak over the window (the numbers the model can't read off a chart). An empty window
   is an honest "no history recorded yet", and an unreachable monitor an honest "couldn't read" — neither
   is narrated as idleness.
+- Two engine-event-history tools, `get_audit_log` (`instance_name?`, `window?`) and
+  `get_change_timeline` (`instance_name?`, `range?`), read directly from the kgsm-monitor's
+  `GET /events` over its unix socket — the assistant reads the monitor's engine-event store the same
+  way `get_performance` reads its metrics, never through kgsm-api (leaf independence). Both accept an
+  OPTIONAL instance (omit for every server on the host) and a window token (`1h`/`24h`/`7d`/`30d`, an
+  unrecognized/omitted token honestly falls back to the tool's default — `24h` for the audit log,
+  `7d` for the timeline — never an error). `get_audit_log` is the unfiltered "what happened" feed,
+  most-recent-first; `get_change_timeline` shares the same source narrowed to durable state changes
+  (install/uninstall/update/version-update/backup/port-open/port-close) and excludes routine
+  start/stop and player join/leave. Both emit the shared `ToolResult<AuditData>` envelope with a
+  deterministic, type-counted grounding summary (e.g. "6 events for factorio-test in the last 24h: 2
+  starts, 1 crash, 1 update…") authored by a pure `AuditReport` composer — never the model. An event
+  with no recorded actor renders as unknown, never defaulted to a placeholder like "system"; an empty
+  window is an honest "no events/changes recorded"; an unreachable monitor is an honest "couldn't
+  read", explicitly not a claim that nothing happened. The capability is additive and fails closed —
+  a fail-closed `IEventHistory` default reports the monitor unavailable when none is wired, so the
+  assistant composes and boots standalone (reuses the existing `Monitor:SocketPath` config key, no
+  new configuration).
 
 ## [1.3.0] - 2026-07-17
 

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using NSubstitute;
 
+using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
@@ -27,6 +28,7 @@ public class ToolDispatcherTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly ISearch _search = Substitute.For<ISearch>();
     private readonly IServerMetrics _metrics = Substitute.For<IServerMetrics>();
+    private readonly IEventHistory _events = Substitute.For<IEventHistory>();
     private readonly ConfirmationContext _confirmations = new();
 
     public ToolDispatcherTests()
@@ -47,7 +49,7 @@ public class ToolDispatcherTests
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, _search, _metrics, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _search, _metrics, _events, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -538,6 +540,129 @@ public class ToolDispatcherTests
 
         output.Summary.Should().Contain("No resource history");
         output.Data.Should().BeNull();   // empty series → no chart card
+    }
+
+    // --- get_audit_log / get_change_timeline (engine event history via the IEventHistory port) ---
+    // The dispatcher resolves an OPTIONAL instance (blank → fleet-wide), maps window/range to a
+    // `since` bound, reads the raw rows, and runs the pure AuditReport composer — always attaching a
+    // card (an empty/unavailable result is still a real, honestly-worded answer worth showing).
+
+    private static LlmToolCall AuditLogCall(string? instance = null, string? window = null) =>
+        new(LlmTools.GetAuditLog, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["window"] = window,
+        });
+
+    private static LlmToolCall ChangeTimelineCall(string? instance = null, string? range = null) =>
+        new(LlmTools.GetChangeTimeline, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["range"] = range,
+        });
+
+    private static readonly AuditEventRow SampleStart =
+        new("evt_1", DateTimeOffset.UtcNow, "instance_started", "minecraft", "discord:tester", "assistant");
+
+    [Fact]
+    public async Task GetAuditLog_NoInstance_ReadsFleetWide_AndSurfacesCard()
+    {
+        _events.GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.Available, new[] { SampleStart }));
+
+        var output = await Create().ExecuteAsync(AuditLogCall());
+
+        await _events.Received(1).GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        output.Summary.Should().Contain("all servers");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.GetAuditLog.Name);
+        var data = card.Data.Should().BeOfType<AuditData>().Subject;
+        data.Instance.Should().BeNull();
+        data.Events.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task GetAuditLog_WithInstance_ResolvesFirst_ThenScopesTheRead()
+    {
+        _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.Available, new[] { SampleStart }));
+
+        var output = await Create().ExecuteAsync(AuditLogCall("minecraft", "1h"));
+
+        await _events.Received(1).GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        output.Summary.Should().Contain("minecraft").And.Contain("last 1h");
+    }
+
+    [Fact]
+    public async Task GetAuditLog_UnresolvedInstance_DoesNotRead()
+    {
+        var output = await Create().ExecuteAsync(AuditLogCall("doesnotexist"));
+
+        output.Summary.Should().Contain("no instance named");
+        await _events.DidNotReceive().GetEventsAsync(Arg.Any<string?>(), Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetAuditLog_MonitorUnavailable_StillSurfacesACard_WordedHonestly()
+    {
+        _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.MonitorUnavailable, Array.Empty<AuditEventRow>()));
+
+        var output = await Create().ExecuteAsync(AuditLogCall("minecraft"));
+
+        output.Summary.Should().Contain("unavailable");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Confidence.Should().Be(Confidence.Possible);
+    }
+
+    [Fact]
+    public async Task GetAuditLog_UnknownWindow_FallsBackToDefault_NeverErrors()
+    {
+        _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.Available, Array.Empty<AuditEventRow>()));
+
+        var output = await Create().ExecuteAsync(AuditLogCall("minecraft", "nonsense"));
+
+        output.Summary.Should().Contain("last 24h");   // the tool's default window
+    }
+
+    [Fact]
+    public async Task GetChangeTimeline_NoInstance_ReadsFleetWide_UsesChangeFraming()
+    {
+        var changeRow = SampleStart with { Type = "instance_installed" };
+        _events.GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.Available, new[] { changeRow }));
+
+        var output = await Create().ExecuteAsync(ChangeTimelineCall());
+
+        await _events.Received(1).GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        output.Summary.Should().Contain("1 change for all servers");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.GetChangeTimeline.Name);
+    }
+
+    [Fact]
+    public async Task GetChangeTimeline_FiltersOutRoutineEvents_ViaTheSharedComposer()
+    {
+        var routine = SampleStart;   // instance_started — not a "change"
+        _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.Available, new[] { routine }));
+
+        var output = await Create().ExecuteAsync(ChangeTimelineCall("minecraft"));
+
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        var data = card.Data.Should().BeOfType<AuditData>().Subject;
+        data.Events.Should().BeEmpty();
+        output.Summary.Should().Contain("No changes recorded");
+    }
+
+    [Fact]
+    public async Task GetChangeTimeline_UnresolvedInstance_DoesNotRead()
+    {
+        var output = await Create().ExecuteAsync(ChangeTimelineCall("doesnotexist"));
+
+        output.Summary.Should().Contain("no instance named");
+        await _events.DidNotReceive().GetEventsAsync(Arg.Any<string?>(), Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     public static IEnumerable<object[]> StagedCommandCases() => new[]

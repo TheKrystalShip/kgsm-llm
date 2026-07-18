@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 
+using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
@@ -36,6 +37,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IConfirmationContext _confirmations;
     private readonly ISearch _search;
     private readonly IServerMetrics _metrics;
+    private readonly IEventHistory _events;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
@@ -44,6 +46,7 @@ public class ToolDispatcher : IToolDispatcher
         IConfirmationContext confirmations,
         ISearch search,
         IServerMetrics metrics,
+        IEventHistory events,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
@@ -51,6 +54,7 @@ public class ToolDispatcher : IToolDispatcher
         _confirmations = confirmations;
         _search = search;
         _metrics = metrics;
+        _events = events;
         _logger = logger;
     }
 
@@ -69,6 +73,10 @@ public class ToolDispatcher : IToolDispatcher
                 return await RunHealthCheckAsync(call, cancellationToken);
             if (call.Name == LlmTools.GetPerformance)
                 return await GetPerformanceAsync(call, cancellationToken);
+            if (call.Name == LlmTools.GetAuditLog)
+                return await GetAuditLogAsync(call, cancellationToken);
+            if (call.Name == LlmTools.GetChangeTimeline)
+                return await GetChangeTimelineAsync(call, cancellationToken);
             if (call.Name == LlmTools.Search)
                 return await SearchAsync(call, cancellationToken);
             if (call.Name == LlmTools.ReadFile)
@@ -294,6 +302,41 @@ public class ToolDispatcher : IToolDispatcher
         return report.Data.State == PerformanceState.Live
             ? new ToolOutput(report.Summary, ToolResultCard.From(report))
             : report.Summary;   // NotRunning / MonitorUnavailable stay summary-only (no card)
+    }
+
+    /// <summary>
+    /// The unfiltered engine-event read (toolbox-plan §4.1): resolves an OPTIONAL instance (blank →
+    /// every server on this host), maps the model's <c>window</c> to a <c>since</c> bound, reads the
+    /// monitor's raw event log via <see cref="IEventHistory"/> directly (never via kgsm-api — plan §9),
+    /// and runs the pure <see cref="AuditReport"/>. Always carries a card: an empty/unavailable result
+    /// is still a real, honestly-worded answer worth showing, unlike a not-running metrics snapshot.
+    /// </summary>
+    private async Task<ToolOutput> GetAuditLogAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveOptionalInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var (window, sinceMs) = AuditWindow.Resolve(call.Arg("window"), AuditWindow.DefaultAuditWindow, DateTimeOffset.UtcNow);
+        var reading = await _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
+        var result = AuditReport.Build(reading, resolved, window);
+        return new ToolOutput(result.Summary, ToolResultCard.From(result));
+    }
+
+    /// <summary>
+    /// Same source as <see cref="GetAuditLogAsync"/>, narrowed to the state-changing subset and framed
+    /// as "what changed" (see <see cref="AuditReport.ChangeEventTypes"/> for the exact set and why).
+    /// </summary>
+    private async Task<ToolOutput> GetChangeTimelineAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveOptionalInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var (range, sinceMs) = AuditWindow.Resolve(call.Arg("range"), AuditWindow.DefaultChangeRange, DateTimeOffset.UtcNow);
+        var reading = await _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
+        var result = AuditReport.BuildChangeTimeline(reading, resolved, range);
+        return new ToolOutput(result.Summary, ToolResultCard.From(result));
     }
 
     /// <summary>
@@ -535,4 +578,21 @@ public class ToolDispatcher : IToolDispatcher
         var known = instances.Keys.OrderBy(k => k);
         return (null, $"Error: no instance named '{name}'. Known instances: {string.Join(", ", known)}.");
     }
+
+    /// <summary>
+    /// Like <see cref="ResolveInstanceAsync"/>, but a blank/omitted name is valid — it means
+    /// "every server" (fleet-wide), returned as <see langword="null"/> with no error. A NON-blank
+    /// name still goes through full resolution (exact/substring/game-type, ambiguity refused), so a
+    /// typo'd instance_name is caught rather than silently falling back to the whole fleet. Used by
+    /// <c>get_audit_log</c>/<c>get_change_timeline</c>, whose <c>instance_name</c> is optional.
+    /// </summary>
+    private Task<(string? resolved, string? error)> ResolveOptionalInstanceAsync(string? name, CancellationToken cancellationToken) =>
+        string.IsNullOrWhiteSpace(name)
+            ? Task.FromResult<(string?, string?)>((null, null))
+            : ResolveInstanceAsync(name, cancellationToken);
+
+    /// <summary>Server-side cap on rows fetched per <c>get_audit_log</c>/<c>get_change_timeline</c>
+    /// call — generous enough to cover a week of normal activity; the monitor's own cap (1000) is the
+    /// hard ceiling. Filtering (change-timeline) happens client-side on top of this fetch.</summary>
+    private const int EventFetchLimit = 200;
 }

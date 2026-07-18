@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant;
@@ -26,6 +27,13 @@ public static class LlmTools
     // measured values from the metrics monitor. Status-sensitive like health, so it's a read-only
     // tool offered to everyone, not a file-content read.
     public static readonly Tool GetPerformance = new("get_performance");
+
+    // Engine event history, read straight from the kgsm-monitor's event store (never via kgsm-api —
+    // the assistant is a leaf, plan §9). get_audit_log is the unfiltered "what happened" read;
+    // get_change_timeline shares the same source but narrows to the state-changing subset and frames
+    // it as "what changed" (see Audit.AuditReport.ChangeEventTypes for the exact set).
+    public static readonly Tool GetAuditLog = new("get_audit_log");
+    public static readonly Tool GetChangeTimeline = new("get_change_timeline");
 
     // The unified knowledge-search tool (§3.4): the operator's indexed docs first, the public web as
     // a fallback. Replaces the former model-facing `web_search` — IWebSearch is now an internal
@@ -88,6 +96,24 @@ public static class LlmTools
         "doing over the last hour/day?\", \"is X's memory climbing?\", \"CPU trend for X\".",
         Required: false,
         AllowedValues: new[] { "1h", "24h", "7d", "30d" });
+
+    private static readonly LlmToolParameter AuditInstanceName = new(
+        "instance_name",
+        "Optional. Scope the events to this one server. OMIT to get events across every server on " +
+        "this host — do that for questions like \"what happened recently?\" / \"any errors lately?\".",
+        Required: false);
+
+    private static readonly LlmToolParameter AuditWindowParam = new(
+        "window",
+        "Optional. How far back to look. Defaults to 24h if omitted.",
+        Required: false,
+        AllowedValues: AuditWindow.AllowedValues);
+
+    private static readonly LlmToolParameter ChangeTimelineRange = new(
+        "range",
+        "Optional. How far back to look. Defaults to 7d if omitted.",
+        Required: false,
+        AllowedValues: AuditWindow.AllowedValues);
 
     private static readonly LlmToolParameter StatusInstanceName = new(
         "instance_name",
@@ -162,6 +188,23 @@ public static class LlmTools
             "window as a chart (\"how has X been doing over the last hour/day?\", \"is X's memory " +
             "climbing?\"). A stopped server has no live snapshot but may still have recent history.",
             InstanceName, PerformanceRange),
+
+        LlmToolDefinition.Create(GetAuditLog,
+            "Get recent operational events for a server (or every server) — starts, stops, crashes, " +
+            "installs, updates, backups, port changes, player activity — most recent first, read " +
+            "straight from KGSM's own event log. Use this for \"what happened to X?\", \"has X crashed " +
+            "recently?\", or \"what's been going on?\". For a narrower \"what CHANGED\" question " +
+            "(installs/updates/version/backups/port changes only, no routine starts/stops or player " +
+            "activity), use get_change_timeline instead.",
+            AuditInstanceName, AuditWindowParam),
+
+        LlmToolDefinition.Create(GetChangeTimeline,
+            "Get a timeline of durable CHANGES to a server (or every server) — installs, uninstalls, " +
+            "updates, version changes, backups, and port changes — most recent first. Deliberately " +
+            "excludes routine starts/stops and player join/leave (use get_audit_log for the full " +
+            "event feed). Use this for \"what changed on X?\", \"when was X last updated?\", or " +
+            "\"has anything changed recently?\".",
+            AuditInstanceName, ChangeTimelineRange),
 
         LlmToolDefinition.Create(Search,
             "Look something up in the knowledge base: the operator's indexed documentation first, then " +

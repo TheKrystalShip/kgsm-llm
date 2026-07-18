@@ -107,6 +107,36 @@ public static class ServiceCollectionExtensions
             }
         });
 
+        // --- Engine event history (kgsm-monitor GET /events scrape) ----------------------------
+        // Backs get_audit_log / get_change_timeline over the SAME monitor unix socket as the metrics
+        // client above (Phase B/D of the event-history plan) — the assistant reads the monitor
+        // directly, never via kgsm-api (plan §9, leaf independence). Registered AFTER AddKgsmAssistant,
+        // so this concrete IEventHistory wins over the library's fail-closed UnavailableEventHistory
+        // default. Additive: with no monitor reachable (or event history disabled on that host) every
+        // read maps to "monitor unavailable" (the adapter never throws), so the assistant runs standalone.
+        services.AddHttpClient<IEventHistory, KgsmEventHistory>(client =>
+        {
+            client.BaseAddress = new Uri("http://localhost");
+            client.Timeout = TimeSpan.FromSeconds(2);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            ConnectCallback = async (_, ct) =>
+            {
+                var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                try
+                {
+                    await socket.ConnectAsync(new UnixDomainSocketEndPoint(monitorSocketPath), ct).ConfigureAwait(false);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            }
+        });
+
         // --- Web search (Tavily) ---------------------------------------------------------------
         // The assistant's web_search port. The API key is ENV-ONLY (WebSearch__ApiKey) and travels
         // as a default Bearer header; with no key the adapter fails closed. DailyCallBudget is the

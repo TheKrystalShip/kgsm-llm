@@ -49,6 +49,11 @@ public static class ServiceCollectionExtensions
         // default. Without it, get_performance honestly reports the monitor as unavailable rather
         // than breaking DI — keeps the assistant embeddable by a host with no monitor.
         services.TryAddSingleton<IServerMetrics, UnavailableServerMetrics>();
+        // Engine event history (get_audit_log / get_change_timeline) degrades closed the same way: a
+        // host that wires the kgsm-monitor calls AddKgsmAdapters, which registers a concrete
+        // IEventHistory that wins over this default. Without it, both tools honestly report the
+        // monitor as unavailable rather than breaking DI.
+        services.TryAddSingleton<IEventHistory, UnavailableEventHistory>();
         services.AddSingleton<IServerAssistant, ServerAssistant>();
 
         return services;

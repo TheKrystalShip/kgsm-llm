@@ -6,6 +6,7 @@ using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
+using TheKrystalShip.Kgsm.Assistant.Metrics;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Search;
 using TheKrystalShip.Kgsm.Assistant.Status;
@@ -25,6 +26,7 @@ public class ToolDispatcherTests
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly ISearch _search = Substitute.For<ISearch>();
+    private readonly IServerMetrics _metrics = Substitute.For<IServerMetrics>();
     private readonly ConfirmationContext _confirmations = new();
 
     public ToolDispatcherTests()
@@ -45,7 +47,7 @@ public class ToolDispatcherTests
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, _search, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _search, _metrics, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -429,6 +431,113 @@ public class ToolDispatcherTests
 
         result.Should().Contain("needs a 'query'");
         await _search.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- get_performance (live per-server metrics via the IServerMetrics port) ---
+    // The dispatcher resolves the instance, reads the neutral snapshot, runs the pure aggregator, and
+    // attaches a card ONLY for a Live read; the Live/NotRunning/Unavailable wording lives in PerformanceReportTests.
+
+    private static LlmToolCall PerformanceCall(string instance) => Call(LlmTools.GetPerformance, instance);
+
+    [Fact]
+    public async Task GetPerformance_Live_SurfacesTheMetricsCard()
+    {
+        _metrics.GetSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new ServerMetricsReading(
+                PerformanceState.Live, CpuPctCore: 42.5, MemBytes: 1_073_741_824,
+                RxBps: 1024, TxBps: 2048, IoReadBps: 0, IoWriteBps: 512, DiskBytes: 5_000_000, Pids: 7));
+
+        var output = await Create().ExecuteAsync(PerformanceCall("minecraft"));
+
+        await _metrics.Received(1).GetSnapshotAsync("minecraft", Arg.Any<CancellationToken>());
+        output.Summary.Should().Contain("minecraft").And.Contain("42.5%");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.GetPerformance.Name);   // the card carries the tool NAME ("get_performance")
+        card.Confidence.Should().Be(Confidence.Confirmed);
+        card.Subject.Should().Be(new ResultRef(ResourceKind.Metrics, "minecraft"));
+        var data = card.Data.Should().BeOfType<PerformanceData>().Subject;
+        data.State.Should().Be(PerformanceState.Live);
+        data.Instance.Should().Be("minecraft");
+        data.CpuPctCore.Should().Be(42.5);
+        data.Pids.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task GetPerformance_NotRunning_StaysSummaryOnly()
+    {
+        _metrics.GetSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new ServerMetricsReading(
+                PerformanceState.NotRunning, null, null, null, null, null, null, null, null));
+
+        var output = await Create().ExecuteAsync(PerformanceCall("minecraft"));
+
+        output.Summary.Should().Contain("isn't running");
+        output.Data.Should().BeNull();   // no live frame → no card
+    }
+
+    [Fact]
+    public async Task GetPerformance_MonitorUnavailable_StaysSummaryOnly()
+    {
+        _metrics.GetSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new ServerMetricsReading(
+                PerformanceState.MonitorUnavailable, null, null, null, null, null, null, null, null));
+
+        var output = await Create().ExecuteAsync(PerformanceCall("minecraft"));
+
+        output.Summary.Should().Contain("unavailable").And.Contain("isn't a sign the server is idle");
+        output.Data.Should().BeNull();   // couldn't read → no card
+    }
+
+    [Fact]
+    public async Task GetPerformance_UnresolvedInstance_DoesNotRead()
+    {
+        var result = await Summary(PerformanceCall("doesnotexist"));
+
+        result.Should().Contain("no instance named");
+        await _metrics.DidNotReceive().GetSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    private static LlmToolCall PerformanceTrendCall(string instance, string range) =>
+        new(LlmTools.GetPerformance, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["range"] = range,
+        });
+
+    [Fact]
+    public async Task GetPerformance_WithRange_ReadsHistory_AndSurfacesTheChartCard()
+    {
+        var t0 = new DateTimeOffset(2026, 7, 18, 0, 0, 0, TimeSpan.Zero);
+        _metrics.GetHistoryAsync("minecraft", "1h", Arg.Any<CancellationToken>())
+            .Returns(new ServerMetricsHistory(
+                PerformanceState.Live, "1h", "raw",
+                new Dictionary<string, IReadOnlyList<MetricPoint>>
+                {
+                    ["cpuPctCore"] = [new MetricPoint(t0, 10), new MetricPoint(t0.AddMinutes(1), 30)],
+                }));
+
+        var output = await Create().ExecuteAsync(PerformanceTrendCall("minecraft", "1h"));
+
+        await _metrics.Received(1).GetHistoryAsync("minecraft", "1h", Arg.Any<CancellationToken>());
+        await _metrics.DidNotReceive().GetSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        output.Summary.Should().Contain("last 1h");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        var data = card.Data.Should().BeOfType<PerformanceData>().Subject;
+        data.Range.Should().Be("1h");
+        data.Series.Should().ContainKey("cpuPctCore");
+    }
+
+    [Fact]
+    public async Task GetPerformance_WithRange_EmptyHistory_StaysSummaryOnly()
+    {
+        _metrics.GetHistoryAsync("minecraft", "24h", Arg.Any<CancellationToken>())
+            .Returns(new ServerMetricsHistory(
+                PerformanceState.Live, "24h", "raw", new Dictionary<string, IReadOnlyList<MetricPoint>>()));
+
+        var output = await Create().ExecuteAsync(PerformanceTrendCall("minecraft", "24h"));
+
+        output.Summary.Should().Contain("No resource history");
+        output.Data.Should().BeNull();   // empty series → no chart card
     }
 
     public static IEnumerable<object[]> StagedCommandCases() => new[]

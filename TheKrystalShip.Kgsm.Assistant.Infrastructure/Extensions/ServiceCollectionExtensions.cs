@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Options;
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Monitor;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Search;
 using TheKrystalShip.Kgsm.Assistant.Ports;
@@ -68,6 +70,42 @@ public static class ServiceCollectionExtensions
         // the value per call flow.
         services.AddSingleton<IInvocationContext, AsyncLocalInvocationContext>();
         services.AddSingleton<IServerOperations, KgsmServerOperations>();
+
+        // --- Live per-server metrics (kgsm-monitor scrape) -------------------------------------
+        // Backs the get_performance tool by scraping the monitor's GET /metrics over its unix socket.
+        // Registered AFTER AddKgsmAssistant, so this concrete IServerMetrics wins over the library's
+        // fail-closed UnavailableServerMetrics default. Additive: with no monitor reachable the scrape
+        // maps every failure to "monitor unavailable" (the adapter never throws), so the assistant runs
+        // standalone. A single socket-dialing handler is reused for every call (no per-call socket leak).
+        var monitor = config.GetSection(MonitorOptions.Section).Get<MonitorOptions>() ?? new MonitorOptions();
+        var monitorSocketPath = string.IsNullOrWhiteSpace(monitor.SocketPath)
+            ? new MonitorOptions().SocketPath
+            : monitor.SocketPath;
+        services.AddHttpClient<IServerMetrics, KgsmServerMetrics>(client =>
+        {
+            // The request URI host is a placeholder the monitor ignores; the socket does the routing.
+            client.BaseAddress = new Uri("http://localhost");
+            // The monitor serves an in-memory frame and must be fast; bound it so a hung socket can
+            // never stall a turn.
+            client.Timeout = TimeSpan.FromSeconds(2);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            ConnectCallback = async (_, ct) =>
+            {
+                var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                try
+                {
+                    await socket.ConnectAsync(new UnixDomainSocketEndPoint(monitorSocketPath), ct).ConfigureAwait(false);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            }
+        });
 
         // --- Web search (Tavily) ---------------------------------------------------------------
         // The assistant's web_search port. The API key is ENV-ONLY (WebSearch__ApiKey) and travels

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
+using TheKrystalShip.Kgsm.Assistant.Metrics;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Interfaces;
@@ -34,6 +35,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IServerInventory _inventory;
     private readonly IConfirmationContext _confirmations;
     private readonly ISearch _search;
+    private readonly IServerMetrics _metrics;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
@@ -41,12 +43,14 @@ public class ToolDispatcher : IToolDispatcher
         IServerInventory inventory,
         IConfirmationContext confirmations,
         ISearch search,
+        IServerMetrics metrics,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
         _inventory = inventory;
         _confirmations = confirmations;
         _search = search;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -63,6 +67,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await ListBlueprintsAsync(cancellationToken);
             if (call.Name == LlmTools.RunHealthCheck)
                 return await RunHealthCheckAsync(call, cancellationToken);
+            if (call.Name == LlmTools.GetPerformance)
+                return await GetPerformanceAsync(call, cancellationToken);
             if (call.Name == LlmTools.Search)
                 return await SearchAsync(call, cancellationToken);
             if (call.Name == LlmTools.ReadFile)
@@ -252,6 +258,42 @@ public class ToolDispatcher : IToolDispatcher
 
         var health = HealthCheckAggregator.Run(result.Value!, resolved!);
         return new ToolOutput(health.Summary, ToolResultCard.From(health));
+    }
+
+    /// <summary>
+    /// Live per-server resource usage (mirrors <see cref="RunHealthCheckAsync"/>): resolves the
+    /// instance, reads the neutral metrics via <see cref="IServerMetrics"/> (a snapshot from the
+    /// kgsm-monitor's latest frame), and runs the pure <see cref="PerformanceReport"/>. Only a
+    /// <see cref="PerformanceState.Live"/> read carries a card (measured values to render); a
+    /// not-running or monitor-unavailable read stays summary-only — carding it would fabricate
+    /// structure we don't have. The port never throws, so there is no error path here; a failed
+    /// read arrives as <see cref="PerformanceState.MonitorUnavailable"/>, which the aggregator words
+    /// honestly.
+    /// </summary>
+    private async Task<ToolOutput> GetPerformanceAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        // A `range` argument switches from the point-in-time snapshot to a windowed TREND read (a chart
+        // of how usage changed) — pulled on demand from the monitor's history, the single source of truth.
+        string? range = call.Arg("range");
+        if (!string.IsNullOrWhiteSpace(range))
+        {
+            var history = await _metrics.GetHistoryAsync(resolved!, range.Trim(), cancellationToken);
+            var trend = PerformanceReport.BuildHistory(history, resolved!);
+            // Card only when there's a series to plot; empty/unavailable stays summary-only (no fabricated chart).
+            return trend.Data.Series is { Count: > 0 } s && s.Values.Any(p => p.Count > 0)
+                ? new ToolOutput(trend.Summary, ToolResultCard.From(trend))
+                : trend.Summary;
+        }
+
+        var reading = await _metrics.GetSnapshotAsync(resolved!, cancellationToken);
+        var report = PerformanceReport.Build(reading, resolved!);
+        return report.Data.State == PerformanceState.Live
+            ? new ToolOutput(report.Summary, ToolResultCard.From(report))
+            : report.Summary;   // NotRunning / MonitorUnavailable stay summary-only (no card)
     }
 
     /// <summary>

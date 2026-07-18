@@ -22,6 +22,11 @@ public static class LlmTools
     public static readonly Tool ListBlueprints = new("list_blueprints");
     public static readonly Tool RunHealthCheck = new("run_health_check");
 
+    // Live per-server resource usage (CPU/memory/network/disk-io/pids) — a snapshot of current
+    // measured values from the metrics monitor. Status-sensitive like health, so it's a read-only
+    // tool offered to everyone, not a file-content read.
+    public static readonly Tool GetPerformance = new("get_performance");
+
     // The unified knowledge-search tool (§3.4): the operator's indexed docs first, the public web as
     // a fallback. Replaces the former model-facing `web_search` — IWebSearch is now an internal
     // capability the `search` aggregator composes, not a tool the model picks directly. Offered iff a
@@ -75,6 +80,14 @@ public static class LlmTools
 
     private static readonly LlmToolParameter InstanceName = new(
         "instance_name", "The exact name of the server instance.");
+
+    private static readonly LlmToolParameter PerformanceRange = new(
+        "range",
+        "Optional. OMIT for a live snapshot of current usage. Provide a time window to get the TREND " +
+        "over that period instead (a chart of how CPU/memory changed) — use this for \"how has X been " +
+        "doing over the last hour/day?\", \"is X's memory climbing?\", \"CPU trend for X\".",
+        Required: false,
+        AllowedValues: new[] { "1h", "24h", "7d", "30d" });
 
     private static readonly LlmToolParameter StatusInstanceName = new(
         "instance_name",
@@ -141,6 +154,14 @@ public static class LlmTools
             "checks host disk space. Use this for \"is X healthy / OK?\" or \"what's wrong with X?\" " +
             "instead of fetching status, logs and disk separately.",
             InstanceName),
+
+        LlmToolDefinition.Create(GetPerformance,
+            "Get ONE server's resource usage — CPU (as % of one core), memory, network and disk-I/O " +
+            "throughput, process count. Without a range it's a LIVE snapshot of current values (\"how " +
+            "much is X using?\", \"is X hammering the CPU/RAM?\"); with a range it's the TREND over that " +
+            "window as a chart (\"how has X been doing over the last hour/day?\", \"is X's memory " +
+            "climbing?\"). A stopped server has no live snapshot but may still have recent history.",
+            InstanceName, PerformanceRange),
 
         LlmToolDefinition.Create(Search,
             "Look something up in the knowledge base: the operator's indexed documentation first, then " +

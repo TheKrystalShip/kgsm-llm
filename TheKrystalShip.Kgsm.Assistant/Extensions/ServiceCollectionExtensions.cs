@@ -44,6 +44,11 @@ public static class ServiceCollectionExtensions
         // ports above (local docs first → web fallback). Always registered; whether the `search` TOOL
         // is offered is a separate, config-driven decision (SearchOptions.Available, set by the host).
         services.AddSingleton<ISearch, SearchAggregator>();
+        // Live per-server metrics degrade closed the same way: a host that wires the kgsm-monitor
+        // calls AddKgsmAdapters, which registers a concrete IServerMetrics that wins over this
+        // default. Without it, get_performance honestly reports the monitor as unavailable rather
+        // than breaking DI — keeps the assistant embeddable by a host with no monitor.
+        services.TryAddSingleton<IServerMetrics, UnavailableServerMetrics>();
         services.AddSingleton<IServerAssistant, ServerAssistant>();
 
         return services;

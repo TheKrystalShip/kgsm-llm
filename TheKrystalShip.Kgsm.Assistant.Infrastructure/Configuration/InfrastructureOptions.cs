@@ -12,6 +12,21 @@ public sealed class KgsmConnectionOptions
     public string Path { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// Where to reach the kgsm-monitor's metrics socket. Bound from the "Monitor" config section. The
+/// monitor serves its latest frame over an unauthenticated, pull-only <c>GET /metrics</c> on a
+/// unix-domain socket; the metrics adapter scrapes it for the <c>get_performance</c> tool. Optional —
+/// with no monitor reachable the adapter fails closed (reports the monitor unavailable), so this is a
+/// path, not a dependency.
+/// </summary>
+public sealed class MonitorOptions
+{
+    public const string Section = "Monitor";
+
+    /// <summary>Path to the monitor's metrics unix socket. A standard install serves it here.</summary>
+    public string SocketPath { get; set; } = "/run/kgsm-monitor/metrics.sock";
+}
+
 /// <summary>TTLs for the in-process inventory cache. A backstop; hosts also invalidate explicitly
 /// (the service from the kgsm webhook, the CLI after a confirmed mutation).</summary>
 public sealed class InventoryCacheOptions

@@ -63,6 +63,7 @@ any committed `appsettings.json`:
 | `Recording` | ✅ (on) | ✅ (off) | — | Transcript corpus (opt-in) |
 | `KGSM` | ✅ | ✅ | — | Path to `kgsm.sh` |
 | `InventoryCache` | ✅ | ✅ | — | Instance/blueprint cache TTLs |
+| `Monitor` | ✅ | ✅ | — | kgsm-monitor metrics socket (`get_performance`) |
 | `WebSearch` | ✅ | ✅ | — | Tavily fallback |
 | `Rag` (retrieval) | ✅ | ✅ | — | Local doc retrieval (consumer) |
 | `Rag` (embedder + build) | ✅ (`index` verb) | reads only | ✅ | Embedding model + chunking |
@@ -128,6 +129,17 @@ Append-only JSONL of turns, for prompt-tuning/eval. **On by default in the CLI**
 |-----|---------|-----|-------|
 | `InstancesTtlSeconds` | `300` | `InventoryCache__InstancesTtlSeconds` | Instance-list cache TTL (backstop; the webhook invalidates) |
 | `BlueprintsTtlSeconds` | `600` | `InventoryCache__BlueprintsTtlSeconds` | Blueprint-list cache TTL |
+
+### `Monitor` — kgsm-monitor metrics socket (`MonitorOptions`)
+
+Where the `get_performance` tool scrapes live per-server metrics. The monitor serves its latest frame
+over an unauthenticated, pull-only `GET /metrics` on a unix-domain socket. Optional — with no monitor
+reachable the tool reports the monitor unavailable (an honest "couldn't read", never a fabricated
+number), so this is a path, not a dependency.
+
+| Key | Default | Env | Notes |
+|-----|---------|-----|-------|
+| `SocketPath` | `/run/kgsm-monitor/metrics.sock` | `Monitor__SocketPath` | Path to the monitor's metrics unix socket |
 
 ### `WebSearch` — Tavily fallback (`WebSearchOptions`)
 

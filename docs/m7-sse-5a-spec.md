@@ -5,8 +5,11 @@
 > **opaque-payload mechanism**, not the ambient capture this spec originally sketched (see WI-5 +
 > §4; `Task.WhenAll` concurrency made order-keyed ambient unreliable). A card is lit only where a
 > tool has a **real structured source**: **`run_health_check`** (`HealthData`), **`get_status` fleet
-> mode** (`FleetStatusData`), and **`search`** (`SearchData` — the cited passages, when the search
-> found something to cite; an empty / "couldn't search" result stays summary-only). Single-server
+> mode** (`FleetStatusData`), **`search`** (`SearchData` — the cited passages, when the search
+> found something to cite; an empty / "couldn't search" result stays summary-only), and
+> **`get_performance`** (`PerformanceData` — a live per-server metrics snapshot when the server is
+> running with a live frame, OR a windowed history series (`range`+`series`) for a trend read; an empty
+> window / not-running / monitor-unavailable read stays summary-only). Single-server
 > `get_status`/`read_file` return opaque strings and stay summary-only — fabricating cards for absent
 > sources is forbidden (never-fabricate).
 > Implementation spec for the upstream half of kgsm-api **M7** (assistant turn relay / keystone
@@ -184,8 +187,10 @@ channel** — a small, genuinely domain-agnostic enrichment of the LLM-tool abst
 don't exist as implemented tools, and single-server `get_status`/`read_file` have no structured
 source.** The tools that produce a real `ToolResult<TData>` today are **`run_health_check`**
 (`HealthCheckAggregator → HealthData`), **`get_status` fleet mode** (`FleetStatusCard → FleetStatusData`),
-and **`search`** (`SearchAggregator → SearchData`). Building cards for absent tools would fabricate
-data — forbidden.
+**`search`** (`SearchAggregator → SearchData`), and **`get_performance`**
+(`PerformanceReport → PerformanceData` — a live snapshot for a running server, or a windowed history
+series for a trend read; carded only when there are measured values / a non-empty series, else
+summary-only). Building cards for absent tools would fabricate data — forbidden.
 
 **Adding the next card** is one line **in its handler** — `return new ToolOutput(summary,
 ToolResultCard.From(theResult))` — *for a tool that already produces a `ToolResult<TData>`*. A

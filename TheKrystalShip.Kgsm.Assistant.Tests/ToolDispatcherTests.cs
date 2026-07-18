@@ -9,6 +9,7 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.RootCause;
 using TheKrystalShip.Kgsm.Assistant.Search;
 using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Models;
@@ -663,6 +664,83 @@ public class ToolDispatcherTests
 
         output.Summary.Should().Contain("no instance named");
         await _events.DidNotReceive().GetEventsAsync(Arg.Any<string?>(), Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- trace_root_cause (the capstone aggregator: fans out to _events + _metrics + _operations) ---
+    // Rule-matching itself is covered exhaustively by RootCauseAggregatorTests (pure, no mocks); these
+    // pin the DISPATCHER's job — resolve the REQUIRED instance, fetch all three sources, and always
+    // surface a card.
+
+    private static LlmToolCall RootCauseCall(string instance, string? range = null) =>
+        new(LlmTools.TraceRootCause, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["range"] = range,
+        });
+
+    [Fact]
+    public async Task TraceRootCause_FetchesAllThreeSources_AndSurfacesCard()
+    {
+        _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.Available, Array.Empty<AuditEventRow>()));
+        _metrics.GetHistoryAsync("minecraft", "24h", Arg.Any<CancellationToken>())
+            .Returns(new ServerMetricsHistory(PerformanceState.MonitorUnavailable, "24h", null,
+                new Dictionary<string, IReadOnlyList<MetricPoint>>()));
+        _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new InstanceHealthSnapshot(
+                true, new[] { "INFO ok" }, false, "1.0.0", null, new HostDisk(20, "100G", "80G"), null)));
+
+        var output = await Create().ExecuteAsync(RootCauseCall("minecraft"));
+
+        await _events.Received(1).GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await _metrics.Received(1).GetHistoryAsync("minecraft", "24h", Arg.Any<CancellationToken>());
+        await _operations.Received(1).GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>());
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.TraceRootCause.Name);
+        var data = card.Data.Should().BeOfType<RootCauseData>().Subject;
+        data.Instance.Should().Be("minecraft");
+        data.Findings.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task TraceRootCause_UnresolvedInstance_DoesNotReadAnySource()
+    {
+        var output = await Create().ExecuteAsync(RootCauseCall("doesnotexist"));
+
+        output.Summary.Should().Contain("no instance named");
+        await _events.DidNotReceive().GetEventsAsync(Arg.Any<string?>(), Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await _metrics.DidNotReceive().GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TraceRootCause_NoInstanceName_RefusesBeforeFetching()
+    {
+        // Unlike get_audit_log/get_change_timeline, instance_name is REQUIRED here — root cause is
+        // always about one server.
+        var output = await Create().ExecuteAsync(RootCauseCall(""));
+
+        output.Summary.Should().Contain("no instance_name was provided");
+        await _events.DidNotReceive().GetEventsAsync(Arg.Any<string?>(), Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TraceRootCause_HealthReadFails_StillSurfacesACard_WithSourceMarkedUnavailable()
+    {
+        _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new EventHistoryReading(AuditReadState.Available, Array.Empty<AuditEventRow>()));
+        _metrics.GetHistoryAsync("minecraft", "24h", Arg.Any<CancellationToken>())
+            .Returns(new ServerMetricsHistory(PerformanceState.MonitorUnavailable, "24h", null,
+                new Dictionary<string, IReadOnlyList<MetricPoint>>()));
+        _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<InstanceHealthSnapshot>("kgsm unreachable"));
+
+        var output = await Create().ExecuteAsync(RootCauseCall("minecraft"));
+
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        var data = card.Data.Should().BeOfType<RootCauseData>().Subject;
+        data.HealthAvailable.Should().BeFalse();
+        data.HealthUnavailableReason.Should().Be("kgsm unreachable");
     }
 
     public static IEnumerable<object[]> StagedCommandCases() => new[]

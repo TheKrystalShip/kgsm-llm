@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A `trace_root_cause(instance_name, range?)` tool — the toolbox's capstone aggregator (plan §3.4/
+  §7·Q1): a DETERMINISTIC composition of one instance's engine event timeline, a metrics window, and
+  its health/status snapshot, run through a fixed rules table of known KGSM failure signatures. No
+  nested model call anywhere in the path — the pure `RootCause.RootCauseAggregator` fetches nothing
+  itself and reasons about nothing; the dispatcher fans the three reads out in parallel
+  (`IEventHistory` + `IServerMetrics` + `IServerOperations.GetHealthSnapshotAsync`, the same neutral
+  inputs `get_audit_log`/`get_performance`/`run_health_check` already use) and the aggregator only
+  pattern-matches over what came back. `instance_name` is REQUIRED (unlike the audit tools — root
+  cause is always about one server); `range` defaults to `24h`. The rules table: a start/restart that
+  crashed or failed within 3 minutes without reaching "ready" reads as a port-conflict/bind-failure
+  shape (`Likely` — kgsm's event log records THAT a start didn't take, not WHY); one or more crashes
+  within 15 minutes of an update finishing reads as update-triggered (`Likely` for one, `Confirmed`
+  "crash loop" for two or more); the health snapshot's own critical-disk verdict coinciding with a
+  deploy/download/uninstall failure reads as disk-full (`Confirmed` — reuses `HealthCheckAggregator`'s
+  disk judgment rather than a second threshold); the most recent run-state event saying
+  started/restarted/ready while the live snapshot reads not-running is a split-brain (`Confirmed` — a
+  direct, measured contradiction, not an inference). When nothing matches, the result is an honest
+  ranked correlation of the most salient recent events at `Possible` — never a guessed cause. Every
+  source degrades independently: an unreachable event timeline means no rule can be evaluated at all
+  (honestly worded, not a fabricated "nothing happened"); a failed health snapshot only disables the
+  two rules that need it (disk-full, split-brain); an unreachable metrics window only empties the
+  supporting CPU/memory context facts. Emits the shared `ToolResult<RootCauseData>` envelope with a
+  ranked `Findings` list (each carrying its own evidence — the specific events, metric facts, and
+  health checks that produced it) and a deterministic summary authored from the top finding — the
+  model narrates it, it never authors it.
+
+### Changed
+- `Metrics.PerformanceReport`'s `Stats`/`FormatBytes` helpers are now `internal` (were `private`) so
+  `RootCauseAggregator` reuses the exact same avg/peak computation and byte formatting for its
+  metrics-window evidence instead of a second copy.
+
 - A `get_performance` tool that surfaces one running server's LIVE resource usage as a snapshot —
   CPU (as a percentage of one core), memory, network and disk-I/O throughput, on-disk footprint, and
   process count — read from the kgsm-monitor's latest `GET /metrics` frame over its unix socket. It

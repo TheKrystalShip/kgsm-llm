@@ -35,6 +35,14 @@ public static class LlmTools
     public static readonly Tool GetAuditLog = new("get_audit_log");
     public static readonly Tool GetChangeTimeline = new("get_change_timeline");
 
+    // The capstone aggregator (toolbox-plan §3.4/§7·Q1): a DETERMINISTIC composition of the event
+    // timeline + a metrics window + a health snapshot for ONE instance, run through a fixed rules
+    // table of known KGSM failure signatures. No nested model call — the model only narrates the
+    // finding this tool already computed (RootCause.RootCauseAggregator). Per-instance only
+    // (unlike get_audit_log/get_change_timeline, instance_name is REQUIRED — root cause needs a
+    // single subject).
+    public static readonly Tool TraceRootCause = new("trace_root_cause");
+
     // The unified knowledge-search tool (§3.4): the operator's indexed docs first, the public web as
     // a fallback. Replaces the former model-facing `web_search` — IWebSearch is now an internal
     // capability the `search` aggregator composes, not a tool the model picks directly. Offered iff a
@@ -112,6 +120,12 @@ public static class LlmTools
     private static readonly LlmToolParameter ChangeTimelineRange = new(
         "range",
         "Optional. How far back to look. Defaults to 7d if omitted.",
+        Required: false,
+        AllowedValues: AuditWindow.AllowedValues);
+
+    private static readonly LlmToolParameter RootCauseRange = new(
+        "range",
+        "Optional. How far back to look for evidence. Defaults to 24h if omitted.",
         Required: false,
         AllowedValues: AuditWindow.AllowedValues);
 
@@ -205,6 +219,18 @@ public static class LlmTools
             "event feed). Use this for \"what changed on X?\", \"when was X last updated?\", or " +
             "\"has anything changed recently?\".",
             AuditInstanceName, ChangeTimelineRange),
+
+        LlmToolDefinition.Create(TraceRootCause,
+            "Investigate WHY one server crashed, won't stay up, or has been misbehaving recently — " +
+            "an incident/history question, not a right-now check (use run_health_check for \"is X " +
+            "healthy now?\"). Automatically pulls together its event history, resource usage, and " +
+            "health checks and matches them against known failure patterns (port conflicts, " +
+            "update-triggered crash loops, disk-full failures, event-log/live-state mismatches), " +
+            "returning a ranked explanation with the evidence behind it. Use this for \"why did X " +
+            "crash?\" or \"why did X stop working?\" instead of calling get_audit_log/get_performance " +
+            "separately and reasoning it out yourself. If no known pattern matches, it honestly " +
+            "reports a correlation instead of guessing a cause.",
+            InstanceName, RootCauseRange),
 
         LlmToolDefinition.Create(Search,
             "Look something up in the knowledge base: the operator's indexed documentation first, then " +

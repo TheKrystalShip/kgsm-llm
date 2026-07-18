@@ -115,8 +115,10 @@ public static class PerformanceReport
         return string.Join(" ", parts);
     }
 
-    /// <summary>avg/min/max over a metric's series, or null when that metric isn't present.</summary>
-    private static (double avg, double min, double max)? Stats(ServerMetricsHistory h, string metric)
+    /// <summary>avg/min/max over a metric's series, or null when that metric isn't present. Internal
+    /// (not private) so <see cref="RootCause.RootCauseAggregator"/> can reuse the same computation for
+    /// its metrics-window evidence facts rather than duplicating it.</summary>
+    internal static (double avg, double min, double max)? Stats(ServerMetricsHistory h, string metric)
     {
         if (!h.Series.TryGetValue(metric, out var points) || points.Count == 0)
             return null;
@@ -169,8 +171,10 @@ public static class PerformanceReport
     private static string FormatCpu(double? pct) =>
         pct is null ? "an unmeasured amount" : $"{pct.Value:0.#}%";
 
-    /// <summary>A byte size as B / KB / MB / GB (1024-based); a null (unmeasured) source renders "not measured".</summary>
-    private static string FormatBytes(long? bytes)
+    /// <summary>A byte size as B / KB / MB / GB (1024-based); a null (unmeasured) source renders "not
+    /// measured". Internal (not private) so <see cref="RootCause.RootCauseAggregator"/> can reuse the
+    /// same formatting for its metrics-window evidence facts.</summary>
+    internal static string FormatBytes(long? bytes)
     {
         if (bytes is null)
             return "not measured";

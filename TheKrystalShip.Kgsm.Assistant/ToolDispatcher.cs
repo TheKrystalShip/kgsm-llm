@@ -5,6 +5,7 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.RootCause;
 using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
@@ -77,6 +78,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await GetAuditLogAsync(call, cancellationToken);
             if (call.Name == LlmTools.GetChangeTimeline)
                 return await GetChangeTimelineAsync(call, cancellationToken);
+            if (call.Name == LlmTools.TraceRootCause)
+                return await TraceRootCauseAsync(call, cancellationToken);
             if (call.Name == LlmTools.Search)
                 return await SearchAsync(call, cancellationToken);
             if (call.Name == LlmTools.ReadFile)
@@ -336,6 +339,41 @@ public class ToolDispatcher : IToolDispatcher
         var (range, sinceMs) = AuditWindow.Resolve(call.Arg("range"), AuditWindow.DefaultChangeRange, DateTimeOffset.UtcNow);
         var reading = await _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
         var result = AuditReport.BuildChangeTimeline(reading, resolved, range);
+        return new ToolOutput(result.Summary, ToolResultCard.From(result));
+    }
+
+    /// <summary>
+    /// The capstone aggregator (toolbox-plan §3.4/§7·Q1): resolves the REQUIRED instance (root cause
+    /// is always about one server), then fetches the three sources <see cref="RootCauseAggregator"/>
+    /// composes — the event timeline (<see cref="IEventHistory"/>), a metrics window
+    /// (<see cref="IServerMetrics"/>), and the health snapshot (<see cref="IServerOperations.GetHealthSnapshotAsync"/>,
+    /// the same neutral input <see cref="RunHealthCheckAsync"/> uses) — IN PARALLEL, so a slow source
+    /// doesn't serialize the read. Each source degrades independently and honestly: a failed health
+    /// snapshot passes <see langword="null"/> + its error into the aggregator rather than refusing the
+    /// whole call; the aggregator's rules table then simply can't evaluate the rules that need it. No
+    /// nested model call happens anywhere in this path — <see cref="RootCauseAggregator.Run"/> is pure.
+    /// Always attaches a card: even a "nothing matched" correlation or a fully-degraded read is a real,
+    /// honestly-worded answer worth showing (mirrors <see cref="GetAuditLogAsync"/>).
+    /// </summary>
+    private async Task<ToolOutput> TraceRootCauseAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var (range, sinceMs) = AuditWindow.Resolve(call.Arg("range"), AuditWindow.DefaultAuditWindow, DateTimeOffset.UtcNow);
+
+        var eventsTask = _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
+        var metricsTask = _metrics.GetHistoryAsync(resolved!, range, cancellationToken);
+        var healthTask = _operations.GetHealthSnapshotAsync(resolved!, cancellationToken);
+        await Task.WhenAll(eventsTask, metricsTask, healthTask);
+
+        var healthResult = healthTask.Result;
+        var result = RootCauseAggregator.Run(
+            resolved!, range, eventsTask.Result, metricsTask.Result,
+            health: healthResult.IsSuccess ? healthResult.Value : null,
+            healthUnavailableReason: healthResult.IsSuccess ? null : healthResult.Error);
+
         return new ToolOutput(result.Summary, ToolResultCard.From(result));
     }
 

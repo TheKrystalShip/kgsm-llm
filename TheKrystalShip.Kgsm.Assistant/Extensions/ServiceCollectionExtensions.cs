@@ -49,6 +49,12 @@ public static class ServiceCollectionExtensions
         // default. Without it, get_performance honestly reports the monitor as unavailable rather
         // than breaking DI — keeps the assistant embeddable by a host with no monitor.
         services.TryAddSingleton<IServerMetrics, UnavailableServerMetrics>();
+        // Host-firewall visibility/control (get_network / open_ports) degrades closed the same way: a
+        // host that wires the kgsm-firewall authority calls AddKgsmAdapters, which registers a concrete
+        // INetworkInfo that wins over this default. Without it, get_network honestly reports the firewall
+        // as unavailable and a confirmed open_ports honestly reports "nothing changed" rather than
+        // breaking DI — keeps the assistant embeddable by a host with no firewall authority.
+        services.TryAddSingleton<INetworkInfo, UnavailableNetworkInfo>();
         // Engine event history (get_audit_log / get_change_timeline) degrades closed the same way: a
         // host that wires the kgsm-monitor calls AddKgsmAdapters, which registers a concrete
         // IEventHistory that wins over this default. Without it, both tools honestly report the

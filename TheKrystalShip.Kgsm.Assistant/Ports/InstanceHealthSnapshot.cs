@@ -40,6 +40,16 @@ public sealed record HostDisk(int? UsedPercent, string? Size, string? Available)
 /// <param name="HostDiskUnavailableReason">
 /// Why host disk usage is absent. Non-null only when <paramref name="HostDisk"/> is null.
 /// </param>
+/// <param name="PortsReachable">
+/// Whether the instance's configured ports are currently bound/reachable: <c>true</c> when all are
+/// active, <c>false</c> when the server is running but they aren't, <c>null</c> when not probed
+/// (stopped, no ports configured, or the probe failed — the ports check then skips, never fabricating a
+/// pass). Reflects HOST-LOCAL port binding (via <c>ss</c>), NOT firewall or router/UPnP reachability.
+/// </param>
+/// <param name="PortsDetail">
+/// A short human detail for the ports probe (e.g. "no ports configured"), or <c>null</c>. Feeds the
+/// skip/warn wording so an honest "not checked" reason surfaces rather than a bare skip.
+/// </param>
 public sealed record InstanceHealthSnapshot(
     bool Running,
     IReadOnlyList<string> RecentLogLines,
@@ -47,4 +57,6 @@ public sealed record InstanceHealthSnapshot(
     string? CurrentVersion,
     string? LatestVersion,
     HostDisk? HostDisk,
-    string? HostDiskUnavailableReason);
+    string? HostDiskUnavailableReason,
+    bool? PortsReachable = null,
+    string? PortsDetail = null);

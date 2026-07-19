@@ -36,7 +36,7 @@ public class ServerAssistantStreamTests
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
-            agent, _prompt, confirmations, _inventory, _operations,
+            agent, _prompt, confirmations, _inventory, _operations, Substitute.For<INetworkInfo>(),
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
             Options.Create(new SearchOptions { WebEnabled = true }), NullLogger<ServerAssistant>.Instance);
     }

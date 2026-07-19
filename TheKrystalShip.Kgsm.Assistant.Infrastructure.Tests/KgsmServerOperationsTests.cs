@@ -23,6 +23,7 @@ public sealed class KgsmServerOperationsTests : IDisposable
 {
     private readonly IInstanceService _instances = Substitute.For<IInstanceService>();
     private readonly ISystemService _system = Substitute.For<ISystemService>();
+    private readonly IWatcherService _watcher = Substitute.For<IWatcherService>();
     private readonly AsyncLocalInvocationContext _invocation = new();
     private readonly string _root;     // stand-in for an instance (config) directory
     private readonly string _outside;  // a sibling tree the read must never reach
@@ -43,7 +44,7 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     private KgsmServerOperations Create() =>
-        new(_instances, _system, _invocation, NullLogger<KgsmServerOperations>.Instance);
+        new(_instances, _system, _watcher, _invocation, NullLogger<KgsmServerOperations>.Instance);
 
     // --- provenance: a turn/confirm scope stamps actor (the Discord principal) + origin=assistant ---
 
@@ -373,6 +374,46 @@ public sealed class KgsmServerOperationsTests : IDisposable
         s.HostDisk.Should().BeNull();                          // no fabricated 0%
         s.HostDiskUnavailableReason.Should().NotBeNullOrEmpty();
         s.UpdatesAvailable.Should().BeNull();                  // honest unknown preserved
+    }
+
+    [Theory]
+    [InlineData(0, true, null)]     // all configured ports active
+    [InlineData(1, false, null)]    // running but ports not bound
+    [InlineData(44, null, "no ports configured")] // EC_WATCHER_PORT_NOT_ACTIVE → not applicable (skip)
+    public async Task GetHealthSnapshot_Running_MapsPortProbeExitCode(
+        int exitCode, bool? expectedReachable, string? expectedDetail)
+    {
+        _instances.GetInstanceStatus("factorio").Returns(new InstanceRuntimeStatus
+        {
+            InstanceName = "factorio",
+            Status = true, // running → the probe runs
+            Version = new VersionInfo { Current = "1.0.0", Checked = false, UpdatesAvailable = null },
+            RecentLogs = "",
+        });
+        _watcher.TestPortWatch("factorio").Returns(new KgsmResult(exitCode));
+
+        var s = (await Create().GetHealthSnapshotAsync("factorio")).Value!;
+
+        s.PortsReachable.Should().Be(expectedReachable);
+        s.PortsDetail.Should().Be(expectedDetail);
+        _watcher.Received(1).TestPortWatch("factorio");
+    }
+
+    [Fact]
+    public async Task GetHealthSnapshot_Stopped_DoesNotProbePorts()
+    {
+        _instances.GetInstanceStatus("factorio").Returns(new InstanceRuntimeStatus
+        {
+            InstanceName = "factorio",
+            Status = false, // stopped → binding is meaningless, so no probe
+            Version = new VersionInfo { Current = "1.0.0", Checked = false, UpdatesAvailable = null },
+            RecentLogs = "",
+        });
+
+        var s = (await Create().GetHealthSnapshotAsync("factorio")).Value!;
+
+        s.PortsReachable.Should().BeNull();
+        _watcher.DidNotReceive().TestPortWatch(Arg.Any<string>());
     }
 
     [Fact]

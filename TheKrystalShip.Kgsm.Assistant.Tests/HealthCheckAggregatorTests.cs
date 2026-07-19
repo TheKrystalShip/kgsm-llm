@@ -25,7 +25,9 @@ public class HealthCheckAggregatorTests
         string? latest = null,
         HostDisk? disk = null,
         bool hasDisk = true,
-        string? diskReason = null) =>
+        string? diskReason = null,
+        bool? portsReachable = true,
+        string? portsDetail = null) =>
         new(
             Running: running,
             // A healthy running server HAS clean log output; the logs check now Skips on an
@@ -36,7 +38,10 @@ public class HealthCheckAggregatorTests
             LatestVersion: latest,
             // hasDisk:false models "host read failed" — distinct from a present-but-default disk.
             HostDisk: hasDisk ? (disk ?? new HostDisk(26, "916G", "649G")) : null,
-            HostDiskUnavailableReason: diskReason);
+            HostDiskUnavailableReason: diskReason,
+            // A healthy running server's configured ports are active; a null models "not probed" (skip).
+            PortsReachable: portsReachable,
+            PortsDetail: portsDetail);
 
     private static HealthCheck Check(ToolResult<HealthData> r, string name) =>
         r.Data.Checks.Single(c => c.Name == name);
@@ -47,8 +52,8 @@ public class HealthCheckAggregatorTests
         var r = HealthCheckAggregator.Run(Healthy(), "minecraft");
 
         r.Data.Overall.Should().Be(CheckState.Pass);
-        r.Data.Total.Should().Be(4);
-        r.Data.Passed.Should().Be(4);
+        r.Data.Total.Should().Be(5);
+        r.Data.Passed.Should().Be(5);
         r.Data.Skipped.Should().Be(0);
         r.Tool.Should().Be(LlmTools.RunHealthCheck);
         r.Confidence.Should().Be(Confidence.Confirmed);
@@ -65,9 +70,11 @@ public class HealthCheckAggregatorTests
         Check(r, "liveness").State.Should().Be(CheckState.Pass);
         Check(r, "liveness").Severity.Should().Be(Severity.Info);
         Check(r, "logs").State.Should().Be(CheckState.Skip);
+        // Ports also skip on a stopped server (nothing is bound) — a second honest skip.
+        Check(r, "ports").State.Should().Be(CheckState.Skip);
         r.Data.Overall.Should().NotBe(CheckState.Fail);
         r.Data.Overall.Should().Be(CheckState.Pass);
-        r.Data.Skipped.Should().Be(1);
+        r.Data.Skipped.Should().Be(2);
         r.Summary.Should().Contain("stopped").And.Contain("skipped");
     }
 
@@ -103,7 +110,7 @@ public class HealthCheckAggregatorTests
         logs.Detail.Should().Contain("No recent log output");
         r.Data.Overall.Should().Be(CheckState.Pass);   // a skip never fails the overall
         r.Data.Skipped.Should().Be(1);
-        r.Data.Passed.Should().Be(3);                  // liveness + updates + disk
+        r.Data.Passed.Should().Be(4);                  // liveness + updates + disk + ports
     }
 
     [Fact]
@@ -165,6 +172,53 @@ public class HealthCheckAggregatorTests
             Healthy(disk: new HostDisk(null, "916G", "649G")), "minecraft");
 
         Check(r, "disk").State.Should().Be(CheckState.Skip);
+    }
+
+    [Fact]
+    public void Ports_ReachableWhileRunning_Passes()
+    {
+        var r = HealthCheckAggregator.Run(Healthy(portsReachable: true), "factorio-test");
+
+        var ports = Check(r, "ports");
+        ports.State.Should().Be(CheckState.Pass);
+        ports.Severity.Should().Be(Severity.Success);
+        r.Data.Overall.Should().Be(CheckState.Pass);
+    }
+
+    [Fact]
+    public void Ports_UnreachableWhileRunning_Warns_NotFail()
+    {
+        // A running server whose ports aren't bound is a warning (it may still be starting), never a
+        // hard fail — the honest middle ground.
+        var r = HealthCheckAggregator.Run(Healthy(portsReachable: false), "factorio-test");
+
+        var ports = Check(r, "ports");
+        ports.State.Should().Be(CheckState.Warn);
+        ports.State.Should().NotBe(CheckState.Fail);
+        r.Data.Overall.Should().Be(CheckState.Warn);
+    }
+
+    [Fact]
+    public void Ports_NotProbed_Skips_WithReason_NeverFabricatesPass()
+    {
+        // null reachability (no ports configured / probe failed) must Skip, never assert reachable.
+        var r = HealthCheckAggregator.Run(
+            Healthy(portsReachable: null, portsDetail: "no ports configured"), "factorio-test");
+
+        var ports = Check(r, "ports");
+        ports.State.Should().Be(CheckState.Skip);
+        ports.State.Should().NotBe(CheckState.Pass);
+        ports.Detail.Should().Contain("no ports configured");
+        r.Data.Overall.Should().Be(CheckState.Pass); // a skip never fails the overall
+    }
+
+    [Fact]
+    public void Ports_StoppedServer_Skips_WithoutProbing()
+    {
+        // Even with a stale true, a stopped server's ports check skips (binding is meaningless stopped).
+        var r = HealthCheckAggregator.Run(Healthy(running: false, portsReachable: true), "factorio-test");
+
+        Check(r, "ports").State.Should().Be(CheckState.Skip);
     }
 
     [Fact]

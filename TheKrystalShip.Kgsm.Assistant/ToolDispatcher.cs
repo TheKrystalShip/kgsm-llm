@@ -4,6 +4,7 @@ using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
+using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.RootCause;
 using TheKrystalShip.Kgsm.Assistant.Status;
@@ -39,6 +40,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly ISearch _search;
     private readonly IServerMetrics _metrics;
     private readonly IEventHistory _events;
+    private readonly INetworkInfo _network;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
@@ -48,6 +50,7 @@ public class ToolDispatcher : IToolDispatcher
         ISearch search,
         IServerMetrics metrics,
         IEventHistory events,
+        INetworkInfo network,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
@@ -56,6 +59,7 @@ public class ToolDispatcher : IToolDispatcher
         _search = search;
         _metrics = metrics;
         _events = events;
+        _network = network;
         _logger = logger;
     }
 
@@ -74,6 +78,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await RunHealthCheckAsync(call, cancellationToken);
             if (call.Name == LlmTools.GetPerformance)
                 return await GetPerformanceAsync(call, cancellationToken);
+            if (call.Name == LlmTools.GetNetwork)
+                return await GetNetworkAsync(call, cancellationToken);
             if (call.Name == LlmTools.GetAuditLog)
                 return await GetAuditLogAsync(call, cancellationToken);
             if (call.Name == LlmTools.GetChangeTimeline)
@@ -94,6 +100,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await StageInstallAsync(call, cancellationToken);
             if (call.Name == LlmTools.SetConfigValue)
                 return await StageSetConfigAsync(call, cancellationToken);
+            if (call.Name == LlmTools.OpenPorts)
+                return await StageOpenPortsAsync(call, cancellationToken);
 
             return $"Error: '{call.Name}' is not a known tool.";
         }
@@ -305,6 +313,28 @@ public class ToolDispatcher : IToolDispatcher
         return report.Data.State == PerformanceState.Live
             ? new ToolOutput(report.Summary, ToolResultCard.From(report))
             : report.Summary;   // NotRunning / MonitorUnavailable stay summary-only (no card)
+    }
+
+    /// <summary>
+    /// The host-firewall read (mirrors <see cref="GetPerformanceAsync"/>): resolves the instance, reads
+    /// the neutral firewall picture via <see cref="INetworkInfo"/> (the kgsm-firewall authority), and
+    /// runs the pure <see cref="NetworkReport"/>. Only a <see cref="NetworkState.Available"/> read carries
+    /// a card (a real, measured firewall picture); a firewall-unavailable read stays summary-only —
+    /// carding it would fabricate structure we don't have. The port never throws, so there is no error
+    /// path here; a failed read arrives as <see cref="NetworkState.FirewallUnavailable"/>, which the
+    /// aggregator words honestly (and never as router/UPnP forwarding, which the host can't observe).
+    /// </summary>
+    private async Task<ToolOutput> GetNetworkAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var reading = await _network.GetPortsAsync(resolved!, cancellationToken);
+        var report = NetworkReport.Build(reading, resolved!);
+        return report.Data.State == NetworkState.Available
+            ? new ToolOutput(report.Summary, ToolResultCard.From(report))
+            : report.Summary;   // FirewallUnavailable stays summary-only (no card)
     }
 
     /// <summary>
@@ -534,6 +564,33 @@ public class ToolDispatcher : IToolDispatcher
         return $"Staged setting '{key}' on '{resolved}' for confirmation. A confirmation prompt " +
                "with a button has been shown to the user. This is NOT done yet and will only run " +
                "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
+    }
+
+    /// <summary>
+    /// Propose-only (§3.5): resolves the instance and parses/validates the port spec, then STAGES an
+    /// open-ports for human confirmation — the host firewall is never touched here. The validated ports
+    /// ride the confirmation as a canonical string on <c>ConfigValue</c> (so the token round-trips them
+    /// with no new payload field); the confirm path re-parses exactly what was staged. A malformed or
+    /// out-of-range spec short-circuits to the model so it can fix it, and nothing is staged.
+    /// </summary>
+    private async Task<string> StageOpenPortsAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        if (!PortSpecParser.TryParse(call.Arg("ports"), out var ports, out var parseError))
+            return $"Error: {parseError}";
+
+        var canonical = PortSpecParser.ToCanonical(ports);
+
+        _confirmations.Stage(new PendingConfirmation(
+            ConfirmationKind.OpenPorts, resolved!, InstanceName: null, ConfigKey: null, ConfigValue: canonical));
+
+        return $"Staged opening host-firewall port(s) {PortSpecParser.ToDisplay(ports)} on '{resolved}' for " +
+               "confirmation. A confirmation prompt with a button has been shown to the user. This is NOT done " +
+               "yet and will only run if a permitted human clicks Confirm — tell the user it's awaiting their " +
+               "confirmation. Note this opens the HOST firewall only, not router/UPnP port forwarding.";
     }
 
     /// <summary>

@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
@@ -44,6 +45,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IConfirmationContext _confirmations;
     private readonly IServerInventory _inventory;
     private readonly IServerOperations _operations;
+    private readonly INetworkInfo _network;
     private readonly IToolRelevanceFilter _toolFilter;
     private readonly IPromptOverrides _promptOverrides;
     private readonly SearchOptions _searchOptions;
@@ -55,6 +57,7 @@ public class ServerAssistant : IServerAssistant
         IConfirmationContext confirmations,
         IServerInventory inventory,
         IServerOperations operations,
+        INetworkInfo network,
         IToolRelevanceFilter toolFilter,
         IPromptOverrides promptOverrides,
         IOptions<SearchOptions> searchOptions,
@@ -65,6 +68,7 @@ public class ServerAssistant : IServerAssistant
         _confirmations = confirmations;
         _inventory = inventory;
         _operations = operations;
+        _network = network;
         _toolFilter = toolFilter;
         _promptOverrides = promptOverrides;
         _searchOptions = searchOptions.Value;
@@ -319,6 +323,8 @@ public class ServerAssistant : IServerAssistant
                 confirmation.Target, confirmation.InstanceName, cancellationToken),
             ConfirmationKind.SetConfig => await ConfirmSetConfigAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
+            ConfirmationKind.OpenPorts => await ConfirmOpenPortsAsync(
+                confirmation.Target, confirmation.ConfigValue, cancellationToken),
             ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
                 or ConfirmationKind.Update or ConfirmationKind.Backup
                 => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
@@ -444,6 +450,51 @@ public class ServerAssistant : IServerAssistant
         return result.IsSuccess
             ? Result.Success($"Set {key} = {shown} on '{match}'.")
             : Result.Failure<string>($"Could not set {key} on '{match}': {result.Error ?? "unknown error"}.");
+    }
+
+    /// <summary>
+    /// Re-validates the instance still exists (it was resolved at staging time, and a stateless token is
+    /// replayable within its lifetime), re-parses the port spec carried on the token, then opens the
+    /// HOST-FIREWALL ports via <see cref="INetworkInfo.OpenPortsAsync"/> — the real execution point.
+    /// The firewall authority's precise outcome is mapped to an honest user-facing result: an unreachable
+    /// authority, an unsupported backend, and an inactive (staged-not-enforcing) backend each read
+    /// differently and never as a fabricated "opened". This opens the host firewall only; the message
+    /// never implies router/UPnP forwarding.
+    /// </summary>
+    private async Task<Result<string>> ConfirmOpenPortsAsync(
+        string target, string? portSpec, CancellationToken cancellationToken)
+    {
+        if (!PortSpecParser.TryParse(portSpec, out var ports, out var parseError))
+            return Result.Failure<string>($"The staged ports were invalid ({parseError}) — nothing was opened.");
+
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        var match = instances.Keys.FirstOrDefault(
+            k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+            return Result.Failure<string>($"'{target}' no longer exists — nothing to open ports on.");
+
+        _logger.LogInformation("Confirmed open-ports of {Instance} ({Ports})", match, PortSpecParser.ToCanonical(ports));
+
+        var result = await _network.OpenPortsAsync(match, ports, cancellationToken);
+        var shown = PortSpecParser.ToDisplay(ports);
+        var backend = string.IsNullOrWhiteSpace(result.Backend) ? "the firewall" : result.Backend;
+
+        return result.State switch
+        {
+            NetworkActionState.Applied =>
+                Result.Success($"Opened host-firewall port(s) {shown} for '{match}' ({backend})."),
+            NetworkActionState.AppliedInactive =>
+                Result.Success($"Wrote host-firewall rules for port(s) {shown} on '{match}', but {backend} isn't " +
+                               "enforcing yet — they'll take effect when it's enabled (the ports are reachable meanwhile)."),
+            NetworkActionState.NoOp =>
+                Result.Success($"Host-firewall port(s) {shown} were already open for '{match}' — nothing to change."),
+            NetworkActionState.Unsupported =>
+                Result.Failure<string>($"This host has no firewall backend that can open ports, so nothing was changed for '{match}'."),
+            NetworkActionState.FirewallUnavailable =>
+                Result.Failure<string>($"The firewall service isn't reachable, so the port(s) for '{match}' couldn't be opened. Nothing was changed."),
+            _ =>
+                Result.Failure<string>($"Could not open host-firewall port(s) {shown} for '{match}': {result.Detail ?? "the firewall rejected the change"}."),
+        };
     }
 
     /// <summary>

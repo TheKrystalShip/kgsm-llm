@@ -8,6 +8,7 @@ using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
+using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.RootCause;
 using TheKrystalShip.Kgsm.Assistant.Search;
@@ -30,6 +31,7 @@ public class ToolDispatcherTests
     private readonly ISearch _search = Substitute.For<ISearch>();
     private readonly IServerMetrics _metrics = Substitute.For<IServerMetrics>();
     private readonly IEventHistory _events = Substitute.For<IEventHistory>();
+    private readonly INetworkInfo _network = Substitute.For<INetworkInfo>();
     private readonly ConfirmationContext _confirmations = new();
 
     public ToolDispatcherTests()
@@ -50,7 +52,7 @@ public class ToolDispatcherTests
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, _search, _metrics, _events, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _search, _metrics, _events, _network, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -498,6 +500,91 @@ public class ToolDispatcherTests
 
         result.Should().Contain("no instance named");
         await _metrics.DidNotReceive().GetSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- get_network (host-firewall picture via the INetworkInfo port) ---
+    // The dispatcher resolves the instance, reads the neutral picture, runs the pure aggregator, and
+    // attaches a card ONLY for an Available read; the wording lives in NetworkReportTests.
+
+    private static LlmToolCall NetworkCall(string instance) => Call(LlmTools.GetNetwork, instance);
+
+    [Fact]
+    public async Task GetNetwork_Available_SurfacesTheNetworkCard()
+    {
+        _network.GetPortsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new NetworkReading(
+                NetworkState.Available, "ufw", PortListState.Enumerated, NetworkEnforcement.Enforcing,
+                new[] { new PortRule(25565, 25565, "tcp") }));
+
+        var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
+
+        await _network.Received(1).GetPortsAsync("minecraft", Arg.Any<CancellationToken>());
+        output.Summary.Should().Contain("25565/tcp").And.Contain("host firewall only");
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.GetNetwork.Name);
+        card.Subject.Should().Be(new ResultRef(ResourceKind.Network, "minecraft"));
+        var data = card.Data.Should().BeOfType<NetworkData>().Subject;
+        data.Backend.Should().Be("ufw");
+        data.Ports.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task GetNetwork_FirewallUnavailable_StaysSummaryOnly()
+    {
+        _network.GetPortsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new NetworkReading(
+                NetworkState.FirewallUnavailable, "", PortListState.Unknown, NetworkEnforcement.Unknown,
+                Array.Empty<PortRule>()));
+
+        var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
+
+        output.Summary.Should().Contain("unavailable").And.Contain("isn't a sign no ports are open");
+        output.Data.Should().BeNull();   // couldn't read → no card
+    }
+
+    [Fact]
+    public async Task GetNetwork_UnresolvedInstance_DoesNotRead()
+    {
+        var result = await Summary(NetworkCall("doesnotexist"));
+
+        result.Should().Contain("no instance named");
+        await _network.DidNotReceive().GetPortsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- open_ports (propose-only staged command) ---
+
+    private static LlmToolCall OpenPortsCall(string instance, string ports) =>
+        new(LlmTools.OpenPorts, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["ports"] = ports,
+        });
+
+    [Fact]
+    public async Task OpenPorts_StagesCanonicalSpec_ForConfirmation()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft", "25565/tcp"))).Summary;
+
+            summary.Should().Contain("Staged").And.Contain("25565/tcp").And.Contain("HOST firewall only");
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new PendingConfirmation(
+                    ConfirmationKind.OpenPorts, "minecraft", InstanceName: null,
+                    ConfigKey: null, ConfigValue: "25565/tcp"));
+        }
+    }
+
+    [Fact]
+    public async Task OpenPorts_InvalidSpec_IsRejected_NothingStaged()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft", "not-a-port"))).Summary;
+
+            summary.Should().StartWith("Error");
+            _confirmations.Staged.Should().BeEmpty();
+        }
     }
 
     private static LlmToolCall PerformanceTrendCall(string instance, string range) =>

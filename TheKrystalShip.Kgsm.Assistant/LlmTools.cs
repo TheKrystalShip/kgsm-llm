@@ -28,6 +28,12 @@ public static class LlmTools
     // tool offered to everyone, not a file-content read.
     public static readonly Tool GetPerformance = new("get_performance");
 
+    // Host-firewall picture for one instance — the ports KGSM has opened for it plus the firewall
+    // backend and its enforcement state, read from the kgsm-firewall authority. Read-only and offered
+    // to everyone (it reveals no file contents). Covers the HOST FIREWALL only: router/UPnP forwarding
+    // is not observable from the host and is never reported (honesty rule).
+    public static readonly Tool GetNetwork = new("get_network");
+
     // Engine event history, read straight from the kgsm-monitor's event store (never via kgsm-api —
     // the assistant is a leaf, plan §9). get_audit_log is the unfiltered "what happened" read;
     // get_change_timeline shares the same source but narrows to the state-changing subset and frames
@@ -68,6 +74,11 @@ public static class LlmTools
     public static readonly Tool InstallServer = new("install_server");
     public static readonly Tool UninstallServer = new("uninstall_server");
     public static readonly Tool SetConfigValue = new("set_config_value");
+
+    // Propose opening HOST-FIREWALL ports for an instance (via the kgsm-firewall authority). Staged for
+    // human confirmation like every command; on confirm it opens the host firewall only — it does NOT
+    // configure router/UPnP port forwarding (no such control surface exists from the host).
+    public static readonly Tool OpenPorts = new("open_ports");
 
     /// <summary>
     /// The verbs <see cref="ServerCommand"/> accepts, in display order. Single source of
@@ -157,6 +168,12 @@ public static class LlmTools
         "Which lifecycle action to take on the server: start, stop, restart, update, or backup.",
         AllowedValues: ServerCommandVerbs);
 
+    private static readonly LlmToolParameter OpenPortsSpec = new(
+        "ports",
+        "The host-firewall port(s) to open — e.g. \"34197/udp\", \"27015/tcp\", or a range " +
+        "\"27015:27020/udp\". Separate multiple with commas. Include the protocol (tcp or udp); if you " +
+        "omit it, both are opened.");
+
     private static readonly LlmToolParameter ReadPath = new(
         "path",
         "Optional. The file to read, as a path relative to the server's own directory — e.g. " +
@@ -202,6 +219,14 @@ public static class LlmTools
             "window as a chart (\"how has X been doing over the last hour/day?\", \"is X's memory " +
             "climbing?\"). A stopped server has no live snapshot but may still have recent history.",
             InstanceName, PerformanceRange),
+
+        LlmToolDefinition.Create(GetNetwork,
+            "Report the HOST-FIREWALL ports open for ONE server — the ports KGSM has opened for it, plus " +
+            "the firewall backend and whether it's actively enforcing. Use this for \"what ports are open " +
+            "for X?\", \"is X's port allowed through the firewall?\", or \"which firewall backend is " +
+            "active?\". This is the host firewall only — it does NOT show router/UPnP port forwarding " +
+            "(that can't be seen from the host), so never imply it does.",
+            InstanceName),
 
         LlmToolDefinition.Create(GetAuditLog,
             "Get recent operational events for a server (or every server) — starts, stops, crashes, " +
@@ -299,6 +324,14 @@ public static class LlmTools
             "forwarding/_command_shortcuts) — those have dedicated flows — so proposing one of those is " +
             "rejected when confirmed; tell the user rather than retrying.",
             InstanceName, ConfigKey, ConfigValue),
+
+        LlmToolDefinition.Create(OpenPorts,
+            "Propose opening HOST-FIREWALL ports for a server so players can reach it — e.g. its game " +
+            "port. Staged for human confirmation; it does not run until a person confirms. This opens the " +
+            "host's own firewall only (via the firewall authority); it does NOT set up router/UPnP port " +
+            "forwarding, so don't imply the server will be reachable from the internet if the router isn't " +
+            "already forwarding.",
+            InstanceName, OpenPortsSpec),
     };
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>

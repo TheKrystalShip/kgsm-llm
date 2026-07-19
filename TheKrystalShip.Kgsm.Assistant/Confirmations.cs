@@ -20,7 +20,11 @@ public enum ConfirmationKind
     Backup,
     // §3.8: set a single key=value in an instance's .config.ini. Propose-only like the
     // rest; carries a key/value payload and has its own confirm path (like Install).
-    SetConfig
+    SetConfig,
+    // Open host-firewall ports for an instance (via the kgsm-firewall authority). Propose-only
+    // like the rest; carries the port spec on ConfigValue and has its own confirm path (like
+    // SetConfig). APPENDED — never reorder (tokens encode (int)Kind).
+    OpenPorts
 }
 
 /// <summary>
@@ -66,6 +70,7 @@ public static class ConfirmationKinds
         ConfirmationKind.Uninstall => "uninstall",
         ConfirmationKind.Install => "install",
         ConfirmationKind.SetConfig => "set config on",
+        ConfirmationKind.OpenPorts => "open firewall ports on",
         _ => kind.ToString().ToLowerInvariant(),
     };
 
@@ -80,6 +85,7 @@ public static class ConfirmationKinds
         ConfirmationKind.Uninstall => "uninstalled",
         ConfirmationKind.Install => "installed",
         ConfirmationKind.SetConfig => "reconfigured",
+        ConfirmationKind.OpenPorts => "had its firewall ports opened",
         _ => kind.ToString().ToLowerInvariant(),
     };
 }

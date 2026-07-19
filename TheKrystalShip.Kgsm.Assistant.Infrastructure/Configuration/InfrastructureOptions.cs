@@ -27,6 +27,20 @@ public sealed class MonitorOptions
     public string SocketPath { get; set; } = "/run/kgsm-monitor/metrics.sock";
 }
 
+/// <summary>
+/// Connection to the kgsm-firewall authority — the host-firewall control daemon whose unix socket backs
+/// the <c>get_network</c> read and the <c>open_ports</c> command. Optional — with no authority reachable
+/// the adapter fails closed (reports the firewall unavailable / nothing changed), so this is a path, not
+/// a dependency.
+/// </summary>
+public sealed class FirewallOptions
+{
+    public const string Section = "Firewall";
+
+    /// <summary>Path to the kgsm-firewall control unix socket. A standard install serves it here.</summary>
+    public string SocketPath { get; set; } = "/run/kgsm-firewall/firewall.sock";
+}
+
 /// <summary>TTLs for the in-process inventory cache. A backstop; hosts also invalidate explicitly
 /// (the service from the kgsm webhook, the CLI after a confirmed mutation).</summary>
 public sealed class InventoryCacheOptions

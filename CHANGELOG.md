@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A `get_network(instance_name)` read-only tool — reports one instance's HOST-FIREWALL picture: the
+  ports KGSM has opened for it (via the kgsm-firewall authority), the active backend, and whether it's
+  enforcing. Backed by the neutral `INetworkInfo` port and the pure `Network.NetworkReport` composer
+  (no nested model call); the `KgsmNetworkInfo` adapter reaches the firewall authority through
+  kgsm-lib's `IFirewallService` (`ListOwnedAsync` + `BackendAsync`) and fails closed — an unreachable
+  authority reads as an honest "firewall unavailable", never a fabricated "nothing open". Covers the
+  host firewall ONLY: router/UPnP port forwarding is not observable from the host, so it is never
+  reported or implied. Offered to everyone (reveals no file contents); only an `Available` read carries
+  a `NetworkData` card, an unavailable read stays summary-only.
+- An `open_ports(instance_name, ports)` propose-only staged command — opens HOST-FIREWALL ports for an
+  instance on human confirmation. Staged like every command (never runs in a turn); on confirm it calls
+  kgsm-lib `IFirewallService.EnsureOpenAsync` through `INetworkInfo`, mapping the authority's precise
+  outcome (applied / applied-but-not-enforcing / no-op / unsupported / unreachable) to an honest result,
+  never a fabricated open. The `ports` argument accepts `port`, `port/proto`, `start:end`, and
+  `start:end/proto` forms (comma/pipe separated; a missing protocol opens both tcp and udp), parsed once
+  by `Network.PortSpecParser` and carried on the confirmation token as a canonical string. Opens the
+  host firewall only — it does NOT configure router/UPnP port forwarding.
+- `run_health_check` gains a fifth **port-reachability** check — for a running instance, whether its
+  configured ports are currently bound (host-local `ss` probe via kgsm-lib `watcher ports test`).
+  Reachable → pass; running-but-unbound → warn (it may still be starting), never a hard fail; a stopped
+  server, an instance with no ports configured, or a failed probe → skip, never a fabricated pass. This
+  is host-local port binding, distinct from `get_network`'s firewall-rule view.
 - A `trace_root_cause(instance_name, range?)` tool — the toolbox's capstone aggregator (plan §3.4/
   §7·Q1): a DETERMINISTIC composition of one instance's engine event timeline, a metrics window, and
   its health/status snapshot, run through a fixed rules table of known KGSM failure signatures. No

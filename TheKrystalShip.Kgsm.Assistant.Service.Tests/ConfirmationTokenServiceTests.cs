@@ -96,6 +96,25 @@ public class ConfirmationTokenServiceTests
     }
 
     [Fact]
+    public void RoundTrip_OpenPorts_PreservesPortSpecOnConfigValue()
+    {
+        // open_ports carries its validated port spec on ConfigValue (Cv), so the confirm path re-parses
+        // exactly what was staged — the token must round-trip it, and the (int)Kind must decode to the
+        // appended OpenPorts member (proof the enum append didn't shift an existing kind).
+        var service = Create();
+        var token = service.Create(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: null, ConfigValue: "27015:27020/tcp,34197/udp"),
+            "user-1");
+
+        service.TryValidate(token, out var parsed, out var userId).Should().BeTrue();
+        parsed.Kind.Should().Be(ConfirmationKind.OpenPorts);
+        parsed.Target.Should().Be("factorio");
+        parsed.ConfigValue.Should().Be("27015:27020/tcp,34197/udp");
+        userId.Should().Be("user-1");
+    }
+
+    [Fact]
     public void TamperedPayload_FailsValidation()
     {
         var service = Create();

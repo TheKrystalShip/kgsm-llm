@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
+using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
@@ -23,6 +24,7 @@ public class ServerAssistantConfirmTests
 {
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
+    private readonly INetworkInfo _network = Substitute.For<INetworkInfo>();
 
     private ServerAssistant Create() => new(
         Substitute.For<ILlmAgent>(),
@@ -30,6 +32,7 @@ public class ServerAssistantConfirmTests
         new ConfirmationContext(),
         _inventory,
         _operations,
+        _network,
         new NoopToolRelevanceFilter(),
         new PassthroughPromptOverrides(),
         Options.Create(new SearchOptions()),
@@ -159,6 +162,73 @@ public class ServerAssistantConfirmTests
         result.Value.Should().Contain("minecraft").And.Contain("auto_update").And.Contain("true");
         await _operations.Received(1)
             .SetInstanceConfigValueAsync("minecraft", "auto_update", "true", Arg.Any<CancellationToken>());
+    }
+
+    // --- open_ports (host-firewall) --------------------------------------------------------
+
+    [Fact]
+    public async Task OpenPorts_HappyPath_OpensViaFirewall_AndReportsOutcome()
+    {
+        Instances("factorio");
+        _network.OpenPortsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new NetworkActionResult(NetworkActionState.Applied, "ufw", null)));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: null, ConfigValue: "34197/udp"),
+            canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("factorio").And.Contain("34197/udp");
+        await _network.Received(1).OpenPortsAsync(
+            "factorio",
+            Arg.Is<IReadOnlyList<PortRule>>(p => p.Count == 1 && p[0] == new PortRule(34197, 34197, "udp")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OpenPorts_FirewallUnreachable_FailsHonestly_NoFabricatedOpen()
+    {
+        Instances("factorio");
+        _network.OpenPortsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new NetworkActionResult(NetworkActionState.FirewallUnavailable, "", null)));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: null, ConfigValue: "34197/udp"),
+            canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("isn't reachable").And.Contain("Nothing was changed");
+    }
+
+    [Fact]
+    public async Task OpenPorts_TargetGone_IsRefused_WithoutOpening()
+    {
+        Instances(); // vanished since staging
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: null, ConfigValue: "34197/udp"),
+            canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("no longer exists");
+        await _network.DidNotReceive().OpenPortsAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OpenPorts_UnauthorizedCaller_IsRefused_AndNothingOpens()
+    {
+        Instances("factorio");
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: null, ConfigValue: "34197/udp"),
+            canPerformActions: false);
+
+        result.IsFailure.Should().BeTrue();
+        await _network.DidNotReceive().OpenPortsAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

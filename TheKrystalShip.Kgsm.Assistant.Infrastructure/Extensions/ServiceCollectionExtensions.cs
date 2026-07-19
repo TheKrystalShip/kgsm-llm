@@ -14,6 +14,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Search;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
+using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Services;
 using TheKrystalShip.Rag.Ollama;
 
@@ -57,6 +58,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IInstanceService, InstanceService>();
         services.AddSingleton<IBlueprintService, BlueprintService>();
         services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
+        services.AddSingleton<IWatcherService, WatcherService>(); // port-reachability probe for run_health_check
 
         // One singleton inventory, exposed under both the read port and the invalidation seam so
         // a host's Invalidate() and the assistant's reads hit the SAME cache.
@@ -136,6 +138,20 @@ public static class ServiceCollectionExtensions
                 }
             }
         });
+
+        // --- Host firewall (kgsm-firewall authority) -------------------------------------------
+        // Backs get_network (read) and open_ports (the confirmed mutation) by reaching the kgsm-firewall
+        // authority through kgsm-lib's IFirewallService. Registered AFTER AddKgsmAssistant, so this
+        // concrete INetworkInfo wins over the library's fail-closed UnavailableNetworkInfo default.
+        // Additive: with no authority reachable the client throws FirewallException on connect, which the
+        // adapter maps to "firewall unavailable" (never throws), so the assistant runs standalone. The
+        // firewall authority is a separate daemon from the monitor, on its own socket.
+        var firewall = config.GetSection(FirewallOptions.Section).Get<FirewallOptions>() ?? new FirewallOptions();
+        var firewallSocketPath = string.IsNullOrWhiteSpace(firewall.SocketPath)
+            ? new FirewallOptions().SocketPath
+            : firewall.SocketPath;
+        services.AddKgsmFirewallClient(firewallSocketPath);
+        services.AddSingleton<INetworkInfo, KgsmNetworkInfo>();
 
         // --- Web search (Tavily) ---------------------------------------------------------------
         // The assistant's web_search port. The API key is ENV-ONLY (WebSearch__ApiKey) and travels

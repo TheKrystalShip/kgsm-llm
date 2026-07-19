@@ -26,15 +26,21 @@ internal sealed class KgsmServerOperations : IServerOperations
 {
     private readonly IInstanceService _instances;
     private readonly ISystemService _system;
+    private readonly IWatcherService _watcher;
     private readonly IInvocationContext _invocation;
     private readonly ILogger<KgsmServerOperations> _logger;
 
+    // kgsm's `watcher ports test` exit code when the instance has no ports configured — treated as
+    // "not applicable" (the health ports check skips) rather than "not reachable".
+    private const int NoPortsConfiguredExit = 44; // EC_WATCHER_PORT_NOT_ACTIVE
+
     public KgsmServerOperations(
-        IInstanceService instances, ISystemService system, IInvocationContext invocation,
-        ILogger<KgsmServerOperations> logger)
+        IInstanceService instances, ISystemService system, IWatcherService watcher,
+        IInvocationContext invocation, ILogger<KgsmServerOperations> logger)
     {
         _instances = instances;
         _system = system;
+        _watcher = watcher;
         _invocation = invocation;
         _logger = logger;
     }
@@ -410,6 +416,15 @@ internal sealed class KgsmServerOperations : IServerOperations
                 diskReason = "the host disk usage could not be read";
             }
 
+            // Port reachability is best-effort and only meaningful while running: its absence skips the
+            // ports check, it never fails the read. `watcher ports test` probes whether the configured
+            // ports are currently bound (host-local `ss`), NOT firewall/router reachability.
+            bool? portsReachable = null;
+            string? portsDetail = null;
+            if (status.Status)
+                (portsReachable, portsDetail) = await Task.Run(
+                    () => ProbePorts(instance), cancellationToken);
+
             var snapshot = new InstanceHealthSnapshot(
                 Running: status.Status,
                 RecentLogLines: logLines,
@@ -417,7 +432,9 @@ internal sealed class KgsmServerOperations : IServerOperations
                 CurrentVersion: NullIfEmpty(status.Version.Current),
                 LatestVersion: status.Version.Latest,
                 HostDisk: hostDisk,
-                HostDiskUnavailableReason: diskReason);
+                HostDiskUnavailableReason: diskReason,
+                PortsReachable: portsReachable,
+                PortsDetail: portsDetail);
 
             return Result.Success(snapshot);
         }
@@ -425,6 +442,30 @@ internal sealed class KgsmServerOperations : IServerOperations
         {
             _logger.LogError(ex, "GetHealthSnapshot failed for {Instance}", instance);
             return Result.Failure<InstanceHealthSnapshot>(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort port-reachability probe for the health check, mapping kgsm's <c>watcher ports test</c>
+    /// exit code to the neutral (reachable?, detail) shape. Exit 0 → all configured ports active; the
+    /// no-ports-configured code → not applicable (null → the check skips); any other non-zero while
+    /// running → not active (a warning); a thrown probe → null (skip), never a fabricated pass.
+    /// </summary>
+    private (bool?, string?) ProbePorts(string instance)
+    {
+        try
+        {
+            var result = _watcher.TestPortWatch(instance);
+            if (result.ExitCode == 0)
+                return (true, null);
+            if (result.ExitCode == NoPortsConfiguredExit)
+                return (null, "no ports configured");
+            return (false, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Port reachability probe failed for health check of {Instance}", instance);
+            return (null, null);
         }
     }
 

@@ -83,6 +83,9 @@ public enum ResourceKind
 
     /// <summary>A knowledge search (the operator's indexed docs / the web) — the query is its id.</summary>
     Search,
+
+    /// <summary>An instance's host-firewall network picture (the <c>get_network</c> subject).</summary>
+    Network,
 }
 
 /// <summary>

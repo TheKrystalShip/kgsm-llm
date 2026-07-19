@@ -38,15 +38,16 @@ public static class HealthCheckAggregator
         var logs = CheckLogs(snapshot);
         var updates = CheckUpdates(snapshot);
         var disk = CheckDisk(snapshot);
+        var ports = CheckPorts(snapshot);
 
-        var checks = new[] { liveness, logs, updates, disk };
+        var checks = new[] { liveness, logs, updates, disk, ports };
 
         var overall = WorstNonSkip(checks);
         var passed = checks.Count(c => c.State == CheckState.Pass);
         var skipped = checks.Count(c => c.State == CheckState.Skip);
 
         var data = new HealthData(overall, checks, passed, checks.Length, skipped);
-        var summary = BuildSummary(instanceId, snapshot.Running, overall, logs, updates, disk);
+        var summary = BuildSummary(instanceId, snapshot.Running, overall, logs, updates, disk, ports);
 
         return new ToolResult<HealthData>(
             Tool: LlmTools.RunHealthCheck,
@@ -132,6 +133,32 @@ public static class HealthCheckAggregator
             $"Disk OK ({pct}% used{free}).");
     }
 
+    private static HealthCheck CheckPorts(InstanceHealthSnapshot s)
+    {
+        // Port binding is only meaningful for a running server; a stopped one binds nothing.
+        if (!s.Running)
+            return new HealthCheck(
+                "ports", CheckState.Skip, Severity.Info, "Port reachability skipped — instance not running.");
+
+        // Honest unknown: not probed / no ports configured / probe failed → skip, never a fabricated pass.
+        if (s.PortsReachable is null)
+            return new HealthCheck(
+                "ports", CheckState.Skip, Severity.Info,
+                s.PortsDetail is { Length: > 0 } reason
+                    ? $"Port reachability not checked ({reason})."
+                    : "Port reachability not checked.");
+
+        if (s.PortsReachable == true)
+            return new HealthCheck(
+                "ports", CheckState.Pass, Severity.Success, "Configured ports are active.");
+
+        // Running but ports not bound — a warning, not a hard fail (the server may still be starting up).
+        var detail = s.PortsDetail is { Length: > 0 } d
+            ? $"Configured ports are not active ({d})."
+            : "Configured ports are not active while the server is running.";
+        return new HealthCheck("ports", CheckState.Warn, Severity.Warn, detail);
+    }
+
     // --- Synthesis helpers -------------------------------------------------
 
     /// <summary>The worst state across checks, ignoring <see cref="CheckState.Skip"/>.</summary>
@@ -163,7 +190,7 @@ public static class HealthCheckAggregator
     /// </summary>
     private static string BuildSummary(
         string id, bool running, CheckState overall,
-        HealthCheck logs, HealthCheck updates, HealthCheck disk)
+        HealthCheck logs, HealthCheck updates, HealthCheck disk, HealthCheck ports)
     {
         var headline = (overall, running) switch
         {
@@ -173,7 +200,7 @@ public static class HealthCheckAggregator
             (_, false) => $"{id}: stopped (idle).",
         };
 
-        var rest = string.Join(" ", new[] { logs.Detail, updates.Detail, disk.Detail }
+        var rest = string.Join(" ", new[] { logs.Detail, updates.Detail, disk.Detail, ports.Detail }
             .Where(d => !string.IsNullOrWhiteSpace(d)));
 
         return string.IsNullOrEmpty(rest) ? headline : $"{headline} {rest}";

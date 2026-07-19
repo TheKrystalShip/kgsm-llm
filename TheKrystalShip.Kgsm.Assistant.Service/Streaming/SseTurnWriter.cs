@@ -162,6 +162,7 @@ internal static class SseTurnWriter
         ConfirmationKind.Uninstall => "uninstall",
         ConfirmationKind.Backup => "backup",
         ConfirmationKind.SetConfig => "set_config",
+        ConfirmationKind.OpenPorts => "open_ports",
         _ => kind.ToString().ToLowerInvariant(),
     };
 
@@ -174,6 +175,10 @@ internal static class SseTurnWriter
     {
         if (c.Kind == ConfirmationKind.SetConfig && c.ConfigKey is not null)
             return $"Set {c.ConfigKey} = {c.ConfigValue} on {c.Target}?";
+
+        // open_ports carries the port spec on ConfigValue; surface it in the prompt (host firewall only).
+        if (c.Kind == ConfirmationKind.OpenPorts && !string.IsNullOrWhiteSpace(c.ConfigValue))
+            return $"Open host-firewall port(s) {c.ConfigValue} on {c.Target}?";
 
         var verb = ConfirmationKinds.Verb(c.Kind); // "start", "back up", "set config on", …
         return $"{char.ToUpperInvariant(verb[0])}{verb[1..]} {c.Target}?";

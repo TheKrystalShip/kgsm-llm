@@ -35,8 +35,10 @@ public static class KgsmAssistantPrompts
         "several actions in sequence (e.g. stop, then back up, then update) — issue the tool calls " +
         "in the order requested. When a user asks whether a server is healthy or OK, or what's wrong " +
         "with one, use the health-check tool for that one server rather than fetching its status, logs " +
-        "and disk separately. To check whether a specific server is running, or to find its port or " +
-        "network details, call get_status for that instance rather than saying you cannot. You can also " +
+        "and disk separately. To check whether a specific server is running or find the port it " +
+        "listens on, call get_status for that instance; to check firewall or router reachability (is " +
+        "its port open, is it reachable from outside) use get_network — rather than saying you cannot. " +
+        "You can also " +
         "search the public web, but ONLY for outside facts that " +
         "help with the games or servers (a game's latest version, patch notes, what a setting does) " +
         "— never to answer questions about this host's own servers, which the other tools already " +

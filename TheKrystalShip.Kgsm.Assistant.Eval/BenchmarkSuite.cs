@@ -27,8 +27,11 @@ internal static class BenchmarkSuite
 {
     /// <summary>Corpus version — stamped into results; <c>compare</c> warns across a version change.
     /// v2 added the ambiguous-diagnosis "G" group. v3 retargeted the E-group search rubrics from the
-    /// removed model-facing <c>web_search</c> onto the unified <c>search</c> tool (Phase 4).</summary>
-    public const string Version = "v3";
+    /// removed model-facing <c>web_search</c> onto the unified <c>search</c> tool. v4 covers the tools
+    /// added since the hand-eval — performance (P), network reachability (N), event/change/root-cause
+    /// history (H), file reads (R), and the open-ports / uninstall staging cases (C11–C13) — so tool
+    /// selection is measured across the whole current catalog, not just its original half.</summary>
+    public const string Version = "v4";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -176,6 +179,91 @@ internal static class BenchmarkSuite
                 C.CalledTool(LlmTools.GetStatus), C.Clarifies(),
                 C.FinalHas(@"\bwhich\b|what.{0,15}(happening|wrong|server|going on)|let'?s (start|check|take|look)|start by|narrow (it|this) down",
                     "focuses the vague problem", Rubric.D_ClarifyVsGuess))),
+
+        // --- Tools added since the hand-eval. These assert the INTENDED trajectory for the current
+        // catalog; a red here is a routing signal to drive prompt/description tuning, not necessarily a
+        // model defect. Trajectory signals only (which tool / what it staged), never a world fact. ---
+
+        // Performance (get_performance): a live snapshot vs a trend over a window. The auto-check asserts
+        // the tool; snapshot-vs-range is a transcript read (the tool is right either way).
+        Single("P1", "how much CPU/RAM is <game> using right now?", true, new[] { FixtureRole.UniqueGame },
+            "how much CPU and memory is {unique_game} using right now?",
+            C.CalledTool(LlmTools.GetPerformance, "uses the performance tool"),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        Single("P2", "how has <game>'s memory been over the last day?", true, new[] { FixtureRole.UniqueGame },
+            "has {unique_game}'s memory been climbing over the last day?",
+            C.CalledTool(LlmTools.GetPerformance, "uses the performance tool for the trend"),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // Network reachability (get_network) — distinct from B5's "what port is it ON" (get_status): these
+        // are firewall/router reachability questions, the get_network lane.
+        Single("N1", "is <game>'s port open in the firewall?", true, new[] { FixtureRole.UniqueGame },
+            "is {unique_game}'s port actually open in the firewall?",
+            C.CalledTool(LlmTools.GetNetwork, "uses the network tool for firewall reachability"),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        Single("N2", "is <game> reachable from the internet?", true, new[] { FixtureRole.UniqueGame },
+            "is {unique_game} reachable from the internet right now?",
+            C.CalledTool(LlmTools.GetNetwork, "uses the network tool for router/UPnP reachability"),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // History / diagnosis (H): the full event feed vs durable changes vs the root-cause capstone.
+        Single("H1", "what happened with <game> recently?", true, new[] { FixtureRole.UniqueGame },
+            "what's been happening with {unique_game} recently?",
+            C.AnyOf(Rubric.B_Routing, "reads the event feed (audit log)",
+                C.CalledTool(LlmTools.GetAuditLog), C.CalledTool(LlmTools.GetChangeTimeline)),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        Single("H2", "when was <game> last updated?", true, new[] { FixtureRole.UniqueGame },
+            "when was {unique_game} last updated?",
+            C.AnyOf(Rubric.B_Routing, "reads the change timeline",
+                C.CalledTool(LlmTools.GetChangeTimeline), C.CalledTool(LlmTools.GetAuditLog)),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // The root-cause capstone: an incident/history "why" (trace_root_cause), NOT a right-now health
+        // check (run_health_check, B3). B4 covers the general "how to diagnose"; this asserts the tool.
+        Single("H3", "why did <game> crash?", true, new[] { FixtureRole.UniqueGame },
+            "why did {unique_game} crash?",
+            C.AnyOf(Rubric.B_Routing, "routes to the root-cause / diagnosis tools",
+                C.CalledTool(LlmTools.TraceRootCause),
+                C.CalledTool(LlmTools.GetAuditLog), C.CalledTool(LlmTools.RunHealthCheck)),
+            C.StagesNothing(Rubric.C_ProposeOnly, "stages no command for a why-question"),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // File reads (authorized tier): read_file to see a specific file, list_files to discover them.
+        Single("R1", "show me <game>'s server.properties", true, new[] { FixtureRole.UniqueGame },
+            "show me what's in {unique_game}'s server.properties file",
+            C.AnyOf(Rubric.B_Routing, "reads the file (or lists to find it first)",
+                C.CalledTool(LlmTools.ReadFile), C.CalledTool(LlmTools.ListFiles)),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        Single("R2", "what files are in <game>'s folder?", true, new[] { FixtureRole.UniqueGame },
+            "what files are in {unique_game}'s directory?",
+            C.AnyOf(Rubric.B_Routing, "lists the server's files",
+                C.CalledTool(LlmTools.ListFiles), C.CalledTool(LlmTools.ReadFile)),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // Open ports (staged): host firewall only, and the include_router leg proven via the staged payload.
+        Single("C11", "open port <n> for <game>", true, new[] { FixtureRole.UniqueGame },
+            "open port 27015 for {unique_game}",
+            C.Stages(ConfirmationKind.OpenPorts),
+            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        Single("C12", "make <game> reachable from the internet", true, new[] { FixtureRole.UniqueGame },
+            "open {unique_game} up so my friends outside my network can join",
+            C.StagesWith(ConfirmationKind.OpenPorts, s => string.Equals(s.ConfigKey, "router", StringComparison.OrdinalIgnoreCase),
+                "stages the router/UPnP forward leg (include_router)"),
+            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // Uninstall (staged, irreversible tier) — the one staged command with no prior benchmark case.
+        Single("C13", "delete the <game> server", true, new[] { FixtureRole.UniqueGame },
+            "delete the {unique_game} server for good",
+            C.Stages(ConfirmationKind.Uninstall),
+            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
         // Multi-turn: genuine ambiguity → clarify → resolve on the follow-up.
         new BenchmarkCase("M1", "something's wrong → which? → the <game> one", true,

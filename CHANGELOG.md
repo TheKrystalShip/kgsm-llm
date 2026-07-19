@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- System-prompt routing guidance splits the port/network question across the two tools it now spans:
+  "is the server running / what port does it listen on" points at `get_status`, while "is its port open
+  / is it reachable from outside" (firewall or router reachability) points at `get_network`. Previously a
+  single line sent all "network details" to `get_status`, written before `get_network` existed. Routing
+  is measured green either way (`gemma4:12b` already picked the right tool); this makes the instruction
+  match the catalog.
 - `get_network` now reports BOTH network layers for a server: the host firewall (as before) AND its
   **router / UPnP port forwards**, read from the kgsm-watchdog via kgsm-lib's `IWatchdogClient` through a
   new neutral `IUpnpInfo` port + `KgsmUpnpInfo` adapter (a separate authority from the firewall, never

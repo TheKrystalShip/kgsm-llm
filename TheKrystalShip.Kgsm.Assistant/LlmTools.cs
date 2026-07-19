@@ -28,10 +28,11 @@ public static class LlmTools
     // tool offered to everyone, not a file-content read.
     public static readonly Tool GetPerformance = new("get_performance");
 
-    // Host-firewall picture for one instance — the ports KGSM has opened for it plus the firewall
-    // backend and its enforcement state, read from the kgsm-firewall authority. Read-only and offered
-    // to everyone (it reveals no file contents). Covers the HOST FIREWALL only: router/UPnP forwarding
-    // is not observable from the host and is never reported (honesty rule).
+    // Network reachability for one instance across two layers: the HOST FIREWALL (the ports KGSM has
+    // opened, the firewall backend, its enforcement state — from the kgsm-firewall authority) AND the
+    // ROUTER / UPnP forwards (from the watchdog). Read-only and offered to everyone (it reveals no file
+    // contents). Each layer is reported honestly and separately — unreachable is "couldn't check", never
+    // "nothing open".
     public static readonly Tool GetNetwork = new("get_network");
 
     // Engine event history, read straight from the kgsm-monitor's event store (never via kgsm-api —
@@ -75,9 +76,9 @@ public static class LlmTools
     public static readonly Tool UninstallServer = new("uninstall_server");
     public static readonly Tool SetConfigValue = new("set_config_value");
 
-    // Propose opening HOST-FIREWALL ports for an instance (via the kgsm-firewall authority). Staged for
-    // human confirmation like every command; on confirm it opens the host firewall only — it does NOT
-    // configure router/UPnP port forwarding (no such control surface exists from the host).
+    // Propose opening ports for an instance. Staged for human confirmation like every command; on confirm
+    // it opens the host firewall (via the kgsm-firewall authority), and — when include_router is set — also
+    // sets up the router/UPnP forward (via the watchdog), honoring the instance's port-forwarding gate.
     public static readonly Tool OpenPorts = new("open_ports");
 
     /// <summary>

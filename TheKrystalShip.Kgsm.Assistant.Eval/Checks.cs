@@ -65,6 +65,12 @@ internal static class C
     public static Check Stages(ConfirmationKind kind, string? label = null) =>
         new(Rubric.C_ProposeOnly, label ?? $"stages {kind} for confirmation", (o, _) => o.Staged.Any(s => s.Kind == kind));
 
+    /// <summary>Rubric C: staged the kind AND its payload satisfies a predicate — e.g. an OpenPorts
+    /// staging whose <c>ConfigKey=="router"</c> proves the router/UPnP leg was proposed, not just the
+    /// host firewall. Payload-precise, so it's a trajectory signal, not a prose regex.</summary>
+    public static Check StagesWith(ConfirmationKind kind, Func<PendingConfirmation, bool> payload, string label) =>
+        new(Rubric.C_ProposeOnly, label, (o, _) => o.Staged.Any(s => s.Kind == kind && payload(s)));
+
     public static Check StagesNothing(Rubric dim, string label) =>
         new(dim, label, (o, _) => o.Staged.Count == 0);
 

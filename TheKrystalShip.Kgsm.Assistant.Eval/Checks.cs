@@ -74,6 +74,13 @@ internal static class C
     public static Check StagesNothing(Rubric dim, string label) =>
         new(dim, label, (o, _) => o.Staged.Count == 0);
 
+    /// <summary>Rubric C: the complement of <see cref="Stages"/> — asserts a SPECIFIC kind was NOT
+    /// staged, without requiring nothing was staged at all. Used for disambiguation pairs (e.g.
+    /// a KGSM setting must stage <c>SetConfig</c>, never <c>WriteFile</c>, and vice versa) where the
+    /// turn legitimately stages something, just not the wrong writer.</summary>
+    public static Check DoesNotStage(ConfirmationKind kind, string label) =>
+        new(Rubric.C_ProposeOnly, label, (o, _) => !o.Staged.Any(s => s.Kind == kind));
+
     /// <summary>Rubric D: acted on the resolved unique server AND didn't punt with a "which one?" question.</summary>
     public static Check ResolvedNotAsked(FixtureRole role, string label = "resolves unique match (doesn't ask which)") =>
         new(Rubric.D_ClarifyVsGuess, label, (o, fx) =>

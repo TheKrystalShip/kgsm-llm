@@ -30,8 +30,11 @@ internal static class BenchmarkSuite
     /// removed model-facing <c>web_search</c> onto the unified <c>search</c> tool. v4 covers the tools
     /// added since the hand-eval — performance (P), network reachability (N), event/change/root-cause
     /// history (H), file reads (R), and the open-ports / uninstall staging cases (C11–C13) — so tool
-    /// selection is measured across the whole current catalog, not just its original half.</summary>
-    public const string Version = "v4";
+    /// selection is measured across the whole current catalog, not just its original half. v5 adds the
+    /// propose-only <c>write_file</c> group (W): a full read-then-stage flow for a game's own config
+    /// file, plus a <c>set_config_value</c>-vs-<c>write_file</c> disambiguation pair guarding the two
+    /// writers (KGSM's own <c>.config.ini</c> vs. a game's config file) from routing collisions.</summary>
+    public const string Version = "v5";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -262,6 +265,39 @@ internal static class BenchmarkSuite
         Single("C13", "delete the <game> server", true, new[] { FixtureRole.UniqueGame },
             "delete the {unique_game} server for good",
             C.Stages(ConfirmationKind.Uninstall),
+            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // write_file (staged, propose-only): editing a GAME's own config file, as opposed to
+        // set_config_value (KGSM's .config.ini). W1 is the full intended flow — read the file first,
+        // then stage a full-content overwrite. W2/W3 are a disambiguation pair guarding the two writers
+        // from routing collisions: a KGSM-own setting must route to SetConfig (never WriteFile) and a
+        // game-own setting must route to WriteFile (never SetConfig). Trajectory-only, per invariant #1
+        // (Eval/CLAUDE.md) — never asserts the file content is correct, only which writer was staged.
+        Single("W1", "edit a setting in <game>'s own world config", true, new[] { FixtureRole.UniqueGame },
+            "help me edit a setting in {unique_game}'s world config file, like the difficulty",
+            C.AnyOf(Rubric.B_Routing, "reads the game's config file before proposing an edit",
+                C.CalledTool(LlmTools.ReadFile), C.CalledTool(LlmTools.ListFiles)),
+            C.StagesWith(ConfirmationKind.WriteFile,
+                s => !string.IsNullOrWhiteSpace(s.Target) && !string.IsNullOrWhiteSpace(s.ConfigKey),
+                "stages a write_file naming the resolved instance and the file path"),
+            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        Single("W2", "a KGSM setting (launch args) routes to set_config_value, not write_file", true,
+            new[] { FixtureRole.UniqueGame },
+            "change the launch arguments for {unique_game}",
+            C.Stages(ConfirmationKind.SetConfig),
+            C.DoesNotStage(ConfirmationKind.WriteFile, "does not stage a write_file for a KGSM-own setting"),
+            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
+            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        Single("W3", "a game setting (day length) routes to write_file, not set_config_value", true,
+            new[] { FixtureRole.UniqueGame },
+            "make the days longer on {unique_game}",
+            C.StagesWith(ConfirmationKind.WriteFile, s => !string.IsNullOrWhiteSpace(s.ConfigKey),
+                "stages a write_file for the game-own setting"),
+            C.DoesNotStage(ConfirmationKind.SetConfig, "does not stage a set_config_value for a game-own setting"),
             C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 

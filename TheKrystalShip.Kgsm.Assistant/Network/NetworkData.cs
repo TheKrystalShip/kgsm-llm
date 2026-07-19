@@ -66,12 +66,51 @@ public sealed record PortRule(int Start, int End, string Protocol)
 }
 
 /// <summary>
+/// The outcome of the router / UPnP half of a <c>get_network</c> read — whether the router's forwards
+/// could be read, and via which layer they failed. Honest states, never collapsed: a router that
+/// answered with no forwards (<see cref="Queried"/>, empty <c>Forwards</c>) is a real "nothing forwarded",
+/// distinct from a router that couldn't be reached (<see cref="RouterUnavailable"/>) or a watchdog that
+/// couldn't be reached at all (<see cref="DaemonUnavailable"/>) — neither of the latter is ever read as
+/// "nothing is forwarded".
+/// </summary>
+public enum UpnpState
+{
+    /// <summary>The router (IGD) was queried — <c>Forwards</c> is what it owns for this instance (may be empty).</summary>
+    Queried,
+
+    /// <summary>The watchdog was reached but the router could not be queried (no IGD, or a timeout) —
+    /// honest "couldn't ask the router", never "nothing forwarded".</summary>
+    RouterUnavailable,
+
+    /// <summary>The watchdog daemon itself could not be reached, so router forwarding is unknown.</summary>
+    DaemonUnavailable,
+}
+
+/// <summary>One router / UPnP port-forward the IGD owns for an instance (measured from the router,
+/// never fabricated): an external port mapped to an internal client + port.</summary>
+/// <param name="ExternalPort">The WAN-side port the router forwards.</param>
+/// <param name="Protocol">Transport protocol — <c>"tcp"</c> or <c>"udp"</c>.</param>
+/// <param name="InternalPort">The LAN-side port the forward targets.</param>
+/// <param name="InternalClient">The LAN-side client address the forward targets.</param>
+public sealed record UpnpForward(int ExternalPort, string Protocol, int InternalPort, string InternalClient)
+{
+    /// <summary>Renders one forward compactly — <c>ext/proto→client:int</c> (or <c>ext/proto</c> when the
+    /// external and internal ports match, the common case).</summary>
+    public string ToDisplay() =>
+        ExternalPort == InternalPort
+            ? $"{ExternalPort}/{Protocol}"
+            : $"{ExternalPort}/{Protocol}→{InternalClient}:{InternalPort}";
+}
+
+/// <summary>
 /// The <c>get_network</c> tool's structured card payload (the surface half of its
-/// <see cref="ToolResult{TData}"/>): one instance's HOST-FIREWALL picture — the ports KGSM has opened
-/// for it, the active backend, and its enforcement state. This covers the host firewall ONLY; router /
-/// UPnP port forwarding is not observable from the host and is never represented here (the ecosystem
-/// never-fabricate rule). Built only for a <see cref="NetworkState.Available"/> read; a
-/// firewall-unavailable outcome is summary-only, so there is no card to render.
+/// <see cref="ToolResult{TData}"/>): one instance's network picture across TWO independent authorities —
+/// the HOST FIREWALL (the ports KGSM has opened, the active backend, its enforcement state) and the
+/// ROUTER / UPnP forwards the IGD owns for it. The two axes fail independently and are never conflated: a
+/// firewall-unavailable read (<see cref="NetworkState.FirewallUnavailable"/>) can still carry a router
+/// answer and vice-versa, and each honest-unknown state is preserved (the ecosystem never-fabricate rule).
+/// A card is rendered whenever either axis has real measured structure (firewall
+/// <see cref="NetworkState.Available"/> or UPnP <see cref="UpnpState.Queried"/>).
 /// </summary>
 /// <param name="Instance">The resolved instance name the picture is for (also the card subject id).</param>
 /// <param name="State">Whether the firewall authority could be read (only <see cref="NetworkState.Available"/> carries values).</param>
@@ -79,10 +118,14 @@ public sealed record PortRule(int Start, int End, string Protocol)
 /// <param name="ListState">Whether the owned rules could be enumerated (<see cref="PortListState.Unknown"/> ≠ empty).</param>
 /// <param name="Enforcement">The backend's runtime enforcement state (load-bearing: an inactive backend filters nothing).</param>
 /// <param name="Ports">The host-firewall ports KGSM owns for this instance; authoritative only when <see cref="ListState"/> is <see cref="PortListState.Enumerated"/>.</param>
+/// <param name="UpnpState">Whether the router's forwards could be read (a separate authority — the watchdog — from the host firewall).</param>
+/// <param name="Forwards">The router / UPnP forwards the IGD owns for this instance; authoritative only when <see cref="UpnpState"/> is <see cref="UpnpState.Queried"/>.</param>
 public sealed record NetworkData(
     string Instance,
     NetworkState State,
     string Backend,
     PortListState ListState,
     NetworkEnforcement Enforcement,
-    IReadOnlyList<PortRule> Ports);
+    IReadOnlyList<PortRule> Ports,
+    UpnpState UpnpState,
+    IReadOnlyList<UpnpForward> Forwards);

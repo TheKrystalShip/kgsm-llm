@@ -41,6 +41,16 @@ public sealed class FirewallOptions
     public string SocketPath { get; set; } = "/run/kgsm-firewall/firewall.sock";
 }
 
+/// <summary>Where the kgsm-watchdog control socket lives — backs the router/UPnP axis of get_network and
+/// the opt-in router leg of open_ports (via kgsm-lib's IWatchdogClient).</summary>
+public sealed class WatchdogOptions
+{
+    public const string Section = "Watchdog";
+
+    /// <summary>Path to the kgsm-watchdog control unix socket. A standard install serves it here.</summary>
+    public string SocketPath { get; set; } = "/run/kgsm-watchdog/control.sock";
+}
+
 /// <summary>TTLs for the in-process inventory cache. A backstop; hosts also invalidate explicitly
 /// (the service from the kgsm webhook, the CLI after a confirmed mutation).</summary>
 public sealed class InventoryCacheOptions

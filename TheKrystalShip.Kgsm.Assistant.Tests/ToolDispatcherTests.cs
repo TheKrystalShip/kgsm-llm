@@ -32,6 +32,7 @@ public class ToolDispatcherTests
     private readonly IServerMetrics _metrics = Substitute.For<IServerMetrics>();
     private readonly IEventHistory _events = Substitute.For<IEventHistory>();
     private readonly INetworkInfo _network = Substitute.For<INetworkInfo>();
+    private readonly IUpnpInfo _upnp = Substitute.For<IUpnpInfo>();
     private readonly ConfirmationContext _confirmations = new();
 
     public ToolDispatcherTests()
@@ -49,10 +50,15 @@ public class ToolDispatcherTests
         var blueprints = new[] { "valheim", "terraria" };
         _inventory.GetBlueprintNamesAsync(Arg.Any<CancellationToken>())
             .Returns((IReadOnlyCollection<string>)blueprints);
+
+        // Default the UPnP axis to "watchdog unreachable" so get_network tests that only exercise the
+        // firewall axis get a valid (non-null) reading; router-specific tests override this.
+        _upnp.GetForwardsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new UpnpReading(UpnpState.DaemonUnavailable, Array.Empty<UpnpForward>()));
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, _search, _metrics, _events, _network, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _search, _metrics, _events, _network, _upnp, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -502,9 +508,10 @@ public class ToolDispatcherTests
         await _metrics.DidNotReceive().GetSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    // --- get_network (host-firewall picture via the INetworkInfo port) ---
-    // The dispatcher resolves the instance, reads the neutral picture, runs the pure aggregator, and
-    // attaches a card ONLY for an Available read; the wording lives in NetworkReportTests.
+    // --- get_network (host firewall via INetworkInfo + router/UPnP via IUpnpInfo) ---
+    // The dispatcher resolves the instance, reads BOTH neutral pictures concurrently, runs the pure
+    // aggregator, and attaches a card when EITHER axis has real structure; the wording lives in
+    // NetworkReportTests.
 
     private static LlmToolCall NetworkCall(string instance) => Call(LlmTools.GetNetwork, instance);
 
@@ -515,31 +522,56 @@ public class ToolDispatcherTests
             .Returns(new NetworkReading(
                 NetworkState.Available, "ufw", PortListState.Enumerated, NetworkEnforcement.Enforcing,
                 new[] { new PortRule(25565, 25565, "tcp") }));
+        _upnp.GetForwardsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new UpnpReading(UpnpState.Queried, new[] { new UpnpForward(25565, "tcp", 25565, "192.168.1.5") }));
 
         var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
 
         await _network.Received(1).GetPortsAsync("minecraft", Arg.Any<CancellationToken>());
-        output.Summary.Should().Contain("25565/tcp").And.Contain("host firewall only");
+        await _upnp.Received(1).GetForwardsAsync("minecraft", Arg.Any<CancellationToken>());
+        // Both axes surface in the summary: firewall ports + the router forward.
+        output.Summary.Should().Contain("25565/tcp").And.Contain("router");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
         card.Tool.Should().Be(LlmTools.GetNetwork.Name);
         card.Subject.Should().Be(new ResultRef(ResourceKind.Network, "minecraft"));
         var data = card.Data.Should().BeOfType<NetworkData>().Subject;
         data.Backend.Should().Be("ufw");
         data.Ports.Should().ContainSingle();
+        data.UpnpState.Should().Be(UpnpState.Queried);
+        data.Forwards.Should().ContainSingle();
     }
 
     [Fact]
-    public async Task GetNetwork_FirewallUnavailable_StaysSummaryOnly()
+    public async Task GetNetwork_FirewallUnavailableButRouterQueried_StillCards()
     {
         _network.GetPortsAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(new NetworkReading(
                 NetworkState.FirewallUnavailable, "", PortListState.Unknown, NetworkEnforcement.Unknown,
                 Array.Empty<PortRule>()));
+        _upnp.GetForwardsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new UpnpReading(UpnpState.Queried, Array.Empty<UpnpForward>()));
+
+        var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
+
+        // Firewall couldn't be read, but the router answered → the router axis alone warrants a card.
+        output.Data.Should().BeOfType<ToolResultCard>();
+        output.Summary.Should().Contain("unavailable");   // the firewall clause is still honest
+    }
+
+    [Fact]
+    public async Task GetNetwork_BothUnavailable_StaysSummaryOnly()
+    {
+        _network.GetPortsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new NetworkReading(
+                NetworkState.FirewallUnavailable, "", PortListState.Unknown, NetworkEnforcement.Unknown,
+                Array.Empty<PortRule>()));
+        _upnp.GetForwardsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(new UpnpReading(UpnpState.DaemonUnavailable, Array.Empty<UpnpForward>()));
 
         var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
 
         output.Summary.Should().Contain("unavailable").And.Contain("isn't a sign no ports are open");
-        output.Data.Should().BeNull();   // couldn't read → no card
+        output.Data.Should().BeNull();   // neither axis could read → no card
     }
 
     [Fact]
@@ -549,6 +581,7 @@ public class ToolDispatcherTests
 
         result.Should().Contain("no instance named");
         await _network.DidNotReceive().GetPortsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _upnp.DidNotReceive().GetForwardsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     // --- open_ports (propose-only staged command) ---
@@ -572,6 +605,29 @@ public class ToolDispatcherTests
                 .Which.Should().BeEquivalentTo(new PendingConfirmation(
                     ConfirmationKind.OpenPorts, "minecraft", InstanceName: null,
                     ConfigKey: null, ConfigValue: "25565/tcp"));
+        }
+    }
+
+    [Fact]
+    public async Task OpenPorts_IncludeRouter_StagesRouterScope()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var call = new LlmToolCall(LlmTools.OpenPorts, new Dictionary<string, string?>
+            {
+                ["instance_name"] = "minecraft",
+                ["ports"] = "25565/tcp",
+                ["include_router"] = "true",
+            });
+
+            var summary = (await Create().ExecuteAsync(call)).Summary;
+
+            // The router opt-in rides ConfigKey ("router"); the port spec stays on ConfigValue.
+            summary.Should().Contain("router");
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new PendingConfirmation(
+                    ConfirmationKind.OpenPorts, "minecraft", InstanceName: null,
+                    ConfigKey: "router", ConfigValue: "25565/tcp"));
         }
     }
 

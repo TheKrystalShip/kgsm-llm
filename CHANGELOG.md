@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `get_network` now reports BOTH network layers for a server: the host firewall (as before) AND its
+  **router / UPnP port forwards**, read from the kgsm-watchdog via kgsm-lib's `IWatchdogClient` through a
+  new neutral `IUpnpInfo` port + `KgsmUpnpInfo` adapter (a separate authority from the firewall, never
+  conflated). The two axes fail independently and honestly: a queried router that owns no forwards is a
+  real "no forwards", distinct from a router that couldn't be reached (`RouterUnavailable`) or a watchdog
+  that couldn't be reached (`DaemonUnavailable`) — neither is ever read as "nothing forwarded". The card
+  gains a `UpnpState` + `Forwards[]` block and is attached whenever EITHER axis has real measured
+  structure. The old "router/UPnP isn't observable from the host" caveat is gone — it now is. Fails closed:
+  with no watchdog wired the router axis reads as unavailable and the assistant still boots standalone.
+- `open_ports` gains an optional `include_router` flag — when set, the confirmed command ALSO opens the
+  router / UPnP forward for the same ports (via `IWatchdogClient.OpenUpnpAsync`), so a server can be made
+  reachable from the internet in one step. The router leg honors the instance's `enable_port_forwarding`
+  gate at the watchdog (a gated-off server is honestly `skipped`, never a fabricated forward) and reports
+  its outcome (applied / skipped / failed / watchdog-unavailable) as a separate clause alongside the
+  firewall outcome. Default (flag off) is unchanged — host firewall only. The opt-in rides the existing
+  confirmation token (on `ConfigKey`), so there is no new token field and no new `ConfirmationKind`.
+
 ### Added
 - A `get_network(instance_name)` read-only tool — reports one instance's HOST-FIREWALL picture: the
   ports KGSM has opened for it (via the kgsm-firewall authority), the active backend, and whether it's

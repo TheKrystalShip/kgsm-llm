@@ -41,6 +41,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IServerMetrics _metrics;
     private readonly IEventHistory _events;
     private readonly INetworkInfo _network;
+    private readonly IUpnpInfo _upnp;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
@@ -51,6 +52,7 @@ public class ToolDispatcher : IToolDispatcher
         IServerMetrics metrics,
         IEventHistory events,
         INetworkInfo network,
+        IUpnpInfo upnp,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
@@ -60,6 +62,7 @@ public class ToolDispatcher : IToolDispatcher
         _metrics = metrics;
         _events = events;
         _network = network;
+        _upnp = upnp;
         _logger = logger;
     }
 
@@ -316,13 +319,14 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// The host-firewall read (mirrors <see cref="GetPerformanceAsync"/>): resolves the instance, reads
-    /// the neutral firewall picture via <see cref="INetworkInfo"/> (the kgsm-firewall authority), and
-    /// runs the pure <see cref="NetworkReport"/>. Only a <see cref="NetworkState.Available"/> read carries
-    /// a card (a real, measured firewall picture); a firewall-unavailable read stays summary-only —
-    /// carding it would fabricate structure we don't have. The port never throws, so there is no error
-    /// path here; a failed read arrives as <see cref="NetworkState.FirewallUnavailable"/>, which the
-    /// aggregator words honestly (and never as router/UPnP forwarding, which the host can't observe).
+    /// The network read (mirrors <see cref="GetPerformanceAsync"/>): resolves the instance, reads the two
+    /// independent authorities — the host firewall via <see cref="INetworkInfo"/> (kgsm-firewall) and the
+    /// router / UPnP forwards via <see cref="IUpnpInfo"/> (the watchdog) — and runs the pure
+    /// <see cref="NetworkReport"/>. A card is attached when EITHER axis has real measured structure (the
+    /// firewall is <see cref="NetworkState.Available"/> OR the router was <see cref="UpnpState.Queried"/>);
+    /// when both are unavailable it stays summary-only rather than card an empty shell. Neither port throws,
+    /// so there is no error path — each unreachable authority arrives as its honest unavailable state, which
+    /// the aggregator words as such (never a fabricated "nothing open" / "nothing forwarded").
     /// </summary>
     private async Task<ToolOutput> GetNetworkAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
@@ -330,11 +334,18 @@ public class ToolDispatcher : IToolDispatcher
         if (error is not null)
             return error;
 
-        var reading = await _network.GetPortsAsync(resolved!, cancellationToken);
-        var report = NetworkReport.Build(reading, resolved!);
-        return report.Data.State == NetworkState.Available
+        // Both authorities read concurrently — independent sockets, neither throws.
+        var firewallTask = _network.GetPortsAsync(resolved!, cancellationToken);
+        var upnpTask = _upnp.GetForwardsAsync(resolved!, cancellationToken);
+        var firewall = await firewallTask;
+        var upnp = await upnpTask;
+
+        var report = NetworkReport.Build(firewall, upnp, resolved!);
+        bool hasStructure = report.Data.State == NetworkState.Available
+                            || report.Data.UpnpState == UpnpState.Queried;
+        return hasStructure
             ? new ToolOutput(report.Summary, ToolResultCard.From(report))
-            : report.Summary;   // FirewallUnavailable stays summary-only (no card)
+            : report.Summary;   // both authorities unavailable → summary-only (no card)
     }
 
     /// <summary>
@@ -568,10 +579,11 @@ public class ToolDispatcher : IToolDispatcher
 
     /// <summary>
     /// Propose-only (§3.5): resolves the instance and parses/validates the port spec, then STAGES an
-    /// open-ports for human confirmation — the host firewall is never touched here. The validated ports
-    /// ride the confirmation as a canonical string on <c>ConfigValue</c> (so the token round-trips them
-    /// with no new payload field); the confirm path re-parses exactly what was staged. A malformed or
-    /// out-of-range spec short-circuits to the model so it can fix it, and nothing is staged.
+    /// open-ports for human confirmation — nothing is touched here. The validated ports ride the
+    /// confirmation as a canonical string on <c>ConfigValue</c>, and the optional router leg rides on
+    /// <c>ConfigKey</c> (<c>"router"</c> ⇒ also open the UPnP forward; null ⇒ host firewall only) — both
+    /// round-trip through the existing token with no new payload field. The confirm path re-parses exactly
+    /// what was staged. A malformed or out-of-range spec short-circuits to the model, and nothing is staged.
     /// </summary>
     private async Task<string> StageOpenPortsAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
@@ -583,14 +595,28 @@ public class ToolDispatcher : IToolDispatcher
             return $"Error: {parseError}";
 
         var canonical = PortSpecParser.ToCanonical(ports);
+        // Arguments arrive as strings; treat true/1/yes (any case) as the opt-in, everything else as off.
+        var routerArg = call.Arg("include_router")?.Trim();
+        bool includeRouter = routerArg is not null
+            && (routerArg.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || routerArg.Equals("1", StringComparison.Ordinal)
+                || routerArg.Equals("yes", StringComparison.OrdinalIgnoreCase));
+        string? scope = includeRouter ? "router" : null;
 
         _confirmations.Stage(new PendingConfirmation(
-            ConfirmationKind.OpenPorts, resolved!, InstanceName: null, ConfigKey: null, ConfigValue: canonical));
+            ConfirmationKind.OpenPorts, resolved!, InstanceName: null, ConfigKey: scope, ConfigValue: canonical));
 
-        return $"Staged opening host-firewall port(s) {PortSpecParser.ToDisplay(ports)} on '{resolved}' for " +
+        string scopeText = includeRouter
+            ? "host-firewall AND router/UPnP forward for port(s) "
+            : "host-firewall port(s) ";
+        string routerNote = includeRouter
+            ? " The router leg only takes effect if the server has port-forwarding enabled; otherwise it's skipped."
+            : " Note this opens the HOST firewall only, not router/UPnP port forwarding.";
+
+        return $"Staged opening {scopeText}{PortSpecParser.ToDisplay(ports)} on '{resolved}' for " +
                "confirmation. A confirmation prompt with a button has been shown to the user. This is NOT done " +
                "yet and will only run if a permitted human clicks Confirm — tell the user it's awaiting their " +
-               "confirmation. Note this opens the HOST firewall only, not router/UPnP port forwarding.";
+               $"confirmation.{routerNote}";
     }
 
     /// <summary>

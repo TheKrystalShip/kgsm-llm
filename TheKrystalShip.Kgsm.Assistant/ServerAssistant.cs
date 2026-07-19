@@ -46,6 +46,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IServerInventory _inventory;
     private readonly IServerOperations _operations;
     private readonly INetworkInfo _network;
+    private readonly IUpnpInfo _upnp;
     private readonly IToolRelevanceFilter _toolFilter;
     private readonly IPromptOverrides _promptOverrides;
     private readonly SearchOptions _searchOptions;
@@ -58,6 +59,7 @@ public class ServerAssistant : IServerAssistant
         IServerInventory inventory,
         IServerOperations operations,
         INetworkInfo network,
+        IUpnpInfo upnp,
         IToolRelevanceFilter toolFilter,
         IPromptOverrides promptOverrides,
         IOptions<SearchOptions> searchOptions,
@@ -69,6 +71,7 @@ public class ServerAssistant : IServerAssistant
         _inventory = inventory;
         _operations = operations;
         _network = network;
+        _upnp = upnp;
         _toolFilter = toolFilter;
         _promptOverrides = promptOverrides;
         _searchOptions = searchOptions.Value;
@@ -324,7 +327,7 @@ public class ServerAssistant : IServerAssistant
             ConfirmationKind.SetConfig => await ConfirmSetConfigAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
             ConfirmationKind.OpenPorts => await ConfirmOpenPortsAsync(
-                confirmation.Target, confirmation.ConfigValue, cancellationToken),
+                confirmation.Target, confirmation.ConfigValue, confirmation.ConfigKey, cancellationToken),
             ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
                 or ConfirmationKind.Update or ConfirmationKind.Backup
                 => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
@@ -458,11 +461,17 @@ public class ServerAssistant : IServerAssistant
     /// HOST-FIREWALL ports via <see cref="INetworkInfo.OpenPortsAsync"/> — the real execution point.
     /// The firewall authority's precise outcome is mapped to an honest user-facing result: an unreachable
     /// authority, an unsupported backend, and an inactive (staged-not-enforcing) backend each read
-    /// differently and never as a fabricated "opened". This opens the host firewall only; the message
-    /// never implies router/UPnP forwarding.
+    /// differently and never as a fabricated "opened".
+    /// <para>
+    /// When the router leg was opted in at staging (<paramref name="scope"/> == <c>"router"</c>), it ALSO
+    /// opens the router / UPnP forward for the same ports via <see cref="IUpnpInfo.OpenForwardsAsync"/> (a
+    /// separate authority — the watchdog) and appends an honest per-axis clause: applied, skipped (the
+    /// instance has port-forwarding disabled), failed, or watchdog-unavailable — never a fabricated forward.
+    /// The firewall outcome still determines success/failure; the router clause is additive context.
+    /// </para>
     /// </summary>
     private async Task<Result<string>> ConfirmOpenPortsAsync(
-        string target, string? portSpec, CancellationToken cancellationToken)
+        string target, string? portSpec, string? scope, CancellationToken cancellationToken)
     {
         if (!PortSpecParser.TryParse(portSpec, out var ports, out var parseError))
             return Result.Failure<string>($"The staged ports were invalid ({parseError}) — nothing was opened.");
@@ -473,13 +482,15 @@ public class ServerAssistant : IServerAssistant
         if (match is null)
             return Result.Failure<string>($"'{target}' no longer exists — nothing to open ports on.");
 
-        _logger.LogInformation("Confirmed open-ports of {Instance} ({Ports})", match, PortSpecParser.ToCanonical(ports));
+        bool includeRouter = string.Equals(scope, "router", StringComparison.Ordinal);
+        _logger.LogInformation("Confirmed open-ports of {Instance} ({Ports}, router={Router})",
+            match, PortSpecParser.ToCanonical(ports), includeRouter);
 
         var result = await _network.OpenPortsAsync(match, ports, cancellationToken);
         var shown = PortSpecParser.ToDisplay(ports);
         var backend = string.IsNullOrWhiteSpace(result.Backend) ? "the firewall" : result.Backend;
 
-        return result.State switch
+        var firewall = result.State switch
         {
             NetworkActionState.Applied =>
                 Result.Success($"Opened host-firewall port(s) {shown} for '{match}' ({backend})."),
@@ -495,6 +506,24 @@ public class ServerAssistant : IServerAssistant
             _ =>
                 Result.Failure<string>($"Could not open host-firewall port(s) {shown} for '{match}': {result.Detail ?? "the firewall rejected the change"}."),
         };
+
+        if (!includeRouter)
+            return firewall;
+
+        // The router leg — a separate authority (the watchdog). Its outcome is appended honestly and never
+        // upgrades a firewall failure to success (the firewall Result carries success/failure).
+        var upnp = await _upnp.OpenForwardsAsync(match, ports, cancellationToken);
+        string routerClause = upnp.State switch
+        {
+            UpnpActionState.Applied => $"Also opened the router/UPnP forward for {shown}.",
+            UpnpActionState.Skipped => "The router/UPnP forward was skipped — this server has port-forwarding disabled, so nothing was forwarded on the router.",
+            UpnpActionState.Unavailable => "The router/UPnP forward couldn't be set — the watchdog isn't reachable.",
+            _ => $"The router/UPnP forward failed{(string.IsNullOrWhiteSpace(upnp.Detail) ? "" : $" ({upnp.Detail})")} — the host firewall change above still stands.",
+        };
+
+        string combined = $"{firewall.Value ?? firewall.Error} {routerClause}";
+        // Preserve the firewall axis's success/failure; append the router context either way.
+        return firewall.IsSuccess ? Result.Success(combined) : Result.Failure<string>(combined);
     }
 
     /// <summary>

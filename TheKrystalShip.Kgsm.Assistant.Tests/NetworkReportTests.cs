@@ -10,9 +10,10 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
 /// The deterministic <c>get_network</c> composer is a pure function, so these run without mocks. They
-/// pin the honesty rules: an unavailable firewall is never "nothing open", an unknown enumeration is
-/// never a fabricated empty set, an inactive backend is called out, and EVERY summary states it covers
-/// the host firewall only (never router/UPnP).
+/// pin the honesty rules across BOTH authorities: on the firewall axis an unavailable read is never
+/// "nothing open", an unknown enumeration is never a fabricated empty set, an inactive backend is called
+/// out; on the router/UPnP axis a queried-empty router is a real "no forwards", distinct from a router or
+/// watchdog that couldn't be reached — neither of which is ever read as "nothing forwarded".
 /// </summary>
 public class NetworkReportTests
 {
@@ -24,11 +25,17 @@ public class NetworkReportTests
         params PortRule[] ports) =>
         new(state, backend, listState, enforcement, ports);
 
+    // Default router reading for firewall-focused tests: watchdog unreachable (an honest unknown that
+    // doesn't collide with any firewall assertion).
+    private static UpnpReading Upnp(
+        UpnpState state = UpnpState.DaemonUnavailable, params UpnpForward[] forwards) =>
+        new(state, forwards);
+
     [Fact]
     public void EnumeratedWithPorts_ListsThem_AndSubject()
     {
         var r = NetworkReport.Build(
-            Reading(ports: new PortRule(34197, 34197, "udp")), "factorio");
+            Reading(ports: new PortRule(34197, 34197, "udp")), Upnp(), "factorio");
 
         r.Tool.Should().Be(LlmTools.GetNetwork);
         r.Confidence.Should().Be(Confidence.Confirmed);
@@ -36,17 +43,15 @@ public class NetworkReportTests
         r.Data.State.Should().Be(NetworkState.Available);
         r.Data.Ports.Should().ContainSingle();
         r.Summary.Should().Contain("34197/udp");
-        r.Summary.Should().Contain("host firewall only");
     }
 
     [Fact]
     public void EnumeratedEmpty_SaysNonePlain_NeverFabricated()
     {
-        var r = NetworkReport.Build(Reading(), "terraria");
+        var r = NetworkReport.Build(Reading(), Upnp(), "terraria");
 
         r.Confidence.Should().Be(Confidence.Confirmed);
         r.Summary.Should().Contain("no host-firewall ports");
-        r.Summary.Should().Contain("host firewall only");
     }
 
     [Fact]
@@ -54,7 +59,7 @@ public class NetworkReportTests
     {
         var r = NetworkReport.Build(
             Reading(enforcement: NetworkEnforcement.Inactive, ports: new PortRule(27015, 27015, "tcp")),
-            "cs2");
+            Upnp(), "cs2");
 
         r.Summary.Should().Contain("not enforcing");
         r.Summary.Should().Contain("reachable");
@@ -64,7 +69,7 @@ public class NetworkReportTests
     [Fact]
     public void UnknownEnumeration_IsHonestUnknown_NotEmpty()
     {
-        var r = NetworkReport.Build(Reading(listState: PortListState.Unknown), "valheim");
+        var r = NetworkReport.Build(Reading(listState: PortListState.Unknown), Upnp(), "valheim");
 
         // Honest unknown → only a Possible conclusion, never "none open".
         r.Confidence.Should().Be(Confidence.Possible);
@@ -76,11 +81,10 @@ public class NetworkReportTests
     public void NoBackend_ReportsUnsupported_Honestly()
     {
         var r = NetworkReport.Build(
-            Reading(backend: "none", listState: PortListState.Unsupported), "minecraft");
+            Reading(backend: "none", listState: PortListState.Unsupported), Upnp(), "minecraft");
 
         r.Confidence.Should().Be(Confidence.Confirmed);
         r.Summary.Should().Contain("No host firewall backend");
-        r.Summary.Should().Contain("host firewall only");
     }
 
     [Fact]
@@ -89,12 +93,62 @@ public class NetworkReportTests
         var r = NetworkReport.Build(
             Reading(state: NetworkState.FirewallUnavailable, backend: "", listState: PortListState.Unknown,
                 enforcement: NetworkEnforcement.Unknown),
-            "factorio");
+            Upnp(), "factorio");
 
         r.Confidence.Should().Be(Confidence.Possible);
         r.Data.State.Should().Be(NetworkState.FirewallUnavailable);
         r.Summary.Should().Contain("unavailable");
         r.Summary.Should().Contain("isn't a sign no ports are open");
-        r.Summary.Should().Contain("host firewall only");
+    }
+
+    // --- The router / UPnP axis -----------------------------------------------------------------
+
+    [Fact]
+    public void RouterQueriedWithForwards_ListsThem()
+    {
+        var r = NetworkReport.Build(
+            Reading(),
+            Upnp(UpnpState.Queried, new UpnpForward(8211, "udp", 8211, "192.168.1.10")),
+            "palworld");
+
+        r.Data.UpnpState.Should().Be(UpnpState.Queried);
+        r.Data.Forwards.Should().ContainSingle();
+        r.Summary.Should().Contain("router").And.Contain("8211/udp");
+    }
+
+    [Fact]
+    public void RouterQueriedEmpty_IsRealNone_NotUnknown()
+    {
+        var r = NetworkReport.Build(Reading(), Upnp(UpnpState.Queried), "terraria");
+
+        r.Data.UpnpState.Should().Be(UpnpState.Queried);
+        r.Summary.Should().Contain("no port forwards");
+    }
+
+    [Fact]
+    public void RouterUnavailable_IsCouldntAsk_NotNothingForwarded()
+    {
+        var r = NetworkReport.Build(Reading(), Upnp(UpnpState.RouterUnavailable), "factorio");
+
+        r.Summary.Should().Contain("router couldn't be queried");
+        r.Summary.Should().Contain("not a sign nothing is forwarded");
+    }
+
+    [Fact]
+    public void DaemonUnavailable_IsRouterForwardingUnknown()
+    {
+        var r = NetworkReport.Build(Reading(), Upnp(UpnpState.DaemonUnavailable), "factorio");
+
+        r.Summary.Should().Contain("Router/UPnP forwarding is unknown");
+    }
+
+    [Fact]
+    public void NoSummaryImpliesUpnpIsUnobservable()
+    {
+        // The old firewall-only caveat is gone — UPnP IS now observed and reported.
+        var r = NetworkReport.Build(Reading(), Upnp(UpnpState.Queried), "factorio");
+
+        r.Summary.Should().NotContain("isn't observable from the host");
+        r.Summary.Should().NotContain("not router/UPnP");
     }
 }

@@ -25,6 +25,7 @@ public class ServerAssistantConfirmTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
     private readonly INetworkInfo _network = Substitute.For<INetworkInfo>();
+    private readonly IUpnpInfo _upnp = Substitute.For<IUpnpInfo>();
 
     private ServerAssistant Create() => new(
         Substitute.For<ILlmAgent>(),
@@ -33,6 +34,7 @@ public class ServerAssistantConfirmTests
         _inventory,
         _operations,
         _network,
+        _upnp,
         new NoopToolRelevanceFilter(),
         new PassthroughPromptOverrides(),
         Options.Create(new SearchOptions()),
@@ -229,6 +231,83 @@ public class ServerAssistantConfirmTests
         result.IsFailure.Should().BeTrue();
         await _network.DidNotReceive().OpenPortsAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OpenPorts_DefaultScope_DoesNotTouchTheRouter()
+    {
+        Instances("factorio");
+        _network.OpenPortsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new NetworkActionResult(NetworkActionState.Applied, "ufw", null)));
+
+        await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: null, ConfigValue: "34197/udp"),  // no router scope
+            canPerformActions: true);
+
+        await _upnp.DidNotReceive().OpenForwardsAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- open_ports with the router leg opted in (ConfigKey == "router") -------------------
+
+    [Fact]
+    public async Task OpenPorts_Router_OpensBoth_AndReportsBothOutcomes()
+    {
+        Instances("factorio");
+        _network.OpenPortsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new NetworkActionResult(NetworkActionState.Applied, "ufw", null)));
+        _upnp.OpenForwardsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new UpnpActionResult(UpnpActionState.Applied, null)));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: "router", ConfigValue: "34197/udp"),
+            canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("host-firewall").And.Contain("router/UPnP forward");
+        await _upnp.Received(1).OpenForwardsAsync(
+            "factorio",
+            Arg.Is<IReadOnlyList<PortRule>>(p => p.Count == 1 && p[0] == new PortRule(34197, 34197, "udp")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OpenPorts_Router_GatedOff_ReportsSkipped_NotFabricated()
+    {
+        Instances("factorio");
+        _network.OpenPortsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new NetworkActionResult(NetworkActionState.Applied, "ufw", null)));
+        _upnp.OpenForwardsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new UpnpActionResult(UpnpActionState.Skipped, null)));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: "router", ConfigValue: "34197/udp"),
+            canPerformActions: true);
+
+        // Firewall still succeeded; the router leg is honestly "skipped", never a fabricated forward.
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("skipped").And.Contain("port-forwarding disabled");
+    }
+
+    [Fact]
+    public async Task OpenPorts_Router_WatchdogUnreachable_FirewallStandsPlusHonestRouterClause()
+    {
+        Instances("factorio");
+        _network.OpenPortsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new NetworkActionResult(NetworkActionState.Applied, "ufw", null)));
+        _upnp.OpenForwardsAsync("factorio", Arg.Any<IReadOnlyList<PortRule>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new UpnpActionResult(UpnpActionState.Unavailable, null)));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.OpenPorts, "factorio",
+                InstanceName: null, ConfigKey: "router", ConfigValue: "34197/udp"),
+            canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue();  // firewall opened; the router clause is additive context
+        result.Value.Should().Contain("watchdog isn't reachable");
     }
 
     [Fact]

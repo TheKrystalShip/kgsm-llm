@@ -176,9 +176,15 @@ internal static class SseTurnWriter
         if (c.Kind == ConfirmationKind.SetConfig && c.ConfigKey is not null)
             return $"Set {c.ConfigKey} = {c.ConfigValue} on {c.Target}?";
 
-        // open_ports carries the port spec on ConfigValue; surface it in the prompt (host firewall only).
+        // open_ports carries the port spec on ConfigValue and the optional router leg on ConfigKey
+        // ("router" ⇒ also open the UPnP forward). Surface both in the prompt.
         if (c.Kind == ConfirmationKind.OpenPorts && !string.IsNullOrWhiteSpace(c.ConfigValue))
-            return $"Open host-firewall port(s) {c.ConfigValue} on {c.Target}?";
+        {
+            bool includeRouter = string.Equals(c.ConfigKey, "router", StringComparison.Ordinal);
+            return includeRouter
+                ? $"Open host-firewall + router/UPnP forward for port(s) {c.ConfigValue} on {c.Target}?"
+                : $"Open host-firewall port(s) {c.ConfigValue} on {c.Target}?";
+        }
 
         var verb = ConfirmationKinds.Verb(c.Kind); // "start", "back up", "set config on", …
         return $"{char.ToUpperInvariant(verb[0])}{verb[1..]} {c.Target}?";

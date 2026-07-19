@@ -55,6 +55,12 @@ public static class ServiceCollectionExtensions
         // as unavailable and a confirmed open_ports honestly reports "nothing changed" rather than
         // breaking DI — keeps the assistant embeddable by a host with no firewall authority.
         services.TryAddSingleton<INetworkInfo, UnavailableNetworkInfo>();
+        // Router/UPnP visibility/control (the get_network router axis, and open_ports' opt-in router leg)
+        // degrades closed independently of the firewall: a host that wires the kgsm-watchdog calls
+        // AddKgsmAdapters, which registers a concrete IUpnpInfo that wins over this default. Without it,
+        // get_network honestly reports router forwarding as unknown and an opted-in open_ports router leg
+        // honestly reports the watchdog unavailable — never breaking DI.
+        services.TryAddSingleton<IUpnpInfo, UnavailableUpnpInfo>();
         // Engine event history (get_audit_log / get_change_timeline) degrades closed the same way: a
         // host that wires the kgsm-monitor calls AddKgsmAdapters, which registers a concrete
         // IEventHistory that wins over this default. Without it, both tools honestly report the

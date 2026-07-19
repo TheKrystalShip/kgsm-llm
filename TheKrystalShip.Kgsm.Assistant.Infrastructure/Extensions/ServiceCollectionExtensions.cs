@@ -153,6 +153,20 @@ public static class ServiceCollectionExtensions
         services.AddKgsmFirewallClient(firewallSocketPath);
         services.AddSingleton<INetworkInfo, KgsmNetworkInfo>();
 
+        // --- Router / UPnP forwarding (kgsm-watchdog authority) --------------------------------
+        // Backs the router axis of get_network and the opt-in router leg of open_ports by reaching the
+        // watchdog through kgsm-lib's IWatchdogClient. Registered AFTER AddKgsmAssistant, so this concrete
+        // IUpnpInfo wins over the library's fail-closed UnavailableUpnpInfo default. The watchdog CONTROL
+        // client is HTTP-over-socket and starts no listener (unlike the event graph we deliberately omit
+        // above), so it is safe to add here. Additive + fails closed: an unreachable daemon maps to
+        // "watchdog unavailable" (the adapter never throws), so the assistant runs standalone.
+        var watchdog = config.GetSection(WatchdogOptions.Section).Get<WatchdogOptions>() ?? new WatchdogOptions();
+        var watchdogSocketPath = string.IsNullOrWhiteSpace(watchdog.SocketPath)
+            ? new WatchdogOptions().SocketPath
+            : watchdog.SocketPath;
+        services.AddKgsmWatchdogClient(watchdogSocketPath);
+        services.AddSingleton<IUpnpInfo, KgsmUpnpInfo>();
+
         // --- Web search (Tavily) ---------------------------------------------------------------
         // The assistant's web_search port. The API key is ENV-ONLY (WebSearch__ApiKey) and travels
         // as a default Bearer header; with no key the adapter fails closed. DailyCallBudget is the

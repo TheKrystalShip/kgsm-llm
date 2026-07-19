@@ -170,9 +170,17 @@ public static class LlmTools
 
     private static readonly LlmToolParameter OpenPortsSpec = new(
         "ports",
-        "The host-firewall port(s) to open — e.g. \"34197/udp\", \"27015/tcp\", or a range " +
+        "The port(s) to open — e.g. \"34197/udp\", \"27015/tcp\", or a range " +
         "\"27015:27020/udp\". Separate multiple with commas. Include the protocol (tcp or udp); if you " +
         "omit it, both are opened.");
+
+    private static readonly LlmToolParameter IncludeRouter = new(
+        "include_router",
+        "Optional. Set to true to ALSO set up the router/UPnP port forward for these ports (so the server " +
+        "is reachable from the internet), not just the host firewall. Use it when the user wants the server " +
+        "reachable from outside their network. The router leg only takes effect if the server has " +
+        "port-forwarding enabled; otherwise it's skipped. Defaults to false (host firewall only).",
+        Required: false);
 
     private static readonly LlmToolParameter ReadPath = new(
         "path",
@@ -221,11 +229,12 @@ public static class LlmTools
             InstanceName, PerformanceRange),
 
         LlmToolDefinition.Create(GetNetwork,
-            "Report the HOST-FIREWALL ports open for ONE server — the ports KGSM has opened for it, plus " +
-            "the firewall backend and whether it's actively enforcing. Use this for \"what ports are open " +
-            "for X?\", \"is X's port allowed through the firewall?\", or \"which firewall backend is " +
-            "active?\". This is the host firewall only — it does NOT show router/UPnP port forwarding " +
-            "(that can't be seen from the host), so never imply it does.",
+            "Report the network reachability of ONE server across two layers: the HOST FIREWALL (the ports " +
+            "KGSM has opened, the firewall backend, and whether it's enforcing) AND the ROUTER / UPnP port " +
+            "forwards it has on the local router. Use this for \"what ports are open for X?\", \"is X's port " +
+            "allowed through the firewall?\", \"is X forwarded on the router?\", or \"is X reachable from the " +
+            "internet?\". Both layers are reported honestly and separately — an unreachable firewall or router " +
+            "is 'couldn't check', never 'nothing open'.",
             InstanceName),
 
         LlmToolDefinition.Create(GetAuditLog,
@@ -326,12 +335,12 @@ public static class LlmTools
             InstanceName, ConfigKey, ConfigValue),
 
         LlmToolDefinition.Create(OpenPorts,
-            "Propose opening HOST-FIREWALL ports for a server so players can reach it — e.g. its game " +
-            "port. Staged for human confirmation; it does not run until a person confirms. This opens the " +
-            "host's own firewall only (via the firewall authority); it does NOT set up router/UPnP port " +
-            "forwarding, so don't imply the server will be reachable from the internet if the router isn't " +
-            "already forwarding.",
-            InstanceName, OpenPortsSpec),
+            "Propose opening ports for a server so players can reach it — e.g. its game port. Staged for " +
+            "human confirmation; it does not run until a person confirms. By default it opens the host's own " +
+            "firewall only. To ALSO make the server reachable from the internet, set include_router to true — " +
+            "that additionally sets up the router/UPnP forward for the same ports (only effective if the " +
+            "server has port-forwarding enabled; otherwise the router leg is skipped).",
+            InstanceName, OpenPortsSpec, IncludeRouter),
     };
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>

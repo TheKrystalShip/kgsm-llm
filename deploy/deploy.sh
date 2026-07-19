@@ -11,9 +11,11 @@
 #   * CLI      — framework-dependent single file → /opt/kgsm-assistant/cli + symlinked on PATH
 #   * Indexer  — Native-AOT single file          → /opt/kgsm-assistant/indexer (opt-in; needs Ollama)
 #
-# Service + CLI need the .NET 10 ASP.NET Core runtime on the host (checked up front). The Service
-# and CLI ProjectReference the sibling kgsm-lib, so the full tks workspace (umbrella checkout) must
-# be present. The env file /etc/kgsm-assistant/service.env is created from the template only if
+# Service + CLI need the .NET 10 ASP.NET Core runtime on the host (checked up front). kgsm-lib is
+# consumed as the packed NuGet TheKrystalShip.KGSM.Lib from the local feed (nuget.config →
+# /home/heisen/local-nuget), the same PackageReference pattern every other .NET consumer uses; the
+# sibling kgsm-lib checkout must be present so it can be packed into that feed (see the preflight
+# check below). The env file /etc/kgsm-assistant/service.env is created from the template only if
 # absent and NEVER overwritten — your secrets survive a redeploy.
 #
 # Non-interactive: SUDO='sudo -A' SUDO_ASKPASS=/path/to/askpass ./deploy/deploy.sh
@@ -97,7 +99,9 @@ if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
     exit 1
 fi
 [[ -f "$SVC_PROJ" ]] || { err "project not found: $SVC_PROJ"; exit 1; }
-[[ -d "$WORKSPACE/kgsm-lib" ]] || { err "sibling repo missing: $WORKSPACE/kgsm-lib — clone the full tks workspace (umbrella checkout)."; exit 1; }
+# kgsm-lib is consumed as the packed NuGet from the local feed (nuget.config). The sibling checkout is
+# what packs it there; if it's absent the pinned package may be unresolvable at restore.
+[[ -d "$WORKSPACE/kgsm-lib" ]] || { err "sibling repo missing: $WORKSPACE/kgsm-lib — it packs TheKrystalShip.KGSM.Lib into the local NuGet feed the build restores from."; exit 1; }
 if ! dotnet --list-runtimes 2>/dev/null | grep -q 'Microsoft.AspNetCore.App 10\.'; then
     err "the .NET 10 ASP.NET Core shared runtime is not installed (need 'Microsoft.AspNetCore.App 10.x'). Check: dotnet --list-runtimes"
     exit 1

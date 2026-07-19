@@ -42,10 +42,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The single C#<->kgsm chokepoint. Consume the local checkout (the canonical dev
-         source), same as the Service does — this lib needs the local lib's Reading<T>
-         bulk-status shape and is otherwise stranded across the 1.3.0 breaking release. -->
-    <ProjectReference Include="..\..\kgsm-lib\kgsm-lib\kgsm-lib.csproj" />
+    <!-- The single C#<->kgsm chokepoint, consumed as the packed NuGet from the local feed
+         (nuget.config → /home/heisen/local-nuget), same pattern as kgsm-watchdog / kgsm-api /
+         kgsm-monitor. Bump this version when a new kgsm-lib is packed. -->
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.37.0" />
   </ItemGroup>
 
 </Project>

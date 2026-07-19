@@ -14,37 +14,22 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 /// <summary>
-/// Covers the two pieces of <see cref="KgsmServerOperations"/> with real logic
-/// (the rest just forwards to KGSM.Lib): the path-bound config read
-/// (<see cref="KgsmServerOperations.ReadInstanceFileAsync"/>) and the fleet-status
-/// mapping that must preserve the measured-vs-unavailable distinction.
+/// Covers the pieces of <see cref="KgsmServerOperations"/> with real logic (the rest just
+/// forwards to KGSM.Lib): the <see cref="TheKrystalShip.KGSM.Core.Interfaces.IInstanceFiles"/>
+/// outcome→<see cref="Result"/> mapping for the three file methods (the jail itself lives in
+/// kgsm-lib and is tested exhaustively there — <c>InstanceFilesTests</c> — not here), and the
+/// fleet-status mapping that must preserve the measured-vs-unavailable distinction.
 /// </summary>
-public sealed class KgsmServerOperationsTests : IDisposable
+public sealed class KgsmServerOperationsTests
 {
     private readonly IInstanceService _instances = Substitute.For<IInstanceService>();
+    private readonly IInstanceFiles _files = Substitute.For<IInstanceFiles>();
     private readonly ISystemService _system = Substitute.For<ISystemService>();
     private readonly IWatcherService _watcher = Substitute.For<IWatcherService>();
     private readonly AsyncLocalInvocationContext _invocation = new();
-    private readonly string _root;     // stand-in for an instance (config) directory
-    private readonly string _outside;  // a sibling tree the read must never reach
-
-    public KgsmServerOperationsTests()
-    {
-        var baseDir = Path.Combine(Path.GetTempPath(), "kgsm-ops-" + Guid.NewGuid().ToString("N"));
-        _root = Path.Combine(baseDir, "inst");
-        _outside = Path.Combine(baseDir, "outside");
-        Directory.CreateDirectory(_root);
-        Directory.CreateDirectory(_outside);
-    }
-
-    public void Dispose()
-    {
-        try { Directory.Delete(Path.GetDirectoryName(_root)!, recursive: true); }
-        catch { /* best-effort cleanup */ }
-    }
 
     private KgsmServerOperations Create() =>
-        new(_instances, _system, _watcher, _invocation, NullLogger<KgsmServerOperations>.Instance);
+        new(_instances, _files, _system, _watcher, _invocation, NullLogger<KgsmServerOperations>.Instance);
 
     // --- provenance: a turn/confirm scope stamps actor (the Discord principal) + origin=assistant ---
 
@@ -97,298 +82,251 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     /// <summary>
-    /// Stub kgsm's config-path resolution (<c>instances find</c> → __find_instance_config)
-    /// to return the given absolute config-file path. The file's DIRECTORY becomes the read
-    /// boundary — this mirrors the real engine, the same resolution config-get/config-set use.
+    /// The jail itself (traversal/symlink/special-file/atomic-write/.kgsmbak) is kgsm-lib's —
+    /// covered exhaustively by <c>InstanceFilesTests</c> there. These tests only assert that
+    /// <see cref="KgsmServerOperations"/> calls <see cref="IInstanceFiles"/> with the right
+    /// arguments and maps every <see cref="FileOpOutcome"/> to the right <see cref="Result"/>.
     /// </summary>
-    private void StubConfigPath(string instance, string configFilePath) =>
-        _instances.FindConfigPath(instance).Returns(new KgsmResult(0, configFilePath));
+
+    // --- ReadInstanceFileAsync (IInstanceFiles.Read outcome → Result<string>) ---
 
     [Fact]
-    public async Task ReadInstanceFile_ResolvedConfig_ReturnsContent()
+    public async Task ReadInstanceFile_Ok_ReturnsContent()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        await File.WriteAllTextAsync(Path.Combine(_root, "inst.config.ini"), "port = 25565\n");
+        _files.Read("inst", "inst.config.ini", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Ok(new FileContent { Content = "port = 25565\n" }));
 
         var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Contain("port = 25565");
+        result.Value.Should().Be("port = 25565\n");
     }
 
     [Fact]
-    public async Task ReadInstanceFile_ReadsResolvedConfigDir_NotInstallDir()
+    public async Task ReadInstanceFile_BlankPath_DefaultsToInstanceConfigIni()
     {
-        // Regression guard for the view_config_file bug. Model the real layout: the config
-        // lives in the working dir while install_dir is a DIFFERENT, deeper directory
-        // (…/<inst>/install). The old code bound the read boundary to install_dir and so
-        // 404'd for every real instance; resolving via kgsm's find-path reads the real file.
-        var workingDir = Path.Combine(_root, "factorio-test");
-        var installDir = Path.Combine(workingDir, "install");
-        Directory.CreateDirectory(installDir);
-        await File.WriteAllTextAsync(
-            Path.Combine(workingDir, "factorio-test.config.ini"), "auto_update = false\n");
+        _files.Read("inst", "inst.config.ini", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Ok(new FileContent { Content = "port = 1\n" }));
 
-        // kgsm resolves the config to the working dir, never the install dir.
-        StubConfigPath("factorio-test", Path.Combine(workingDir, "factorio-test.config.ini"));
-        // Belt-and-suspenders: even if the impl regressed to GetInstanceInfo().InstallDir,
-        // that points at the file-less install dir.
-        _instances.GetInstanceInfo("factorio-test")
-            .Returns(new Instance { Name = "factorio-test", InstallDir = installDir, WorkingDir = workingDir });
-
-        var result = await Create().ReadInstanceFileAsync("factorio-test", "factorio-test.config.ini");
+        var result = await Create().ReadInstanceFileAsync("inst", relativePath: "");
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Contain("auto_update = false");
+        _files.Received(1).Read("inst", "inst.config.ini", Arg.Any<long>());
+    }
+
+    [Fact]
+    public async Task ReadInstanceFile_PassesA64KbCap()
+    {
+        _files.Read(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Ok(new FileContent { Content = "x" }));
+
+        await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
+
+        _files.Received(1).Read("inst", "inst.config.ini", 64 * 1024);
+    }
+
+    [Fact]
+    public async Task ReadInstanceFile_Binary_SucceedsWithPlaceholder_NeverDumpsBytes()
+    {
+        _files.Read("inst", "blob.bin", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.Binary));
+
+        var result = await Create().ReadInstanceFileAsync("inst", "blob.bin");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("binary file");
+    }
+
+    [Fact]
+    public async Task ReadInstanceFile_NotFound_Fails()
+    {
+        _files.Read("inst", "missing.ini", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.NotFound));
+
+        var result = await Create().ReadInstanceFileAsync("inst", "missing.ini");
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadInstanceFile_OutOfJail_Fails()
+    {
+        _files.Read("inst", "../outside/secret.txt", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.OutOfJail));
+
+        var result = await Create().ReadInstanceFileAsync("inst", "../outside/secret.txt");
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadInstanceFile_NotAFile_Fails()
+    {
+        _files.Read("inst", "pipe.sock", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.NotAFile));
+
+        var result = await Create().ReadInstanceFileAsync("inst", "pipe.sock");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("regular file");
+    }
+
+    [Fact]
+    public async Task ReadInstanceFile_TooLarge_Fails()
+    {
+        _files.Read("inst", "huge.log", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.TooLarge));
+
+        var result = await Create().ReadInstanceFileAsync("inst", "huge.log");
+
+        result.IsSuccess.Should().BeFalse();
     }
 
     [Fact]
     public async Task ReadInstanceFile_UnknownInstance_Fails()
     {
-        _instances.FindConfigPath("ghost").Returns(new KgsmResult(1, "", "Instance 'ghost' not found"));
+        _files.Read("ghost", "ghost.config.ini", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.InstanceUnavailable));
 
         var result = await Create().ReadInstanceFileAsync("ghost", "ghost.config.ini");
 
         result.IsSuccess.Should().BeFalse();
     }
 
-    [Fact]
-    public async Task ReadInstanceFile_EmptyResolvedPath_Fails_NoCwdRelativeRead()
-    {
-        // The CWD-relative-read guard: an empty resolved path must never combine into
-        // a path rooted at the service's working directory.
-        StubConfigPath("inst", string.Empty);
-
-        var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
-
-        result.IsSuccess.Should().BeFalse();
-    }
+    // --- ListInstanceDirectoryAsync (IInstanceFiles.List outcome → Result<IReadOnlyList<InstanceDirEntry>>) ---
 
     [Fact]
-    public async Task ReadInstanceFile_MissingFile_Fails()
+    public async Task ListInstanceDirectory_Ok_MapsEntries()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini")); // dir exists, file does not
-
-        var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
-
-        result.IsSuccess.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task ReadInstanceFile_DotDotEscape_IsRefused()
-    {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        await File.WriteAllTextAsync(Path.Combine(_outside, "secret.txt"), "TOPSECRET");
-
-        var result = await Create().ReadInstanceFileAsync("inst", "../outside/secret.txt");
-
-        result.IsSuccess.Should().BeFalse();
-        (result.Value ?? string.Empty).Should().NotContain("TOPSECRET");
-    }
-
-    [Fact]
-    public async Task ReadInstanceFile_SiblingDirWithSharedPrefix_IsRefused()
-    {
-        // /…/inst must not admit /…/inst-evil — the trailing-separator prefix guard.
-        var sibling = _root + "-evil";
-        Directory.CreateDirectory(sibling);
-        await File.WriteAllTextAsync(Path.Combine(sibling, "secret.txt"), "TOPSECRET");
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-
-        var result = await Create().ReadInstanceFileAsync("inst", "../inst-evil/secret.txt");
-
-        result.IsSuccess.Should().BeFalse();
-        (result.Value ?? string.Empty).Should().NotContain("TOPSECRET");
-    }
-
-    [Fact]
-    public async Task ReadInstanceFile_SymlinkPointingOutside_IsRefused()
-    {
-        var secret = Path.Combine(_outside, "secret.txt");
-        await File.WriteAllTextAsync(secret, "TOPSECRET");
-        // A symlink that lives INSIDE the instance dir but points OUT of it.
-        File.CreateSymbolicLink(Path.Combine(_root, "inst.config.ini"), secret);
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-
-        var result = await Create().ReadInstanceFileAsync("inst", "inst.config.ini");
-
-        result.IsSuccess.Should().BeFalse();
-        (result.Value ?? string.Empty).Should().NotContain("TOPSECRET");
-    }
-
-    [Fact]
-    public async Task ReadInstanceFile_NonRegularFile_IsRefused()
-    {
-        // A FIFO inside the instance dir: opening it for read would block forever, so the
-        // stat()-based guard must refuse it before opening. (Skips if mkfifo is unavailable.)
-        var fifo = Path.Combine(_root, "pipe.sock");
-        if (!TryMakeFifo(fifo)) return;
-
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-
-        var result = await Create().ReadInstanceFileAsync("inst", "pipe.sock");
-
-        result.IsSuccess.Should().BeFalse("a FIFO/socket isn't a regular file and would block on open");
-        (result.Error ?? string.Empty).Should().Contain("regular file");
-    }
-
-    [Fact]
-    public async Task ReadInstanceFile_BinaryFile_IsNotDumped()
-    {
-        // A NUL byte marks the content as binary → report the size, never spray raw bytes.
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        await File.WriteAllBytesAsync(
-            Path.Combine(_root, "blob.bin"), new byte[] { 0x50, 0x4B, 0x00, 0x01, 0x02 });
-
-        var result = await Create().ReadInstanceFileAsync("inst", "blob.bin");
-
-        result.IsSuccess.Should().BeTrue();
-        result.Value.Should().Contain("binary file").And.Contain("bytes");
-    }
-
-    [Fact]
-    public async Task ListInstanceDirectory_ListsEntries_DirsAndFilesWithinJail()
-    {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        await File.WriteAllTextAsync(Path.Combine(_root, "inst.config.ini"), "port = 1\n");
-        Directory.CreateDirectory(Path.Combine(_root, "logs"));
+        _files.List("inst", null, Arg.Any<int>()).Returns(FileOpResult<DirListing>.Ok(new DirListing
+        {
+            Entries =
+            [
+                new FileEntry("logs", FileKind.Dir, null, null),
+                new FileEntry("inst.config.ini", FileKind.File, 42, DateTimeOffset.UtcNow),
+            ],
+        }));
 
         var result = await Create().ListInstanceDirectoryAsync("inst");
 
         result.IsSuccess.Should().BeTrue();
         var byName = result.Value!.ToDictionary(e => e.Name);
-        byName.Should().ContainKey("inst.config.ini");
-        byName["inst.config.ini"].IsDirectory.Should().BeFalse();
-        byName.Should().ContainKey("logs");
         byName["logs"].IsDirectory.Should().BeTrue();
+        byName["inst.config.ini"].IsDirectory.Should().BeFalse();
+        byName["inst.config.ini"].Size.Should().Be(42);
     }
 
     [Fact]
-    public async Task ListInstanceDirectory_DotDotEscape_IsRefused()
+    public async Task ListInstanceDirectory_PassesA200EntryCap()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        await File.WriteAllTextAsync(Path.Combine(_outside, "secret.txt"), "TOPSECRET");
+        _files.List(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing()));
+
+        await Create().ListInstanceDirectoryAsync("inst", "logs");
+
+        _files.Received(1).List("inst", "logs", 200);
+    }
+
+    [Fact]
+    public async Task ListInstanceDirectory_NotFound_Fails()
+    {
+        _files.List("inst", "ghost-dir", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Fail(FileOpOutcome.NotFound));
+
+        var result = await Create().ListInstanceDirectoryAsync("inst", "ghost-dir");
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListInstanceDirectory_NotADirectory_Fails()
+    {
+        _files.List("inst", "inst.config.ini", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Fail(FileOpOutcome.NotADirectory));
+
+        var result = await Create().ListInstanceDirectoryAsync("inst", "inst.config.ini");
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListInstanceDirectory_OutOfJail_Fails()
+    {
+        _files.List("inst", "../outside", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Fail(FileOpOutcome.OutOfJail));
 
         var result = await Create().ListInstanceDirectoryAsync("inst", "../outside");
 
         result.IsSuccess.Should().BeFalse();
     }
 
-    /// <summary>Best-effort FIFO creation via the <c>mkfifo</c> CLI; false if unavailable.</summary>
-    private static bool TryMakeFifo(string path)
-    {
-        try
-        {
-            using var p = System.Diagnostics.Process.Start("mkfifo", path);
-            p?.WaitForExit(2000);
-            return File.Exists(path);
-        }
-        catch { return false; }
-    }
-
-    // --- WriteInstanceFileAsync (jail reuse + atomic replace + .kgsmbak + size cap + new-file) ---
+    // --- WriteInstanceFileAsync (IInstanceFiles.Write outcome → Result; fixed WriteOptions) ---
 
     [Fact]
-    public async Task WriteInstanceFile_NewFile_CreatesItWithContent()
+    public async Task WriteInstanceFile_Ok_Succeeds()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        _files.Write(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
 
         var result = await Create().WriteInstanceFileAsync("inst", "server.properties", "port=25565\n");
 
         result.IsSuccess.Should().BeTrue();
-        (await File.ReadAllTextAsync(Path.Combine(_root, "server.properties"))).Should().Be("port=25565\n");
     }
 
     [Fact]
-    public async Task WriteInstanceFile_OverwritesExisting_AtomicReplace_ProducesExactContent()
+    public async Task WriteInstanceFile_PassesAllowCreateBackupAndA10MbCap_LastWriterWins()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        var target = Path.Combine(_root, "PalWorldSettings.ini");
-        await File.WriteAllTextAsync(target, "old content");
+        _files.Write(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
 
-        var result = await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "new content");
+        await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "new content");
+
+        _files.Received(1).Write("inst", "PalWorldSettings.ini", "new content", Arg.Is<WriteOptions>(o =>
+            o.AllowCreate && o.Backup && o.MaxBytes == 10 * 1024 * 1024 && o.ExpectedEtag == null));
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_NestedPalworldStylePath_ForwardedVerbatim()
+    {
+        // Regression flavor: the relative path (working-dir-relative, deeply nested) must reach
+        // IInstanceFiles unmodified — no local re-combine/re-jail on this side any more.
+        const string relPath = "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini";
+        _files.Write("inst", relPath, Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+
+        var result = await Create().WriteInstanceFileAsync(
+            "inst", relPath, "[/Script/Pal.PalGameWorldSettings]");
 
         result.IsSuccess.Should().BeTrue();
-        (await File.ReadAllTextAsync(target)).Should().Be("new content");
-        // No stray temp file left behind after the atomic rename.
-        Directory.EnumerateFiles(_root).Should().NotContain(f => f.Contains(".kgsmtmp-"));
     }
 
     [Fact]
-    public async Task WriteInstanceFile_OverwritingNonEmptyExisting_CreatesKgsmbakBackup()
+    public async Task WriteInstanceFile_NotFound_MissingParentOrNoCreate_Fails()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        var target = Path.Combine(_root, "PalWorldSettings.ini");
-        await File.WriteAllTextAsync(target, "the old good config");
+        _files.Write("inst", "newdir/settings.ini", Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Fail(FileOpOutcome.NotFound));
 
-        await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "the new config");
+        var result = await Create().WriteInstanceFileAsync("inst", "newdir/settings.ini", "content");
 
-        var backup = target + ".kgsmbak";
-        File.Exists(backup).Should().BeTrue();
-        (await File.ReadAllTextAsync(backup)).Should().Be("the old good config");
+        result.IsSuccess.Should().BeFalse();
     }
 
     [Fact]
-    public async Task WriteInstanceFile_OverwritingEmptyExisting_DoesNotBackUp()
+    public async Task WriteInstanceFile_OutOfJail_Fails()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        var target = Path.Combine(_root, "PalWorldSettings.ini");
-        await File.WriteAllTextAsync(target, ""); // genuinely empty — Palworld's starting state
-
-        var result = await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "populated");
-
-        result.IsSuccess.Should().BeTrue();
-        File.Exists(target + ".kgsmbak").Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task WriteInstanceFile_SecondOverwrite_ReusesSameBackupFile_NotAHistory()
-    {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        var target = Path.Combine(_root, "PalWorldSettings.ini");
-        await File.WriteAllTextAsync(target, "version 1");
-
-        await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "version 2");
-        await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "version 3");
-
-        var backup = target + ".kgsmbak";
-        // The backup is last-good (the content just before the LAST overwrite), not a history of every edit.
-        (await File.ReadAllTextAsync(backup)).Should().Be("version 2");
-        (await File.ReadAllTextAsync(target)).Should().Be("version 3");
-    }
-
-    [Fact]
-    public async Task WriteInstanceFile_DotDotEscape_IsRefused()
-    {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        _files.Write("inst", "../outside/evil.txt", Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Fail(FileOpOutcome.OutOfJail));
 
         var result = await Create().WriteInstanceFileAsync("inst", "../outside/evil.txt", "pwned");
 
         result.IsSuccess.Should().BeFalse();
-        File.Exists(Path.Combine(_outside, "evil.txt")).Should().BeFalse();
     }
 
     [Fact]
-    public async Task WriteInstanceFile_SymlinkPointingOutside_IsRefused_TargetUntouched()
+    public async Task WriteInstanceFile_NotAFile_Fails()
     {
-        var outsideTarget = Path.Combine(_outside, "real.txt");
-        await File.WriteAllTextAsync(outsideTarget, "original outside content");
-        // A symlink that lives INSIDE the instance dir but points OUT of it.
-        File.CreateSymbolicLink(Path.Combine(_root, "linked.ini"), outsideTarget);
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-
-        var result = await Create().WriteInstanceFileAsync("inst", "linked.ini", "pwned");
-
-        result.IsSuccess.Should().BeFalse();
-        (await File.ReadAllTextAsync(outsideTarget)).Should().Be("original outside content");
-    }
-
-    [Fact]
-    public async Task WriteInstanceFile_NonRegularTarget_IsRefused()
-    {
-        var fifo = Path.Combine(_root, "pipe.sock");
-        if (!TryMakeFifo(fifo)) return;
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        _files.Write("inst", "pipe.sock", Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Fail(FileOpOutcome.NotAFile));
 
         var result = await Create().WriteInstanceFileAsync("inst", "pipe.sock", "pwned");
 
@@ -397,48 +335,35 @@ public sealed class KgsmServerOperationsTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteInstanceFile_OversizedContent_IsRefused()
+    public async Task WriteInstanceFile_Binary_RefusesToClobberExistingBinary()
     {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        _files.Write("inst", "blob.bin", Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Fail(FileOpOutcome.Binary));
+
+        var result = await Create().WriteInstanceFileAsync("inst", "blob.bin", "pwned");
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_TooLarge_Fails()
+    {
+        _files.Write("inst", "big.txt", Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Fail(FileOpOutcome.TooLarge));
+
         var huge = new string('a', 10 * 1024 * 1024 + 1); // one byte over the 10 MB cap
 
         var result = await Create().WriteInstanceFileAsync("inst", "big.txt", huge);
 
         result.IsSuccess.Should().BeFalse();
         (result.Error ?? string.Empty).Should().Contain("MB limit");
-        File.Exists(Path.Combine(_root, "big.txt")).Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task WriteInstanceFile_NewFile_MissingParentDirectory_IsRefused()
-    {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        // "newdir" does not exist under _root — no deep-tree creation.
-
-        var result = await Create().WriteInstanceFileAsync("inst", "newdir/settings.ini", "content");
-
-        result.IsSuccess.Should().BeFalse();
-        Directory.Exists(Path.Combine(_root, "newdir")).Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task WriteInstanceFile_NewFile_InsideExistingSubdirectory_IsAllowed()
-    {
-        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
-        var configDir = Path.Combine(_root, "install", "Pal", "Saved", "Config", "LinuxServer");
-        Directory.CreateDirectory(configDir);
-
-        var result = await Create().WriteInstanceFileAsync(
-            "inst", "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini", "[/Script/Pal.PalGameWorldSettings]");
-
-        result.IsSuccess.Should().BeTrue();
-        File.Exists(Path.Combine(configDir, "PalWorldSettings.ini")).Should().BeTrue();
     }
 
     [Fact]
     public async Task WriteInstanceFile_UnknownInstance_Fails()
     {
-        _instances.FindConfigPath("ghost").Returns(new KgsmResult(1, "", "Instance 'ghost' not found"));
+        _files.Write("ghost", "x.txt", Arg.Any<string>(), Arg.Any<WriteOptions>())
+            .Returns(FileOpResult<FileStat>.Fail(FileOpOutcome.InstanceUnavailable));
 
         var result = await Create().WriteInstanceFileAsync("ghost", "x.txt", "content");
 

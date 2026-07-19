@@ -56,6 +56,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ILogSubscriptionService, LogSubscriptionService>();
         services.AddSingleton<ILifecycleService, LifecycleService>();
         services.AddSingleton<IInstanceService, InstanceService>();
+        services.AddSingleton<IInstanceFiles, InstanceFiles>(); // jailed file I/O for read/list/write_file — no socket dep, injects IInstanceService only
         services.AddSingleton<IBlueprintService, BlueprintService>();
         services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
         services.AddSingleton<IWatcherService, WatcherService>(); // port-reachability probe for run_health_check

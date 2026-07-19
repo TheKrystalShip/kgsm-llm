@@ -286,6 +286,165 @@ public sealed class KgsmServerOperationsTests : IDisposable
         catch { return false; }
     }
 
+    // --- WriteInstanceFileAsync (jail reuse + atomic replace + .kgsmbak + size cap + new-file) ---
+
+    [Fact]
+    public async Task WriteInstanceFile_NewFile_CreatesItWithContent()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+
+        var result = await Create().WriteInstanceFileAsync("inst", "server.properties", "port=25565\n");
+
+        result.IsSuccess.Should().BeTrue();
+        (await File.ReadAllTextAsync(Path.Combine(_root, "server.properties"))).Should().Be("port=25565\n");
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_OverwritesExisting_AtomicReplace_ProducesExactContent()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        var target = Path.Combine(_root, "PalWorldSettings.ini");
+        await File.WriteAllTextAsync(target, "old content");
+
+        var result = await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "new content");
+
+        result.IsSuccess.Should().BeTrue();
+        (await File.ReadAllTextAsync(target)).Should().Be("new content");
+        // No stray temp file left behind after the atomic rename.
+        Directory.EnumerateFiles(_root).Should().NotContain(f => f.Contains(".kgsmtmp-"));
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_OverwritingNonEmptyExisting_CreatesKgsmbakBackup()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        var target = Path.Combine(_root, "PalWorldSettings.ini");
+        await File.WriteAllTextAsync(target, "the old good config");
+
+        await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "the new config");
+
+        var backup = target + ".kgsmbak";
+        File.Exists(backup).Should().BeTrue();
+        (await File.ReadAllTextAsync(backup)).Should().Be("the old good config");
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_OverwritingEmptyExisting_DoesNotBackUp()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        var target = Path.Combine(_root, "PalWorldSettings.ini");
+        await File.WriteAllTextAsync(target, ""); // genuinely empty — Palworld's starting state
+
+        var result = await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "populated");
+
+        result.IsSuccess.Should().BeTrue();
+        File.Exists(target + ".kgsmbak").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_SecondOverwrite_ReusesSameBackupFile_NotAHistory()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        var target = Path.Combine(_root, "PalWorldSettings.ini");
+        await File.WriteAllTextAsync(target, "version 1");
+
+        await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "version 2");
+        await Create().WriteInstanceFileAsync("inst", "PalWorldSettings.ini", "version 3");
+
+        var backup = target + ".kgsmbak";
+        // The backup is last-good (the content just before the LAST overwrite), not a history of every edit.
+        (await File.ReadAllTextAsync(backup)).Should().Be("version 2");
+        (await File.ReadAllTextAsync(target)).Should().Be("version 3");
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_DotDotEscape_IsRefused()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+
+        var result = await Create().WriteInstanceFileAsync("inst", "../outside/evil.txt", "pwned");
+
+        result.IsSuccess.Should().BeFalse();
+        File.Exists(Path.Combine(_outside, "evil.txt")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_SymlinkPointingOutside_IsRefused_TargetUntouched()
+    {
+        var outsideTarget = Path.Combine(_outside, "real.txt");
+        await File.WriteAllTextAsync(outsideTarget, "original outside content");
+        // A symlink that lives INSIDE the instance dir but points OUT of it.
+        File.CreateSymbolicLink(Path.Combine(_root, "linked.ini"), outsideTarget);
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+
+        var result = await Create().WriteInstanceFileAsync("inst", "linked.ini", "pwned");
+
+        result.IsSuccess.Should().BeFalse();
+        (await File.ReadAllTextAsync(outsideTarget)).Should().Be("original outside content");
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_NonRegularTarget_IsRefused()
+    {
+        var fifo = Path.Combine(_root, "pipe.sock");
+        if (!TryMakeFifo(fifo)) return;
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+
+        var result = await Create().WriteInstanceFileAsync("inst", "pipe.sock", "pwned");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("regular file");
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_OversizedContent_IsRefused()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        var huge = new string('a', 10 * 1024 * 1024 + 1); // one byte over the 10 MB cap
+
+        var result = await Create().WriteInstanceFileAsync("inst", "big.txt", huge);
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("MB limit");
+        File.Exists(Path.Combine(_root, "big.txt")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_NewFile_MissingParentDirectory_IsRefused()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        // "newdir" does not exist under _root — no deep-tree creation.
+
+        var result = await Create().WriteInstanceFileAsync("inst", "newdir/settings.ini", "content");
+
+        result.IsSuccess.Should().BeFalse();
+        Directory.Exists(Path.Combine(_root, "newdir")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_NewFile_InsideExistingSubdirectory_IsAllowed()
+    {
+        StubConfigPath("inst", Path.Combine(_root, "inst.config.ini"));
+        var configDir = Path.Combine(_root, "install", "Pal", "Saved", "Config", "LinuxServer");
+        Directory.CreateDirectory(configDir);
+
+        var result = await Create().WriteInstanceFileAsync(
+            "inst", "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini", "[/Script/Pal.PalGameWorldSettings]");
+
+        result.IsSuccess.Should().BeTrue();
+        File.Exists(Path.Combine(configDir, "PalWorldSettings.ini")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WriteInstanceFile_UnknownInstance_Fails()
+    {
+        _instances.FindConfigPath("ghost").Returns(new KgsmResult(1, "", "Instance 'ghost' not found"));
+
+        var result = await Create().WriteInstanceFileAsync("ghost", "x.txt", "content");
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
     [Fact]
     public async Task GetFleetStatus_PreservesMeasuredVsUnavailable()
     {

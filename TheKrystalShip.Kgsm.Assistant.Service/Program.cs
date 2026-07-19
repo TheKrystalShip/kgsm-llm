@@ -10,6 +10,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
+using TheKrystalShip.Kgsm.Assistant.Service.PendingWrites;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
@@ -49,6 +50,9 @@ builder.Services.AddKgsmAdapters(builder.Configuration);
 
 // --- Security ----------------------------------------------------------------
 builder.Services.AddSingleton<ConfirmationTokenService>();
+// write_file's confirmation-token carrier for a body too large for a stateless HMAC token (§ Contracts) —
+// shares the conversation store's SQLite file (bound by AddLocalLlm above), adding its own table.
+builder.Services.AddSingleton<IPendingWriteStore, SqlitePendingWriteStore>();
 
 // --- Web auth (Discord OAuth) ------------------------------------------------
 // The SPA is a separate origin (GitHub Pages), so auth is a bearer session token the
@@ -287,6 +291,8 @@ secured.MapPost("/turn", async (
     HttpContext http,
     IServerAssistant assistant,
     ConfirmationTokenService tokens,
+    IPendingWriteStore pendingWrites,
+    IOptions<AssistantServiceOptions> assistantOptions,
     DiscordAuthService auth,
     IInvocationContext invocation,
     CancellationToken ct) =>
@@ -350,7 +356,8 @@ secured.MapPost("/turn", async (
     if (wantsStream)
     {
         await SseTurnWriter.WriteAsync(
-            http, assistant, tokens, principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools);
+            http, assistant, tokens, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds,
+            principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools);
         return Results.Empty;
     }
 
@@ -368,9 +375,15 @@ secured.MapPost("/turn", async (
     }
 
     var confirmations = result.Confirmations
-        .Select(c => new ConfirmationDto(
-            c.Kind.ToString().ToLowerInvariant(), c.Target, c.InstanceName, tokens.Create(c, principal.UserId),
-            c.ConfigKey, c.ConfigValue))
+        .Select(c =>
+        {
+            // write_file: swap the real content for an opaque pending-write id BEFORE minting the
+            // token (a 10 MB body can't ride a stateless HMAC token) — every other kind is untouched.
+            var forToken = PendingWriteTokenSwap.ForToken(c, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds);
+            return new ConfirmationDto(
+                forToken.Kind.ToString().ToLowerInvariant(), forToken.Target, forToken.InstanceName,
+                tokens.Create(forToken, principal.UserId), forToken.ConfigKey, forToken.ConfigValue);
+        })
         .ToArray();
 
     return Results.Ok(new TurnResponse(result.Text, confirmations, UsageDto.From(result.Usage)));
@@ -381,6 +394,7 @@ secured.MapPost("/confirm", async (
     HttpContext http,
     IServerAssistant assistant,
     ConfirmationTokenService tokens,
+    IPendingWriteStore pendingWrites,
     DiscordAuthService auth,
     IInvocationContext invocation,
     CancellationToken ct) =>
@@ -392,6 +406,17 @@ secured.MapPost("/confirm", async (
     if (!tokens.TryValidate(request.Token, out var confirmation, out var stagedBy) ||
         !string.Equals(stagedBy, principal.UserId, StringComparison.Ordinal))
         return Results.BadRequest(new { error = "Invalid or expired confirmation." });
+
+    // write_file: the token's ConfigValue is the opaque pending-write id (never the real content —
+    // see PendingWriteTokenSwap), so rehydrate the real content here, single-use. An expired/already-
+    // used id is an honest failure — never silently treated as an empty write.
+    if (confirmation.Kind == ConfirmationKind.WriteFile)
+    {
+        if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var realContent))
+            return Results.BadRequest(new { error = "This file write has expired or was already confirmed — ask the assistant to propose it again." });
+
+        confirmation = confirmation with { ConfigValue = realContent };
+    }
 
     // Re-derive authority FRESH at confirm time — never trust it from the token.
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);

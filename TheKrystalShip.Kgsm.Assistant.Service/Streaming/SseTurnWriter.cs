@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 
 using TheKrystalShip.Kgsm.Assistant;
+using TheKrystalShip.Kgsm.Assistant.Service.PendingWrites;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service;
@@ -39,6 +40,8 @@ internal static class SseTurnWriter
         HttpContext http,
         IServerAssistant assistant,
         ConfirmationTokenService tokens,
+        IPendingWriteStore pendingWrites,
+        int writeConfirmationTtlSeconds,
         AuthPrincipal principal,
         string conversationId,
         string prompt,
@@ -105,16 +108,33 @@ internal static class SseTurnWriter
                         // token is RETAINED (additive) for the /confirm surfaces; the SPA routes a
                         // confirm to the API's M3 command path instead (fork (a)).
                         var c = ev.StagedConfirmation!;
+
+                        // write_file: the frame's `file` block carries the real content for a diff
+                        // preview (built from the UN-swapped `c`, before the token swap below removes
+                        // it) — the content rides the frame body, never the token.
+                        CommandFile? file = c.Kind == ConfirmationKind.WriteFile
+                            && c.ConfigKey is not null && c.ConfigValue is not null
+                            ? new CommandFile(c.ConfigKey, c.ConfigValue)
+                            : null;
+
+                        // Swap the real content for an opaque pending-write id BEFORE minting the
+                        // token (a 10 MB body can't ride a stateless HMAC token) — every other kind
+                        // passes through unchanged.
+                        var forToken = PendingWriteTokenSwap.ForToken(c, pendingWrites, writeConfirmationTtlSeconds);
+
                         var proposed = new CommandProposedEvent(
                             Id: $"cmd_{proposalSeq++}",
                             Verb: ApiVerb(c.Kind),
                             Subject: new CommandSubject(SubjectResource(c.Kind), c.Target),
                             Confirm: ComposeConfirm(c),
-                            Token: tokens.Create(c, principal.UserId),
+                            Token: tokens.Create(forToken, principal.UserId),
                             Reason: null,
-                            ConfigKey: c.ConfigKey,
-                            ConfigValue: c.ConfigValue,
-                            InstanceName: c.InstanceName);
+                            // write_file's real content already rides `file` above — ConfigKey/ConfigValue
+                            // here stay set-config's own fields, never the (now-opaque) write payload.
+                            ConfigKey: c.Kind == ConfirmationKind.WriteFile ? null : c.ConfigKey,
+                            ConfigValue: c.Kind == ConfirmationKind.WriteFile ? null : c.ConfigValue,
+                            InstanceName: c.InstanceName,
+                            File: file);
                         await WriteEventAsync(response, TurnStream.CommandProposed, proposed, ct);
                         break;
 
@@ -163,6 +183,7 @@ internal static class SseTurnWriter
         ConfirmationKind.Backup => "backup",
         ConfirmationKind.SetConfig => "set_config",
         ConfirmationKind.OpenPorts => "open_ports",
+        ConfirmationKind.WriteFile => "write_file",
         _ => kind.ToString().ToLowerInvariant(),
     };
 
@@ -175,6 +196,11 @@ internal static class SseTurnWriter
     {
         if (c.Kind == ConfirmationKind.SetConfig && c.ConfigKey is not null)
             return $"Set {c.ConfigKey} = {c.ConfigValue} on {c.Target}?";
+
+        // write_file carries the relative path on ConfigKey and the (potentially large) new content on
+        // ConfigValue — the prompt names the file, never dumps the content into the confirm text.
+        if (c.Kind == ConfirmationKind.WriteFile && c.ConfigKey is not null)
+            return $"Overwrite '{c.ConfigKey}' on {c.Target}?";
 
         // open_ports carries the port spec on ConfigValue and the optional router leg on ConfigKey
         // ("router" ⇒ also open the UPnP forward). Surface both in the prompt.

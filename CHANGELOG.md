@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-19
+
+### Added
+- A new propose-only `write_file` tool lets the assistant overwrite a game server's OWN config file
+  (e.g. Palworld's `PalWorldSettings.ini`), distinct from `set_config_value` (KGSM's own `.config.ini`).
+  The model reads the current file (and any default/reference file) in full, composes the COMPLETE new
+  content, and stages it; a human confirms against a preview before anything is written. Reuses the
+  read path's instance-directory jail verbatim (`ResolveInstanceBoundaryAsync` / `IsWithin` / symlink
+  re-check / `IsNonRegularFile`) via a new `IServerOperations.WriteInstanceFileAsync` — a new file may
+  only be created inside an already-existing in-jail directory, never a deep tree. The write is capped
+  at 10 MB, atomic (temp file + rename in the same directory), and backs up a non-empty existing target
+  to a sibling `.kgsmbak` (overwritten each time — last-good, not a history) before replacing it. Always
+  stages, even on an auto-accept turn — a whole-file overwrite always gets a human look at the diff.
+  On the Service (HTTP/SSE), the confirmation token carries an opaque SQLite-backed pending-write id
+  instead of the file body (a 10 MB body can't ride a stateless HMAC token); the real content is
+  rehydrated single-use at confirm time. The CLI carries the real content in-process, unaffected by the
+  cap. `ConfirmationKind.WriteFile` is `Destructive`-exempt (the `.kgsmbak` + preview are the friction).
+
+### Changed
+- System-prompt guidance for the config-edit flow: to change a game's own config, read a known path
+  directly rather than walking every directory level with `list_files`, and PROPOSE a requested change
+  by CALLING `write_file` (the staging IS the confirmation prompt) instead of asking in prose first; an
+  empty or missing game config file is normal, not an error. This matches the live behaviour of
+  `gemma4:12b` on a deep config path.
+- The agent iteration cap is raised from 8 to 16 on both assistant surfaces (CLI + Service
+  `LlmAgent:MaxIterations`), so a multi-step edit flow (navigate → read the file → read the reference →
+  propose) has headroom to reach the staging step. Unchanged for turns that finish early; the cap is a
+  maximum, not a target.
+
 ## [1.8.1] - 2026-07-19
 
 ### Changed

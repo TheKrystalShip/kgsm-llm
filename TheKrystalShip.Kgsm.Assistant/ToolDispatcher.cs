@@ -105,6 +105,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await StageSetConfigAsync(call, cancellationToken);
             if (call.Name == LlmTools.OpenPorts)
                 return await StageOpenPortsAsync(call, cancellationToken);
+            if (call.Name == LlmTools.WriteFile)
+                return await StageWriteFileAsync(call, cancellationToken);
 
             return $"Error: '{call.Name}' is not a known tool.";
         }
@@ -617,6 +619,48 @@ public class ToolDispatcher : IToolDispatcher
                "confirmation. A confirmation prompt with a button has been shown to the user. This is NOT done " +
                "yet and will only run if a permitted human clicks Confirm — tell the user it's awaiting their " +
                $"confirmation.{routerNote}";
+    }
+
+    /// <summary>Mirrors the <see cref="IServerOperations.WriteInstanceFileAsync"/> adapter's write cap —
+    /// enforced here too so an oversized body is refused before it ever reaches a confirmation token or
+    /// the Service's pending-write store.</summary>
+    private const int MaxWriteBytes = 10 * 1024 * 1024;
+
+    /// <summary>
+    /// Propose-only: resolves the instance and validates a non-blank path/content, then STAGES a
+    /// whole-file overwrite for human confirmation — nothing is written here. The size cap is
+    /// enforced at stage time (not just in <see cref="IServerOperations.WriteInstanceFileAsync"/>) so
+    /// an oversized body is refused before it ever reaches a confirmation token or the Service's
+    /// pending-write store. ALWAYS stages, even on an auto-accept turn (like set_config/install) — a
+    /// whole-file overwrite is too consequential to run without a human looking at the diff.
+    /// </summary>
+    private async Task<string> StageWriteFileAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var path = call.Arg("path")?.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+            return "Error: no path was provided.";
+
+        // Content is NOT trimmed (leading/trailing whitespace can be meaningful in a config file),
+        // but it must be present — an empty write is almost certainly a model mistake, not intent.
+        var content = call.Arg("content");
+        if (string.IsNullOrEmpty(content))
+            return "Error: no content was provided.";
+
+        var byteCount = System.Text.Encoding.UTF8.GetByteCount(content);
+        if (byteCount > MaxWriteBytes)
+            return $"Error: the content is {byteCount:N0} bytes, over the {MaxWriteBytes / (1024 * 1024)} MB limit.";
+
+        _confirmations.Stage(new PendingConfirmation(
+            ConfirmationKind.WriteFile, resolved!, InstanceName: null, ConfigKey: path, ConfigValue: content));
+
+        return $"Staged writing '{path}' on '{resolved}' for confirmation. A confirmation prompt with a " +
+               "preview has been shown to the user. This is NOT done yet and will only run if a permitted " +
+               "human confirms it — tell the user it's awaiting their confirmation, and that a running " +
+               "server picks up the change on its next restart.";
     }
 
     /// <summary>

@@ -97,6 +97,10 @@ internal static class ConfirmationFlow
             : $"install '{c.Target}' as '{c.InstanceName}'",
         ConfirmationKind.SetConfig =>
             $"set config on '{c.Target}' ({c.ConfigKey}={c.ConfigValue})",
+        // The content itself isn't printed (it can be sizeable) — just what's being replaced and
+        // how much; the CLI's y/N is the confirmation, not a diff viewer (owed to a later surface).
+        ConfirmationKind.WriteFile =>
+            $"overwrite '{c.ConfigKey}' on '{c.Target}' ({(c.ConfigValue?.Length ?? 0):N0} chars)",
         _ => $"{ConfirmationKinds.Verb(c.Kind)} '{c.Target}'",
     };
 

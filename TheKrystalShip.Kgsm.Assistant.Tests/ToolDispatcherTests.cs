@@ -92,6 +92,14 @@ public class ToolDispatcherTests
     private static LlmToolCall SearchCall(string? query) =>
         new(LlmTools.Search, new Dictionary<string, string?> { ["query"] = query });
 
+    private static LlmToolCall WriteFileCall(string instance, string? path, string? content) =>
+        new(LlmTools.WriteFile, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["path"] = path,
+            ["content"] = content,
+        });
+
     [Fact]
     public async Task ExactName_Resolves_AndExecutes()
     {
@@ -1127,6 +1135,78 @@ public class ToolDispatcherTests
             var result = await Summary(SetConfigCall("doesnotexist", "auto_update", "true"));
 
             result.Should().Contain("no instance named");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    // --- write_file staging ------------------------------------------------------------------
+
+    [Fact]
+    public async Task WriteFile_StagesConfirmation_WithPathAndContent_AndDoesNotWrite()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(
+                WriteFileCall("minecraft", "server.properties", "motd=hello world"));
+
+            result.Should().Contain("Staged").And.Contain("confirm");
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new PendingConfirmation(
+                    ConfirmationKind.WriteFile, "minecraft",
+                    InstanceName: null, ConfigKey: "server.properties", ConfigValue: "motd=hello world"));
+        }
+
+        // Propose-only: nothing is written inline (the write runs only after a human confirms).
+        await _operations.DidNotReceive().WriteInstanceFileAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WriteFile_BlankPath_DoesNotStage()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(WriteFileCall("minecraft", "   ", "content"));
+
+            result.Should().Contain("no path");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task WriteFile_EmptyContent_DoesNotStage()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(WriteFileCall("minecraft", "server.properties", ""));
+
+            result.Should().Contain("no content");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task WriteFile_UnknownInstance_DoesNotStage()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(WriteFileCall("doesnotexist", "server.properties", "content"));
+
+            result.Should().Contain("no instance named");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task WriteFile_OversizedContent_IsRefused_BeforeStaging()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var huge = new string('a', 10 * 1024 * 1024 + 1); // one byte over the 10 MB cap
+
+            var result = await Summary(WriteFileCall("minecraft", "big.txt", huge));
+
+            result.Should().Contain("MB limit");
             _confirmations.Staged.Should().BeEmpty();
         }
     }

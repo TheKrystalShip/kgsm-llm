@@ -24,7 +24,13 @@ public enum ConfirmationKind
     // Open host-firewall ports for an instance (via the kgsm-firewall authority). Propose-only
     // like the rest; carries the port spec on ConfigValue and has its own confirm path (like
     // SetConfig). APPENDED — never reorder (tokens encode (int)Kind).
-    OpenPorts
+    OpenPorts,
+    // Overwrite a GAME's own config file (as opposed to KGSM's .config.ini — that's SetConfig).
+    // Propose-only like the rest; carries the relative path on ConfigKey and the COMPLETE new
+    // content on ConfigValue, and has its own confirm path. Not Destructive (a .kgsmbak backup
+    // + the confirm-time preview are the friction, not a type-the-name gate). APPENDED — never
+    // reorder (tokens encode (int)Kind).
+    WriteFile
 }
 
 /// <summary>
@@ -71,6 +77,7 @@ public static class ConfirmationKinds
         ConfirmationKind.Install => "install",
         ConfirmationKind.SetConfig => "set config on",
         ConfirmationKind.OpenPorts => "open firewall ports on",
+        ConfirmationKind.WriteFile => "write to a file on",
         _ => kind.ToString().ToLowerInvariant(),
     };
 
@@ -86,6 +93,7 @@ public static class ConfirmationKinds
         ConfirmationKind.Install => "installed",
         ConfirmationKind.SetConfig => "reconfigured",
         ConfirmationKind.OpenPorts => "had its firewall ports opened",
+        ConfirmationKind.WriteFile => "had a file updated",
         _ => kind.ToString().ToLowerInvariant(),
     };
 }
@@ -98,8 +106,13 @@ public static class ConfirmationKinds
 /// instance-targeted kinds, a known blueprint for <see cref="ConfirmationKind.Install"/>)
 /// — never the model's raw argument. <see cref="InstanceName"/> is Install-only (the
 /// optional custom name for the new instance). <see cref="ConfigKey"/>/<see cref="ConfigValue"/>
-/// are <see cref="ConfirmationKind.SetConfig"/>-only (the config key to set and its new value;
-/// the value may legitimately be the empty string).
+/// are overloaded per kind (like <see cref="ConfirmationKind.OpenPorts"/>'s router-scope/port-spec
+/// pair): for <see cref="ConfirmationKind.SetConfig"/> they are the config key/value (the value may
+/// legitimately be the empty string); for <see cref="ConfirmationKind.WriteFile"/> they are the
+/// file's relative path (<see cref="ConfigKey"/>) and its COMPLETE new content
+/// (<see cref="ConfigValue"/>) — the CLI carries the real content here in-process, while the Service
+/// swaps <see cref="ConfigValue"/> for an opaque server-side pending-write id before minting a token
+/// (a 10 MB body can't ride a stateless HMAC token) and rehydrates it at confirm time.
 /// </para>
 /// </summary>
 public sealed record PendingConfirmation(

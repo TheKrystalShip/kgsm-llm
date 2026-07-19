@@ -112,10 +112,21 @@ public class ServerAssistantTests
         turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeTrue();
         turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeTrue();
         turn.Gate!(Call(LlmTools.SetConfigValue)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.WriteFile)).Allowed.Should().BeTrue();
 
         // Five staged across kinds; the sixth (any kind) is refused.
         turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UnauthorizedCaller_GateRefusesWriteFile()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        var decision = turn.Gate!(Call(LlmTools.WriteFile));
+
+        decision.Allowed.Should().BeFalse();
+        decision.RefusalMessage.Should().Contain("permission");
     }
 
     [Fact]

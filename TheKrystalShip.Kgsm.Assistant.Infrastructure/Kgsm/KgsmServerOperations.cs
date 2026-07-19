@@ -532,6 +532,87 @@ internal sealed class KgsmServerOperations : IServerOperations
             () => _instances.SetInstanceConfigValue(instance, key, value, actor, origin), cancellationToken);
     }
 
+    /// <summary>Generous size cap for a whole-file overwrite — headroom for future non-config
+    /// uses, not a target (see plan §"Resolved decisions" 2).</summary>
+    private const int MaxWriteBytes = 10 * 1024 * 1024;
+
+    /// <summary>Sibling suffix for the last-good backup written before an overwrite.</summary>
+    private const string BackupSuffix = ".kgsmbak";
+
+    public async Task<Result> WriteInstanceFileAsync(
+        string instance, string relativePath, string content, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var byteCount = System.Text.Encoding.UTF8.GetByteCount(content);
+            if (byteCount > MaxWriteBytes)
+                return Result.Failure(
+                    $"Refused: the content is {byteCount:N0} bytes, over the {MaxWriteBytes / (1024 * 1024)} MB limit.");
+
+            // Same jail as the read path — resolved THROUGH kgsm (`instances find`), drift-proof.
+            var (realDir, resolveError) = await ResolveInstanceBoundaryAsync(instance, cancellationToken);
+            if (resolveError is not null || realDir is null)
+                return Result.Failure(resolveError ?? "could not resolve the instance directory.");
+
+            var candidate = Path.GetFullPath(Path.Combine(realDir, relativePath));
+            if (!IsWithin(realDir, candidate))
+                return Result.Failure("Refused: the target file is outside the instance directory.");
+
+            var fileInfo = new FileInfo(candidate);
+            if (fileInfo.Exists)
+            {
+                // Refuse a non-regular target (FIFO/socket/device) before ever touching it.
+                if (IsNonRegularFile(candidate))
+                    return Result.Failure(
+                        "Refused: that path isn't a regular file (it may be a directory, socket, pipe, or device).");
+
+                // Re-check after resolving a final-component symlink (an in-dir link out).
+                var realFile = fileInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? fileInfo.FullName;
+                if (!IsWithin(realDir, realFile))
+                    return Result.Failure("Refused: the target file resolves outside the instance directory.");
+                candidate = realFile;
+            }
+            else
+            {
+                // New file: only inside an EXISTING in-jail directory — never creates deep trees.
+                var parentDir = Path.GetDirectoryName(candidate);
+                if (string.IsNullOrEmpty(parentDir) || !Directory.Exists(parentDir))
+                    return Result.Failure(
+                        "Refused: the containing directory doesn't exist — only a file inside an existing " +
+                        "server directory can be created.");
+                if (!IsWithin(realDir, parentDir))
+                    return Result.Failure("Refused: the target directory is outside the instance directory.");
+
+                var dirInfo = new DirectoryInfo(parentDir);
+                var realParent = dirInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? dirInfo.FullName;
+                if (!IsWithin(realDir, realParent))
+                    return Result.Failure("Refused: the target directory resolves outside the instance directory.");
+            }
+
+            // Backup-before-overwrite: a non-empty existing target is copied ONCE to a sibling
+            // ".kgsmbak" (overwritten each time — last-good, not a history) before it's replaced.
+            if (File.Exists(candidate) && new FileInfo(candidate).Length > 0)
+            {
+                var backupPath = candidate + BackupSuffix;
+                await Task.Run(() => File.Copy(candidate, backupPath, overwrite: true), cancellationToken);
+            }
+
+            // Atomic write: a temp file in the SAME directory, then an atomic rename — a
+            // live-reading server never sees a torn file. UTF-8, no BOM.
+            var directory = Path.GetDirectoryName(candidate)!;
+            var tempPath = Path.Combine(directory, $".{Path.GetFileName(candidate)}.kgsmtmp-{Guid.NewGuid():N}");
+            await File.WriteAllTextAsync(tempPath, content, new System.Text.UTF8Encoding(false), cancellationToken);
+            File.Move(tempPath, candidate, overwrite: true);
+
+            return Result.Success();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WriteInstanceFile failed for {Instance} ({Path})", instance, relativePath);
+            return Result.Failure(ex.Message);
+        }
+    }
+
     private async Task<Result> RunAsync(
         string op, string instance, Func<KgsmResult> action, CancellationToken cancellationToken)
     {

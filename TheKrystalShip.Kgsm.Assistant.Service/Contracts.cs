@@ -228,6 +228,15 @@ public sealed record ToolResultEvent(
 public sealed record CommandSubject(string Resource, string Id);
 
 /// <summary>
+/// The `write_file` preview block on `command.proposed`: the relative <see cref="Path"/> and
+/// <see cref="ProposedContent"/> (the COMPLETE new file content, bounded by the write cap) so a client
+/// can render a diff before the user confirms. Rides the frame body, never the token (the token instead
+/// carries an opaque pending-write id — see <c>PendingWriteTokenSwap</c> — because a 10 MB body can't
+/// ride a stateless HMAC token).
+/// </summary>
+public sealed record CommandFile(string Path, string ProposedContent);
+
+/// <summary>
 /// `command.proposed` — a destructive op staged this turn, awaiting human confirmation, in the §5·a
 /// shape. <see cref="Verb"/> is the normalised API verb token (the SPA routes a confirm to the M3
 /// command path — fork (a)); <see cref="Token"/> is the host-minted confirmation token, RETAINED
@@ -237,11 +246,13 @@ public sealed record CommandSubject(string Resource, string Id);
 /// custom name for an <c>install</c> (the new instance the user asked for); null for every other verb
 /// and for an unnamed install (kgsm then auto-names it). A surface that creates via an API endpoint
 /// passes it through so a named install lands the name the user asked for rather than silently dropping it.
+/// <see cref="File"/> is populated only for the <c>write_file</c> verb — the diff-preview payload;
+/// null for every other verb.
 /// </summary>
 public sealed record CommandProposedEvent(
     string Id, string Verb, CommandSubject Subject, string Confirm, string Token,
     string? Reason = null, string? ConfigKey = null, string? ConfigValue = null,
-    string? InstanceName = null);
+    string? InstanceName = null, CommandFile? File = null);
 
 /// <summary>
 /// `done` — terminal success; the full assembled reply plus the turn's token <see cref="Usage"/>

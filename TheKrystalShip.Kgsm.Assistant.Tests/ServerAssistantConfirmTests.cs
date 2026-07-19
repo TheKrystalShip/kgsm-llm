@@ -310,6 +310,86 @@ public class ServerAssistantConfirmTests
         result.Value.Should().Contain("watchdog isn't reachable");
     }
 
+    // --- write_file --------------------------------------------------------------------------
+
+    [Fact]
+    public async Task WriteFile_HappyPath_WritesAndReportsOutcome()
+    {
+        Instances("minecraft");
+        _operations.WriteInstanceFileAsync("minecraft", "server.properties", "motd=hi", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Success()));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.WriteFile, "minecraft",
+                InstanceName: null, ConfigKey: "server.properties", ConfigValue: "motd=hi"),
+            canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Contain("server.properties").And.Contain("minecraft");
+        await _operations.Received(1).WriteInstanceFileAsync(
+            "minecraft", "server.properties", "motd=hi", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WriteFile_TargetGone_IsRefused_WithoutWriting()
+    {
+        Instances(); // vanished since staging (or the token is being replayed)
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.WriteFile, "minecraft",
+                InstanceName: null, ConfigKey: "server.properties", ConfigValue: "motd=hi"),
+            canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("no longer exists");
+        await _operations.DidNotReceive().WriteInstanceFileAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WriteFile_UnauthorizedCaller_IsRefused_AndNothingWrites()
+    {
+        Instances("minecraft");
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.WriteFile, "minecraft",
+                InstanceName: null, ConfigKey: "server.properties", ConfigValue: "motd=hi"),
+            canPerformActions: false);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("permission");
+        await _operations.DidNotReceive().WriteInstanceFileAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WriteFile_OperationFails_SurfacesError()
+    {
+        Instances("minecraft");
+        _operations.WriteInstanceFileAsync("minecraft", "server.properties", "motd=hi", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Failure("jail refused it")));
+
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.WriteFile, "minecraft",
+                InstanceName: null, ConfigKey: "server.properties", ConfigValue: "motd=hi"),
+            canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("jail refused it");
+    }
+
+    [Fact]
+    public async Task WriteFile_MissingPath_IsRefused_WithoutWriting()
+    {
+        Instances("minecraft");
+        var result = await Create().ConfirmAsync(
+            new PendingConfirmation(ConfirmationKind.WriteFile, "minecraft",
+                InstanceName: null, ConfigKey: null, ConfigValue: "motd=hi"),
+            canPerformActions: true);
+
+        result.IsFailure.Should().BeTrue();
+        await _operations.DidNotReceive().WriteInstanceFileAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task SetConfig_TargetGone_IsRefused_WithoutExecuting()
     {

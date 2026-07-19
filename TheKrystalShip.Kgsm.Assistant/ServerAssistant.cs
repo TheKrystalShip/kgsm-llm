@@ -328,6 +328,8 @@ public class ServerAssistant : IServerAssistant
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
             ConfirmationKind.OpenPorts => await ConfirmOpenPortsAsync(
                 confirmation.Target, confirmation.ConfigValue, confirmation.ConfigKey, cancellationToken),
+            ConfirmationKind.WriteFile => await ConfirmWriteFileAsync(
+                confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
             ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
                 or ConfirmationKind.Update or ConfirmationKind.Backup
                 => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
@@ -453,6 +455,37 @@ public class ServerAssistant : IServerAssistant
         return result.IsSuccess
             ? Result.Success($"Set {key} = {shown} on '{match}'.")
             : Result.Failure<string>($"Could not set {key} on '{match}': {result.Error ?? "unknown error"}.");
+    }
+
+    /// <summary>
+    /// Re-validates the instance still exists (it was resolved at staging time, and a stateless token is
+    /// replayable within its lifetime), then overwrites the file at the staged path (<paramref name="key"/>)
+    /// with the staged content (<paramref name="value"/>) via <see cref="IServerOperations.WriteInstanceFileAsync"/>
+    /// — the same jail the read tools use. The Service rehydrates the real content from its pending-write
+    /// store BEFORE calling this (see the /confirm handler); this method always sees real content and stays
+    /// store-agnostic. A jail violation, size-cap refusal, or I/O failure surfaces as a failed
+    /// <see cref="Result"/>, never an exception.
+    /// </summary>
+    private async Task<Result<string>> ConfirmWriteFileAsync(
+        string target, string? key, string? value, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return Result.Failure<string>("No file path was given — nothing was written.");
+        if (string.IsNullOrEmpty(value))
+            return Result.Failure<string>("No content was given — nothing was written.");
+
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        var match = instances.Keys.FirstOrDefault(
+            k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+            return Result.Failure<string>($"'{target}' no longer exists — nothing to write.");
+
+        _logger.LogInformation("Confirmed write-file of {Instance} ({Path})", match, key);
+
+        var result = await _operations.WriteInstanceFileAsync(match, key, value, cancellationToken);
+        return result.IsSuccess
+            ? Result.Success($"Wrote '{key}' on '{match}'. A running server picks up the change on its next restart.")
+            : Result.Failure<string>($"Could not write '{key}' on '{match}': {result.Error ?? "unknown error"}.");
     }
 
     /// <summary>

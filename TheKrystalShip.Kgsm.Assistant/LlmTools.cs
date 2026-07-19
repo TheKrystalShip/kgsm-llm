@@ -81,6 +81,13 @@ public static class LlmTools
     // sets up the router/UPnP forward (via the watchdog), honoring the instance's port-forwarding gate.
     public static readonly Tool OpenPorts = new("open_ports");
 
+    // Propose overwriting a text file inside a server's OWN directory with COMPLETE new content —
+    // e.g. a game's own config (Palworld's PalWorldSettings.ini), never KGSM's .config.ini (that's
+    // set_config_value). Staged for human confirmation like every command; the confirm step shows a
+    // preview/diff before it replaces the file. Game-agnostic: it handles whatever text the model
+    // composes (a game's own INI/JSON/tuple format), so there is no per-game structure to parse.
+    public static readonly Tool WriteFile = new("write_file");
+
     /// <summary>
     /// The verbs <see cref="ServerCommand"/> accepts, in display order. Single source of
     /// truth for both the tool's <c>enum</c> schema and the dispatcher's verb→kind routing
@@ -195,6 +202,17 @@ public static class LlmTools
         "Optional. A subdirectory to list, relative to the server's own directory — e.g. \"logs\" " +
         "or \"install\". OMIT it to list the server's top-level directory.",
         Required: false);
+
+    private static readonly LlmToolParameter WritePath = new(
+        "path",
+        "The file to write, as a path relative to the server's own directory — e.g. " +
+        "\"install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini\" or \"server.properties\". Use " +
+        "list_files/read_file first to find and read it.");
+
+    private static readonly LlmToolParameter WriteContent = new(
+        "content",
+        "The COMPLETE new content for the file. This OVERWRITES the whole file — it is not a patch or " +
+        "a diff, so include every existing setting you want to keep, not just the one you're changing.");
 
     private static readonly LlmToolParameter SearchQuery = new(
         "query",
@@ -342,6 +360,18 @@ public static class LlmTools
             "that additionally sets up the router/UPnP forward for the same ports (only effective if the " +
             "server has port-forwarding enabled; otherwise the router leg is skipped).",
             InstanceName, OpenPortsSpec, IncludeRouter),
+
+        LlmToolDefinition.Create(WriteFile,
+            "Propose OVERWRITING a text file inside a game server's OWN directory — e.g. its actual " +
+            "game config file (Palworld's PalWorldSettings.ini, server.properties, a mod's settings " +
+            "file) — with content you provide. This is for the GAME's own config; for KGSM's own " +
+            "settings (ports, launch arguments, auto-update) use set_config_value instead. Give the " +
+            "COMPLETE new file content (this replaces the whole file, not a patch) — only propose an " +
+            "overwrite of a file you've read in full with read_file (or a brand-new file), and preserve " +
+            "every setting you're not changing. Staged for human confirmation against a preview; it " +
+            "does not run until a person confirms, and a running server picks up the change on its next " +
+            "restart. Never claim to have written the file yourself.",
+            InstanceName, WritePath, WriteContent),
     };
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>

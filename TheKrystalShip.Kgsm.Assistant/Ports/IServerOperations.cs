@@ -116,6 +116,24 @@ public interface IServerOperations
     /// <param name="value">The new value (may be the empty string, but not null).</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     Task<Result> SetInstanceConfigValueAsync(string instance, string key, string value, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Overwrites a text file belonging to an instance with <paramref name="content"/> —
+    /// the GAME's own config file (e.g. Palworld's <c>PalWorldSettings.ini</c>), never
+    /// KGSM's own <c>.config.ini</c> (that's <see cref="SetInstanceConfigValueAsync"/>).
+    /// Called only by <see cref="IServerAssistant.ConfirmAsync"/> after a human confirms a
+    /// staged write — never from the agent loop. <paramref name="relativePath"/> is
+    /// <b>path-bound to the instance's own directory</b> exactly like
+    /// <see cref="ReadInstanceFileAsync"/> (same kgsm-resolved boundary, same
+    /// <c>..</c>/out-of-tree-symlink refusal); a non-regular target or a new file whose
+    /// parent directory doesn't already exist in-jail is refused. The write is capped in
+    /// size, atomic (temp file + rename in the same directory), and backs up a non-empty
+    /// existing target to a sibling <c>.kgsmbak</c> (overwritten each time — last-good, not
+    /// a history) before replacing it. Returns a failed <see cref="Result"/> for any jail
+    /// violation, oversized content, or I/O failure — never throws.
+    /// </summary>
+    Task<Result> WriteInstanceFileAsync(
+        string instance, string relativePath, string content, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-07-19
+
 ### Changed
 - System-prompt routing guidance splits the port/network question across the two tools it now spans:
   "is the server running / what port does it listen on" points at `get_status`, while "is its port open
@@ -14,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single line sent all "network details" to `get_status`, written before `get_network` existed. Routing
   is measured green either way (`gemma4:12b` already picked the right tool); this makes the instruction
   match the catalog.
+
+## [1.8.0] - 2026-07-19
+
+### Changed
 - `get_network` now reports BOTH network layers for a server: the host firewall (as before) AND its
   **router / UPnP port forwards**, read from the kgsm-watchdog via kgsm-lib's `IWatchdogClient` through a
   new neutral `IUpnpInfo` port + `KgsmUpnpInfo` adapter (a separate authority from the firewall, never
@@ -21,15 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real "no forwards", distinct from a router that couldn't be reached (`RouterUnavailable`) or a watchdog
   that couldn't be reached (`DaemonUnavailable`) — neither is ever read as "nothing forwarded". The card
   gains a `UpnpState` + `Forwards[]` block and is attached whenever EITHER axis has real measured
-  structure. The old "router/UPnP isn't observable from the host" caveat is gone — it now is. Fails closed:
-  with no watchdog wired the router axis reads as unavailable and the assistant still boots standalone.
+  structure. Fails closed: with no watchdog wired the router axis reads as unavailable and the assistant
+  still boots standalone.
 - `open_ports` gains an optional `include_router` flag — when set, the confirmed command ALSO opens the
   router / UPnP forward for the same ports (via `IWatchdogClient.OpenUpnpAsync`), so a server can be made
   reachable from the internet in one step. The router leg honors the instance's `enable_port_forwarding`
   gate at the watchdog (a gated-off server is honestly `skipped`, never a fabricated forward) and reports
   its outcome (applied / skipped / failed / watchdog-unavailable) as a separate clause alongside the
-  firewall outcome. Default (flag off) is unchanged — host firewall only. The opt-in rides the existing
+  firewall outcome. Default (flag off) is host firewall only. The opt-in rides the existing
   confirmation token (on `ConfigKey`), so there is no new token field and no new `ConfirmationKind`.
+
+## [1.7.0] - 2026-07-19
 
 ### Added
 - A `get_network(instance_name)` read-only tool — reports one instance's HOST-FIREWALL picture: the
@@ -54,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reachable → pass; running-but-unbound → warn (it may still be starting), never a hard fail; a stopped
   server, an instance with no ports configured, or a failed probe → skip, never a fabricated pass. This
   is host-local port binding, distinct from `get_network`'s firewall-rule view.
+
+## [1.6.0] - 2026-07-18
+
+### Added
 - A `trace_root_cause(instance_name, range?)` tool — the toolbox's capstone aggregator (plan §3.4/
   §7·Q1): a DETERMINISTIC composition of one instance's engine event timeline, a metrics window, and
   its health/status snapshot, run through a fixed rules table of known KGSM failure signatures. No
@@ -85,23 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RootCauseAggregator` reuses the exact same avg/peak computation and byte formatting for its
   metrics-window evidence instead of a second copy.
 
-- A `get_performance` tool that surfaces one running server's LIVE resource usage as a snapshot —
-  CPU (as a percentage of one core), memory, network and disk-I/O throughput, on-disk footprint, and
-  process count — read from the kgsm-monitor's latest `GET /metrics` frame over its unix socket. It
-  emits a structured `PerformanceData` card alongside the model's grounding text (the shared
-  `ToolResult<PerformanceData>` envelope): a `live` read carries the measured values and a card; a
-  not-running server or an unreachable monitor stays summary-only, worded honestly ("couldn't read",
-  never "idle"). An unmeasured axis (`null`) is omitted from the summary rather than shown as 0. The
-  capability is additive and fails closed — a fail-closed default reports the monitor unavailable when
-  none is wired, so the assistant composes and boots standalone. New `Monitor:SocketPath` config key
-  (default `/run/kgsm-monitor/metrics.sock`).
-- `get_performance` also answers TREND questions: an optional `range` argument (`1h`/`24h`/`7d`/`30d`)
-  switches from the live snapshot to a windowed history read, pulled on demand from the monitor's
-  `GET /metrics/history` (the monitor is the single source of truth for metrics history). The card then
-  carries the per-metric time series (a chart the surface renders) and the grounding summary states the
-  CPU + memory avg/peak over the window (the numbers the model can't read off a chart). An empty window
-  is an honest "no history recorded yet", and an unreachable monitor an honest "couldn't read" — neither
-  is narrated as idleness.
+## [1.5.0] - 2026-07-18
+
+### Added
 - Two engine-event-history tools, `get_audit_log` (`instance_name?`, `window?`) and
   `get_change_timeline` (`instance_name?`, `range?`), read directly from the kgsm-monitor's
   `GET /events` over its unix socket — the assistant reads the monitor's engine-event store the same
@@ -120,6 +118,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a fail-closed `IEventHistory` default reports the monitor unavailable when none is wired, so the
   assistant composes and boots standalone (reuses the existing `Monitor:SocketPath` config key, no
   new configuration).
+
+## [1.4.0] - 2026-07-18
+
+### Added
+- A `get_performance` tool that surfaces one running server's LIVE resource usage as a snapshot —
+  CPU (as a percentage of one core), memory, network and disk-I/O throughput, on-disk footprint, and
+  process count — read from the kgsm-monitor's latest `GET /metrics` frame over its unix socket. It
+  emits a structured `PerformanceData` card alongside the model's grounding text (the shared
+  `ToolResult<PerformanceData>` envelope): a `live` read carries the measured values and a card; a
+  not-running server or an unreachable monitor stays summary-only, worded honestly ("couldn't read",
+  never "idle"). An unmeasured axis (`null`) is omitted from the summary rather than shown as 0. The
+  capability is additive and fails closed — a fail-closed default reports the monitor unavailable when
+  none is wired, so the assistant composes and boots standalone. New `Monitor:SocketPath` config key
+  (default `/run/kgsm-monitor/metrics.sock`).
+- `get_performance` also answers TREND questions: an optional `range` argument (`1h`/`24h`/`7d`/`30d`)
+  switches from the live snapshot to a windowed history read, pulled on demand from the monitor's
+  `GET /metrics/history` (the monitor is the single source of truth for metrics history). The card then
+  carries the per-metric time series (a chart the surface renders) and the grounding summary states the
+  CPU + memory avg/peak over the window (the numbers the model can't read off a chart). An empty window
+  is an honest "no history recorded yet", and an unreachable monitor an honest "couldn't read" — neither
+  is narrated as idleness.
 
 ## [1.3.0] - 2026-07-17
 

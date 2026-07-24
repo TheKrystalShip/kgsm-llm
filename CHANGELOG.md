@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Blueprint research reaches the web provider (`IWebSearch`) directly instead of the local-index-first
+  `ISearch` aggregator. Authoring a blueprint needs fetchable third-party pages (an official server doc,
+  a setup guide); a local-first search answered the "how do I host X" query from this host's own
+  documentation index and never reached the web, so research found no page to fetch whenever the RAG
+  index was enabled.
+- The research fact extractor now sources `executable_arguments` (a documented headless launch command —
+  the flags a server needs to boot non-interactively instead of hanging at an interactive prompt and
+  never listening) and `startup_success_regex` (a real server-ready log line, taken only when it appears
+  verbatim in a fetched page — a secondary readiness signal alongside the primary port-reachability
+  check). Both stay unset when a page doesn't document them — never fabricated.
+- Drafted blueprint ports render in UFW format (`<port>/tcp|<port>/udp`), the shape kgsm's schema
+  expects, rather than a docker-style `host:container` mapping.
+
 ### Added
 - `create_blueprint` narrates its own progress over the SSE turn stream while it is still running —
   a new `progress` frame (`{ tool, key, label, status }`, `id` omitted — the ambient sink that reports

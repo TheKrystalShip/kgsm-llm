@@ -151,6 +151,36 @@ public sealed class BlueprintAuthoringAggregatorTests
         captured.Native.ExecutableFile.Should().Be("./start.sh");
     }
 
+    [Fact]
+    public async Task SourcedFields_FlowIntoDraft_PortsInUfwFormat_WithLaunchArgsAndReadyRegex()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(new BlueprintResearchFindings(
+            BlueprintFeasibility.Feasible, "Terraria",
+            [
+                new BlueprintResearchField("executable_file", "TerrariaServer.bin.x86_64", "https://s/1"),
+                new BlueprintResearchField("executable_arguments", "-autocreate 3 -worldname World", "https://s/2"),
+                new BlueprintResearchField("ports", "7777", "https://s/1"),
+                new BlueprintResearchField("startup_success_regex", "Server started", "https://s/1"),
+            ],
+            ["https://s/1"], "found a native Linux server"));
+        NativeBlueprintDraft? captured = null;
+        _files.Create(Arg.Do<NativeBlueprintDraft>(d => captured = d), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(RunningAndListening()));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        await Create().AuthorAsync("Terraria");
+
+        captured.Should().NotBeNull();
+        captured!.Native.Ports.Should().Be("7777/tcp|7777/udp", "ports render in UFW format (<port>/<proto>), never docker host:container");
+        captured.Native.ExecutableArguments.Should().Be("-autocreate 3 -worldname World", "a documented headless launch command is what lets the probe boot non-interactively");
+        captured.Native.StartupSuccessRegex.Should().Be("Server started");
+    }
+
     // --- Steps 5-6: persist + validate-by-readback ----------------------------------------------------
 
     [Fact]

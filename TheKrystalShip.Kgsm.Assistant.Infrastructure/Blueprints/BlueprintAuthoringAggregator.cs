@@ -324,8 +324,10 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         var provenance = new List<BlueprintFieldProvenance>
         {
             new("executable_file", Value("executable_file"), Value("executable_file") is null ? null : Source("executable_file")),
+            new("executable_arguments", Value("executable_arguments"), Value("executable_arguments") is null ? null : Source("executable_arguments")),
             new("steam_app_id", Value("steam_app_id"), Value("steam_app_id") is null ? null : Source("steam_app_id")),
             new("ports", Value("ports"), Value("ports") is null ? null : Source("ports")),
+            new("startup_success_regex", Value("startup_success_regex"), Value("startup_success_regex") is null ? null : Source("startup_success_regex")),
         };
 
         var executableFile = Value("executable_file");
@@ -333,10 +335,14 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             return (null, provenance); // the one strictly-required native field — never fabricated
 
         var steamAppId = int.TryParse(Value("steam_app_id"), out var appId) ? appId : 0;
+        // Ports render in UFW format — "<port>/<proto>", pipe-separated (e.g. 7777/tcp|7777/udp) — the
+        // shape kgsm's blueprint schema expects. The extractor sources a single port number; emit both
+        // tcp and udp for it (a superset that covers whichever the game actually binds; the verify probe's
+        // port-reachability check confirms which is live).
         var portNumber = Value("ports");
         var ports = string.IsNullOrWhiteSpace(portNumber)
             ? string.Empty
-            : $"{portNumber}:{portNumber}/tcp|{portNumber}:{portNumber}/udp";
+            : $"{portNumber}/tcp|{portNumber}/udp";
 
         var draft = new NativeBlueprintDraft
         {
@@ -345,8 +351,10 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             Native = new NativeBlueprintNativeDraft
             {
                 ExecutableFile = executableFile,
+                ExecutableArguments = Value("executable_arguments") ?? string.Empty,
                 Ports = ports,
                 SteamAppId = steamAppId,
+                StartupSuccessRegex = Value("startup_success_regex") ?? string.Empty,
             },
         };
 
@@ -409,8 +417,10 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         sb.AppendLine($"name: {draft.Name}");
         sb.AppendLine($"display_name: {draft.Metadata.DisplayName ?? "null"}");
         sb.AppendLine($"executable_file: {draft.Native.ExecutableFile}");
+        sb.AppendLine($"executable_arguments: {(string.IsNullOrEmpty(draft.Native.ExecutableArguments) ? "null" : draft.Native.ExecutableArguments)}");
         sb.AppendLine($"ports: {(string.IsNullOrEmpty(draft.Native.Ports) ? "null" : draft.Native.Ports)}");
         sb.AppendLine($"steam_app_id: {draft.Native.SteamAppId}");
+        sb.AppendLine($"startup_success_regex: {(string.IsNullOrEmpty(draft.Native.StartupSuccessRegex) ? "null" : draft.Native.StartupSuccessRegex)}");
         return sb.ToString();
     }
 

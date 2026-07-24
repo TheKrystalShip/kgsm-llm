@@ -26,6 +26,25 @@ internal static class BlueprintFactExtractor
     private static readonly Regex PortHint = new(
         @"\bport(?:s)?\b[^.\n]{0,30}?(\d{4,5})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // A documented headless launch command: a server binary/script (…​.sh / .x86_64 / .x64) invoked with
+    // its argument tail — the flags that make it boot non-interactively (e.g. Terraria's
+    // "-autocreate 3 -world … -worldname …", which it needs to skip the interactive "Choose World" prompt
+    // that otherwise leaves it hung and never listening). Captures the run of args up to a line/markup
+    // break; a "chmod +x ./server.x86_64" line has no trailing flags after the binary, so it isn't caught.
+    private static readonly Regex LaunchArgsHint = new(
+        @"(?:\.\/)?[A-Za-z0-9_.\-]+\.(?:sh|x86_64|x64)\s+((?:[-+][^\r\n<>`|]{0,200}))",
+        RegexOptions.Compiled);
+
+    // Distinctive server-READY log lines (not startup banners). Used only as a SECONDARY readiness signal —
+    // the verify bar's primary sensor is port-reachability — and only when one appears VERBATIM in a fetched
+    // page, so the regex is sourced, never guessed. Curated to true "now accepting connections" lines to
+    // avoid a premature-success match on an early boot banner. First present wins.
+    private static readonly string[] StartupReadyPhrases =
+    [
+        "Server started", "Hosting game at", "Started Server", "Server listening",
+        "Ready for connections", "listening on port", "For help, type",
+    ];
+
     private static readonly string[] NotSelfHostablePhrases =
     [
         "cannot be self-hosted", "can't be self-hosted", "no dedicated server",
@@ -70,6 +89,8 @@ internal static class BlueprintFactExtractor
             TryAdd(fields, "steam_app_id", SteamAppId, text, url);
             TryAdd(fields, "executable_file", ExecutableHint, text, url);
             TryAdd(fields, "ports", PortHint, text, url);
+            TryAdd(fields, "executable_arguments", LaunchArgsHint, text, url, clean: CleanArgs);
+            TryAddPhrase(fields, "startup_success_regex", StartupReadyPhrases, text, url);
         }
 
         return new BlueprintResearchFindings(
@@ -78,14 +99,53 @@ internal static class BlueprintFactExtractor
     }
 
     /// <summary>Adds the first match for <paramref name="field"/> found across pages — later pages never
-    /// override an already-sourced field, so the citation is always the FIRST page that supported it.</summary>
-    private static void TryAdd(List<BlueprintResearchField> fields, string field, Regex pattern, string text, string url)
+    /// override an already-sourced field, so the citation is always the FIRST page that supported it. An
+    /// optional <paramref name="clean"/> normalizes the raw capture (e.g. trims trailing prose punctuation
+    /// off an extracted argument tail); a value that cleans down to empty is not added.</summary>
+    private static void TryAdd(
+        List<BlueprintResearchField> fields, string field, Regex pattern, string text, string url,
+        Func<string, string>? clean = null)
     {
         if (fields.Exists(f => f.Name == field))
             return;
 
         var match = pattern.Match(text);
-        if (match.Success)
-            fields.Add(new BlueprintResearchField(field, match.Groups[1].Value, url));
+        if (!match.Success)
+            return;
+
+        var value = match.Groups[1].Value;
+        if (clean is not null)
+            value = clean(value);
+        if (!string.IsNullOrWhiteSpace(value))
+            fields.Add(new BlueprintResearchField(field, value, url));
+    }
+
+    /// <summary>Trims a captured launch-argument tail down to just the arguments. HTML→text flattening
+    /// collapses a doc's line breaks, so the greedy capture can run past the command into the following
+    /// sentence ("… -config serverconfig.txt . The most important keys …"); cut at the first sentence
+    /// boundary (a period followed by whitespace — real flag values like <c>world.wld</c> have no
+    /// trailing space) and strip dangling prose punctuation. An over-capture that still slips through is
+    /// caught downstream by the empirical boot+listen verification, never shipped blind.</summary>
+    private static string CleanArgs(string raw)
+    {
+        var a = raw.Trim();
+        var sentenceEnd = a.IndexOf(". ", StringComparison.Ordinal);
+        if (sentenceEnd >= 0)
+            a = a[..sentenceEnd];
+        return a.Trim().TrimEnd('.', ',', ';', ')');
+    }
+
+    /// <summary>Adds <paramref name="field"/> as the first <paramref name="phrases"/> entry that appears
+    /// VERBATIM (case-sensitive, as it would in real server output) in the page text — a sourced literal,
+    /// never a guess. Same first-page-wins semantics as <see cref="TryAdd"/>.</summary>
+    private static void TryAddPhrase(
+        List<BlueprintResearchField> fields, string field, string[] phrases, string text, string url)
+    {
+        if (fields.Exists(f => f.Name == field))
+            return;
+
+        var hit = Array.Find(phrases, text.Contains);
+        if (hit is not null)
+            fields.Add(new BlueprintResearchField(field, hit, url));
     }
 }

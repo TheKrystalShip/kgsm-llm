@@ -1,17 +1,23 @@
 using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
-using TheKrystalShip.Kgsm.Assistant.Search;
 
 namespace TheKrystalShip.Kgsm.Assistant.Blueprints;
 
 /// <summary>
-/// The deterministic <see cref="IBlueprintResearch"/> composer (plan step 2): <see cref="ISearch"/>
+/// The deterministic <see cref="IBlueprintResearch"/> composer (plan step 2): <see cref="IWebSearch"/>
 /// finds candidate pages, <see cref="IWebFetch"/> reads them, and <see cref="BlueprintFactExtractor"/>
-/// pulls out sourced fields. Mirrors <see cref="SearchAggregator"/>'s shape — a pure routing composition
-/// over existing ports, no nested model call — so it is independently testable with fakes for both
-/// ports and honors the same budgets (fetch/search per-message caps live in the assistant gate, same as
-/// every other <c>search</c>/<c>fetch_url</c> call). Never throws (neither underlying port does).
+/// pulls out sourced fields. A pure routing composition over existing ports — no nested model call — so
+/// it is independently testable with fakes for both ports and honors the same budgets (fetch/search
+/// per-message caps live in the assistant gate, same as every other <c>search</c>/<c>fetch_url</c> call).
+/// Never throws (neither underlying port does).
+/// <para>
+/// It reaches <see cref="IWebSearch"/> (the raw web provider) directly rather than the local-index-first
+/// <c>ISearch</c> aggregator: blueprint research needs fetchable third-party pages — an official server
+/// doc, a Steam page, a community setup guide — and those live on the public web, never in this host's
+/// own documentation index. A local-first search answers a "how do I host X" query from KGSM's docs and
+/// never reaches the web, leaving no page to fetch.
+/// </para>
 /// </summary>
 public sealed class BlueprintResearchAggregator : IBlueprintResearch
 {
@@ -20,13 +26,13 @@ public sealed class BlueprintResearchAggregator : IBlueprintResearch
     /// fetch_url call.</summary>
     private const int MaxPagesToFetch = 3;
 
-    private readonly ISearch _search;
+    private readonly IWebSearch _webSearch;
     private readonly IWebFetch _webFetch;
     private readonly ILogger<BlueprintResearchAggregator> _logger;
 
-    public BlueprintResearchAggregator(ISearch search, IWebFetch webFetch, ILogger<BlueprintResearchAggregator> logger)
+    public BlueprintResearchAggregator(IWebSearch webSearch, IWebFetch webFetch, ILogger<BlueprintResearchAggregator> logger)
     {
-        _search = search;
+        _webSearch = webSearch;
         _webFetch = webFetch;
         _logger = logger;
     }
@@ -36,13 +42,15 @@ public sealed class BlueprintResearchAggregator : IBlueprintResearch
         game = game.Trim();
         var query = $"{game} dedicated server download self-host Linux";
 
-        var searchResult = await _search.SearchAsync(query, cancellationToken);
-        var webUrls = searchResult.Data.Passages
-            .Where(p => p.Provenance == SearchProvenance.Web)
-            .Select(p => p.Source)
-            .Distinct()
-            .Take(MaxPagesToFetch)
-            .ToArray();
+        var search = await _webSearch.SearchAsync(query, cancellationToken);
+        var webUrls = search.IsSuccess && search.Value is not null
+            ? search.Value
+                .Select(h => h.Url)
+                .Where(u => !string.IsNullOrWhiteSpace(u))
+                .Distinct()
+                .Take(MaxPagesToFetch)
+                .ToArray()
+            : [];
 
         if (webUrls.Length == 0)
         {

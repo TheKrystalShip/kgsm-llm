@@ -136,6 +136,39 @@ public sealed class WebFetchOptions
 }
 
 /// <summary>
+/// The <c>create_blueprint</c> authoring pipeline's settings. Bound from the "BlueprintAuthoring"
+/// section. Disabled (fails closed) by default like <see cref="WebFetchOptions"/> — flipping
+/// <see cref="Enabled"/> is the sole gate the real <c>BlueprintAuthoringAggregator</c> checks before
+/// touching kgsm-lib at all, so leaving it false keeps the pipeline inert everywhere it isn't explicitly
+/// turned on (including inside the eval, which force-offers the tool for routing checks without ever
+/// flipping this flag — see <c>Harness.cs</c>).
+/// </summary>
+public sealed class BlueprintAuthoringOptions
+{
+    public const string Section = "BlueprintAuthoring";
+
+    /// <summary>Master switch. False (default) → <c>create_blueprint</c> honestly reports itself as not
+    /// configured and never calls kgsm-lib's write-side blueprint/instance authorities.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Directory the admin "attempted" stash writes into (draft YAML + provenance + verify log
+    /// per failed/infeasible attempt). Empty (default) → records are dropped rather than written
+    /// (mirrors <see cref="RagOptions.IndexPath"/>'s "not configured yet" handling).</summary>
+    public string StashDir { get; set; } = string.Empty;
+
+    /// <summary>Bound on the persist→install→verify retry loop (plan step 9) — kept small so a
+    /// genuinely broken source fails fast rather than flapping.</summary>
+    public int MaxAttempts { get; set; } = 2;
+
+    /// <summary>How long to poll the test-install for "booted + listening" before giving up on that
+    /// attempt.</summary>
+    public int VerifyTimeoutSeconds { get; set; } = 180;
+
+    /// <summary>Interval between verify polls.</summary>
+    public int VerifyPollIntervalSeconds { get; set; } = 5;
+}
+
+/// <summary>
 /// Local RAG retrieval settings. Bound from the "Rag" section — the SAME section the core's
 /// <c>RagEmbeddingOptions</c> reads (each picks up its own keys); this is the retrieval/host half
 /// (enable switch, where the index lives, how much to return), that is the embedder half. Retrieval

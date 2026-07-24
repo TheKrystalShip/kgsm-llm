@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Fetch;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
@@ -59,6 +60,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IInstanceService, InstanceService>();
         services.AddSingleton<IInstanceFiles, InstanceFiles>(); // jailed file I/O for read/list/write_file — no socket dep, injects IInstanceService only
         services.AddSingleton<IBlueprintService, BlueprintService>();
+        services.AddSingleton<IBlueprintFiles, BlueprintFiles>(); // create_blueprint's write-side authority — no socket dep, injects IKgsmCommandExecutor only
         services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
         services.AddSingleton<IWatcherService, WatcherService>(); // port-reachability probe for run_health_check
 
@@ -248,6 +250,22 @@ public static class ServiceCollectionExtensions
             o.LocalEnabled = rag.Enabled;
             o.WebEnabled = !string.IsNullOrWhiteSpace(webSearch.ApiKey);
         });
+
+        // --- Blueprint authoring (create_blueprint) ---------------------------------------------
+        // The real pipeline: research (ISearch/IWebFetch above) → draft → persist/validate/test-install
+        // via kgsm-lib's write-side authorities (IBlueprintFiles/IBlueprintService/IInstanceService,
+        // already registered above) → verify (IServerOperations) → keep or stash. Registered AFTER
+        // AddKgsmAssistant, so this concrete IBlueprintAuthoring wins over the library's fail-closed
+        // DisabledBlueprintAuthoring default. Disabled (fails closed) by default — see
+        // BlueprintAuthoringOptions's own remarks for why this is also what makes the tool safe to
+        // force-OFFER in the eval harness without ever touching kgsm-lib there.
+        services.Configure<BlueprintAuthoringOptions>(config.GetSection(BlueprintAuthoringOptions.Section));
+        var blueprintAuthoring = config.GetSection(BlueprintAuthoringOptions.Section).Get<BlueprintAuthoringOptions>()
+            ?? new BlueprintAuthoringOptions();
+        if (!string.IsNullOrWhiteSpace(blueprintAuthoring.StashDir))
+            services.AddSingleton<IBlueprintAttemptStore, FileSystemBlueprintAttemptStore>();
+        services.AddSingleton<IBlueprintAuthoring, BlueprintAuthoringAggregator>();
+        services.PostConfigure<BlueprintAuthoringFlags>(o => o.Available = blueprintAuthoring.Enabled);
 
         return services;
     }

@@ -44,6 +44,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IEventHistory _events;
     private readonly INetworkInfo _network;
     private readonly IUpnpInfo _upnp;
+    private readonly IBlueprintAuthoring _blueprintAuthoring;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
@@ -56,6 +57,7 @@ public class ToolDispatcher : IToolDispatcher
         IEventHistory events,
         INetworkInfo network,
         IUpnpInfo upnp,
+        IBlueprintAuthoring blueprintAuthoring,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
@@ -67,6 +69,7 @@ public class ToolDispatcher : IToolDispatcher
         _events = events;
         _network = network;
         _upnp = upnp;
+        _blueprintAuthoring = blueprintAuthoring;
         _logger = logger;
     }
 
@@ -97,6 +100,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await SearchAsync(call, cancellationToken);
             if (call.Name == LlmTools.FetchUrl)
                 return await FetchUrlAsync(call, cancellationToken);
+            if (call.Name == LlmTools.CreateBlueprint)
+                return await CreateBlueprintAsync(call, cancellationToken);
             if (call.Name == LlmTools.ReadFile)
                 return await ReadFileAsync(call, cancellationToken);
             if (call.Name == LlmTools.ListFiles)
@@ -199,6 +204,23 @@ public class ToolDispatcher : IToolDispatcher
         var envelope = new ToolResult<FetchData>(
             LlmTools.FetchUrl, Confidence.Confirmed, new ResultRef(ResourceKind.WebPage, page.FinalUrl), summary, card);
         return new ToolOutput(summary, ToolResultCard.From(envelope));
+    }
+
+    /// <summary>
+    /// The <c>create_blueprint</c> authoring pipeline (plan §"Pipeline"), run entirely by
+    /// <see cref="IBlueprintAuthoring"/> — this handler only validates the argument and relays. Unlike
+    /// every command tool, this is NOT staged: it is authorized-and-autonomous (§LlmTools.AuthorizedActions),
+    /// so it runs to completion here and returns the real outcome. Always carries a card (even a
+    /// "couldn't do this one" outcome is worth showing — mirrors <see cref="GetAuditLogAsync"/>).
+    /// </summary>
+    private async Task<ToolOutput> CreateBlueprintAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var game = call.Arg("game")?.Trim();
+        if (string.IsNullOrWhiteSpace(game))
+            return "Error: create_blueprint needs a 'game'.";
+
+        var result = await _blueprintAuthoring.AuthorAsync(game, cancellationToken);
+        return new ToolOutput(result.Summary, ToolResultCard.From(result));
     }
 
     /// <summary>

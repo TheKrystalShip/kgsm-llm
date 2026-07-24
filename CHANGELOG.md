@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A new `create_blueprint` tool AUTHORS a game type genuinely missing from the catalog: it researches
+  the game online (via `search`/`fetch_url`), drafts a native-Linux blueprint from sourced fields only
+  (an unsourced field stays `null`/default, never fabricated), test-installs it under a reserved
+  `__bp_probe_<name>__` instance name, verifies empirically that it boots and listens (polling
+  `IServerOperations.GetHealthSnapshotAsync` against a bounded timeout, matching the sourced
+  `startup_success_regex` when one was found), and keeps the blueprint only if that succeeds —
+  otherwise the catalog stays clean and the attempt is stashed for admin review. Runs autonomously in
+  one step (authorized, no propose→confirm — the new `LlmTools.AuthorizedActions` tier), because it
+  touches nothing of the user's; the test-install probe is guaranteed torn down in a `finally` on every
+  exit path, and the Service host runs a one-shot startup sweep (`BlueprintProbeSweepService`, the
+  repo's first `IHostedService`) that removes any probe a prior crash left behind. Gated end-to-end by
+  a new `BlueprintAuthoring` config section (`Enabled` false everywhere by default — the pipeline never
+  touches kgsm-lib's write-side authorities until an operator opts in) and a computed
+  `BlueprintAuthoringFlags.Available` mirroring `FetchOptions`'s pattern. New `IBlueprintAuthoring` port
+  (the model-facing seam; the real `BlueprintAuthoringAggregator` lives in Infrastructure since it needs
+  kgsm-lib's `IBlueprintFiles`/`IBlueprintService`/`IInstanceService` directly), a new `IBlueprintResearch`
+  port + `BlueprintResearchAggregator` (deterministic composition over `ISearch`/`IWebFetch`, no nested
+  model call), and a new `IBlueprintAttemptStore` port + filesystem-backed admin stash. Consumes
+  kgsm-lib 1.40.1's new `IBlueprintFiles` write authority. Eval corpus bumped to v7 with a `create_blueprint`
+  routing group (B), including a disambiguation pair against `install_server` for a blueprint that
+  already exists.
+
 ## [1.10.0]
 
 ### Added

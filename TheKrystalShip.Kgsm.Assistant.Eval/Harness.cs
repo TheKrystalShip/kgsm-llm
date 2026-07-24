@@ -73,6 +73,12 @@ internal sealed class Harness
         // WebFetch:Enabled stays false, so an actual call just returns an honest "not configured" — no
         // network, no host ever contacted.
         services.PostConfigure<FetchOptions>(o => o.Available = true);
+        // Same reasoning for create_blueprint (B-group): offered even though BlueprintAuthoring:Enabled
+        // is unset here, so CalledTool(create_blueprint) is meaningful. AddKgsmAdapters registers the
+        // real BlueprintAuthoringAggregator unconditionally, but its own Enabled flag stays false, so a
+        // model-routed call here reports itself as "not configured" and never touches kgsm-lib's
+        // write-side blueprint/instance authorities — no install, no uninstall, no file write.
+        services.PostConfigure<BlueprintAuthoringFlags>(o => o.Available = true);
 
         // The conversation store (SQLite) is already registered by AddLocalLlm and pointed at a throwaway
         // temp DB (see BuildConfiguration) so eval turns never touch the user's real corpus. The harness

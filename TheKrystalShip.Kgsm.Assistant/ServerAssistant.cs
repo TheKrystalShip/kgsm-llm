@@ -48,6 +48,13 @@ public class ServerAssistant : IServerAssistant
     /// </summary>
     private const int MaxFetchesPerMessage = 5;
 
+    /// <summary>
+    /// Per-message ceiling on <c>create_blueprint</c> calls. Kept at 1 — each run is a real research +
+    /// test-install + teardown pipeline (far heavier than a search or fetch), so one message proposing
+    /// several new games at once is refused rather than fanning out several probes concurrently.
+    /// </summary>
+    private const int MaxBlueprintAuthoringsPerMessage = 1;
+
     private readonly ILlmAgent _agent;
     private readonly ISystemPromptBuilder _promptBuilder;
     private readonly IConfirmationContext _confirmations;
@@ -59,6 +66,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IPromptOverrides _promptOverrides;
     private readonly SearchOptions _searchOptions;
     private readonly FetchOptions _fetchOptions;
+    private readonly BlueprintAuthoringFlags _blueprintAuthoringFlags;
     private readonly ILogger<ServerAssistant> _logger;
 
     public ServerAssistant(
@@ -73,6 +81,7 @@ public class ServerAssistant : IServerAssistant
         IPromptOverrides promptOverrides,
         IOptions<SearchOptions> searchOptions,
         IOptions<FetchOptions> fetchOptions,
+        IOptions<BlueprintAuthoringFlags> blueprintAuthoringFlags,
         ILogger<ServerAssistant> logger)
     {
         _agent = agent;
@@ -86,6 +95,7 @@ public class ServerAssistant : IServerAssistant
         _promptOverrides = promptOverrides;
         _searchOptions = searchOptions.Value;
         _fetchOptions = fetchOptions.Value;
+        _blueprintAuthoringFlags = blueprintAuthoringFlags.Value;
         _logger = logger;
     }
 
@@ -116,6 +126,11 @@ public class ServerAssistant : IServerAssistant
         // is enabled on this host (FetchOptions.Available).
         if (!_fetchOptions.Available)
             authorized = authorized.Where(t => t.Tool != LlmTools.FetchUrl).ToArray();
+
+        // Same §D7 omit-when-disabled rule for create_blueprint: offered only when the real authoring
+        // pipeline is enabled on this host (BlueprintAuthoringFlags.Available, false everywhere by default).
+        if (!_blueprintAuthoringFlags.Available)
+            authorized = authorized.Where(t => t.Tool != LlmTools.CreateBlueprint).ToArray();
 
         if (requestedTools is { Count: > 0 })
         {
@@ -590,8 +605,28 @@ public class ServerAssistant : IServerAssistant
         var staged = 0;
         var searches = 0;
         var fetches = 0;
+        var authored = 0;
         return call =>
         {
+            // create_blueprint is authorized-and-autonomous (LlmTools.AuthorizedActions): refused for an
+            // unauthorized caller exactly like a staged command (defense in depth behind SelectTools
+            // already omitting it for those callers), but it never stages — it runs to completion inline,
+            // so its own per-message cap replaces the staging cap below.
+            if (call.Name == LlmTools.CreateBlueprint)
+            {
+                if (!canPerformActions)
+                    return ToolGate.Refuse("Refused: you don't have permission to perform server actions.");
+
+                if (authored >= MaxBlueprintAuthoringsPerMessage)
+                    return ToolGate.Refuse(
+                        $"Refused: at most {MaxBlueprintAuthoringsPerMessage} new blueprint(s) can be " +
+                        "authored per message. Ask the user to try the rest separately.");
+
+                authored++;
+                return ToolGate.Allow;
+            }
+
+
             // search is read-only (open to everyone), but each call adds a loop iteration (and a web
             // fallback may spend a credit), so it carries its own per-message cap — the in-turn
             // runaway guard (the per-day web wallet ceiling lives host-side). Checked before the

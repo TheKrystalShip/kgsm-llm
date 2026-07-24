@@ -47,6 +47,9 @@ builder.Services.AddKgsmAssistant();
 // wins over the library's fail-closed DisabledWebSearch default. AddKgsmAdapters reads the KGSM,
 // InventoryCache and WebSearch config sections.
 builder.Services.AddKgsmAdapters(builder.Configuration);
+// The startup orphan sweep for create_blueprint test-install probes (plan step 10's backstop) — the
+// first IHostedService in this repo. Runs once at startup and exits; see its own doc comment.
+builder.Services.AddHostedService<BlueprintProbeSweepService>();
 
 // --- Security ----------------------------------------------------------------
 builder.Services.AddSingleton<ConfirmationTokenService>();

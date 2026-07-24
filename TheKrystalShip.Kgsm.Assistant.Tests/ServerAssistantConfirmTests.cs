@@ -39,6 +39,7 @@ public class ServerAssistantConfirmTests
         new PassthroughPromptOverrides(),
         Options.Create(new SearchOptions()),
         Options.Create(new FetchOptions()),
+        Options.Create(new BlueprintAuthoringFlags()),
         NullLogger<ServerAssistant>.Instance);
 
     private void Instances(params string[] names) =>

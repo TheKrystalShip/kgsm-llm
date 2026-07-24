@@ -31,9 +31,11 @@ public class ServerAssistantTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
-    // Default: search AND fetch are both AVAILABLE, so the offered set is the unfiltered catalog
-    // (BeSameAs holds) and the gate's per-message caps are exercisable. Availability tests pass their own.
-    private ServerAssistant Create(SearchOptions? search = null, FetchOptions? fetch = null)
+    // Default: search, fetch, AND blueprint authoring are all AVAILABLE, so the offered set is the
+    // unfiltered catalog (BeSameAs holds) and the gate's per-message caps are exercisable. Availability
+    // tests pass their own.
+    private ServerAssistant Create(
+        SearchOptions? search = null, FetchOptions? fetch = null, BlueprintAuthoringFlags? blueprint = null)
     {
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
@@ -42,18 +44,20 @@ public class ServerAssistantTests
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
             Options.Create(fetch ?? new FetchOptions { Available = true }),
+            Options.Create(blueprint ?? new BlueprintAuthoringFlags { Available = true }),
             NullLogger<ServerAssistant>.Instance);
     }
 
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>
     private async Task<AgentTurn> CaptureTurnAsync(
-        bool canPerformActions, SearchOptions? search = null, FetchOptions? fetch = null)
+        bool canPerformActions, SearchOptions? search = null, FetchOptions? fetch = null,
+        BlueprintAuthoringFlags? blueprint = null)
     {
         AgentTurn? captured = null;
         _agent.RunAsync(Arg.Do<AgentTurn>(t => captured = t), Arg.Any<CancellationToken>())
             .Returns(Result.Success(new AgentRunResult("ok", null)));
 
-        await Create(search, fetch).RunAsync(Conversation, "do it", canPerformActions);
+        await Create(search, fetch, blueprint).RunAsync(Conversation, "do it", canPerformActions);
 
         captured.Should().NotBeNull();
         return captured!;
@@ -313,5 +317,57 @@ public class ServerAssistantTests
         for (var i = 0; i < 5; i++)
             turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
         turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse(); // staging cap hit, independently
+    }
+
+    // --- create_blueprint availability + per-message cap + authorization ----------------------------
+
+    [Fact]
+    public async Task CreateBlueprint_IsOffered_WhenAvailable_AndAuthorized()
+    {
+        var turn = await CaptureTurnAsync(
+            canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = true });
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.CreateBlueprint);
+    }
+
+    [Fact]
+    public async Task CreateBlueprint_IsOmitted_WhenUnavailable()
+    {
+        var turn = await CaptureTurnAsync(
+            canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = false });
+        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.CreateBlueprint);
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.GetStatus);
+    }
+
+    [Fact]
+    public async Task CreateBlueprint_IsOmitted_ForUnauthorizedCaller_EvenWhenAvailable()
+    {
+        var turn = await CaptureTurnAsync(
+            canPerformActions: false, blueprint: new BlueprintAuthoringFlags { Available = true });
+        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.CreateBlueprint);
+    }
+
+    [Fact]
+    public async Task Gate_RefusesCreateBlueprint_ForUnauthorizedCaller()
+    {
+        // Defense in depth: even if an unauthorized caller's request somehow reaches the gate (the
+        // tool isn't offered per the test above), the gate itself refuses it too.
+        var turn = await CaptureTurnAsync(
+            canPerformActions: false, blueprint: new BlueprintAuthoringFlags { Available = true });
+        var result = turn.Gate!(Call(LlmTools.CreateBlueprint));
+        result.Allowed.Should().BeFalse();
+        result.RefusalMessage.Should().Contain("permission");
+    }
+
+    [Fact]
+    public async Task Gate_CapsCreateBlueprint_AtOnePerMessage()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: true);
+        var call = Call(LlmTools.CreateBlueprint);
+
+        turn.Gate!(call).Allowed.Should().BeTrue();
+
+        var second = turn.Gate!(call);
+        second.Allowed.Should().BeFalse();
+        second.RefusalMessage.Should().Contain("blueprint");
     }
 }

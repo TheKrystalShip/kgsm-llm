@@ -39,6 +39,7 @@ public class ServerAssistantStreamTests
             agent, _prompt, confirmations, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
             Options.Create(new SearchOptions { WebEnabled = true }), Options.Create(new FetchOptions { Available = true }),
+            Options.Create(new BlueprintAuthoringFlags { Available = true }),
             NullLogger<ServerAssistant>.Instance);
     }
 

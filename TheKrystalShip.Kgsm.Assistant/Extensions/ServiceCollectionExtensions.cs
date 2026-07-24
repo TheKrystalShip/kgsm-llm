@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
 
@@ -71,6 +72,21 @@ public static class ServiceCollectionExtensions
         // IEventHistory that wins over this default. Without it, both tools honestly report the
         // monitor as unavailable rather than breaking DI.
         services.TryAddSingleton<IEventHistory, UnavailableEventHistory>();
+        // The blueprint-authoring research step (§3.4-style aggregator): a deterministic composer over
+        // ISearch + IWebFetch above, always registered (mirrors SearchAggregator) — whatever those two
+        // ports resolve to (real or disabled), research degrades along with them.
+        services.AddSingleton<IBlueprintResearch, BlueprintResearchAggregator>();
+        // The admin "attempted" stash degrades closed the same way: a host that sets
+        // BlueprintAuthoring:StashDir calls AddKgsmAdapters, which registers a concrete filesystem
+        // store that wins over this default. Without it, a failed attempt is simply not recorded rather
+        // than breaking DI.
+        services.TryAddSingleton<IBlueprintAttemptStore, NullBlueprintAttemptStore>();
+        // create_blueprint (the whole authoring pipeline) degrades closed the same way as fetch_url: a
+        // host that enables BlueprintAuthoring:Enabled calls AddKgsmAdapters, which registers the
+        // concrete aggregator (needs kgsm-lib's write-side blueprint/instance authorities, so it lives
+        // in Infrastructure) that wins over this default. Without it, create_blueprint is not offered
+        // (BlueprintAuthoringFlags.Available) and a stray call reports itself as not configured.
+        services.TryAddSingleton<IBlueprintAuthoring, DisabledBlueprintAuthoring>();
         services.AddSingleton<IServerAssistant, ServerAssistant>();
 
         return services;

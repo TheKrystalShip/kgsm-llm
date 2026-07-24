@@ -37,7 +37,11 @@ internal static class BenchmarkSuite
     /// v6 adds the <c>fetch_url</c> group (F): a read-a-specific-page prompt routes to <c>fetch_url</c>,
     /// and a find/what-is prompt with no URL still routes to <c>search</c> — a disambiguation pair
     /// guarding the two lookup tools from routing collisions, the same way W2/W3 guard the two writers.
-    public const string Version = "v6";
+    /// v7 adds the blueprint-authoring group (B): a game genuinely missing from the catalog routes to
+    /// <c>create_blueprint</c>, and an installable-but-uninstalled game (reusing C10's role/prompt) still
+    /// routes to <c>install_server</c>, never <c>create_blueprint</c> — the disambiguation pair guarding
+    /// the two "get me a new game" paths from routing collisions.
+    public const string Version = "v7";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -321,6 +325,22 @@ internal static class BenchmarkSuite
             C.DoesNotStage(ConfirmationKind.SetConfig, "does not stage a set_config_value for a game-own setting"),
             C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // --- Blueprint authoring (B): a game genuinely missing from the catalog (no blueprint at all)
+        // routes to create_blueprint; an installable-but-uninstalled game (C10's role/prompt — a REAL
+        // blueprint with no instance) still routes to install_server, never create_blueprint. Guards the
+        // two "get me a new game" paths from routing collisions, the same way W2/W3 guard the two writers.
+
+        Single("B1", "a game missing from the catalog routes to create_blueprint", true, Array.Empty<FixtureRole>(),
+            "I want to play a game called Zorblatt Frontier — it's not in your list of games, can you add a server for it?",
+            C.CalledTool(LlmTools.CreateBlueprint, "authors the missing game type"),
+            C.DidNotCallTool(LlmTools.InstallServer, Rubric.B_Routing, "does not stage an install for a blueprint that doesn't exist")),
+
+        Single("B2", "an installable-but-uninstalled game still routes to install_server, not create_blueprint",
+            true, new[] { FixtureRole.NeverInstalledGame },
+            "set up a {never_game} server for me",
+            C.Stages(ConfirmationKind.Install),
+            C.DidNotCallTool(LlmTools.CreateBlueprint, Rubric.B_Routing, "does not author a blueprint that already exists in the catalog")),
 
         // Multi-turn: genuine ambiguity → clarify → resolve on the follow-up.
         new BenchmarkCase("M1", "something's wrong → which? → the <game> one", true,

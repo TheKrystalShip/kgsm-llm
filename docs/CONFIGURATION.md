@@ -66,6 +66,7 @@ any committed `appsettings.json`:
 | `Monitor` | ✅ | ✅ | — | kgsm-monitor metrics socket (`get_performance`) |
 | `WebSearch` | ✅ | ✅ | — | Tavily fallback |
 | `WebFetch` | ✅ | ✅ | — | Direct URL fetch (`fetch_url`) |
+| `BlueprintAuthoring` | ✅ | ✅ | — | Autonomous catalog authoring (`create_blueprint`) |
 | `Rag` (retrieval) | ✅ | ✅ | — | Local doc retrieval (consumer) |
 | `Rag` (embedder + build) | ✅ (`index` verb) | reads only | ✅ | Embedding model + chunking |
 | `Prompts` | ✅ | (built-in) | — | Editable persona/tool prompts |
@@ -170,6 +171,28 @@ is off and the adapter follows manually) on top of these config knobs.
 | `MaxCallsPerDay` | `200` | `WebFetch__MaxCallsPerDay` | Daily spend backstop, mirrors `WebSearch:MaxCallsPerDay` |
 | `AllowedHosts` | `[]` | `WebFetch__AllowedHosts__0`, … | Optional operator allowlist (exact host or subdomain match); empty ⇒ no restriction beyond the SSRF guard |
 | `DeniedHosts` | `[]` | `WebFetch__DeniedHosts__0`, … | Optional operator denylist, checked before the allowlist |
+
+### `BlueprintAuthoring` — autonomous catalog authoring, `create_blueprint` (`BlueprintAuthoringOptions`)
+
+Given a game missing from the catalog, researches it (via `search`/`fetch_url`), drafts a native-Linux
+blueprint, test-installs it on the host to prove it boots and listens, tears the test instance down, and
+keeps the blueprint only if verified. `Enabled` alone gates it — false (the default) means `create_blueprint`
+is never offered and, even if a client somehow requested it, the pipeline returns an honest "not
+configured" without touching kgsm-lib's write-side blueprint/instance authorities at all.
+
+| Key | Default | Env | Notes |
+|-----|---------|-----|-------|
+| `Enabled` | `false` | `BlueprintAuthoring__Enabled` | Master switch; false ⇒ `create_blueprint` fails closed and is omitted from the tool catalog |
+| `StashDir` | `""` | `BlueprintAuthoring__StashDir` | Where a failed/infeasible attempt's draft + provenance + verify log are recorded for admin review; empty ⇒ records are dropped rather than written |
+| `MaxAttempts` | `2` | `BlueprintAuthoring__MaxAttempts` | Bound on the persist→install→verify retry loop before giving up |
+| `VerifyTimeoutSeconds` | `180` | `BlueprintAuthoring__VerifyTimeoutSeconds` | How long to poll a test-install for "booted and listening" before giving up on that attempt |
+| `VerifyPollIntervalSeconds` | `5` | `BlueprintAuthoring__VerifyPollIntervalSeconds` | Interval between verify polls |
+
+Needs `WebSearch` and/or `WebFetch` configured to research anything — with neither wired the pipeline
+still runs (it's not a separate gate) but the research step honestly finds nothing to work from and the
+tool reports it couldn't do the game. The test-install runs under a reserved
+`__bp_probe_<name>__` instance name and is always torn down before the tool returns; the Service host also
+runs a one-shot startup sweep that removes any such probe a prior crash left behind.
 
 ### `Rag` — retrieval, embedder, and index build (one section, three consumers)
 

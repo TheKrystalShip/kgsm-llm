@@ -63,6 +63,12 @@ public static class LlmTools
     // `search`; the dispatcher routes it to IWebFetch.
     public static readonly Tool FetchUrl = new("fetch_url");
 
+    // Authorized, autonomous action — offered only to action-authorized callers, but unlike the staged
+    // commands below it runs INLINE (no propose→confirm): it touches no user data (it only researches,
+    // then test-installs and tears down a disposable probe of its own), so there is nothing for a human
+    // to confirm. See LlmTools.AuthorizedActions for why this needs its own tier.
+    public static readonly Tool CreateBlueprint = new("create_blueprint");
+
     // Authorized read (offered only to action-authorized callers — exposes file
     // contents, so gated like the command tier even though it mutates nothing).
     // read_file replaces the old single-purpose view_config_file: it reads any text file
@@ -233,6 +239,10 @@ public static class LlmTools
         "The exact web address to read, including scheme — e.g. an official server-setup doc, a " +
         "Steam store page, or a raw Dockerfile URL. Only public http/https pages can be fetched.");
 
+    private static readonly LlmToolParameter BlueprintGame = new(
+        "game",
+        "The game to add, by its common name (e.g. \"Terraria\", \"Rust\") — not a blueprint slug.");
+
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
         LlmToolDefinition.Create(GetStatus,
@@ -343,6 +353,30 @@ public static class LlmTools
     };
 
     /// <summary>
+    /// Authorized, autonomous actions — offered only to action-authorized callers, like the staged
+    /// commands below, but NEVER staged: the dispatcher runs these inline and returns the real outcome,
+    /// because they touch nothing of the user's to confirm (today: <see cref="CreateBlueprint"/>, which
+    /// only researches and test-installs a disposable probe of its own, torn down before it returns).
+    /// A separate tier from <see cref="AuthorizedReadOnly"/> (which mutates nothing at all) and from
+    /// <see cref="StagedCommands"/> (which always needs a human confirm) — this is authorized AND
+    /// mutating AND confirm-free, a combination none of the existing tiers express honestly.
+    /// </summary>
+    public static readonly IReadOnlyList<LlmToolDefinition> AuthorizedActions = new[]
+    {
+        LlmToolDefinition.Create(CreateBlueprint,
+            "AUTHORS a game type that is genuinely MISSING from the catalog: researches it online, " +
+            "builds a server config, and TEST-INSTALLS it to prove it actually boots and listens — " +
+            "keeping it in the catalog only if that succeeds. Runs autonomously in one step, with NO " +
+            "confirmation needed (it touches nothing of the user's; the test install is a disposable " +
+            "probe torn down automatically). Use this ONLY when the game is not in list_blueprints / " +
+            "not offered by install_server — for a game that's already installable, propose " +
+            "install_server instead. Do NOT use this to look something up (use search/fetch_url for " +
+            "that). This can take a while and sometimes can't succeed (not every game can be " +
+            "self-hosted, or has a native Linux server) — relay the outcome honestly either way.",
+            BlueprintGame),
+    };
+
+    /// <summary>
     /// Every server command — all propose-only (§3.5). The dispatcher STAGES each for
     /// human confirmation; none runs in the agent loop. Descriptions say so explicitly,
     /// so the model narrates "I've proposed…", never "I've done it."
@@ -397,7 +431,7 @@ public static class LlmTools
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>
     public static readonly IReadOnlyList<LlmToolDefinition> All =
-        ReadOnly.Concat(AuthorizedReadOnly).Concat(StagedCommands).ToArray();
+        ReadOnly.Concat(AuthorizedReadOnly).Concat(StagedCommands).Concat(AuthorizedActions).ToArray();
 
     /// <summary>Tools of authorized-only reads; refused for unauthorized callers, but not capped.</summary>
     public static readonly IReadOnlySet<Tool> AuthorizedReadTools =
@@ -410,10 +444,17 @@ public static class LlmTools
     public static readonly IReadOnlySet<Tool> StagedCommandTools =
         StagedCommands.Select(t => t.Tool).ToHashSet();
 
+    /// <summary>Tools of the authorized, autonomous (confirm-free) actions; refused for unauthorized
+    /// callers, run inline (never staged) — see <see cref="AuthorizedActions"/>.</summary>
+    public static readonly IReadOnlySet<Tool> AuthorizedActionTools =
+        AuthorizedActions.Select(t => t.Tool).ToHashSet();
+
     /// <summary>All valid tool names, for validating client requests against the server catalog.</summary>
     public static IReadOnlySet<Tool> AllToolNames => All.Select(t => t.Tool).ToHashSet();
 
     public static bool IsStagedCommand(Tool tool) => StagedCommandTools.Contains(tool);
 
     public static bool IsAuthorizedRead(Tool tool) => AuthorizedReadTools.Contains(tool);
+
+    public static bool IsAuthorizedAction(Tool tool) => AuthorizedActionTools.Contains(tool);
 }

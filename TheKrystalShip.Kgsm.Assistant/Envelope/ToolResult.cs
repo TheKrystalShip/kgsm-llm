@@ -89,6 +89,10 @@ public enum ResourceKind
 
     /// <summary>A fetched web page (the <c>fetch_url</c> subject) — its final URL is the id.</summary>
     WebPage,
+
+    /// <summary>A researched/authored game-type blueprint (the <c>create_blueprint</c> subject) — the
+    /// game name given to the tool is its id.</summary>
+    Blueprint,
 }
 
 /// <summary>

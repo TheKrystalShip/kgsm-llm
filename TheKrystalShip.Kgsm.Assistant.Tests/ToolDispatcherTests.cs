@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
+using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Fetch;
 using TheKrystalShip.Kgsm.Assistant.Health;
@@ -35,6 +36,7 @@ public class ToolDispatcherTests
     private readonly IEventHistory _events = Substitute.For<IEventHistory>();
     private readonly INetworkInfo _network = Substitute.For<INetworkInfo>();
     private readonly IUpnpInfo _upnp = Substitute.For<IUpnpInfo>();
+    private readonly IBlueprintAuthoring _blueprintAuthoring = Substitute.For<IBlueprintAuthoring>();
     private readonly ConfirmationContext _confirmations = new();
 
     public ToolDispatcherTests()
@@ -60,7 +62,8 @@ public class ToolDispatcherTests
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp,
+            _blueprintAuthoring, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -524,6 +527,69 @@ public class ToolDispatcherTests
 
         result.Should().Contain("needs a 'url'");
         await _webFetch.DidNotReceive().FetchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- create_blueprint (the authoring pipeline via the IBlueprintAuthoring port) ---
+    // The dispatcher only guards the blank game arg and relays the port's outcome; the whole pipeline
+    // (research/draft/persist/install/verify/teardown) is exercised in BlueprintAuthoringAggregatorTests.
+
+    private static LlmToolCall CreateBlueprintCall(string? game) =>
+        new(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = game });
+
+    [Fact]
+    public async Task CreateBlueprint_RelaysThePortsSummary()
+    {
+        var envelope = new ToolResult<BlueprintAuthoringData>(
+            LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "Terraria"),
+            "I didn't have Terraria, so I built and test-ran it — it booted and is listening. **Terraria is now in the catalog.**",
+            new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "it booted and is listening", true));
+        _blueprintAuthoring.AuthorAsync("Terraria", Arg.Any<CancellationToken>()).Returns(envelope);
+
+        var result = await Summary(CreateBlueprintCall("Terraria"));
+
+        result.Should().Contain("Terraria is now in the catalog");
+        await _blueprintAuthoring.Received(1).AuthorAsync("Terraria", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprint_OnSuccess_SurfacesTheAuthoringCard()
+    {
+        var envelope = new ToolResult<BlueprintAuthoringData>(
+            LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "Terraria"),
+            "verified", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "proof", true));
+        _blueprintAuthoring.AuthorAsync("Terraria", Arg.Any<CancellationToken>()).Returns(envelope);
+
+        var output = await Create().ExecuteAsync(CreateBlueprintCall("Terraria"));
+
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.CreateBlueprint.Name);
+        var data = card.Data.Should().BeOfType<BlueprintAuthoringData>().Subject;
+        data.Outcome.Should().Be(BlueprintAuthoringOutcome.Verified);
+        data.BlueprintName.Should().Be("terraria");
+    }
+
+    [Fact]
+    public async Task CreateBlueprint_HonestFailure_StillCarriesACard()
+    {
+        // Even a "couldn't do this one" outcome is worth showing — mirrors get_audit_log's honest-empty card.
+        var envelope = new ToolResult<BlueprintAuthoringData>(
+            LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "SomeGame"),
+            "I couldn't get it to boot.", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, "SomeGame", null, [], null, false));
+        _blueprintAuthoring.AuthorAsync("SomeGame", Arg.Any<CancellationToken>()).Returns(envelope);
+
+        var output = await Create().ExecuteAsync(CreateBlueprintCall("SomeGame"));
+
+        output.Summary.Should().Contain("couldn't get it to boot");
+        output.Data.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task CreateBlueprint_BlankGame_DoesNotCallThePort()
+    {
+        var result = await Summary(CreateBlueprintCall("   "));
+
+        result.Should().Contain("needs a 'game'");
+        await _blueprintAuthoring.DidNotReceive().AuthorAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     // --- get_performance (live per-server metrics via the IServerMetrics port) ---

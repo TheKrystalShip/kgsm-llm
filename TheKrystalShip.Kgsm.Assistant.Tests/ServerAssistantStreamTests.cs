@@ -31,12 +31,13 @@ public class ServerAssistantStreamTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
-    private ServerAssistant Create(ILlmAgent agent, IConfirmationContext confirmations)
+    private ServerAssistant Create(ILlmAgent agent, IConfirmationContext confirmations, ITurnProgress? progress = null)
     {
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
-            agent, _prompt, confirmations, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
+            agent, _prompt, confirmations, progress ?? new TurnProgress(), _inventory, _operations,
+            Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
             Options.Create(new SearchOptions { WebEnabled = true }), Options.Create(new FetchOptions { Available = true }),
             Options.Create(new BlueprintAuthoringFlags { Available = true }),
@@ -72,6 +73,85 @@ public class ServerAssistantStreamTests
         events[0].ToolName.Should().Be(new Tool("get_status"));
         events[1].ToolSummary.Should().Be("factorio-test: stopped");
         events[^1].Text.Should().Be("All good.");
+    }
+
+    // --- P4: progress narration ----------------------------------------------------------------------
+
+    [Fact]
+    public async Task ProgressReportedDuringToolDispatch_LandsInOrder_BeforeThatTool_sResult()
+    {
+        var confirmations = new ConfirmationContext();
+        var progress = new TurnProgress();
+        var agent = new ScriptedAgent(
+            confirmations,
+            new[]
+            {
+                AgentEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = "Rust" }),
+                AgentEvent.ToolResult(LlmTools.CreateBlueprint, "Verified."),
+                AgentEvent.Final("Rust is now in the catalog."),
+            },
+            progress: progress,
+            progressSteps: new (Tool, string, string)[]
+            {
+                (LlmTools.CreateBlueprint, "research", "Looking it up online…"),
+                (LlmTools.CreateBlueprint, "draft", "Building a server config…"),
+            });
+
+        var events = await DrainAsync(Create(agent, confirmations, progress).RunStreamAsync("web:1", "make me a rust server", true));
+
+        events.Select(e => e.Kind).Should().Equal(
+            AssistantEventKind.ToolStart, AssistantEventKind.Progress, AssistantEventKind.Progress,
+            AssistantEventKind.ToolResult, AssistantEventKind.Final);
+        events.Where(e => e.Kind == AssistantEventKind.Progress)
+            .Select(e => e.ProgressKey).Should().Equal("research", "draft");
+        events.Where(e => e.Kind == AssistantEventKind.Progress)
+            .Should().OnlyContain(e => e.ToolName == LlmTools.CreateBlueprint && e.ProgressStatus == "active");
+    }
+
+    [Fact]
+    public async Task InterleavedStreams_DoNotCrossContaminateProgress()
+    {
+        // TurnProgress's AsyncLocal is static and shared by every instance (same isolation model as
+        // ConfirmationContext) — two streams advanced in lock-step must each see only the step
+        // reported within its OWN flow.
+        var confirmations = new ConfirmationContext();
+        var progress = new TurnProgress();
+
+        var agentA = new ScriptedAgent(
+            confirmations,
+            new[]
+            {
+                AgentEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?>()),
+                AgentEvent.ToolResult(LlmTools.CreateBlueprint, "a"),
+                AgentEvent.Final("a"),
+            },
+            progress: progress,
+            progressSteps: new (Tool, string, string)[] { (LlmTools.CreateBlueprint, "research", "alpha step") });
+        var agentB = new ScriptedAgent(
+            confirmations,
+            new[]
+            {
+                AgentEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?>()),
+                AgentEvent.ToolResult(LlmTools.CreateBlueprint, "b"),
+                AgentEvent.Final("b"),
+            },
+            progress: progress,
+            progressSteps: new (Tool, string, string)[] { (LlmTools.CreateBlueprint, "research", "beta step") });
+
+        await using var a = Create(agentA, confirmations, progress).RunStreamAsync("web:a", "x", true).GetAsyncEnumerator();
+        await using var b = Create(agentB, confirmations, progress).RunStreamAsync("web:b", "y", true).GetAsyncEnumerator();
+
+        var fromA = new List<AssistantStreamEvent>();
+        var fromB = new List<AssistantStreamEvent>();
+        bool moreA = true, moreB = true;
+        while (moreA || moreB)
+        {
+            if (moreA && (moreA = await a.MoveNextAsync())) fromA.Add(a.Current);
+            if (moreB && (moreB = await b.MoveNextAsync())) fromB.Add(b.Current);
+        }
+
+        fromA.Where(e => e.Kind == AssistantEventKind.Progress).Select(e => e.ProgressLabel).Should().Equal("alpha step");
+        fromB.Where(e => e.Kind == AssistantEventKind.Progress).Select(e => e.ProgressLabel).Should().Equal("beta step");
     }
 
     [Fact]
@@ -259,6 +339,8 @@ public class ServerAssistantStreamTests
         private readonly IReadOnlyList<PendingConfirmation> _stage;
         private readonly int _stageAfter;
         private readonly Func<string?>? _ambientProbe;
+        private readonly ITurnProgress? _progress;
+        private readonly IReadOnlyList<(Tool Tool, string Key, string Label)> _progressSteps;
 
         public AgentTurn? LastTurn { get; private set; }
 
@@ -278,18 +360,28 @@ public class ServerAssistantStreamTests
         /// If supplied, read on entry and after each yield, recording into <see cref="AmbientObservations"/> —
         /// reproducing the kgsm chokepoint reading a consumer-set provenance ambient inside the agent loop.
         /// </param>
+        /// <param name="progress">
+        /// If supplied along with <paramref name="progressSteps"/>, reports each step immediately before
+        /// the first scripted <see cref="AgentEventKind.ToolResult"/> is yielded — reproducing a real tool
+        /// (e.g. <c>create_blueprint</c>'s aggregator) calling <see cref="ITurnProgress.Report"/> from deep
+        /// inside its own execution, BEFORE it returns its terminal result.
+        /// </param>
         public ScriptedAgent(
             IConfirmationContext confirmations,
             IReadOnlyList<AgentEvent> events,
             IReadOnlyList<PendingConfirmation>? stage = null,
             int stageAfter = 0,
-            Func<string?>? ambientProbe = null)
+            Func<string?>? ambientProbe = null,
+            ITurnProgress? progress = null,
+            IReadOnlyList<(Tool Tool, string Key, string Label)>? progressSteps = null)
         {
             _confirmations = confirmations;
             _events = events;
             _stage = stage ?? Array.Empty<PendingConfirmation>();
             _stageAfter = stageAfter;
             _ambientProbe = ambientProbe;
+            _progress = progress;
+            _progressSteps = progressSteps ?? Array.Empty<(Tool, string, string)>();
         }
 
         public Task<Result<AgentRunResult>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default) =>
@@ -304,8 +396,19 @@ public class ServerAssistantStreamTests
                 Stage();
             Probe(); // a tool dispatched up front, before any event is yielded out
 
+            var reportedProgress = false;
             for (var i = 0; i < _events.Count; i++)
             {
+                // Report progress steps right before the first ToolResult is yielded — the real tool
+                // (running inside the dispatcher's await, before it returns) has already reported them
+                // by the time its own result comes back.
+                if (!reportedProgress && _events[i].Kind == AgentEventKind.ToolResult)
+                {
+                    reportedProgress = true;
+                    foreach (var step in _progressSteps)
+                        _progress?.Report(step.Tool, step.Key, step.Label);
+                }
+
                 await Task.Yield();
                 yield return _events[i];
                 Probe(); // a tool dispatched after the consumer pulled this event (post-yield flow)

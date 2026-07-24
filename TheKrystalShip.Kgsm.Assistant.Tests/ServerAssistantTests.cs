@@ -28,6 +28,7 @@ public class ServerAssistantTests
     private readonly ILlmAgent _agent = Substitute.For<ILlmAgent>();
     private readonly ISystemPromptBuilder _prompt = Substitute.For<ISystemPromptBuilder>();
     private readonly IConfirmationContext _confirmations = new ConfirmationContext();
+    private readonly ITurnProgress _progress = Substitute.For<ITurnProgress>();
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
@@ -40,7 +41,7 @@ public class ServerAssistantTests
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
-            _agent, _prompt, _confirmations, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
+            _agent, _prompt, _confirmations, _progress, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
             Options.Create(fetch ?? new FetchOptions { Available = true }),
@@ -369,5 +370,23 @@ public class ServerAssistantTests
         var second = turn.Gate!(call);
         second.Allowed.Should().BeFalse();
         second.RefusalMessage.Should().Contain("blueprint");
+    }
+
+    // --- P4: the buffered (non-SSE) path never narrates progress ------------------------------------
+
+    [Fact]
+    public async Task RunAsync_NeverOpensAProgressScope()
+    {
+        // The buffered RunAsync path has no channel to write progress frames onto — unlike
+        // RunStreamAsync's ProduceStreamAsync, it must never open the ambient sink, so a long tool
+        // (create_blueprint) still runs to completion and returns its one terminal card, with no
+        // intermediate narration attempted.
+        _agent.RunAsync(Arg.Any<AgentTurn>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new AgentRunResult("Verified.", null)));
+
+        var result = await Create().RunAsync(Conversation, "make me a rust server", canPerformActions: true);
+
+        result.IsSuccess.Should().BeTrue();
+        _progress.DidNotReceiveWithAnyArgs().BeginTurn(default!);
     }
 }

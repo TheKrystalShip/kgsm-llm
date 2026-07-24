@@ -36,10 +36,11 @@ public sealed class BlueprintAuthoringAggregatorTests
     private readonly IInventoryInvalidation _invalidation = Substitute.For<IInventoryInvalidation>();
     private readonly IBlueprintAttemptStore _attempts = Substitute.For<IBlueprintAttemptStore>();
     private readonly AsyncLocalInvocationContext _invocation = new();
+    private readonly ITurnProgress _progress = Substitute.For<ITurnProgress>();
 
     private BlueprintAuthoringAggregator Create(BlueprintAuthoringOptions? options = null) => new(
         Options.Create(options ?? FastOptions()),
-        _research, _files, _blueprints, _instances, _operations, _invalidation, _attempts, _invocation,
+        _research, _files, _blueprints, _instances, _operations, _invalidation, _attempts, _invocation, _progress,
         NullLogger<BlueprintAuthoringAggregator>.Instance);
 
     /// <summary>Short timeouts so a verify loop that never succeeds still finishes fast in tests.</summary>
@@ -330,5 +331,103 @@ public sealed class BlueprintAuthoringAggregatorTests
         await Create().AuthorAsync("Terraria");
 
         _instances.DidNotReceiveWithAnyArgs().Uninstall(default!);
+    }
+
+    // --- P4: progress narration --------------------------------------------------------------------
+
+    [Fact]
+    public async Task HappyPath_ReportsEveryStepKey_InOrder()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(RunningAndListening()));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        await Create().AuthorAsync("Terraria");
+
+        Received.InOrder(() =>
+        {
+            _progress.Report(LlmTools.CreateBlueprint, "research", Arg.Any<string>());
+            _progress.Report(LlmTools.CreateBlueprint, "feasibility", Arg.Any<string>());
+            _progress.Report(LlmTools.CreateBlueprint, "draft", Arg.Any<string>());
+            _progress.Report(LlmTools.CreateBlueprint, "install", Arg.Any<string>());
+            _progress.Report(LlmTools.CreateBlueprint, "verify", Arg.Any<string>());
+            _progress.Report(LlmTools.CreateBlueprint, "teardown", Arg.Any<string>());
+        });
+    }
+
+    [Fact]
+    public async Task InfeasibleResearch_ReportsResearchAndFeasibility_ButNeverDraftInstallVerifyTeardown()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null);
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>())
+            .Returns(new BlueprintResearchFindings(BlueprintFeasibility.NotSelfHostable, null, [], [], "nope"));
+
+        await Create().AuthorAsync("Terraria");
+
+        _progress.Received(1).Report(LlmTools.CreateBlueprint, "research", Arg.Any<string>());
+        _progress.Received(1).Report(LlmTools.CreateBlueprint, "feasibility", Arg.Any<string>());
+        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "draft", Arg.Any<string>());
+        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "install", Arg.Any<string>());
+        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "verify", Arg.Any<string>());
+        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "teardown", Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Disabled_ReportsNoProgress()
+    {
+        await Create(new BlueprintAuthoringOptions { Enabled = false }).AuthorAsync("Terraria");
+
+        _progress.DidNotReceiveWithAnyArgs().Report(default!, default!, default!);
+    }
+
+    [Fact]
+    public async Task AlreadyExists_ReportsNoProgress()
+    {
+        _blueprints.GetInfo("terraria").Returns(new Blueprint { Name = "terraria" });
+
+        await Create().AuthorAsync("Terraria");
+
+        _progress.DidNotReceiveWithAnyArgs().Report(default!, default!, default!);
+    }
+
+    // --- subject.id / Reason (the terminal card the web outcome UI reads) --------------------------
+
+    [Fact]
+    public async Task Verified_SubjectId_IsTheSlug_AndReasonIsNull()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(RunningAndListening()));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create().AuthorAsync("Terraria");
+
+        result.Subject.Id.Should().Be("terraria");
+        result.Data.Reason.Should().BeNull();
+        result.Data.ProofLine.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task InfeasibleResearch_SubjectId_IsTheSlug_AndReasonIsSet()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null);
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>())
+            .Returns(new BlueprintResearchFindings(BlueprintFeasibility.NotSelfHostable, null, [], [], "nope"));
+
+        var result = await Create().AuthorAsync("Terraria");
+
+        result.Subject.Id.Should().Be("terraria");
+        result.Data.Reason.Should().NotBeNullOrEmpty();
     }
 }

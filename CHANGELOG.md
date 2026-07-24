@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `create_blueprint` narrates its own progress over the SSE turn stream while it is still running —
+  a new `progress` frame (`{ tool, key, label, status }`, `id` omitted — the ambient sink that reports
+  it has no access to the tool-call id the generic agent loop mints) fires as each pipeline stage
+  begins: `research` → `feasibility` → `draft` → `install` → `verify` → `teardown`, always landing
+  before the tool's own terminal `tool.result`. A feasibility-fail (or earlier) honest stop reports
+  only the steps it actually reached — never a fabricated later stage. Carried by a new per-turn
+  ambient sink, `ITurnProgress` (mirrors `IConfirmationContext`'s scope shape), opened only on the
+  streaming `RunStreamAsync` path; the buffered `RunAsync` path never opens it, so `create_blueprint`
+  still returns exactly one card there, unchanged. `BlueprintAuthoringData` gains a `Reason` field (the
+  same honest "why not" text carried on the envelope's `Summary`, now readable without parsing prose)
+  and the tool's `ResultRef` subject now carries the canonical blueprint **slug** once one is known
+  (not the raw game name) — the id a web install handoff sends straight to `POST /servers`.
 - A new `create_blueprint` tool AUTHORS a game type genuinely missing from the catalog: it researches
   the game online (via `search`/`fetch_url`), drafts a native-Linux blueprint from sourced fields only
   (an unsourced field stays `null`/default, never fabricated), test-installs it under a reserved

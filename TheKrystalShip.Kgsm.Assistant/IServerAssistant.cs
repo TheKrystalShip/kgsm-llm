@@ -42,6 +42,14 @@ public enum AssistantEventKind
     /// <summary>A tool finished; carries its name, a summary, and an optional structured card (§5·a result).</summary>
     ToolResult,
 
+    /// <summary>
+    /// A long-running tool reported one step of its own progress WHILE still executing (e.g.
+    /// <c>create_blueprint</c>'s research→draft→install→verify stages). Carries
+    /// <see cref="AssistantStreamEvent.ProgressKey"/>/<see cref="AssistantStreamEvent.ProgressLabel"/>;
+    /// never terminal, and never a substitute for the tool's own <see cref="ToolResult"/>.
+    /// </summary>
+    Progress,
+
     /// <summary>A destructive op staged this turn, now awaiting human confirmation.</summary>
     Confirmation,
 
@@ -70,7 +78,10 @@ public sealed record AssistantStreamEvent(
     string? ToolSummary = null,
     LlmUsage? Usage = null,
     string? ToolCallId = null,
-    object? ToolData = null)
+    object? ToolData = null,
+    string? ProgressKey = null,
+    string? ProgressLabel = null,
+    string? ProgressStatus = null)
 {
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
     public static AssistantStreamEvent Thinking(string delta) => new(AssistantEventKind.Thinking, Text: delta);
@@ -79,6 +90,12 @@ public sealed record AssistantStreamEvent(
     // `data` is the dispatcher's optional surface-facing card (§5·a tool.result.result), carried opaquely.
     public static AssistantStreamEvent ToolResult(Tool tool, string summary, string? id = null, object? data = null) =>
         new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id, ToolData: data);
+    // No tool-call `id`: unlike ToolStart/ToolResult (minted by the generic agent loop right where it
+    // dispatches), a progress step is reported from deep inside the tool's own execution (the aggregator),
+    // which is never handed the loop's synthesised id — see ITurnProgress. `status` is always "active"
+    // today (a step is reported when it begins); the parameter exists for a future terminal/failed step.
+    public static AssistantStreamEvent Progress(Tool tool, string key, string label, string status = "active") =>
+        new(AssistantEventKind.Progress, ToolName: tool, ProgressKey: key, ProgressLabel: label, ProgressStatus: status);
     public static AssistantStreamEvent Confirmation(PendingConfirmation confirmation) =>
         new(AssistantEventKind.Confirmation, StagedConfirmation: confirmation);
 

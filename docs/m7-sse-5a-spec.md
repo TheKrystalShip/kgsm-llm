@@ -236,6 +236,37 @@ label.** Two options for sign-off (§7):
 - **(later) Curated `label`** added to each tool definition (a real, human-authored source) —
   a small metadata-curation pass, deferrable past M7.
 
+### WI-8 · `progress` — long-running tool step narration
+**Where:** a new per-turn ambient sink, `ITurnProgress` (`TheKrystalShip.Kgsm.Assistant/TurnProgress.cs`
+— mirrors `IConfirmationContext`'s scope shape exactly), + `Contracts.cs` (`ProgressEvent`) +
+`SseTurnWriter.cs` (the `AssistantEventKind.Progress` arm).
+
+A tool whose single terminal `tool.result` can be a long time coming (`create_blueprint`'s
+research→draft→install→verify→teardown pipeline) reports one `progress` frame per stage as it
+begins, so a client renders a live stepper instead of a silent wait. `ServerAssistant.ProduceStreamAsync`
+opens the sink's scope on the SAME channel writer it relays mapped agent events into (`ITurnProgress.
+BeginTurn`, alongside the confirmation scope), so a step reported from deep inside the tool's own
+execution (the aggregator, called via `ToolDispatcher.ExecuteAsync`, called via the generic loop's
+`DispatchRoundAsync`) lands on the stream immediately — no buffering. Because that call site now
+writes onto the channel from a code path the producer cannot prove is the same writer, the channel is
+opened `SingleWriter: false` (was `true`); ordering still holds because progress writes happen-before
+the tool's own `tool.result` write within the same dispatch.
+
+The buffered (non-SSE) `RunAsync` path never opens the scope, so `Report` calls made through it are a
+silent no-op — a long tool still runs to completion and returns its one terminal card there, unchanged.
+
+`id` is the tool-call correlation id `tool.start`/`tool.result` carry — omitted here (not `null`) because
+the ambient sink has no access to it (the generic agent loop mints it deep inside its own dispatch loop,
+never threaded down into tool execution). A step still correlates to its tool by `tool` and to its place
+in the turn by arrival order. `status` is always `"active"` — a step is reported when it begins; there is
+no separate "done" frame per step.
+
+```
+event: progress
+data: { "type":"progress", "tool":"create_blueprint", "key":"research",
+        "label":"Looking it up online…", "status":"active" }
+```
+
 ---
 
 ## 4 · Layering (where each change lives)
@@ -288,6 +319,10 @@ data: { "type":"tool.result", "id":"tc_0_0", "tool":"run_health_check",
                     "passed":1, "total":2, "skipped":0 },
           "links":null } }
                                                        # a summary-only tool omits `result` entirely (not null)
+
+event: progress                                         # additive — a long-running tool's own step narration
+data: { "type":"progress", "tool":"create_blueprint", "key":"research",
+        "label":"Looking it up online…", "status":"active" }   # id omitted (WI-8); always precedes that tool's own tool.result
 
 event: command.proposed
 data: { "type":"command.proposed", "id":"cmd_0", "verb":"start",

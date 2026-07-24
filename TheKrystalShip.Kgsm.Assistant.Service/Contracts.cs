@@ -192,6 +192,7 @@ public static class TurnStream
     public const string ThinkingDelta = "thinking.delta";
     public const string ToolStart = "tool.start";
     public const string ToolResult = "tool.result";
+    public const string Progress = "progress";
     public const string CommandProposed = "command.proposed";
     public const string Done = "done";
     public const string Error = "error";
@@ -223,6 +224,26 @@ public sealed record ToolResultEvent(
     string Tool,
     string Summary,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? Result = null);
+
+/// <summary>
+/// `progress` — one step of a long-running tool's own progress, reported WHILE the tool is still
+/// executing (today: only <c>create_blueprint</c>'s research→draft→install→verify→teardown stages), so
+/// a client can render a live stepper instead of waiting silently for the tool's single terminal
+/// <see cref="ToolResultEvent"/>. Never terminal on its own — it is always followed, later in the same
+/// turn, by that tool's own <c>tool.start</c>/<c>tool.result</c> pair.
+/// <see cref="Id"/> is the tool-call correlation id used by <c>tool.start</c>/<c>tool.result</c> when the
+/// emitter can supply one; the ambient sink a step is reported through (<c>ITurnProgress</c>) has no
+/// access to that id (it is minted deep inside the generic agent loop, never threaded down into tool
+/// execution), so <see cref="Id"/> is omitted from the frame today — a step still correlates to its
+/// tool by <see cref="Tool"/> and by turn order. <see cref="Status"/> is <c>"active"</c> — a step is
+/// reported when it begins; there is no separate "done" frame per step.
+/// </summary>
+public sealed record ProgressEvent(
+    string Tool,
+    string Key,
+    string Label,
+    string Status,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Id = null);
 
 /// <summary>The §5·a <c>command.proposed.subject</c> — what the staged op is about.</summary>
 public sealed record CommandSubject(string Resource, string Id);

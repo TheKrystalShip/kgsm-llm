@@ -58,6 +58,7 @@ public class ServerAssistant : IServerAssistant
     private readonly ILlmAgent _agent;
     private readonly ISystemPromptBuilder _promptBuilder;
     private readonly IConfirmationContext _confirmations;
+    private readonly ITurnProgress _progress;
     private readonly IServerInventory _inventory;
     private readonly IServerOperations _operations;
     private readonly INetworkInfo _network;
@@ -73,6 +74,7 @@ public class ServerAssistant : IServerAssistant
         ILlmAgent agent,
         ISystemPromptBuilder promptBuilder,
         IConfirmationContext confirmations,
+        ITurnProgress progress,
         IServerInventory inventory,
         IServerOperations operations,
         INetworkInfo network,
@@ -87,6 +89,7 @@ public class ServerAssistant : IServerAssistant
         _agent = agent;
         _promptBuilder = promptBuilder;
         _confirmations = confirmations;
+        _progress = progress;
         _inventory = inventory;
         _operations = operations;
         _network = network;
@@ -243,8 +246,16 @@ public class ServerAssistant : IServerAssistant
         // async flow (Produce — structurally identical to the buffered RunAsync, which is why its
         // scope read is reliable) and ferry events out through a channel. This iterator only
         // relays the channel; its own yields never touch the confirmation scope.
+        // SingleWriter is false: a long-running tool (create_blueprint) reports progress steps via
+        // ITurnProgress from DEEP inside its own execution — a call site nested under the producer's
+        // `await DispatchRoundAsync` in the generic agent loop, on whatever thread the dispatch task
+        // resumes on. Those writes and the producer's own mapped-event writes are no longer provably
+        // the same writer, so the single-writer fast path is unsafe; System.Threading.Channels supports
+        // multiple concurrent writers on an unbounded channel without any extra synchronisation here.
+        // Progress writes still happen-before the tool's own `tool.result` write (the aggregator
+        // reports and returns before the dispatcher's ExecuteAsync call completes), so ordering holds.
         var channel = Channel.CreateUnbounded<AssistantStreamEvent>(
-            new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+            new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         var producer = ProduceStreamAsync(turn, autoExecute, channel.Writer, cancellationToken);
         try
@@ -276,6 +287,11 @@ public class ServerAssistant : IServerAssistant
         try
         {
             using var scope = _confirmations.BeginTurn(autoExecute);
+            // Opens the SAME per-turn ambient pattern as the confirmation scope above, carrying the
+            // SAME writer this method already relays mapped agent events into — a long tool reports a
+            // step by writing straight onto it (see ITurnProgress), landing on the stream immediately
+            // instead of waiting for its own terminal tool.result.
+            using var progressScope = _progress.BeginTurn(writer);
             var finalText = string.Empty;
             LlmUsage? finalUsage = null;
             var errored = false;

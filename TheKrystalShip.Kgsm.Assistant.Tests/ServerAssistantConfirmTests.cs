@@ -31,6 +31,7 @@ public class ServerAssistantConfirmTests
         Substitute.For<ILlmAgent>(),
         Substitute.For<ISystemPromptBuilder>(),
         new ConfirmationContext(),
+        Substitute.For<ITurnProgress>(),
         _inventory,
         _operations,
         _network,

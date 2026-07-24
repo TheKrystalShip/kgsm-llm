@@ -42,6 +42,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     private readonly IInventoryInvalidation _invalidation;
     private readonly IBlueprintAttemptStore _attempts;
     private readonly IInvocationContext _invocation;
+    private readonly ITurnProgress _progress;
     private readonly ILogger<BlueprintAuthoringAggregator> _logger;
 
     public BlueprintAuthoringAggregator(
@@ -54,6 +55,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         IInventoryInvalidation invalidation,
         IBlueprintAttemptStore attempts,
         IInvocationContext invocation,
+        ITurnProgress progress,
         ILogger<BlueprintAuthoringAggregator> logger)
     {
         _options = options.Value;
@@ -65,6 +67,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         _invalidation = invalidation;
         _attempts = attempts;
         _invocation = invocation;
+        _progress = progress;
         _logger = logger;
     }
 
@@ -84,15 +87,20 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         {
             var summary = $"Automatic blueprint authoring isn't enabled on this host, so I can't research " +
                            $"and build a config for \"{game}\" myself.";
-            return Envelope(subject, summary, BlueprintAuthoringOutcome.Disabled, game, null, [], null, false);
+            return Envelope(subject, summary, BlueprintAuthoringOutcome.Disabled, game, null, [], null, summary, false);
         }
 
         var slug = Slugify(game);
         if (string.IsNullOrEmpty(slug))
         {
             var summary = $"\"{game}\" doesn't give me a safe name to build a blueprint from.";
-            return Envelope(subject, summary, BlueprintAuthoringOutcome.NotFeasible, game, null, [], null, false);
+            return Envelope(subject, summary, BlueprintAuthoringOutcome.NotFeasible, game, null, [], null, summary, false);
         }
+
+        // From here on the slug is the canonical id for what this run is about — the subject used by
+        // every outcome below (including the terminal `Verified` card the web install-handoff reads
+        // `subject.id` off of to POST /servers {blueprint: slug}).
+        subject = new ResultRef(ResourceKind.Blueprint, slug);
 
         // --- Step 1: existence guard -------------------------------------------------------------
         // GetInfo checks BOTH the system and user blueprint directories — the engine stays the source
@@ -107,13 +115,15 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         if (existing is not null)
         {
             var summary = $"\"{game}\" is already in the catalog (as \"{slug}\") — nothing to build.";
-            return Envelope(subject, summary, BlueprintAuthoringOutcome.AlreadyExists, game, slug, [], null, true);
+            return Envelope(subject, summary, BlueprintAuthoringOutcome.AlreadyExists, game, slug, [], null, null, true);
         }
 
         // --- Step 2: research (provenance-tagged) -------------------------------------------------
+        _progress.Report(LlmTools.CreateBlueprint, "research", $"Looking up \"{game}\" online…");
         var findings = await _research.ResearchAsync(game, cancellationToken);
 
         // --- Step 3: feasibility gates -------------------------------------------------------------
+        _progress.Report(LlmTools.CreateBlueprint, "feasibility", "Checking it can run on Linux…");
         if (findings.Feasibility != BlueprintFeasibility.Feasible)
         {
             var reason = findings.Feasibility switch
@@ -124,17 +134,18 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             };
             await StashAsync(game, null, findings, [], BlueprintAuthoringOutcome.NotFeasible, reason, null, cancellationToken);
             return Envelope(subject, reason, BlueprintAuthoringOutcome.NotFeasible, game, null,
-                ToProvenance(findings), null, false);
+                ToProvenance(findings), null, reason, false);
         }
 
         // --- Step 4: draft (sourced fields only — unknowns stay null/default) ---------------------
+        _progress.Report(LlmTools.CreateBlueprint, "draft", "Building a server config…");
         var (draft, provenance) = BuildDraft(slug, game, findings);
         if (draft is null)
         {
             var reason = $"I found that \"{game}\" can be self-hosted on Linux, but couldn't pin down exactly " +
                           "how its server is launched from what I found online, so I can't build a working config for it.";
             await StashAsync(game, slug, findings, [], BlueprintAuthoringOutcome.Failed, reason, null, cancellationToken);
-            return Envelope(subject, reason, BlueprintAuthoringOutcome.Failed, game, null, provenance, null, false);
+            return Envelope(subject, reason, BlueprintAuthoringOutcome.Failed, game, null, provenance, null, reason, false);
         }
 
         // --- Steps 5-10: persist → validate → test-install → verify → self-repair → teardown -----
@@ -178,6 +189,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             {
                 var (actor, origin) = Provenance();
                 installAttempted = true;
+                _progress.Report(LlmTools.CreateBlueprint, "install", "Test-installing a copy to try it out…");
                 KgsmResult installResult = await Task.Run(
                     () => _instances.Install(slug, null, null, probeName, actor, origin, null, start: true),
                     cancellationToken);
@@ -188,6 +200,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 }
                 else
                 {
+                    _progress.Report(LlmTools.CreateBlueprint, "verify", "Booting it up and waiting for it to answer…");
                     (verified, proofLine) = await VerifyAsync(probeName, draft, cancellationToken);
                     verifyLog.Add(verified
                         ? $"attempt {attempt}: verified — {proofLine}"
@@ -201,7 +214,10 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             finally
             {
                 if (installAttempted)
+                {
+                    _progress.Report(LlmTools.CreateBlueprint, "teardown", "Cleaning up the test copy…");
                     await TeardownAsync(probeName);
+                }
             }
 
             if (!verified && attempt >= maxAttempts)
@@ -213,7 +229,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             _invalidation.Invalidate();
             var summary = $"I didn't have \"{game}\", so I researched it, built a config, and test-ran it — " +
                            $"{proofLine}. **{game} is now in the catalog.** Want me to make you a server?";
-            return Envelope(subject, summary, BlueprintAuthoringOutcome.Verified, game, slug, provenance, proofLine, true);
+            return Envelope(subject, summary, BlueprintAuthoringOutcome.Verified, game, slug, provenance, proofLine, null, true);
         }
 
         _invalidation.Invalidate();
@@ -223,7 +239,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
         var failSummary = $"I researched \"{game}\" and tried to build and test a config for it, but couldn't " +
                            "get it to boot and answer on its port — so I didn't add it to the catalog.";
-        return Envelope(subject, failSummary, BlueprintAuthoringOutcome.Failed, game, null, provenance, null, false);
+        return Envelope(subject, failSummary, BlueprintAuthoringOutcome.Failed, game, null, provenance, null, failSummary, false);
     }
 
     // --- verify: boots + listens ------------------------------------------------------------------
@@ -400,11 +416,11 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
     private static ToolResult<BlueprintAuthoringData> Envelope(
         ResultRef subject, string summary, BlueprintAuthoringOutcome outcome, string game, string? blueprintName,
-        IReadOnlyList<BlueprintFieldProvenance> provenance, string? proofLine, bool offerInstance) =>
+        IReadOnlyList<BlueprintFieldProvenance> provenance, string? proofLine, string? reason, bool offerInstance) =>
         new(
             LlmTools.CreateBlueprint,
             outcome == BlueprintAuthoringOutcome.Verified ? Confidence.Confirmed : Confidence.Likely,
             subject,
             summary,
-            new BlueprintAuthoringData(outcome, game, blueprintName, provenance, proofLine, offerInstance));
+            new BlueprintAuthoringData(outcome, game, blueprintName, provenance, proofLine, reason, offerInstance));
 }

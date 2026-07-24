@@ -16,9 +16,10 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// typed events (architecture.html §5·a / toolbox-plan §5·a / keystone O1): <c>text.delta</c> (reply
 /// slices), <c>tool.start</c> / <c>tool.result</c> (per tool call, paired by a synthesised id),
 /// <c>command.proposed</c> (a staged op in the §5·a shape, carrying the host-minted token),
-/// <c>done</c> (the full reply), <c>error</c> (in-band failure), and the opt-in additive
-/// <c>thinking.delta</c>. Every frame carries BOTH the SSE <c>event:</c> name and an in-band
-/// <c>type</c> discriminator (same constant) so a client can key on either.
+/// <c>done</c> (the full reply), <c>error</c> (in-band failure), the opt-in additive
+/// <c>thinking.delta</c>, and the additive <c>progress</c> (a long-running tool's own mid-execution
+/// step narration — today only <c>create_blueprint</c>). Every frame carries BOTH the SSE <c>event:</c>
+/// name and an in-band <c>type</c> discriminator (same constant) so a client can key on either.
 /// <para>
 /// The session bearer is already enforced by <see cref="BearerAuthFilter"/> before we get here.
 /// The response commits HTTP 200 the moment the first frame flushes, so any failure after that is
@@ -100,6 +101,17 @@ internal static class SseTurnWriter
                                 new ToolResultEvent(
                                     ev.ToolCallId ?? string.Empty, ev.ToolName.Name,
                                     ev.ToolSummary ?? string.Empty, ev.ToolData), ct);
+                        break;
+
+                    case AssistantEventKind.Progress:
+                        await WriteEventAsync(response, TurnStream.Progress,
+                            new ProgressEvent(
+                                ev.ToolName?.Name ?? string.Empty,
+                                ev.ProgressKey ?? string.Empty,
+                                ev.ProgressLabel ?? string.Empty,
+                                ev.ProgressStatus ?? "active",
+                                ev.ToolCallId),
+                            ct);
                         break;
 
                     case AssistantEventKind.Confirmation:

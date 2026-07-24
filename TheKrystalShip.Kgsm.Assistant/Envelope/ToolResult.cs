@@ -90,8 +90,10 @@ public enum ResourceKind
     /// <summary>A fetched web page (the <c>fetch_url</c> subject) — its final URL is the id.</summary>
     WebPage,
 
-    /// <summary>A researched/authored game-type blueprint (the <c>create_blueprint</c> subject) — the
-    /// game name given to the tool is its id.</summary>
+    /// <summary>A researched/authored game-type blueprint (the <c>create_blueprint</c> subject) — its
+    /// id is the canonical slug once one is known (the id the web install handoff sends to
+    /// <c>POST /servers</c>), falling back to the raw game name given to the tool for an outcome that
+    /// never got far enough to resolve one (disabled, or an unsafe name).</summary>
     Blueprint,
 }
 

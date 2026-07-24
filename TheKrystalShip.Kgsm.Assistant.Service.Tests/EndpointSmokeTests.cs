@@ -385,6 +385,44 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Turn_StreamAccept_EmitsProgress_BeforeTheToolResult()
+    {
+        // A long-running tool (create_blueprint) reports its own progress steps WHILE it is still
+        // executing, ahead of its single terminal tool.result — the exact wire shape a live stepper
+        // reads.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:user1", "make me a rust server", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>())
+            .Returns(_ => AsyncSeq(
+                AssistantStreamEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = "Rust" }, "tc_0"),
+                AssistantStreamEvent.Progress(LlmTools.CreateBlueprint, "research", "Looking it up online…"),
+                AssistantStreamEvent.Progress(LlmTools.CreateBlueprint, "draft", "Building a server config…"),
+                AssistantStreamEvent.ToolResult(LlmTools.CreateBlueprint, "Rust is now in the catalog.", "tc_0"),
+                AssistantStreamEvent.Final("Rust is now in the catalog. Want me to make you a server?")));
+
+        var response = await StreamTurnAsync(Authed(Factory(assistant)), "make me a rust server");
+        var body = await response.Content.ReadAsStringAsync();
+
+        // Two `progress` frames, each carrying `type`+tool+key+label+status, land before `tool.result`.
+        body.Should().Contain("event: progress");
+        body.Should().Contain("\"type\":\"progress\"");
+        body.Should().Contain("\"tool\":\"create_blueprint\"");
+        body.Should().Contain("\"key\":\"research\"");
+        // System.Text.Json escapes non-ASCII by default — the ellipsis rides the wire as ….
+        body.Should().Contain("\"label\":\"Looking it up online\\u2026\"");
+        body.Should().Contain("\"status\":\"active\"");
+        body.Should().Contain("\"key\":\"draft\"");
+        // No tool-call id is threaded through (the ambient sink that reports it has no access to the
+        // one the generic agent loop mints) — omitted from the frame (JsonIgnore WhenWritingNull), not
+        // a fabricated `"id":null`.
+        body.Should().NotContain("\"id\":null");
+
+        var progressIndex = body.IndexOf("event: progress", StringComparison.Ordinal);
+        var resultIndex = body.IndexOf("event: tool.result", StringComparison.Ordinal);
+        progressIndex.Should().BeGreaterThan(-1);
+        resultIndex.Should().BeGreaterThan(progressIndex, "progress steps must land before the tool's own terminal result");
+    }
+
+    [Fact]
     public async Task Turn_StreamAccept_ConfirmationEventCarriesTokenBoundToCaller()
     {
         var assistant = Substitute.For<IServerAssistant>();

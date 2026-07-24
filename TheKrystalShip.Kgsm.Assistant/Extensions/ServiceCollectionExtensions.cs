@@ -24,6 +24,12 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddKgsmAssistant(this IServiceCollection services)
     {
         services.AddSingleton<IConfirmationContext, ConfirmationContext>();
+        // The per-turn progress narration sink (§ITurnProgress) — same ambient-scope shape as
+        // IConfirmationContext above, registered here so it's visible to both ServerAssistant (this
+        // project) and the Infrastructure aggregators that report through it (e.g.
+        // BlueprintAuthoringAggregator), without Infrastructure needing anything beyond the reference
+        // it already has to this project.
+        services.AddSingleton<ITurnProgress, TurnProgress>();
         services.AddSingleton<IToolDispatcher, ToolDispatcher>();
         // The hot-editable prompt/tool-description layer (off unless Prompts:Directory is set). Used
         // by the prompt builder (segments) and the assistant (tool-description overlay).

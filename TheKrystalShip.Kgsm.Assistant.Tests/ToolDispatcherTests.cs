@@ -542,7 +542,7 @@ public class ToolDispatcherTests
         var envelope = new ToolResult<BlueprintAuthoringData>(
             LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "Terraria"),
             "I didn't have Terraria, so I built and test-ran it — it booted and is listening. **Terraria is now in the catalog.**",
-            new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "it booted and is listening", true));
+            new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "it booted and is listening", null, true));
         _blueprintAuthoring.AuthorAsync("Terraria", Arg.Any<CancellationToken>()).Returns(envelope);
 
         var result = await Summary(CreateBlueprintCall("Terraria"));
@@ -556,7 +556,7 @@ public class ToolDispatcherTests
     {
         var envelope = new ToolResult<BlueprintAuthoringData>(
             LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "Terraria"),
-            "verified", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "proof", true));
+            "verified", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "proof", null, true));
         _blueprintAuthoring.AuthorAsync("Terraria", Arg.Any<CancellationToken>()).Returns(envelope);
 
         var output = await Create().ExecuteAsync(CreateBlueprintCall("Terraria"));
@@ -574,7 +574,7 @@ public class ToolDispatcherTests
         // Even a "couldn't do this one" outcome is worth showing — mirrors get_audit_log's honest-empty card.
         var envelope = new ToolResult<BlueprintAuthoringData>(
             LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "SomeGame"),
-            "I couldn't get it to boot.", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, "SomeGame", null, [], null, false));
+            "I couldn't get it to boot.", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, "SomeGame", null, [], null, "I couldn't get it to boot.", false));
         _blueprintAuthoring.AuthorAsync("SomeGame", Arg.Any<CancellationToken>()).Returns(envelope);
 
         var output = await Create().ExecuteAsync(CreateBlueprintCall("SomeGame"));

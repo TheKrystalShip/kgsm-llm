@@ -31,7 +31,7 @@ internal sealed class DisabledBlueprintAuthoring : IBlueprintAuthoring
         var summary = $"Automatic blueprint authoring isn't enabled on this host, so I can't research " +
                        $"and build a config for \"{game}\" myself.";
         var data = new BlueprintAuthoringData(
-            BlueprintAuthoringOutcome.Disabled, game, null, [], null, OfferInstance: false);
+            BlueprintAuthoringOutcome.Disabled, game, null, [], null, Reason: summary, OfferInstance: false);
         return Task.FromResult(new ToolResult<BlueprintAuthoringData>(
             LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, game), summary, data));
     }

@@ -67,6 +67,12 @@ internal sealed class Harness
         // availability LAST (after AddKgsmAdapters' PostConfigure); the underlying ports stay disabled,
         // so an actual call just returns an honest "couldn't search" — no network, no credits spent.
         services.PostConfigure<SearchOptions>(o => o.WebEnabled = true);
+        // Same reasoning for fetch_url (F-group): offered even though WebFetch:Enabled is unset here,
+        // so both CalledTool(fetch_url) and DidNotCallTool(fetch_url) are meaningful. AddKgsmAdapters
+        // registers the real HttpWebFetch unconditionally (mirroring TavilyWebSearch), but its own
+        // WebFetch:Enabled stays false, so an actual call just returns an honest "not configured" — no
+        // network, no host ever contacted.
+        services.PostConfigure<FetchOptions>(o => o.Available = true);
 
         // The conversation store (SQLite) is already registered by AddLocalLlm and pointed at a throwaway
         // temp DB (see BuildConfiguration) so eval turns never touch the user's real corpus. The harness

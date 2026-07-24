@@ -38,6 +38,7 @@ public class ServerAssistantConfirmTests
         new NoopToolRelevanceFilter(),
         new PassthroughPromptOverrides(),
         Options.Create(new SearchOptions()),
+        Options.Create(new FetchOptions()),
         NullLogger<ServerAssistant>.Instance);
 
     private void Instances(params string[] names) =>

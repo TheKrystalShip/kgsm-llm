@@ -56,6 +56,13 @@ public static class LlmTools
     // source backs it (SearchOptions.Available); the dispatcher routes it to ISearch.
     public static readonly Tool Search = new("search");
 
+    // Reads ONE specific web page by URL — a leaf capability distinct from `search`: search FINDS
+    // pages via provider-summarized hits, this READS a page the model already has (or just found)
+    // the URL for (an official docs page, a Steam store page, a raw Dockerfile). Offered iff a
+    // fetch adapter is configured (FetchOptions.Available), same §D7 omit-when-disabled rule as
+    // `search`; the dispatcher routes it to IWebFetch.
+    public static readonly Tool FetchUrl = new("fetch_url");
+
     // Authorized read (offered only to action-authorized callers — exposes file
     // contents, so gated like the command tier even though it mutates nothing).
     // read_file replaces the old single-purpose view_config_file: it reads any text file
@@ -221,6 +228,11 @@ public static class LlmTools
         "a game's latest version, release notes, or what a config option means. NOT for anything " +
         "about this host's own servers (status/config/health) — use the KGSM tools for those.");
 
+    private static readonly LlmToolParameter FetchUrlParam = new(
+        "url",
+        "The exact web address to read, including scheme — e.g. an official server-setup doc, a " +
+        "Steam store page, or a raw Dockerfile URL. Only public http/https pages can be fetched.");
+
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
         LlmToolDefinition.Create(GetStatus,
@@ -293,6 +305,15 @@ public static class LlmTools
             "cite the sources and don't state them as certain. Do NOT use this for anything about this " +
             "host's own servers (status, config, health) — the KGSM tools are authoritative for those.",
             SearchQuery),
+
+        LlmToolDefinition.Create(FetchUrl,
+            "Fetch and read the full text of ONE specific web page by its exact URL — an official docs " +
+            "page, a Steam store page, a GitHub raw file (like a Dockerfile), and so on. Use this when " +
+            "you already HAVE a URL (from the user, or from a prior search result) and need its actual " +
+            "content. Do NOT use this to find a page in the first place — use `search` for that (it " +
+            "looks things up by topic and returns short summaries, not full page content). Only public " +
+            "http/https pages can be fetched; large pages may be truncated.",
+            FetchUrlParam),
     };
 
     /// <summary>

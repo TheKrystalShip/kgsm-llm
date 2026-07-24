@@ -93,6 +93,49 @@ public sealed class WebSearchOptions
 }
 
 /// <summary>
+/// Direct-HTTP URL-fetch provider settings — reads ONE specific page (a doc, a Steam page, a raw
+/// Dockerfile) that <c>IWebSearch</c> cannot (it only returns provider-summarized hits). Bound from
+/// the "WebFetch" section. Needs no API key (it's a direct GET), so it is enabled INDEPENDENTLY of
+/// <see cref="WebSearchOptions"/> — its own <see cref="Enabled"/> flag is the sole gate. Fails closed
+/// (disabled) by default. The URL is model/user-influenced and this host is internet-exposed, so the
+/// SSRF guard and the manual per-redirect-hop re-validation in the adapter (<c>HttpWebFetch</c>) are
+/// load-bearing safety, not just config plumbing.
+/// </summary>
+public sealed class WebFetchOptions
+{
+    public const string Section = "WebFetch";
+
+    /// <summary>Master switch. False (default) → the host registers no adapter and the library's
+    /// fail-closed <c>DisabledWebFetch</c> resolves, so <c>fetch_url</c> is not offered.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Per-request timeout (connect + read). The agent loop blocks on this, so keep it short.</summary>
+    public int TimeoutSeconds { get; set; } = 8;
+
+    /// <summary>Hard cap on bytes read from the response body. Fetching stops and <c>Truncated</c> is
+    /// set once this is hit, rather than buffering an unbounded page.</summary>
+    public int MaxContentBytes { get; set; } = 3 * 1024 * 1024;
+
+    /// <summary>Redirect hops followed before giving up. Auto-redirect is OFF on the underlying
+    /// handler; the adapter follows manually and re-validates the SSRF guard on every hop — no hop is
+    /// ever trusted blindly.</summary>
+    public int MaxRedirects { get; set; } = 5;
+
+    /// <summary>Process-wide ceiling on fetches per UTC day — the wallet backstop, mirroring
+    /// <see cref="WebSearchOptions.MaxCallsPerDay"/>. The per-message cap lives in the assistant gate.</summary>
+    public int MaxCallsPerDay { get; set; } = 200;
+
+    /// <summary>Optional operator allowlist: each entry matches that exact host or any of its
+    /// subdomains (e.g. "github.com" also matches "raw.githubusercontent.com" only if listed
+    /// separately — subdomain matching is per-entry, not implicit across unrelated domains). Empty
+    /// means no allowlist restriction beyond the built-in SSRF guard.</summary>
+    public string[] AllowedHosts { get; set; } = [];
+
+    /// <summary>Optional operator denylist, checked before the allowlist. Empty means none configured.</summary>
+    public string[] DeniedHosts { get; set; } = [];
+}
+
+/// <summary>
 /// Local RAG retrieval settings. Bound from the "Rag" section — the SAME section the core's
 /// <c>RagEmbeddingOptions</c> reads (each picks up its own keys); this is the retrieval/host half
 /// (enable switch, where the index lives, how much to return), that is the embedder half. Retrieval

@@ -38,7 +38,8 @@ public class ServerAssistantStreamTests
         return new ServerAssistant(
             agent, _prompt, confirmations, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
-            Options.Create(new SearchOptions { WebEnabled = true }), NullLogger<ServerAssistant>.Instance);
+            Options.Create(new SearchOptions { WebEnabled = true }), Options.Create(new FetchOptions { Available = true }),
+            NullLogger<ServerAssistant>.Instance);
     }
 
     private static async Task<List<AssistantStreamEvent>> DrainAsync(IAsyncEnumerable<AssistantStreamEvent> events)

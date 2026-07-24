@@ -86,6 +86,9 @@ public enum ResourceKind
 
     /// <summary>An instance's host-firewall network picture (the <c>get_network</c> subject).</summary>
     Network,
+
+    /// <summary>A fetched web page (the <c>fetch_url</c> subject) — its final URL is the id.</summary>
+    WebPage,
 }
 
 /// <summary>

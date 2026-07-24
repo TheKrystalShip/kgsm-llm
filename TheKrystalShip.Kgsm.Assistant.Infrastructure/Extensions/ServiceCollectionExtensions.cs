@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Fetch;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Monitor;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
@@ -183,6 +184,39 @@ public static class ServiceCollectionExtensions
                 client.DefaultRequestHeaders.Authorization =
                     new AuthenticationHeaderValue("Bearer", options.ApiKey);
         });
+
+        // --- URL fetch (fetch_url) --------------------------------------------------------------
+        // The assistant's direct-fetch port: reads ONE specific page, unlike Tavily's summarized
+        // search hits. Needs no API key — its own WebFetch:Enabled flag is the sole gate, independent
+        // of WebSearchOptions.ApiKey. Auto-redirect is OFF (AllowAutoRedirect=false); HttpWebFetch
+        // follows redirects manually so every hop re-enters SsrfGuard.ResolveSafeAsync via the
+        // ConnectCallback below (the same unix-socket-style ConnectCallback pattern used for the
+        // monitor/event-history clients above, here resolving+validating an arbitrary host instead of
+        // a fixed socket path). Registered AFTER AddKgsmAssistant, so this concrete IWebFetch wins
+        // over the library's fail-closed DisabledWebFetch default.
+        services.Configure<WebFetchOptions>(config.GetSection(WebFetchOptions.Section));
+        var webFetch = config.GetSection(WebFetchOptions.Section).Get<WebFetchOptions>() ?? new WebFetchOptions();
+        services.AddSingleton<DailyFetchBudget>();
+        services.AddHttpClient<IWebFetch, HttpWebFetch>((sp, client) =>
+        {
+            var o = sp.GetRequiredService<IOptions<WebFetchOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(o.TimeoutSeconds <= 0 ? 8 : o.TimeoutSeconds);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("kgsm-assistant/1.0 (+fetch_url tool)");
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            // fetch_url follows redirects manually (below) so every hop is re-validated by the SSRF
+            // guard — a blindly-followed redirect would otherwise be the obvious bypass.
+            AllowAutoRedirect = false,
+            ConnectCallback = (context, ct) => SsrfConnectCallback.ConnectAsync(context.DnsEndPoint, ct),
+        });
+
+        // The fetch_url TOOL is offered iff WebFetch:Enabled is true — computed here (the one place
+        // that knows the adapter's config) into the assistant-facing FetchOptions.Available, mirroring
+        // SearchOptions §D7. PostConfigure alone is enough to make IOptions<FetchOptions> resolvable
+        // even though nothing binds it from config directly (there is nothing to bind — Available is
+        // purely computed).
+        services.PostConfigure<FetchOptions>(o => o.Available = webFetch.Enabled);
 
         // --- Local RAG retrieval ---------------------------------------------------------------
         // Off by default and fails closed (plan §D7): only when Rag:Enabled is true do we wire the

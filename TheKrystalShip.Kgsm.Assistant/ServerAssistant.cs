@@ -40,6 +40,14 @@ public class ServerAssistant : IServerAssistant
     /// </summary>
     private const int MaxSearchesPerMessage = 5;
 
+    /// <summary>
+    /// Per-message ceiling on <c>fetch_url</c> calls — mirrors <see cref="MaxSearchesPerMessage"/> for
+    /// the same reason (a loop-runaway guard; the per-day fetch wallet cap lives host-side in the
+    /// adapter). Each fetch is a real outbound HTTP request against a model/user-influenced URL, so
+    /// this stops one prompt from spraying page reads.
+    /// </summary>
+    private const int MaxFetchesPerMessage = 5;
+
     private readonly ILlmAgent _agent;
     private readonly ISystemPromptBuilder _promptBuilder;
     private readonly IConfirmationContext _confirmations;
@@ -50,6 +58,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IToolRelevanceFilter _toolFilter;
     private readonly IPromptOverrides _promptOverrides;
     private readonly SearchOptions _searchOptions;
+    private readonly FetchOptions _fetchOptions;
     private readonly ILogger<ServerAssistant> _logger;
 
     public ServerAssistant(
@@ -63,6 +72,7 @@ public class ServerAssistant : IServerAssistant
         IToolRelevanceFilter toolFilter,
         IPromptOverrides promptOverrides,
         IOptions<SearchOptions> searchOptions,
+        IOptions<FetchOptions> fetchOptions,
         ILogger<ServerAssistant> logger)
     {
         _agent = agent;
@@ -75,6 +85,7 @@ public class ServerAssistant : IServerAssistant
         _toolFilter = toolFilter;
         _promptOverrides = promptOverrides;
         _searchOptions = searchOptions.Value;
+        _fetchOptions = fetchOptions.Value;
         _logger = logger;
     }
 
@@ -100,6 +111,11 @@ public class ServerAssistant : IServerAssistant
         // honest invalid-tool error — never a dead tool the model would call and watch fail.
         if (!_searchOptions.Available)
             authorized = authorized.Where(t => t.Tool != LlmTools.Search).ToArray();
+
+        // Same §D7 omit-when-disabled rule for fetch_url: offered only when a real IWebFetch adapter
+        // is enabled on this host (FetchOptions.Available).
+        if (!_fetchOptions.Available)
+            authorized = authorized.Where(t => t.Tool != LlmTools.FetchUrl).ToArray();
 
         if (requestedTools is { Count: > 0 })
         {
@@ -573,6 +589,7 @@ public class ServerAssistant : IServerAssistant
     {
         var staged = 0;
         var searches = 0;
+        var fetches = 0;
         return call =>
         {
             // search is read-only (open to everyone), but each call adds a loop iteration (and a web
@@ -587,6 +604,20 @@ public class ServerAssistant : IServerAssistant
                         "Answer from what you already found, or tell the user you couldn't find it.");
 
                 searches++;
+                return ToolGate.Allow;
+            }
+
+            // fetch_url is likewise read-only and open to everyone, but each call is a real outbound
+            // HTTP request against a model/user-influenced URL and adds a loop iteration — its own
+            // per-message cap, independent of the search cap.
+            if (call.Name == LlmTools.FetchUrl)
+            {
+                if (fetches >= MaxFetchesPerMessage)
+                    return ToolGate.Refuse(
+                        $"Refused: at most {MaxFetchesPerMessage} page fetches per message. " +
+                        "Answer from what you already fetched, or tell the user you couldn't fetch it.");
+
+                fetches++;
                 return ToolGate.Allow;
             }
 

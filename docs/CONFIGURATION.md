@@ -65,6 +65,7 @@ any committed `appsettings.json`:
 | `InventoryCache` | ✅ | ✅ | — | Instance/blueprint cache TTLs |
 | `Monitor` | ✅ | ✅ | — | kgsm-monitor metrics socket (`get_performance`) |
 | `WebSearch` | ✅ | ✅ | — | Tavily fallback |
+| `WebFetch` | ✅ | ✅ | — | Direct URL fetch (`fetch_url`) |
 | `Rag` (retrieval) | ✅ | ✅ | — | Local doc retrieval (consumer) |
 | `Rag` (embedder + build) | ✅ (`index` verb) | reads only | ✅ | Embedding model + chunking |
 | `Prompts` | ✅ | (built-in) | — | Editable persona/tool prompts |
@@ -150,6 +151,25 @@ number), so this is a path, not a dependency.
 | `SearchDepth` | `basic` | `WebSearch__SearchDepth` | `basic` (1 credit) or `advanced` (2) |
 | `TimeoutSeconds` | `10` | `WebSearch__TimeoutSeconds` | Per-search timeout |
 | `MaxCallsPerDay` | `200` | `WebSearch__MaxCallsPerDay` | Daily spend backstop |
+
+### `WebFetch` — direct URL fetch, `fetch_url` (`WebFetchOptions`)
+
+Reads ONE specific page (a doc, a Steam page, a raw Dockerfile) — distinct from `WebSearch`, which only
+returns provider-summarized hits. Needs **no API key** (it's a direct GET); `Enabled` alone gates it,
+independently of `WebSearch:ApiKey`. This host is internet-exposed and the URL is model/user-influenced,
+so the adapter enforces an SSRF guard (rejects loopback/private/link-local/multicast/reserved addresses,
+including the `169.254.169.254` cloud-metadata address, re-validated on every redirect hop — auto-redirect
+is off and the adapter follows manually) on top of these config knobs.
+
+| Key | Default | Env | Notes |
+|-----|---------|-----|-------|
+| `Enabled` | `false` | `WebFetch__Enabled` | Master switch; false ⇒ `fetch_url` fails closed and is omitted from the tool catalog |
+| `TimeoutSeconds` | `8` | `WebFetch__TimeoutSeconds` | Per-fetch timeout (connect + read) |
+| `MaxContentBytes` | `3145728` (3 MiB) | `WebFetch__MaxContentBytes` | Hard cap on bytes read from the body; fetching stops and the result is marked truncated |
+| `MaxRedirects` | `5` | `WebFetch__MaxRedirects` | Redirect hops followed (each re-validated by the SSRF guard) before giving up |
+| `MaxCallsPerDay` | `200` | `WebFetch__MaxCallsPerDay` | Daily spend backstop, mirrors `WebSearch:MaxCallsPerDay` |
+| `AllowedHosts` | `[]` | `WebFetch__AllowedHosts__0`, … | Optional operator allowlist (exact host or subdomain match); empty ⇒ no restriction beyond the SSRF guard |
+| `DeniedHosts` | `[]` | `WebFetch__DeniedHosts__0`, … | Optional operator denylist, checked before the allowlist |
 
 ### `Rag` — retrieval, embedder, and index build (one section, three consumers)
 

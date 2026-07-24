@@ -34,7 +34,10 @@ internal static class BenchmarkSuite
     /// propose-only <c>write_file</c> group (W): a full read-then-stage flow for a game's own config
     /// file, plus a <c>set_config_value</c>-vs-<c>write_file</c> disambiguation pair guarding the two
     /// writers (KGSM's own <c>.config.ini</c> vs. a game's config file) from routing collisions.</summary>
-    public const string Version = "v5";
+    /// v6 adds the <c>fetch_url</c> group (F): a read-a-specific-page prompt routes to <c>fetch_url</c>,
+    /// and a find/what-is prompt with no URL still routes to <c>search</c> — a disambiguation pair
+    /// guarding the two lookup tools from routing collisions, the same way W2/W3 guard the two writers.
+    public const string Version = "v6";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -141,6 +144,24 @@ internal static class BenchmarkSuite
             C.DidNotCallTool(LlmTools.Search, Rubric.E_Scope, "doesn't search for an off-domain question"),
             C.FinalHas(@"server|game|help (you )?with|assist|focus|scope|weather|can'?t help|isn'?t something|not something i",
                 "redirects to its domain", Rubric.E_Scope)),
+
+        // --- fetch_url vs search disambiguation (F): reading a SPECIFIC given page/URL/Dockerfile is
+        // fetch_url; finding/looking-up a topic with no URL in hand is still search. Guards the two
+        // lookup tools from routing collisions, the same way W2/W3 guard the two writers.
+
+        Single("F1", "read a specific URL the user gave", true, Array.Empty<FixtureRole>(),
+            "can you read this page and tell me what it says: https://example.com/docs/setup-guide",
+            C.CalledTool(LlmTools.FetchUrl, "uses fetch_url for a URL already in hand"),
+            C.DidNotCallTool(LlmTools.Search, Rubric.E_Scope, "doesn't search when a URL was already given")),
+
+        // Deliberately does NOT assert "never calls fetch_url": a live run showed the model searching
+        // first, then reasonably fetching a URL search itself surfaced for more detail — sound chained
+        // behavior, not a routing miss (the Checks.cs D11 lesson: don't fail a check the transcript
+        // shows is fine). The disambiguation this asserts is that search — not a guessed/fabricated
+        // fetch_url call — is how the model STARTS finding something it has no URL for yet.
+        Single("F2", "find something with no URL in hand", true, Array.Empty<FixtureRole>(),
+            "what's the latest version of Terraria? can you look it up online?",
+            C.CalledTool(LlmTools.Search, "starts from search when no URL is in hand")),
 
         // --- Ambiguous / conversational diagnosis: how a model serves a non-technical user who can't
         // phrase the "right" question ("X is not working", "why can't I connect?"). PRIMARILY judged by

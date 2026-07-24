@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
+using TheKrystalShip.Kgsm.Assistant.Fetch;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
 using TheKrystalShip.Kgsm.Assistant.Network;
@@ -38,6 +39,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IServerInventory _inventory;
     private readonly IConfirmationContext _confirmations;
     private readonly ISearch _search;
+    private readonly IWebFetch _webFetch;
     private readonly IServerMetrics _metrics;
     private readonly IEventHistory _events;
     private readonly INetworkInfo _network;
@@ -49,6 +51,7 @@ public class ToolDispatcher : IToolDispatcher
         IServerInventory inventory,
         IConfirmationContext confirmations,
         ISearch search,
+        IWebFetch webFetch,
         IServerMetrics metrics,
         IEventHistory events,
         INetworkInfo network,
@@ -59,6 +62,7 @@ public class ToolDispatcher : IToolDispatcher
         _inventory = inventory;
         _confirmations = confirmations;
         _search = search;
+        _webFetch = webFetch;
         _metrics = metrics;
         _events = events;
         _network = network;
@@ -91,6 +95,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await TraceRootCauseAsync(call, cancellationToken);
             if (call.Name == LlmTools.Search)
                 return await SearchAsync(call, cancellationToken);
+            if (call.Name == LlmTools.FetchUrl)
+                return await FetchUrlAsync(call, cancellationToken);
             if (call.Name == LlmTools.ReadFile)
                 return await ReadFileAsync(call, cancellationToken);
             if (call.Name == LlmTools.ListFiles)
@@ -147,6 +153,52 @@ public class ToolDispatcher : IToolDispatcher
         return result.Data.Passages.Count > 0
             ? new ToolOutput(result.Summary, ToolResultCard.From(result))
             : result.Summary;
+    }
+
+    /// <summary>Caps the text carried in the model-facing <see cref="ToolOutput.Summary"/> for
+    /// <c>fetch_url</c> — protects the small model's context window even when the adapter's own
+    /// (much larger, byte-based) size cap wasn't hit. Independent of the adapter's <c>Truncated</c>
+    /// flag; either one clipping the content sets the card/summary's truncated note.</summary>
+    private const int FetchSummaryCharCap = 6000;
+
+    /// <summary>
+    /// Reads ONE specific page via <see cref="IWebFetch"/> — the model already has (or just found) a
+    /// URL and wants its actual content, unlike <c>search</c> which only returns provider-summarized
+    /// hits. The port handles all safety (scheme allowlist, an SSRF guard re-validated on every
+    /// redirect hop, a size cap, a timeout, content-type filtering) and never throws; a blocked or
+    /// failed fetch surfaces here as an honest "couldn't fetch" message — never as "the page is
+    /// empty" (the same honesty rule <see cref="SearchAsync"/> follows for web failures). A
+    /// successful fetch always carries a <see cref="FetchData"/> card (real fetched structure, unlike
+    /// an empty search that has nothing to cite); a failure stays summary-only.
+    /// </summary>
+    private async Task<ToolOutput> FetchUrlAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var url = call.Arg("url")?.Trim();
+        if (string.IsNullOrWhiteSpace(url))
+            return "Error: fetch_url needs a 'url'.";
+
+        var result = await _webFetch.FetchAsync(url, cancellationToken);
+        if (!result.IsSuccess)
+            return $"Couldn't fetch {url}: {result.Error ?? "unknown error"}.";
+
+        var page = result.Value!;
+        var text = page.Text.Trim();
+        var truncated = page.Truncated;
+        if (text.Length > FetchSummaryCharCap)
+        {
+            text = text[..FetchSummaryCharCap];
+            truncated = true;
+        }
+
+        var truncNote = truncated ? " (truncated)" : "";
+        var summary = text.Length == 0
+            ? $"Fetched {page.FinalUrl} ({page.ContentType ?? "unknown content type"}), but it had no readable text."
+            : $"Fetched {page.FinalUrl}{truncNote}:\n{text}";
+
+        var card = new FetchData(page.FinalUrl, page.Title, text, truncated);
+        var envelope = new ToolResult<FetchData>(
+            LlmTools.FetchUrl, Confidence.Confirmed, new ResultRef(ResourceKind.WebPage, page.FinalUrl), summary, card);
+        return new ToolOutput(summary, ToolResultCard.From(envelope));
     }
 
     /// <summary>

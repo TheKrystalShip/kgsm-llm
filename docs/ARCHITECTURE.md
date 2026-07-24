@@ -10,7 +10,7 @@ A local LLM (Ollama) runs a **tool-calling agent loop**. The loop itself is gene
 about KGSM. `TheKrystalShip.Kgsm.Assistant` is the **brain**: it defines the tool catalog, the
 system prompt, the action policy, and a set of **ports** (interfaces) for the things tools need.
 `*.Infrastructure` supplies the **adapters** that bind those ports to reality — the kgsm engine
-(via kgsm-lib), Tavily web search, and a local RAG index. Two **surfaces** drive the same brain:
+(via kgsm-lib), Tavily web search, a direct URL fetch, and a local RAG index. Two **surfaces** drive the same brain:
 an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, self-contained
 **RAG** subsystem (`TheKrystalShip.Rag` + the indexer) produces a doc index the brain can search.
 
@@ -24,14 +24,16 @@ an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, se
                                            ▼
             ┌──────────────────── TheKrystalShip.Kgsm.Assistant ───────────────────┐
  brain      │  tool catalog · system prompt · action policy (propose/confirm)       │
-            │  the `search` aggregator · PORTS: IRetrieval, IWebSearch, kgsm ops     │
+            │  the `search` aggregator · fetch_url · PORTS: IRetrieval, IWebSearch, │
+            │  IWebFetch, kgsm ops                                                  │
             └──────────────┬───────────────────────────────────────┬───────────────┘
                            ▼ (generic loop)                         ▼ (adapters)
             ┌──────────────────────────┐      ┌──────────────────────────────────────┐
  loop/core  │   TheKrystalShip.Llm      │      │  *.Infrastructure                     │
-            │   Ollama client · agent   │      │  kgsm-lib graph · Tavily · RAG read   │
-            │   loop · conversation mem │      └───────────────┬──────────────────────┘
-            └──────────────────────────┘                      │
+            │   Ollama client · agent   │      │  kgsm-lib graph · Tavily · fetch ·    │
+            │   loop · conversation mem │      │  RAG read                             │
+            └──────────────────────────┘      └───────────────┬──────────────────────┘
+                                                               │
                                                    ┌───────────┴───────────┐
                                                    ▼                       ▼
                                           kgsm-lib (engine)        TheKrystalShip.Rag
@@ -51,11 +53,11 @@ an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, se
   cap, tool-output truncation, and conversation memory — and is handed the tools, prompt, and
   per-call authorization *by the host, every turn*. It never learns what a tool means.
 - **Ports/adapters keep the brain testable and the engine swappable.** The brain depends on
-  interfaces (`IRetrieval`, `IWebSearch`, the kgsm command/query ports); Infrastructure provides
-  concrete adapters. Disabled capabilities get **fail-closed null adapters** (`DisabledRetrieval`,
-  `DisabledWebSearch`) registered by default, so the graph composes even when RAG/Tavily are off —
-  the real adapter is registered *after* and wins only when configured. This is why the Service
-  boots fine with nothing but Ollama + kgsm configured.
+  interfaces (`IRetrieval`, `IWebSearch`, `IWebFetch`, the kgsm command/query ports); Infrastructure
+  provides concrete adapters. Disabled capabilities get **fail-closed null adapters**
+  (`DisabledRetrieval`, `DisabledWebSearch`, `DisabledWebFetch`) registered by default, so the graph
+  composes even when RAG/Tavily/fetch are off — the real adapter is registered *after* and wins only
+  when configured. This is why the Service boots fine with nothing but Ollama + kgsm configured.
 - **One brain, many surfaces.** The Service and CLI both compose the same three DI calls —
   `AddLocalLlm` + `AddKgsmAssistant` + `AddKgsmAdapters` — and differ only in how they get the
   prompt in and the answer out, and in *who the user is* (see [auth](#authentication--authority)).
@@ -90,6 +92,19 @@ model calls): it queries the local RAG index first; a hit at/above `LocalMinScor
 docs; otherwise it falls back to Tavily; otherwise it returns an honest "nothing found" (and a web
 *failure* is reported as "couldn't search," never as "nothing exists" — the ecosystem's
 measured-or-unknown rule). `web_search` is internal; the model only ever sees `search`.
+
+### The `fetch_url` tool (direct page read)
+
+`search` finds pages via a provider's summarized hits; `fetch_url` reads the full text of ONE page
+the model already has (or just found) the URL for — an official docs page, a Steam store page, a raw
+Dockerfile. Backed by `IWebFetch`/`HttpWebFetch`, gated by its own `WebFetch:Enabled` flag (no API key
+needed) and offered only when enabled. Because the fetched URL is model/user-influenced and this host
+is internet-exposed, the adapter enforces a scheme allowlist (http/https only) and an SSRF guard that
+rejects loopback/private/link-local/multicast/reserved addresses (including the `169.254.169.254`
+cloud-metadata address), re-validated on EVERY redirect hop — auto-redirect is disabled and the
+adapter follows redirects manually so each hop re-enters the guard. A size cap, a timeout, and
+content-type filtering (HTML → extracted text; `text/plain` and similar pass through; binary types are
+refused) round it out. See `docs/CONFIGURATION.md`'s `WebFetch` section for every knob.
 
 ## The RAG subsystem (producer/consumer)
 

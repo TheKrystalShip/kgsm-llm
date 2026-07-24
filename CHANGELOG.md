@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0]
+
+### Added
+- A new `fetch_url` tool lets the assistant read the full text of ONE specific web page by URL — an
+  official docs page, a Steam store page, a raw Dockerfile, and so on — distinct from `search`, which
+  only returns provider-summarized hits and cannot fetch a page. Backed by a new `IWebFetch` port
+  (mirroring `IWebSearch`'s shape: a fail-closed `DisabledWebFetch` default, offered only when a real
+  adapter is configured) and a config-gated, budget-capped `HttpWebFetch` adapter (`WebFetch` config
+  section, no API key needed — its own `Enabled` flag is the sole gate). The adapter enforces a scheme
+  allowlist (http/https only), an SSRF guard that rejects loopback/private/link-local/multicast/reserved
+  addresses (including the `169.254.169.254` cloud-metadata address) and re-validates on EVERY redirect
+  hop (auto-redirect is disabled; the adapter follows manually), a size cap (truncates rather than
+  buffering unbounded), a timeout, and content-type filtering (HTML is stripped to readable text with a
+  lightweight dependency-free extractor; `text/plain` and similar raw files pass through verbatim;
+  binary content-types are refused honestly). `fetch_url` is offered in the read-only tier alongside
+  `search`, gated by `FetchOptions.Available` (computed the same way as `SearchOptions.Available`), and
+  capped per message in the assistant gate independently of the search cap.
+
 ## [1.9.0] - 2026-07-19
 
 ### Added

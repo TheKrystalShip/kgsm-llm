@@ -31,9 +31,9 @@ public class ServerAssistantTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
-    // Default: search is AVAILABLE (a web source on), so the offered set is the unfiltered catalog
-    // (BeSameAs holds) and the gate's search cap is exercisable. Availability tests pass their own.
-    private ServerAssistant Create(SearchOptions? search = null)
+    // Default: search AND fetch are both AVAILABLE, so the offered set is the unfiltered catalog
+    // (BeSameAs holds) and the gate's per-message caps are exercisable. Availability tests pass their own.
+    private ServerAssistant Create(SearchOptions? search = null, FetchOptions? fetch = null)
     {
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
@@ -41,17 +41,19 @@ public class ServerAssistantTests
             _agent, _prompt, _confirmations, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
+            Options.Create(fetch ?? new FetchOptions { Available = true }),
             NullLogger<ServerAssistant>.Instance);
     }
 
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>
-    private async Task<AgentTurn> CaptureTurnAsync(bool canPerformActions, SearchOptions? search = null)
+    private async Task<AgentTurn> CaptureTurnAsync(
+        bool canPerformActions, SearchOptions? search = null, FetchOptions? fetch = null)
     {
         AgentTurn? captured = null;
         _agent.RunAsync(Arg.Do<AgentTurn>(t => captured = t), Arg.Any<CancellationToken>())
             .Returns(Result.Success(new AgentRunResult("ok", null)));
 
-        await Create(search).RunAsync(Conversation, "do it", canPerformActions);
+        await Create(search, fetch).RunAsync(Conversation, "do it", canPerformActions);
 
         captured.Should().NotBeNull();
         return captured!;
@@ -245,5 +247,71 @@ public class ServerAssistantTests
 
         result.IsFailure.Should().BeTrue();
         result.Error.Should().Contain("Invalid tool");
+    }
+
+    // --- fetch_url availability + per-message cap (mirrors the search block above) -----------------
+
+    [Fact]
+    public async Task FetchUrl_IsOffered_WhenAvailable()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false, fetch: new FetchOptions { Available = true });
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.FetchUrl);
+    }
+
+    [Fact]
+    public async Task FetchUrl_IsOmitted_WhenUnavailable()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false, fetch: new FetchOptions { Available = false });
+        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.FetchUrl);
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.GetStatus);
+    }
+
+    [Fact]
+    public async Task RequestingFetchUrl_WhenUnavailable_IsAnInvalidToolError()
+    {
+        _agent.RunAsync(Arg.Any<AgentTurn>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new AgentRunResult("ok", null)));
+
+        var result = await Create(fetch: new FetchOptions { Available = false }).RunAsync(
+            Conversation, "read this page", canPerformActions: false, requestedTools: ["fetch_url"]);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Contain("Invalid tool");
+    }
+
+    [Fact]
+    public async Task Gate_AllowsFetchForUnauthorizedCaller_ButCapsItPerMessage()
+    {
+        // fetch_url is offered to everyone (read-only tier), but each call is a real outbound HTTP
+        // request against a model/user-influenced URL and adds a loop iteration — capped per message.
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+        var fetch = Call(LlmTools.FetchUrl);
+
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(fetch).Allowed.Should().BeTrue($"fetch {i} is within the per-message cap");
+
+        var sixth = turn.Gate!(fetch);
+        sixth.Allowed.Should().BeFalse();
+        sixth.RefusalMessage.Should().Contain("fetches per message");
+    }
+
+    [Fact]
+    public async Task Gate_FetchCap_IsSeparateFromSearchAndStagingCaps()
+    {
+        // Three independent counters: exhausting fetches must not eat into the search or
+        // command-staging budgets, and vice versa.
+        var turn = await CaptureTurnAsync(canPerformActions: true);
+
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(Call(LlmTools.FetchUrl)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.FetchUrl)).Allowed.Should().BeFalse(); // fetch cap hit
+
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeFalse(); // search cap hit, independently
+
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse(); // staging cap hit, independently
     }
 }

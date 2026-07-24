@@ -36,6 +36,11 @@ public static class ServiceCollectionExtensions
         // and that later registration is the one resolved. Without one, searches fail cleanly
         // rather than breaking DI — keeps the lib embeddable by a host that doesn't use search.
         services.TryAddSingleton<IWebSearch, DisabledWebSearch>();
+        // fetch_url (reading ONE specific page) degrades closed the same way: a host that wants real
+        // fetching calls AddKgsmAdapters, which registers a concrete IWebFetch (e.g.
+        // AddHttpClient<IWebFetch, HttpWebFetch>) that wins over this default. Without one, fetches
+        // fail cleanly and the tool is omitted (FetchOptions.Available), never a dead tool.
+        services.TryAddSingleton<IWebFetch, DisabledWebFetch>();
         // Local RAG retrieval degrades closed the same way: a host that enables RAG calls
         // AddKgsmAdapters (with Rag:Enabled=true), which registers a concrete IRetrieval that
         // wins over this default. Without it, retrieval fails cleanly rather than breaking DI.

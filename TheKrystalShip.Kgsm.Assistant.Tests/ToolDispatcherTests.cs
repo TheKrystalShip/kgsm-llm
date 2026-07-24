@@ -6,6 +6,7 @@ using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
+using TheKrystalShip.Kgsm.Assistant.Fetch;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
 using TheKrystalShip.Kgsm.Assistant.Network;
@@ -29,6 +30,7 @@ public class ToolDispatcherTests
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly ISearch _search = Substitute.For<ISearch>();
+    private readonly IWebFetch _webFetch = Substitute.For<IWebFetch>();
     private readonly IServerMetrics _metrics = Substitute.For<IServerMetrics>();
     private readonly IEventHistory _events = Substitute.For<IEventHistory>();
     private readonly INetworkInfo _network = Substitute.For<INetworkInfo>();
@@ -58,7 +60,7 @@ public class ToolDispatcherTests
     }
 
     private ToolDispatcher Create() =>
-        new(_operations, _inventory, _confirmations, _search, _metrics, _events, _network, _upnp, NullLogger<ToolDispatcher>.Instance);
+        new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -91,6 +93,9 @@ public class ToolDispatcherTests
 
     private static LlmToolCall SearchCall(string? query) =>
         new(LlmTools.Search, new Dictionary<string, string?> { ["query"] = query });
+
+    private static LlmToolCall FetchUrlCall(string? url) =>
+        new(LlmTools.FetchUrl, new Dictionary<string, string?> { ["url"] = url });
 
     private static LlmToolCall WriteFileCall(string instance, string? path, string? content) =>
         new(LlmTools.WriteFile, new Dictionary<string, string?>
@@ -450,6 +455,75 @@ public class ToolDispatcherTests
 
         result.Should().Contain("needs a 'query'");
         await _search.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- fetch_url (reading ONE specific page via the IWebFetch port) ---
+    // The dispatcher only guards the blank url and relays the adapter's text/outcome honestly; the
+    // SSRF guard / redirect handling / content extraction are exercised in HttpWebFetchTests.
+
+    [Fact]
+    public async Task FetchUrl_RelaysThePageTextInTheSummary()
+    {
+        _webFetch.FetchAsync("https://docs.example.com/setup", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new WebFetchResult(
+                "https://docs.example.com/setup", 200, "text/html", "Setup Guide", "Run the server binary.", Truncated: false)));
+
+        var result = await Summary(FetchUrlCall("https://docs.example.com/setup"));
+
+        result.Should().Contain("https://docs.example.com/setup");
+        result.Should().Contain("Run the server binary.");
+        await _webFetch.Received(1).FetchAsync("https://docs.example.com/setup", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task FetchUrl_OnSuccess_SurfacesTheFetchCard()
+    {
+        _webFetch.FetchAsync("https://docs.example.com/setup", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new WebFetchResult(
+                "https://docs.example.com/setup", 200, "text/html", "Setup Guide", "Run the server binary.", Truncated: false)));
+
+        var output = await Create().ExecuteAsync(FetchUrlCall("https://docs.example.com/setup"));
+
+        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
+        card.Tool.Should().Be(LlmTools.FetchUrl.Name);
+        var data = card.Data.Should().BeOfType<FetchData>().Subject;
+        data.Url.Should().Be("https://docs.example.com/setup");
+        data.Title.Should().Be("Setup Guide");
+        data.Truncated.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task FetchUrl_FailedFetch_IsHonestAndStaysSummaryOnly()
+    {
+        _webFetch.FetchAsync("https://blocked.internal/", Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<WebFetchResult>("refused to fetch this address ('blocked.internal' is a private/internal address)"));
+
+        var output = await Create().ExecuteAsync(FetchUrlCall("https://blocked.internal/"));
+
+        output.Summary.Should().Contain("Couldn't fetch");
+        output.Summary.Should().NotContain("empty", "a failure must never read as 'the page is empty'");
+        output.Data.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FetchUrl_TruncatedPage_NotesItInTheSummary()
+    {
+        _webFetch.FetchAsync("https://big.example.com/", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new WebFetchResult(
+                "https://big.example.com/", 200, "text/plain", null, "partial content", Truncated: true)));
+
+        var result = await Summary(FetchUrlCall("https://big.example.com/"));
+
+        result.Should().Contain("truncated");
+    }
+
+    [Fact]
+    public async Task FetchUrl_BlankUrl_DoesNotCallTheAdapter()
+    {
+        var result = await Summary(FetchUrlCall("   "));
+
+        result.Should().Contain("needs a 'url'");
+        await _webFetch.DidNotReceive().FetchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     // --- get_performance (live per-server metrics via the IServerMetrics port) ---

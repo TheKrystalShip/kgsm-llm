@@ -3,6 +3,8 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
+using TheKrystalShip.Kgsm.Assistant.Blueprints;
+using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
@@ -400,6 +402,7 @@ secured.MapPost("/confirm", async (
     IPendingWriteStore pendingWrites,
     DiscordAuthService auth,
     IInvocationContext invocation,
+    IOptions<AssistantServiceOptions> assistantOptions,
     CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
@@ -409,6 +412,52 @@ secured.MapPost("/confirm", async (
     if (!tokens.TryValidate(request.Token, out var confirmation, out var stagedBy) ||
         !string.Equals(stagedBy, principal.UserId, StringComparison.Ordinal))
         return Results.BadRequest(new { error = "Invalid or expired confirmation." });
+
+    // Re-derive authority FRESH at confirm time — never trust it from the token.
+    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    // The confirming user is the authority for the action they just approved (origin=assistant).
+    using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
+
+    // Blueprint finalize: the user reviewed/edited the draft in the chat. The edited YAML rides the
+    // request body (re-validated downstream); a save without edits falls back to the staged draft (the
+    // token's ConfigValue is its opaque pending-write id). The result is a rich card, not a text line —
+    // and on a DraftReady outcome (repair exhausted / invalid edit) a FRESH Blueprint token is minted so
+    // the user can edit and save again (the re-edit loop).
+    if (confirmation.Kind == ConfirmationKind.Blueprint)
+    {
+        var game = confirmation.InstanceName ?? confirmation.Target;
+        var editedYaml = request.EditedContent;
+        if (string.IsNullOrWhiteSpace(editedYaml))
+        {
+            if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var stagedDraft))
+                return Results.BadRequest(new { error = "This draft has expired — ask the assistant to draft it again." });
+            editedYaml = stagedDraft;
+        }
+
+        var outcome = await assistant.FinalizeBlueprintAsync(game, editedYaml!, canPerform, ct);
+        var data = outcome.Data;
+
+        // On DraftReady, re-stage the returned draft so the user can edit + save again. Mint a fresh token
+        // over it (the draft body swapped into the pending-write store, same as the initial stage).
+        ConfirmationDto[]? reEdit = null;
+        if (data is not null && data.Outcome == BlueprintAuthoringOutcome.DraftReady && data.DraftYaml is not null)
+        {
+            var restaged = PendingWriteTokenSwap.ForToken(
+                new PendingConfirmation(ConfirmationKind.Blueprint, data.BlueprintName ?? game,
+                    InstanceName: game, ConfigValue: data.DraftYaml),
+                pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds);
+            reEdit =
+            [
+                new ConfirmationDto(
+                    restaged.Kind.ToString().ToLowerInvariant(), restaged.Target, restaged.InstanceName,
+                    tokens.Create(restaged, principal.UserId), restaged.ConfigKey, restaged.ConfigValue),
+            ];
+        }
+
+        var card = JsonSerializer.SerializeToElement(ToolResultCard.From(outcome), SseTurnWriter.Json);
+        var verified = data?.Outcome == BlueprintAuthoringOutcome.Verified;
+        return Results.Ok(new ConfirmResponse(outcome.Summary, verified, card, reEdit));
+    }
 
     // write_file: the token's ConfigValue is the opaque pending-write id (never the real content —
     // see PendingWriteTokenSwap), so rehydrate the real content here, single-use. An expired/already-
@@ -421,10 +470,6 @@ secured.MapPost("/confirm", async (
         confirmation = confirmation with { ConfigValue = realContent };
     }
 
-    // Re-derive authority FRESH at confirm time — never trust it from the token.
-    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
-    // The confirming user is the authority for the action they just approved (origin=assistant).
-    using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
     var result = await assistant.ConfirmAsync(confirmation, canPerform, ct);
 
     return Results.Ok(new ConfirmResponse(

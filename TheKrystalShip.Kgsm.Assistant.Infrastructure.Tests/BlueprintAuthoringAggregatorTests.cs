@@ -691,4 +691,135 @@ public sealed class BlueprintAuthoringAggregatorTests
         result.Subject.Id.Should().Be("terraria");
         result.Data.Reason.Should().NotBeNullOrEmpty();
     }
+
+    // --- Human-review checkpoint: DraftAsync + FinalizeAsync (assistant-blueprint-review-plan.md) -------
+
+    private static NativeBlueprintDraft ParsedDraft(string args = "-config serverconfig.txt") => new()
+    {
+        Name = "terraria",
+        Native = new NativeBlueprintNativeDraft { ExecutableFile = "TerrariaServer.bin.x86_64", ExecutableArguments = args },
+    };
+
+    [Fact]
+    public async Task DraftAsync_FeasibleGame_ReturnsEditableDraftReady_AndRunsNoTestInstall()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null); // absent — only the existence guard reads it
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Render(Arg.Any<NativeBlueprintDraft>())
+            .Returns("name: terraria\nruntime: native\nnative:\n  executable_file: ./start.sh\n");
+
+        var result = await Create().DraftAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.DraftReady);
+        result.Data.Editable.Should().BeTrue();
+        result.Data.DraftYaml.Should().Contain("executable_file");
+        result.Data.BlueprintName.Should().Be("terraria");
+        // The draft half touches NO write authority and never test-installs.
+        _files.DidNotReceiveWithAnyArgs().Create(default!);
+        _instances.DidNotReceiveWithAnyArgs().Install(default!);
+    }
+
+    [Fact]
+    public async Task DraftAsync_AlreadyExists_PassesTheTerminalOutcomeThrough_NotDraftReady()
+    {
+        _blueprints.GetInfo("terraria").Returns(new Blueprint { Name = "terraria" });
+
+        var result = await Create().DraftAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.AlreadyExists);
+        result.Data.Editable.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task FinalizeAsync_UnparseableEdit_ComesBackEditable_NeverInstalls()
+    {
+        _files.TryParse(Arg.Any<string>())
+            .Returns(FileOpResult<NativeBlueprintDraft>.Fail(FileOpOutcome.InvalidDraft, "native.executable_file is required"));
+
+        var result = await Create().FinalizeAsync("Terraria", "name: terraria\nruntime: native\n");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.DraftReady);
+        result.Data.Editable.Should().BeTrue();
+        result.Data.DraftYaml.Should().Contain("terraria"); // the user's text is handed back to fix
+        _instances.DidNotReceiveWithAnyArgs().Install(default!);
+    }
+
+    [Fact]
+    public async Task FinalizeAsync_ForeignPlaceholderInArgs_ComesBackEditable_NeverInstalls()
+    {
+        // A $TOKEN that isn't a real $instance_* variable expands to empty at launch — rejected to the editor.
+        _files.TryParse(Arg.Any<string>())
+            .Returns(FileOpResult<NativeBlueprintDraft>.Ok(ParsedDraft(args: "-port $SERVER_PORT")));
+
+        var result = await Create().FinalizeAsync("Terraria", "…yaml…");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.DraftReady);
+        result.Data.Editable.Should().BeTrue();
+        result.Data.Reason.Should().MatchRegex("(?i)instance_|variable");
+        _instances.DidNotReceiveWithAnyArgs().Install(default!);
+    }
+
+    [Fact]
+    public async Task FinalizeAsync_InstancePlaceholderInArgs_IsAccepted_AndProceedsToInstall()
+    {
+        // The real $instance_* variables must NOT trip the guard.
+        _files.TryParse(Arg.Any<string>())
+            .Returns(FileOpResult<NativeBlueprintDraft>.Ok(ParsedDraft(args: "-world $instance_level_name")));
+        _blueprints.GetInfo("terraria").Returns(new Blueprint { Name = "terraria" }); // readback ok (no existence guard in finalize)
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>()).Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(RunningAndListening()));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create().FinalizeAsync("Terraria", "…yaml…");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.Verified);
+        _instances.ReceivedWithAnyArgs(1).Install(default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
+    public async Task FinalizeAsync_ReviewPath_Exhaustion_ReturnsEditableDraftReadyWithEvidence_NotFailed()
+    {
+        _files.TryParse(Arg.Any<string>()).Returns(FileOpResult<NativeBlueprintDraft>.Ok(ParsedDraft()));
+        _blueprints.GetInfo("terraria").Returns(new Blueprint { Name = "terraria" });
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>()).Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _files.Render(Arg.Any<NativeBlueprintDraft>()).Returns("name: terraria\nruntime: native\nnative:\n  executable_file: TerrariaServer.bin.x86_64\n");
+        _instances.Install(default!, default, default, default, default, default, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(NeverBoots())); // never verifies
+        _instances.GetLogsAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns((ICollection<string>)new List<string> { "[boot] failed to bind port" }); // boot evidence for the recovery card
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create().FinalizeAsync("Terraria", "…yaml…");
+
+        // The review path hands the draft back to edit again, WITH the boot evidence — never a dead-end Failed.
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.DraftReady);
+        result.Data.Editable.Should().BeTrue();
+        result.Data.DraftYaml.Should().Contain("executable_file");
+        result.Data.Evidence.Should().Contain("failed to bind port");
+        _files.Received().Remove("terraria");         // catalog stays clean
+        _instances.ReceivedWithAnyArgs().Uninstall(default!, default, default); // guaranteed teardown
+    }
+
+    [Fact]
+    public async Task AuthorAsync_AutonomousExhaustion_StillEndsAtFailed_NotDraftReady()
+    {
+        // The autonomous path (no human to hand back to) keeps its terminal Failed on exhaustion.
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>()).Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(NeverBoots()));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create().AuthorAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.Failed);
+    }
 }

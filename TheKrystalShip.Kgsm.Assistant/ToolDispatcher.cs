@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
+using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Fetch;
 using TheKrystalShip.Kgsm.Assistant.Health;
@@ -219,7 +220,25 @@ public class ToolDispatcher : IToolDispatcher
         if (string.IsNullOrWhiteSpace(game))
             return "Error: create_blueprint needs a 'game'.";
 
-        var result = await _blueprintAuthoring.AuthorAsync(game, cancellationToken);
+        // Mandatory-review flow: DRAFT only (research + build) — the test-install/verify runs later, when a
+        // permitted human saves the config. A ready draft is staged as a Blueprint confirmation carrying the
+        // draft YAML the user edits; every terminal outcome (disabled, already-exists, infeasible) just
+        // returns its card, staging nothing.
+        var result = await _blueprintAuthoring.DraftAsync(game, cancellationToken);
+        var data = result.Data;
+        if (data is not null && data.Outcome == BlueprintAuthoringOutcome.DraftReady && data.DraftYaml is not null)
+        {
+            _confirmations.Stage(new PendingConfirmation(
+                ConfirmationKind.Blueprint, data.BlueprintName ?? game,
+                InstanceName: game, ConfigValue: data.DraftYaml));
+
+            return new ToolOutput(
+                "Drafted a starting config and shown it to the user in an editor to review and edit. NOTHING is " +
+                "installed yet — the test-install runs only when they save it. Tell them to review/tweak the " +
+                "config and save it to have you test-run and verify it; do NOT claim the game is added yet.",
+                ToolResultCard.From(result));
+        }
+
         return new ToolOutput(result.Summary, ToolResultCard.From(result));
     }
 

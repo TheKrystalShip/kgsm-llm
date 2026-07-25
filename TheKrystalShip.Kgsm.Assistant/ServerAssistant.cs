@@ -4,6 +4,8 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Kgsm.Assistant.Blueprints;
+using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
@@ -65,6 +67,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IUpnpInfo _upnp;
     private readonly IToolRelevanceFilter _toolFilter;
     private readonly IPromptOverrides _promptOverrides;
+    private readonly IBlueprintAuthoring _blueprintAuthoring;
     private readonly SearchOptions _searchOptions;
     private readonly FetchOptions _fetchOptions;
     private readonly BlueprintAuthoringFlags _blueprintAuthoringFlags;
@@ -81,6 +84,7 @@ public class ServerAssistant : IServerAssistant
         IUpnpInfo upnp,
         IToolRelevanceFilter toolFilter,
         IPromptOverrides promptOverrides,
+        IBlueprintAuthoring blueprintAuthoring,
         IOptions<SearchOptions> searchOptions,
         IOptions<FetchOptions> fetchOptions,
         IOptions<BlueprintAuthoringFlags> blueprintAuthoringFlags,
@@ -96,6 +100,7 @@ public class ServerAssistant : IServerAssistant
         _upnp = upnp;
         _toolFilter = toolFilter;
         _promptOverrides = promptOverrides;
+        _blueprintAuthoring = blueprintAuthoring;
         _searchOptions = searchOptions.Value;
         _fetchOptions = fetchOptions.Value;
         _blueprintAuthoringFlags = blueprintAuthoringFlags.Value;
@@ -377,11 +382,40 @@ public class ServerAssistant : IServerAssistant
                 confirmation.Target, confirmation.ConfigValue, confirmation.ConfigKey, cancellationToken),
             ConfirmationKind.WriteFile => await ConfirmWriteFileAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
+            // The text path (CLI, and any surface that only reads ConfirmResponse.Text): finalize returns a
+            // rich card, but here we surface only its summary line. A card surface (the Service) calls
+            // FinalizeBlueprintAsync directly to render the DraftReady/Verified card + any re-edit token.
+            ConfirmationKind.Blueprint => Result.Success((await FinalizeBlueprintAsync(
+                confirmation.InstanceName ?? confirmation.Target, confirmation.ConfigValue ?? string.Empty,
+                canPerformActions, cancellationToken)).Summary),
             ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
                 or ConfirmationKind.Update or ConfirmationKind.Backup
                 => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
             _ => Result.Failure<string>("Unknown action; nothing was done."),
         };
+    }
+
+    /// <summary>
+    /// Finalizes an assistant-authored blueprint after the user reviewed/edited it in the chat: re-validates
+    /// the (possibly edited) YAML and runs the test-install → verify → repair → keep/stash pipeline. This is
+    /// the blueprint counterpart of <see cref="ConfirmAsync"/> — it exists separately because its result is a
+    /// rich <see cref="BlueprintAuthoringData"/> card (a Verified card, or a fresh DraftReady card for
+    /// another edit when the repair loop exhausts), not the one-line text a normal confirm returns. Authority
+    /// is checked fresh here, exactly as in <see cref="ConfirmAsync"/>.
+    /// </summary>
+    public async Task<ToolResult<BlueprintAuthoringData>> FinalizeBlueprintAsync(
+        string game, string editedYaml, bool canPerformActions, CancellationToken cancellationToken = default)
+    {
+        if (!canPerformActions)
+        {
+            var denied = "You don't have permission to add a blueprint to the catalog.";
+            return new ToolResult<BlueprintAuthoringData>(
+                LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, game), denied,
+                new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, game, null, [], null, denied, false));
+        }
+
+        _logger.LogInformation("Confirmed blueprint finalize for \"{Game}\"", game);
+        return await _blueprintAuthoring.FinalizeAsync(game, editedYaml, cancellationToken);
     }
 
     /// <summary>

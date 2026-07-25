@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **In-chat review checkpoint for assistant-authored blueprints** (`assistant-blueprint-review-plan.md`).
+  `create_blueprint` now DRAFTS only — it researches and builds the config, then returns an editable
+  `DraftReady` card carrying the rendered YAML and stages a `Blueprint` confirmation; the test-install +
+  verify runs later, only when a permitted human saves the (possibly edited) config. Finalize reuses the
+  confirmation mechanism (new `ConfirmationKind.Blueprint` + `IServerAssistant.FinalizeBlueprintAsync`,
+  returning the rich card rather than a text line); the Service `/confirm` accepts the edited YAML on
+  `ConfirmRequest.EditedContent` and returns the outcome card plus, on a recovery `DraftReady`, a fresh
+  Blueprint token for the re-edit loop. The edited YAML is untrusted — it re-enters the full safety funnel
+  (structural parse via `IBlueprintFiles.TryParse`, the `$instance_*`-only placeholder guard, then the
+  engine readback-validate and empirical boot). When the autonomous repair loop exhausts, the review path
+  hands the last draft plus its boot evidence back as an editable `DraftReady` for another edit instead of a
+  dead-end failure; the autonomous `create_blueprint`-equivalent (`AuthorAsync`) keeps its terminal
+  `Failed`. Stateless — no authoring session is held between draft and finalize (everything is re-derived
+  from the edited YAML). Consumes kgsm-lib 1.42.0 (`IBlueprintFiles.Render`/`TryParse`).
+
 ### Changed
 - **Blueprint-authoring pipeline is split at the draft boundary (no behavior change).** The one
   `AuthorAsync` pipeline is carved into a draft half (gate → slug → existence guard → research →

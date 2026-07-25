@@ -16,7 +16,11 @@ internal static class PendingWriteTokenSwap
     public static PendingConfirmation ForToken(
         PendingConfirmation confirmation, IPendingWriteStore store, int ttlSeconds)
     {
-        if (confirmation.Kind != ConfirmationKind.WriteFile || confirmation.ConfigValue is null)
+        // Both kinds carry a potentially-large body on ConfigValue that must not ride a stateless token:
+        // write_file's file content, and blueprint's draft YAML (the fallback body used if the user saves
+        // without sending an edited version). Every other kind passes through unchanged.
+        var carriesBody = confirmation.Kind is ConfirmationKind.WriteFile or ConfirmationKind.Blueprint;
+        if (!carriesBody || confirmation.ConfigValue is null)
             return confirmation;
 
         var expiry = DateTimeOffset.UtcNow.AddSeconds(Math.Max(ttlSeconds, 1));

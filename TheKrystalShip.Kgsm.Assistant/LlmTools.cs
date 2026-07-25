@@ -364,15 +364,15 @@ public static class LlmTools
     public static readonly IReadOnlyList<LlmToolDefinition> AuthorizedActions = new[]
     {
         LlmToolDefinition.Create(CreateBlueprint,
-            "AUTHORS a game type that is genuinely MISSING from the catalog: researches it online, " +
-            "builds a server config, and TEST-INSTALLS it to prove it actually boots and listens — " +
-            "keeping it in the catalog only if that succeeds. Runs autonomously in one step, with NO " +
-            "confirmation needed (it touches nothing of the user's; the test install is a disposable " +
-            "probe torn down automatically). Use this ONLY when the game is not in list_blueprints / " +
-            "not offered by install_server — for a game that's already installable, propose " +
-            "install_server instead. Do NOT use this to look something up (use search/fetch_url for " +
-            "that). This can take a while and sometimes can't succeed (not every game can be " +
-            "self-hosted, or has a native Linux server) — relay the outcome honestly either way.",
+            "AUTHORS a game type that is genuinely MISSING from the catalog: researches it online and " +
+            "DRAFTS a server config, then shows it to the user in an editor to review and tweak. The " +
+            "test-install + verification runs LATER, only when they save the config — so calling this " +
+            "does NOT add the game yet. After it returns, tell the user a draft is ready for them to " +
+            "review and save; do NOT claim the game is added or installed. Use this ONLY when the game " +
+            "is not in list_blueprints / not offered by install_server — for a game that's already " +
+            "installable, propose install_server instead. Do NOT use this to look something up (use " +
+            "search/fetch_url for that). Not every game can be self-hosted or has a native Linux " +
+            "server — relay the outcome honestly either way.",
             BlueprintGame),
     };
 

@@ -31,6 +31,7 @@ public class ServerAssistantTests
     private readonly ITurnProgress _progress = Substitute.For<ITurnProgress>();
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
+    private readonly IBlueprintAuthoring _blueprintAuthoring = Substitute.For<IBlueprintAuthoring>();
 
     // Default: search, fetch, AND blueprint authoring are all AVAILABLE, so the offered set is the
     // unfiltered catalog (BeSameAs holds) and the gate's per-message caps are exercisable. Availability
@@ -42,7 +43,7 @@ public class ServerAssistantTests
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             _agent, _prompt, _confirmations, _progress, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
-            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(),
+            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), _blueprintAuthoring,
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
             Options.Create(fetch ?? new FetchOptions { Available = true }),
             Options.Create(blueprint ?? new BlueprintAuthoringFlags { Available = true }),

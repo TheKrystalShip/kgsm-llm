@@ -537,50 +537,56 @@ public class ToolDispatcherTests
         new(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = game });
 
     [Fact]
-    public async Task CreateBlueprint_RelaysThePortsSummary()
+    public async Task CreateBlueprint_DraftReady_GroundsTheModelToAskForReview_NotToClaimItsAdded()
     {
-        var envelope = new ToolResult<BlueprintAuthoringData>(
-            LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "Terraria"),
-            "I didn't have Terraria, so I built and test-ran it — it booted and is listening. **Terraria is now in the catalog.**",
-            new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "it booted and is listening", null, true));
-        _blueprintAuthoring.AuthorAsync("Terraria", Arg.Any<CancellationToken>()).Returns(envelope);
+        // The mandatory-review flow: create_blueprint drafts only, and the tool's grounding text must tell
+        // the model NOT to claim the game is added — the test-install runs later, on the user's save.
+        _blueprintAuthoring.DraftAsync("Terraria", Arg.Any<CancellationToken>()).Returns(DraftReadyEnvelope());
 
         var result = await Summary(CreateBlueprintCall("Terraria"));
 
-        result.Should().Contain("Terraria is now in the catalog");
-        await _blueprintAuthoring.Received(1).AuthorAsync("Terraria", Arg.Any<CancellationToken>());
+        result.Should().MatchRegex("(?i)review|save");
+        result.Should().NotContain("is now in the catalog");
+        await _blueprintAuthoring.Received(1).DraftAsync("Terraria", Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task CreateBlueprint_OnSuccess_SurfacesTheAuthoringCard()
+    public async Task CreateBlueprint_DraftReady_StagesABlueprintConfirmation_CarryingTheDraftYaml()
     {
-        var envelope = new ToolResult<BlueprintAuthoringData>(
-            LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "Terraria"),
-            "verified", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Terraria", "terraria", [], "proof", null, true));
-        _blueprintAuthoring.AuthorAsync("Terraria", Arg.Any<CancellationToken>()).Returns(envelope);
+        using var scope = _confirmations.BeginTurn();
+        _blueprintAuthoring.DraftAsync("Terraria", Arg.Any<CancellationToken>()).Returns(DraftReadyEnvelope());
 
         var output = await Create().ExecuteAsync(CreateBlueprintCall("Terraria"));
 
+        // Card carries the editable draft, and a Blueprint confirmation was staged with the draft YAML body.
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.CreateBlueprint.Name);
         var data = card.Data.Should().BeOfType<BlueprintAuthoringData>().Subject;
-        data.Outcome.Should().Be(BlueprintAuthoringOutcome.Verified);
-        data.BlueprintName.Should().Be("terraria");
+        data.Outcome.Should().Be(BlueprintAuthoringOutcome.DraftReady);
+        data.Editable.Should().BeTrue();
+        data.DraftYaml.Should().Contain("executable_file");
+
+        var staged = scope.Staged.Should().ContainSingle().Subject;
+        staged.Kind.Should().Be(ConfirmationKind.Blueprint);
+        staged.Target.Should().Be("terraria");        // slug
+        staged.InstanceName.Should().Be("Terraria");  // display name for finalize
+        staged.ConfigValue.Should().Contain("executable_file"); // draft YAML fallback body
     }
 
     [Fact]
-    public async Task CreateBlueprint_HonestFailure_StillCarriesACard()
+    public async Task CreateBlueprint_TerminalOutcome_SurfacesTheCard_AndStagesNothing()
     {
-        // Even a "couldn't do this one" outcome is worth showing — mirrors get_audit_log's honest-empty card.
+        using var scope = _confirmations.BeginTurn();
         var envelope = new ToolResult<BlueprintAuthoringData>(
             LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "SomeGame"),
-            "I couldn't get it to boot.", new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, "SomeGame", null, [], null, "I couldn't get it to boot.", false));
-        _blueprintAuthoring.AuthorAsync("SomeGame", Arg.Any<CancellationToken>()).Returns(envelope);
+            "I couldn't find a native Linux server for it.",
+            new BlueprintAuthoringData(BlueprintAuthoringOutcome.NotFeasible, "SomeGame", null, [], null, "I couldn't find a native Linux server for it.", false));
+        _blueprintAuthoring.DraftAsync("SomeGame", Arg.Any<CancellationToken>()).Returns(envelope);
 
         var output = await Create().ExecuteAsync(CreateBlueprintCall("SomeGame"));
 
-        output.Summary.Should().Contain("couldn't get it to boot");
-        output.Data.Should().NotBeNull();
+        output.Summary.Should().Contain("native Linux server");
+        output.Data.Should().BeOfType<ToolResultCard>();
+        scope.Staged.Should().BeEmpty(); // a terminal outcome stages no confirmation
     }
 
     [Fact]
@@ -589,8 +595,16 @@ public class ToolDispatcherTests
         var result = await Summary(CreateBlueprintCall("   "));
 
         result.Should().Contain("needs a 'game'");
-        await _blueprintAuthoring.DidNotReceive().AuthorAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _blueprintAuthoring.DidNotReceive().DraftAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
+
+    private static ToolResult<BlueprintAuthoringData> DraftReadyEnvelope() =>
+        new(LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "terraria"),
+            "I drafted a starting config for Terraria — review and save it to test-run it.",
+            new BlueprintAuthoringData(
+                BlueprintAuthoringOutcome.DraftReady, "Terraria", "terraria", [], null, null, false,
+                DraftYaml: "name: terraria\nruntime: native\nnative:\n  executable_file: TerrariaServer.bin.x86_64\n",
+                Evidence: null, Editable: true));
 
     // --- get_performance (live per-server metrics via the IServerMetrics port) ---
     // The dispatcher resolves the instance, reads the neutral snapshot, runs the pure aggregator, and

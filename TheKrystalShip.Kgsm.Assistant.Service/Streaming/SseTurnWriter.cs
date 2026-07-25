@@ -32,7 +32,9 @@ internal static class SseTurnWriter
     // tool.result card's enums (Confidence/CheckState/Severity/ResourceKind) render as
     // "warn"/"pass"/"success" — never opaque integers — for the SPA. No existing §5·a frame
     // carries an enum, so this only affects the new card payload.
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    // Also reused by the /confirm blueprint-finalize response so its card serializes identically to the
+    // tool.result card here (enums as camelCase strings, boxed card Data by runtime type).
+    internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };

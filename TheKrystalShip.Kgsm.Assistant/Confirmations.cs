@@ -30,7 +30,15 @@ public enum ConfirmationKind
     // content on ConfigValue, and has its own confirm path. Not Destructive (a .kgsmbak backup
     // + the confirm-time preview are the friction, not a type-the-name gate). APPENDED — never
     // reorder (tokens encode (int)Kind).
-    WriteFile
+    WriteFile,
+    // Finalize an assistant-authored blueprint the user reviewed/edited in the chat (the human-review
+    // checkpoint — assistant-blueprint-review-plan.md). Unlike the rest, "confirm" runs a long pipeline
+    // (test-install → verify → repair → keep) and its RESULT is a rich card, not a one-line outcome — so it
+    // has its own confirm entrypoint that returns a BlueprintAuthoringData rather than ConfirmAsync's text.
+    // Carries the resolved slug on Target, the game display name on InstanceName, and the DRAFT YAML on
+    // ConfigValue (the fallback body; the user's Save sends the possibly-edited YAML alongside the token).
+    // APPENDED — never reorder (tokens encode (int)Kind).
+    Blueprint
 }
 
 /// <summary>
@@ -78,6 +86,7 @@ public static class ConfirmationKinds
         ConfirmationKind.SetConfig => "set config on",
         ConfirmationKind.OpenPorts => "open firewall ports on",
         ConfirmationKind.WriteFile => "write to a file on",
+        ConfirmationKind.Blueprint => "test-install and add",
         _ => kind.ToString().ToLowerInvariant(),
     };
 
@@ -94,6 +103,7 @@ public static class ConfirmationKinds
         ConfirmationKind.SetConfig => "reconfigured",
         ConfirmationKind.OpenPorts => "had its firewall ports opened",
         ConfirmationKind.WriteFile => "had a file updated",
+        ConfirmationKind.Blueprint => "added to the catalog",
         _ => kind.ToString().ToLowerInvariant(),
     };
 }

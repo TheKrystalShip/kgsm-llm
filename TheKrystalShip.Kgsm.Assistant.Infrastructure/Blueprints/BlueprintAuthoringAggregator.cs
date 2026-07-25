@@ -85,16 +85,76 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
     public async Task<ToolResult<BlueprintAuthoringData>> AuthorAsync(string game, CancellationToken cancellationToken = default)
     {
-        // The pipeline is split at the draft boundary: DraftAsync researches and builds the draft (or stops
-        // early with a terminal outcome that never touches a write authority), FinalizeAsync test-installs →
-        // verifies → repairs → keeps/stashes. AuthorAsync runs both back-to-back for the autonomous path;
-        // the human-review surface (assistant-blueprint-review-plan.md) instead returns the draft for
-        // in-chat editing and calls FinalizeAsync across a confirmation with the edited draft.
-        var (terminal, ready) = await DraftAsync(game, cancellationToken);
-        return terminal ?? await FinalizeAsync(ready!, cancellationToken);
+        // The autonomous full run: draft, then finalize back-to-back with no human in the loop
+        // (reviewable: false → exhaustion ends at Failed). The mandatory-review flow instead calls
+        // DraftAsync (checkpoint) then FinalizeAsync across a confirmation.
+        var (terminal, ready) = await DraftCoreAsync(game, cancellationToken);
+        return terminal ?? await RunFinalizeAsync(ready!, reviewable: false, cancellationToken);
     }
 
-    /// <summary>Everything a <see cref="FinalizeAsync"/> run needs from the draft half: the resolved
+    public async Task<ToolResult<BlueprintAuthoringData>> DraftAsync(string game, CancellationToken cancellationToken = default)
+    {
+        // The checkpoint: research + build, then hand the rendered YAML back for the user to review and
+        // edit — no test-install. A run that stops before a draft returns that terminal outcome verbatim.
+        var (terminal, ready) = await DraftCoreAsync(game, cancellationToken);
+        if (terminal is not null)
+            return terminal;
+
+        var ctx = ready!;
+        var yaml = _files.Render(ctx.Draft);
+        var summary = $"I looked up \"{ctx.Game}\" and put together a starting config for it. Review and tweak " +
+                       "it below if you like, then save it and I'll test-install it and confirm it boots before adding it.";
+        return Envelope(ctx.Subject, summary, BlueprintAuthoringOutcome.DraftReady, ctx.Game, ctx.Slug,
+            ctx.Provenance, proofLine: null, reason: null, offerInstance: false,
+            draftYaml: yaml, evidence: null, editable: true);
+    }
+
+    public async Task<ToolResult<BlueprintAuthoringData>> FinalizeAsync(
+        string game, string editedYaml, CancellationToken cancellationToken = default)
+    {
+        game = game.Trim();
+
+        // --- Gate 0: disabled (same short-circuit as the draft half — touch no write authority) --------
+        if (!_options.Enabled)
+        {
+            var summary = $"Automatic blueprint authoring isn't enabled on this host, so I can't build a config for \"{game}\".";
+            var subj = new ResultRef(ResourceKind.Blueprint, game);
+            return Envelope(subj, summary, BlueprintAuthoringOutcome.Disabled, game, null, [], null, summary, false);
+        }
+
+        // Parse the (user-edited) YAML back into a draft. The engine is still the ultimate validator (the
+        // readback inside RunFinalizeAsync), so this parse only structures the text and rejects an edit
+        // that isn't a native blueprint / lost its executable_file. An unparseable edit comes back as an
+        // editable DraftReady so the user can fix it — never a hard failure they can't recover from.
+        var parsed = _files.TryParse(editedYaml);
+        if (!parsed.IsOk || parsed.Value is null)
+        {
+            var slugGuess = Slugify(game);
+            var subj = new ResultRef(ResourceKind.Blueprint, string.IsNullOrEmpty(slugGuess) ? game : slugGuess);
+            var reason = $"I couldn't read that as a blueprint ({parsed.Message ?? "it isn't valid"}). Fix it and save again.";
+            return Envelope(subj, reason, BlueprintAuthoringOutcome.DraftReady, game, null, [], null, reason, false,
+                draftYaml: editedYaml, evidence: null, editable: true);
+        }
+
+        var draft = parsed.Value;
+        var slug = draft.Name; // TryParse enforced a safe slug, and it's the in-file name the engine binds
+        var subject = new ResultRef(ResourceKind.Blueprint, slug);
+
+        // Re-validation funnel: a $TOKEN in the launch args that isn't a real $instance_* variable expands
+        // to empty at runtime — reject it back to the editor rather than test-install a config that can't boot.
+        if (HasForeignPlaceholder(draft.Native.ExecutableArguments))
+        {
+            var reason = "The launch arguments use a variable KGSM won't fill in — only $instance_* variables are " +
+                          "substituted. Remove or fix it and save again.";
+            return Envelope(subject, reason, BlueprintAuthoringOutcome.DraftReady, game, slug,
+                ProvenanceFromDraft(draft), null, reason, false, draftYaml: editedYaml, evidence: null, editable: true);
+        }
+
+        var ctx = new DraftContext(game, slug, subject, draft, ProvenanceFromDraft(draft), EmptyFindings(game));
+        return await RunFinalizeAsync(ctx, reviewable: true, cancellationToken);
+    }
+
+    /// <summary>Everything a <see cref="RunFinalizeAsync"/> run needs from the draft half: the resolved
     /// display name + canonical slug + subject, the launchable draft, its provenance trail, and the raw
     /// research findings (carried through for the admin stash written on a finalize failure).</summary>
     private sealed record DraftContext(
@@ -108,9 +168,9 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     /// <summary>The draft half of the pipeline: disabled gate → slug → existence guard → research →
     /// feasibility gate → build. Returns a terminal <see cref="ToolResult{TData}"/> when the run stops
     /// before any test-install (disabled, no safe name, already in the catalog, infeasible, or no
-    /// launchable draft), otherwise a <see cref="DraftContext"/> ready for <see cref="FinalizeAsync"/>.
+    /// launchable draft), otherwise a <see cref="DraftContext"/> ready for <see cref="RunFinalizeAsync"/>.
     /// Touches no kgsm-lib write authority — only the read-only existence check.</summary>
-    private async Task<(ToolResult<BlueprintAuthoringData>? Terminal, DraftContext? Ready)> DraftAsync(
+    private async Task<(ToolResult<BlueprintAuthoringData>? Terminal, DraftContext? Ready)> DraftCoreAsync(
         string game, CancellationToken cancellationToken)
     {
         game = game.Trim();
@@ -188,9 +248,14 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
     /// <summary>The finalize half of the pipeline: persist → validate-by-readback → test-install →
     /// verify → bounded evidence-driven self-repair → guaranteed teardown → keep-or-stash. Runs every
-    /// kgsm-lib write authority; only reached once <see cref="DraftAsync"/> produced a launchable draft
-    /// (the autonomous path) or the user approved/edited one (the review path).</summary>
-    private async Task<ToolResult<BlueprintAuthoringData>> FinalizeAsync(DraftContext ctx, CancellationToken cancellationToken)
+    /// kgsm-lib write authority; only reached once the draft half produced a launchable draft (the
+    /// autonomous path) or the user approved/edited one (the review path).
+    /// <para><paramref name="reviewable"/> steers what happens when the repair loop exhausts without a
+    /// verified boot: the autonomous path (false) ends at <see cref="BlueprintAuthoringOutcome.Failed"/>;
+    /// the review path (true) hands the last draft plus its boot evidence back as an editable
+    /// <see cref="BlueprintAuthoringOutcome.DraftReady"/> so the user can fix it and save again.</para></summary>
+    private async Task<ToolResult<BlueprintAuthoringData>> RunFinalizeAsync(
+        DraftContext ctx, bool reviewable, CancellationToken cancellationToken)
     {
         var game = ctx.Game;
         var slug = ctx.Slug;
@@ -207,6 +272,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         string? proofLine = null;
         string? observedReadyRegex = null; // a ready line the verify step observed in the real boot log,
                                            // to write into the kept blueprint when it carried no regex
+        string? lastBootLog = null;        // most recent boot evidence, surfaced on a review-path recovery card
 
         for (var attempt = 1; attempt <= maxAttempts && !verified; attempt++)
         {
@@ -280,9 +346,14 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
                 // Gather the ground-truth evidence WHILE the probe's files are still on disk (before the
                 // finally block tears them down): the real install tree, the shipped launch scripts, and
-                // the boot log. Only when we're going to repair (not verified, attempts remain).
-                if (!verified && !emptyDownload && attempt < maxAttempts)
+                // the boot log. Needed to repair (not verified, attempts remain) — and, on the review path,
+                // also on the FINAL failing attempt so the recovery card can show the user the last boot log.
+                if (!verified && !emptyDownload && (attempt < maxAttempts || reviewable))
+                {
                     evidence = await GatherEvidence(probeName, installSucceeded, installError, lastSnapshot, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(evidence.BootLog))
+                        lastBootLog = evidence.BootLog;
+                }
             }
             catch (Exception ex)
             {
@@ -361,9 +432,19 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         }
 
         _invalidation.Invalidate();
-        var draftYaml = RenderForStash(draft);
         await StashAsync(game, slug, findings, verifyLog, BlueprintAuthoringOutcome.Failed,
-            "test-install never verified booting and listening within the self-repair bound", draftYaml, cancellationToken);
+            "test-install never verified booting and listening within the self-repair bound", RenderForStash(draft), cancellationToken);
+
+        // Review path: hand the last draft back for another edit rather than giving up — the user can close
+        // the gap the autonomous repair couldn't (a wrapper it wouldn't switch off, a game-specific flag),
+        // with the real boot log in front of them. Nothing is in the catalog (the draft was removed above).
+        if (reviewable)
+        {
+            var recoverReason = "I couldn't get it to boot and answer within a few tries. Here's what the last " +
+                                 "boot logged — tweak the config below and save to try again, or cancel to stop.";
+            return Envelope(subject, recoverReason, BlueprintAuthoringOutcome.DraftReady, game, slug, provenance,
+                null, recoverReason, false, draftYaml: _files.Render(draft), evidence: TrimEvidence(lastBootLog), editable: true);
+        }
 
         var failSummary = $"I researched \"{game}\" and tried to build and test a config for it, but couldn't " +
                            "get it to boot and answer on its port — so I didn't add it to the catalog.";
@@ -880,11 +961,68 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
     private static ToolResult<BlueprintAuthoringData> Envelope(
         ResultRef subject, string summary, BlueprintAuthoringOutcome outcome, string game, string? blueprintName,
-        IReadOnlyList<BlueprintFieldProvenance> provenance, string? proofLine, string? reason, bool offerInstance) =>
+        IReadOnlyList<BlueprintFieldProvenance> provenance, string? proofLine, string? reason, bool offerInstance,
+        string? draftYaml = null, string? evidence = null, bool editable = false) =>
         new(
             LlmTools.CreateBlueprint,
             outcome == BlueprintAuthoringOutcome.Verified ? Confidence.Confirmed : Confidence.Likely,
             subject,
             summary,
-            new BlueprintAuthoringData(outcome, game, blueprintName, provenance, proofLine, reason, offerInstance));
+            new BlueprintAuthoringData(outcome, game, blueprintName, provenance, proofLine, reason, offerInstance,
+                draftYaml, evidence, editable));
+
+    // --- review-path helpers ------------------------------------------------------------------------
+
+    // A $VAR / ${VAR} reference. Only $instance_* is a real kgsm runtime placeholder; anything else expands
+    // to empty at launch, so a user edit that reintroduces one must go back to the editor, not to install.
+    private static readonly System.Text.RegularExpressions.Regex PlaceholderToken =
+        new(@"\$\{?(\w+)\}?", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>True if <paramref name="args"/> references any <c>$TOKEN</c> that isn't a real
+    /// <c>$instance_*</c> variable — the same guard the synthesizer applies, enforced again on a user edit
+    /// (the finalize entry can't trust hand-typed args).</summary>
+    private static bool HasForeignPlaceholder(string? args)
+    {
+        if (string.IsNullOrEmpty(args))
+            return false;
+        foreach (System.Text.RegularExpressions.Match m in PlaceholderToken.Matches(args))
+        {
+            if (!m.Groups[1].Value.StartsWith("instance_", StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Provenance for a user-reviewed draft: the launch-critical fields tagged as user-authored
+    /// (there's no web source once a human has edited the YAML). Admin-facing, like the research provenance.</summary>
+    private static List<BlueprintFieldProvenance> ProvenanceFromDraft(NativeBlueprintDraft draft)
+    {
+        const string src = "user-reviewed";
+        string? OrNull(string v) => string.IsNullOrEmpty(v) ? null : v;
+        return
+        [
+            new("executable_file", OrNull(draft.Native.ExecutableFile), src),
+            new("executable_subdirectory", OrNull(draft.Native.ExecutableSubdirectory), src),
+            new("executable_arguments", OrNull(draft.Native.ExecutableArguments), src),
+            new("ports", OrNull(draft.Native.Ports), src),
+            new("startup_success_regex", OrNull(draft.Native.StartupSuccessRegex), src),
+        ];
+    }
+
+    /// <summary>Placeholder findings for a finalize started from a user-edited draft — there is no research
+    /// run behind it, so the stash record simply carries an empty, Feasible finding set.</summary>
+    private static BlueprintResearchFindings EmptyFindings(string game) =>
+        new(BlueprintFeasibility.Feasible, game, [], [], "user-reviewed draft");
+
+    private const int MaxEvidenceChars = 2000; // boot-log excerpt shown on the recovery card
+
+    /// <summary>Trims the boot log to a tail excerpt for the recovery card (the ready/error lines are at the
+    /// end); null/blank stays null so the card simply omits the evidence block.</summary>
+    private static string? TrimEvidence(string? bootLog)
+    {
+        if (string.IsNullOrWhiteSpace(bootLog))
+            return null;
+        var trimmed = bootLog.TrimEnd();
+        return trimmed.Length <= MaxEvidenceChars ? trimmed : "…\n" + trimmed[^MaxEvidenceChars..];
+    }
 }

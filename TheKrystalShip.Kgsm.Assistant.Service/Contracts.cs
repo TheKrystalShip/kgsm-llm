@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 using TheKrystalShip.Llm.Models;
@@ -75,11 +76,21 @@ public sealed record ConfirmationDto(
 public sealed record TurnResponse(
     string Text, IReadOnlyList<ConfirmationDto> Confirmations, UsageDto? Usage = null);
 
-/// <summary>A confirmation submission: the token issued by a prior <c>/turn</c>.</summary>
-public sealed record ConfirmRequest(string? Token);
+/// <summary>A confirmation submission: the token issued by a prior <c>/turn</c>, plus (for a blueprint
+/// finalize) the possibly-edited draft the user reviewed in the chat. <see cref="EditedContent"/> is the
+/// Monaco editor's content on Save — used verbatim for a <c>blueprint</c> confirmation (re-validated
+/// server-side); null for every other kind, and null on a blueprint save that didn't edit (the staged
+/// draft is rehydrated as the fallback).</summary>
+public sealed record ConfirmRequest(string? Token, string? EditedContent = null);
 
-/// <summary>The outcome of executing a confirmed operation.</summary>
-public sealed record ConfirmResponse(string Text, bool Success);
+/// <summary>The outcome of executing a confirmed operation. For a blueprint finalize, <see cref="Card"/>
+/// carries the rich outcome card (a Verified card, or a fresh DraftReady card when the repair loop
+/// exhausts / the edit was invalid) and <see cref="Confirmations"/> carries a fresh Blueprint token for the
+/// re-edit loop; both are null for every other kind, whose outcome is just <see cref="Text"/>.</summary>
+public sealed record ConfirmResponse(
+    string Text, bool Success,
+    JsonElement? Card = null,
+    IReadOnlyList<ConfirmationDto>? Confirmations = null);
 
 /// <summary>The Discord authorize URL the SPA should navigate the browser to.</summary>
 public sealed record LoginUrlResponse(string Url);

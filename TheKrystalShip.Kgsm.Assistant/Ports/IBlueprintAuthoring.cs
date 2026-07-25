@@ -15,7 +15,29 @@ namespace TheKrystalShip.Kgsm.Assistant.Ports;
 /// </summary>
 public interface IBlueprintAuthoring
 {
+    /// <summary>The autonomous full run — research → draft → test-install → verify → repair → keep/stash,
+    /// with no human in the loop (exhaustion ends at <see cref="BlueprintAuthoringOutcome.Failed"/>). The
+    /// mandatory-review flow uses <see cref="DraftAsync"/> + <see cref="FinalizeAsync"/> instead; this
+    /// entry is kept for callers that want the unattended pipeline.</summary>
     Task<ToolResult<BlueprintAuthoringData>> AuthorAsync(string game, CancellationToken cancellationToken = default);
+
+    /// <summary>The draft half of the human-review flow (<c>assistant-blueprint-review-plan.md</c>):
+    /// research → build, then return a <see cref="BlueprintAuthoringOutcome.DraftReady"/> card carrying the
+    /// rendered YAML for the user to review and edit in the chat — NO test-install runs. A run that stops
+    /// before a draft (disabled, already-present, infeasible, no launchable draft) returns that terminal
+    /// outcome instead. The surface stages a Blueprint confirmation from the returned draft; the user's
+    /// Save calls <see cref="FinalizeAsync"/>.</summary>
+    Task<ToolResult<BlueprintAuthoringData>> DraftAsync(string game, CancellationToken cancellationToken = default);
+
+    /// <summary>The finalize half: takes the (possibly user-edited) blueprint YAML back, re-validates it
+    /// (structural parse + the <c>$instance_*</c>-only placeholder guard), then test-installs → verifies →
+    /// bounded self-repairs → keeps/stashes. Stateless — everything needed is re-derived from
+    /// <paramref name="editedYaml"/> (no authoring session is held between draft and finalize). When the
+    /// repair loop exhausts, returns a recovery <see cref="BlueprintAuthoringOutcome.DraftReady"/> (the last
+    /// draft + boot evidence) for the user to edit and save again, rather than a terminal failure. An edit
+    /// that won't parse or trips the placeholder guard likewise comes back as an editable DraftReady with an
+    /// explanation.</summary>
+    Task<ToolResult<BlueprintAuthoringData>> FinalizeAsync(string game, string editedYaml, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Default <see cref="IBlueprintAuthoring"/> for hosts that haven't enabled blueprint
@@ -25,14 +47,23 @@ public interface IBlueprintAuthoring
 /// registers the concrete aggregator that wins over this default.</summary>
 internal sealed class DisabledBlueprintAuthoring : IBlueprintAuthoring
 {
-    public Task<ToolResult<BlueprintAuthoringData>> AuthorAsync(string game, CancellationToken cancellationToken = default)
+    public Task<ToolResult<BlueprintAuthoringData>> AuthorAsync(string game, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Disabled(game));
+
+    public Task<ToolResult<BlueprintAuthoringData>> DraftAsync(string game, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Disabled(game));
+
+    public Task<ToolResult<BlueprintAuthoringData>> FinalizeAsync(string game, string editedYaml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Disabled(game));
+
+    private static ToolResult<BlueprintAuthoringData> Disabled(string game)
     {
         game = game.Trim();
         var summary = $"Automatic blueprint authoring isn't enabled on this host, so I can't research " +
                        $"and build a config for \"{game}\" myself.";
         var data = new BlueprintAuthoringData(
             BlueprintAuthoringOutcome.Disabled, game, null, [], null, Reason: summary, OfferInstance: false);
-        return Task.FromResult(new ToolResult<BlueprintAuthoringData>(
-            LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, game), summary, data));
+        return new ToolResult<BlueprintAuthoringData>(
+            LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, game), summary, data);
     }
 }

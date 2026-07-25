@@ -191,4 +191,22 @@ public interface IServerAssistant
         PendingConfirmation confirmation,
         bool canPerformActions,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Finalizes an assistant-authored blueprint after the user reviewed/edited it in the chat (the
+    /// human-review checkpoint — <c>assistant-blueprint-review-plan.md</c>): re-validates the possibly-edited
+    /// YAML, then runs the test-install → verify → repair → keep/stash pipeline. Separate from
+    /// <see cref="ConfirmAsync"/> because its result is a rich <see cref="Envelope.ToolResult{TData}"/> card
+    /// (a Verified card, or a fresh <see cref="Blueprints.BlueprintAuthoringOutcome.DraftReady"/> card for
+    /// another edit when the autonomous repair loop exhausts) rather than a one-line confirmation string — a
+    /// card surface renders that outcome and, on DraftReady, stages a fresh Blueprint confirmation for the
+    /// re-edit loop.
+    /// <para><paramref name="canPerformActions"/> is computed FRESH at confirm time by the host (never
+    /// trusted from the staging token); when false the finalize is refused.</para>
+    /// </summary>
+    Task<Envelope.ToolResult<Blueprints.BlueprintAuthoringData>> FinalizeBlueprintAsync(
+        string game,
+        string editedYaml,
+        bool canPerformActions,
+        CancellationToken cancellationToken = default);
 }

@@ -75,6 +75,22 @@ public sealed record BlueprintFieldProvenance(string Field, string? Value, strin
 /// handoff — true for <see cref="BlueprintAuthoringOutcome.Verified"/> and
 /// <see cref="BlueprintAuthoringOutcome.AlreadyExists"/>, false otherwise.
 /// </param>
+/// <param name="DraftYaml">
+/// On <see cref="BlueprintAuthoringOutcome.DraftReady"/> only: the rendered native blueprint YAML the
+/// user reviews and edits in the chat before it is test-installed (and the recovery draft returned when
+/// the autonomous repair loop exhausts). Null on every other outcome — there is nothing to edit. The
+/// surface stages a Blueprint confirmation carrying this text; the user's Save sends the (possibly edited)
+/// YAML back to finalize.
+/// </param>
+/// <param name="Evidence">
+/// On a recovery <see cref="BlueprintAuthoringOutcome.DraftReady"/> (the repair loop exhausted): a short
+/// excerpt of the real boot log / install evidence, so the user sees WHY it didn't boot before editing.
+/// Null on the initial pre-test draft (nothing has run yet) and on every non-DraftReady outcome.
+/// </param>
+/// <param name="Editable">
+/// True only on <see cref="BlueprintAuthoringOutcome.DraftReady"/> — the signal for the surface to render
+/// the editable Monaco card with Save/Restore. False on every terminal outcome.
+/// </param>
 public sealed record BlueprintAuthoringData(
     BlueprintAuthoringOutcome Outcome,
     string Game,
@@ -82,4 +98,7 @@ public sealed record BlueprintAuthoringData(
     IReadOnlyList<BlueprintFieldProvenance> Sourced,
     string? ProofLine,
     string? Reason,
-    bool OfferInstance);
+    bool OfferInstance,
+    string? DraftYaml = null,
+    string? Evidence = null,
+    bool Editable = false);

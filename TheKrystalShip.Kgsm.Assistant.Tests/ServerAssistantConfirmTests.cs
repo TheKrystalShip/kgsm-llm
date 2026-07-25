@@ -38,6 +38,7 @@ public class ServerAssistantConfirmTests
         _upnp,
         new NoopToolRelevanceFilter(),
         new PassthroughPromptOverrides(),
+        Substitute.For<IBlueprintAuthoring>(),
         Options.Create(new SearchOptions()),
         Options.Create(new FetchOptions()),
         Options.Create(new BlueprintAuthoringFlags()),

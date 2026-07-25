@@ -161,6 +161,8 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         var maxAttempts = Math.Max(1, _options.MaxAttempts);
         bool verified = false;
         string? proofLine = null;
+        string? observedReadyRegex = null; // a ready line the verify step observed in the real boot log,
+                                           // to write into the kept blueprint when it carried no regex
 
         for (var attempt = 1; attempt <= maxAttempts && !verified; attempt++)
         {
@@ -216,7 +218,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 else
                 {
                     _progress.Report(LlmTools.CreateBlueprint, "verify", "Booting it up and waiting for it to answer…");
-                    (verified, proofLine, lastSnapshot) = await VerifyAsync(probeName, draft, cancellationToken);
+                    (verified, proofLine, lastSnapshot, observedReadyRegex) = await VerifyAsync(probeName, draft, cancellationToken);
                     verifyLog.Add(verified
                         ? $"attempt {attempt}: verified — {proofLine}"
                         : $"attempt {attempt}: did not verify booting + listening within the timeout");
@@ -226,7 +228,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 // finally block tears them down): the real install tree, the shipped launch scripts, and
                 // the boot log. Only when we're going to repair (not verified, attempts remain).
                 if (!verified && attempt < maxAttempts)
-                    evidence = GatherEvidence(probeName, installSucceeded, installError, lastSnapshot, cancellationToken);
+                    evidence = await GatherEvidence(probeName, installSucceeded, installError, lastSnapshot, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -270,6 +272,21 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
         if (verified)
         {
+            // If verification succeeded on a ready line the verify step observed in the real boot log (the
+            // draft carried no startup_success_regex), write that observed line into the kept blueprint — a
+            // future health check needs the readiness signal, and an observed line is the best-sourced value
+            // there is (measured, not researched).
+            if (observedReadyRegex is not null)
+            {
+                draft = draft with { Native = draft.Native with { StartupSuccessRegex = observedReadyRegex } };
+                var rewrite = _files.Create(draft, overwrite: true);
+                if (rewrite.Outcome == FileOpOutcome.Ok)
+                {
+                    provenance = AppendObserved(provenance, "startup_success_regex", observedReadyRegex);
+                    verifyLog.Add($"wrote observed readiness regex into the blueprint: {observedReadyRegex}");
+                }
+            }
+
             _invalidation.Invalidate();
             var summary = $"I didn't have \"{game}\", so I researched it, built a config, and test-ran it — " +
                            $"{proofLine}. **{game} is now in the catalog.** Want me to make you a server?";
@@ -288,7 +305,9 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
     // --- verify: boots + listens ------------------------------------------------------------------
 
-    private async Task<(bool Verified, string? ProofLine, InstanceHealthSnapshot? LastSnapshot)> VerifyAsync(
+    private const int VerifyLogLines = 400;   // full-log tail pulled each poll for the readiness match
+
+    private async Task<(bool Verified, string? ProofLine, InstanceHealthSnapshot? LastSnapshot, string? ObservedReadyRegex)> VerifyAsync(
         string probeName, NativeBlueprintDraft draft, CancellationToken cancellationToken)
     {
         System.Text.RegularExpressions.Regex? successRegex = null;
@@ -309,6 +328,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         var deadline = DateTimeOffset.UtcNow.AddSeconds(Math.Max(5, _options.VerifyTimeoutSeconds));
         var pollInterval = TimeSpan.FromSeconds(Math.Max(1, _options.VerifyPollIntervalSeconds));
         InstanceHealthSnapshot? last = null;
+        var sawRunning = false;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -318,27 +338,88 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             if (health.IsSuccess)
             {
                 var snap = health.Value!;
-                // Keep the most log-bearing snapshot as the evidence handed to repair on failure: prefer a
-                // later snapshot, but never let an empty-log poll overwrite one that captured real output.
-                if (last is null || snap.RecentLogLines.Count >= last.RecentLogLines.Count)
-                    last = snap;
+                last = snap;
 
-                var regexMatched = successRegex is not null && snap.RecentLogLines.Any(l => successRegex.IsMatch(l));
+                // Match readiness against the FULL boot log, not the status snapshot's 3-line tail — a ready
+                // line ("Server started", "Opened Steam server", …) prints during boot and scrolls out of a
+                // tiny tail long before the check runs. GetLogsAsync returns the whole captured log.
+                var fullLog = await FetchFullLogAsync(probeName, VerifyLogLines, cancellationToken);
                 var portsUp = snap.PortsReachable == true;
+                var regexMatched = successRegex is not null && successRegex.IsMatch(fullLog);
+                // When the draft carries no readiness regex (research/repair didn't source one) and the port
+                // isn't detectable (relay/NAT-punch servers never bind a local port), fall back to a curated
+                // set of well-known ready lines — matched only while the server is RUNNING, and written back
+                // into the kept blueprint so it isn't a fabricated-from-nothing signal.
+                var genericPattern = successRegex is null && !portsUp ? MatchGenericReady(fullLog) : null;
 
-                if (snap.Running && (portsUp || regexMatched))
+                if (snap.Running && (portsUp || regexMatched || genericPattern is not null))
                 {
-                    var proof = portsUp
-                        ? "it booted and is listening on its configured port"
-                        : "it booted and its startup message appeared in the logs";
-                    return (true, proof, snap);
+                    if (portsUp)
+                        return (true, "it booted and is listening on its configured port", snap, null);
+                    if (regexMatched)
+                        return (true, "it booted and its startup message appeared in the logs", snap, null);
+                    return (true, "it booted and a known server-ready line appeared in the logs", snap, genericPattern);
                 }
+
+                // Fast-fail on a crash: a server that came up and then exited (a bad argument, a missing
+                // dependency) won't recover — stop polling now so the repair cycle starts in seconds instead
+                // of waiting out the whole timeout. The full log is captured for repair either way.
+                if (snap.Running)
+                    sawRunning = true;
+                else if (sawRunning)
+                    return (false, null, snap, null);
             }
 
             await Task.Delay(pollInterval, cancellationToken);
         }
 
-        return (false, null, last);
+        return (false, null, last, null);
+    }
+
+    /// <summary>The full captured boot log as one string, via kgsm-lib's log reader (not the status
+    /// snapshot's 3-line tail). Best-effort — a read failure degrades to empty, never throws.</summary>
+    private async Task<string> FetchFullLogAsync(string probeName, int maxLines, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var lines = await _instances.GetLogsAsync(probeName, maxLines, cancellationToken);
+            return lines is null || lines.Count == 0 ? string.Empty : string.Join("\n", lines);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(ex, "Blueprint verify/repair: reading the full boot log failed for {Probe}", probeName);
+            return string.Empty;
+        }
+    }
+
+    // Curated "server is ready" lines from the shipped catalog + common engines — the readiness signal for a
+    // server that neither binds a detectable local port nor came with a sourced regex. Substrings, matched
+    // case-insensitively against the full log; the matching substring is written back as the blueprint's
+    // startup_success_regex (a regex-safe literal), so a KEEP always ends with a real, measured signal.
+    private static readonly string[] GenericReadyLines =
+    [
+        "Opened Steam server", "Server started", "Started server using port", "Game ID",
+        "up for play", "SERVER STARTED", "Hosting game", "StartGame done",
+        "Dedicated server host started", "For help, type", "Done (",
+    ];
+
+    private static string? MatchGenericReady(string fullLog)
+    {
+        if (string.IsNullOrEmpty(fullLog))
+            return null;
+        foreach (var line in GenericReadyLines)
+        {
+            if (fullLog.Contains(line, StringComparison.OrdinalIgnoreCase))
+                return System.Text.RegularExpressions.Regex.Escape(line);
+        }
+        return null;
+    }
+
+    private static List<BlueprintFieldProvenance> AppendObserved(
+        List<BlueprintFieldProvenance> provenance, string field, string value)
+    {
+        provenance.Add(new BlueprintFieldProvenance(field, value, "observed:test-install-boot-log"));
+        return provenance;
     }
 
     // --- A + B: gather ground-truth evidence, then repair the draft from it --------------------------
@@ -360,9 +441,11 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     private const int MaxLogFiles = 3;        // game-written log files read for readiness evidence
     private const long MaxLogBytes = 32768;   // per-log read ceiling (the ready line prints early)
 
+    private const int RepairLogLines = 600;   // full-log tail handed to the repair step as boot evidence
+
     /// <summary>Reads the probe's real install directory and boot log into a <see cref="RepairEvidence"/>.
     /// Best-effort: any read failure degrades to an empty section, never throws (except cancellation).</summary>
-    private RepairEvidence GatherEvidence(
+    private async Task<RepairEvidence> GatherEvidence(
         string probeName, bool installSucceeded, string? installError,
         InstanceHealthSnapshot? lastSnapshot, CancellationToken cancellationToken)
     {
@@ -395,15 +478,17 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             }
         }
 
-        // The boot log kgsm captured (the instance's own stdout .log). This is what BOTH the verify check
-        // and repair read — but a game that redirects its output to its own file (e.g. Unity's `-logfile`)
-        // leaves it empty. So supplement it with any log files the game itself wrote into the install dir:
-        // the readiness line ("Game ID", "Server started") is in there even when kgsm's capture is blank,
-        // which is what lets repair synthesize a startup_success_regex AND learn to drop the redirect.
+        // The full boot log kgsm captured (the instance's own stdout .log — the whole thing, not the status
+        // snapshot's 3-line tail). This is what BOTH the verify check and repair read — but a game that
+        // redirects its output to its own file (e.g. Unity's `-logfile`) leaves it empty. So supplement it
+        // with any log files the game itself wrote into the install dir: the readiness line ("Game ID",
+        // "Server started") is in there even when kgsm's capture is blank, which is what lets repair
+        // synthesize a startup_success_regex AND learn to drop the redirect.
         var bootLog = new StringBuilder();
-        if (lastSnapshot is not null && lastSnapshot.RecentLogLines.Count > 0)
+        var capturedStdout = await FetchFullLogAsync(probeName, RepairLogLines, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(capturedStdout))
             bootLog.Append("--- monitored stdout (what the readiness check sees) ---\n")
-                   .Append(string.Join("\n", lastSnapshot.RecentLogLines)).Append('\n');
+                   .Append(capturedStdout).Append('\n');
 
         foreach (var rel in logPaths.Take(MaxLogFiles))
         {

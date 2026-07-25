@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Blueprint-authoring readiness verification reads the full boot log, not a 3-line tail.** The verify
+  step matched the startup-success regex against the status snapshot's `recent_logs` (only the last three
+  lines), so a ready line that printed during boot and scrolled away was missed and a healthy server read
+  as "never came up". It now pulls the full captured log via kgsm-lib's log reader and matches against all
+  of it — for both the readiness check and the repair step's boot-log evidence. Two further readiness
+  improvements: (1) when a draft carries no startup-success regex and the server binds no detectable local
+  port (relay/NAT-punch servers), verification falls back to a curated set of well-known ready lines
+  ("Server started", "Opened Steam server", …) matched only while the server is running, and writes the
+  observed line into the kept blueprint so it ends with a real, measured readiness signal; and (2) a probe
+  that comes up and then exits (a bad argument, a missing dependency) fails the attempt immediately instead
+  of waiting out the whole timeout, so a repair cycle starts in seconds. The verify timeout is raised to
+  240s (a GB-scale server can take minutes to cold-boot; the crash-exit keeps that ceiling from being paid
+  on a server that already died).
+
 ### Added
 - **Blueprint authoring repairs a failed draft from the real install, not just from the web.** When a
   drafted config test-installs but doesn't boot + listen, the pipeline now reads two ground-truth

@@ -163,8 +163,10 @@ public sealed class BlueprintAuthoringOptions
     public int MaxAttempts { get; set; } = 3;
 
     /// <summary>How long to poll the test-install for "booted + listening" before giving up on that
-    /// attempt.</summary>
-    public int VerifyTimeoutSeconds { get; set; } = 180;
+    /// attempt. Generous because a GB-scale server can take minutes to cold-boot; a crash exits the poll
+    /// early (a server that came up then died isn't waited out), so the ceiling only applies to a genuinely
+    /// slow boot.</summary>
+    public int VerifyTimeoutSeconds { get; set; } = 240;
 
     /// <summary>Interval between verify polls.</summary>
     public int VerifyPollIntervalSeconds { get; set; } = 5;

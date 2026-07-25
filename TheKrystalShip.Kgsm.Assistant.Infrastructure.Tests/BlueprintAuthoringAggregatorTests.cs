@@ -68,6 +68,18 @@ public sealed class BlueprintAuthoringAggregatorTests
         new(Running: false, RecentLogLines: [], UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
             HostDisk: null, HostDiskUnavailableReason: null, PortsReachable: null, PortsDetail: null);
 
+    /// <summary>Running, but no detectable local port (a relay/NAT-punch server) — readiness can only come
+    /// from a log line, exercising the full-log match and the generic-ready fallback.</summary>
+    private static InstanceHealthSnapshot RunningNoPorts() =>
+        new(Running: true, RecentLogLines: [], UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
+            HostDisk: null, HostDiskUnavailableReason: null, PortsReachable: null, PortsDetail: null);
+
+    private static BlueprintResearchFindings FeasibleFindingsWithRegex(string regex) => new(
+        BlueprintFeasibility.Feasible, "Terraria",
+        [new BlueprintResearchField("executable_file", "./start.sh", "https://example.com/setup"),
+         new BlueprintResearchField("startup_success_regex", regex, "https://example.com/setup")],
+        ["https://example.com/setup"], "found a native Linux server");
+
     // --- Gate 0: disabled --------------------------------------------------------------------------
 
     [Fact]
@@ -363,7 +375,11 @@ public sealed class BlueprintAuthoringAggregatorTests
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Result.Success(NeverBoots() with { RecentLogLines = ["ERROR: unknown argument -world"] }));
+            .Returns(Result.Success(NeverBoots()));
+        // The boot log fed to repair now comes from the full captured log (kgsm-lib GetLogsAsync), not the
+        // status snapshot's 3-line tail.
+        _instances.GetLogsAsync("__bp_probe_terraria__", Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns<ICollection<string>>(["ERROR: unknown argument -world"]);
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
         _instanceFiles.List("__bp_probe_terraria__", "install", Arg.Any<int>())
             .Returns(FileOpResult<DirListing>.Ok(new DirListing
@@ -387,6 +403,57 @@ public sealed class BlueprintAuthoringAggregatorTests
                 && c.LaunchScripts.Contains("serverport")
                 && c.BootLog.Contains("unknown argument")),
             Arg.Any<CancellationToken>());
+    }
+
+    // --- readiness: full log, not the 3-line tail ---------------------------------------------------
+
+    [Fact]
+    public async Task ReadinessRegex_MatchesAgainstTheFullLog_NotJustTheSnapshotTail()
+    {
+        // The ready line is in the full captured log (GetLogsAsync) but the server binds no detectable port
+        // and the status snapshot's tail is empty — verify must still succeed by matching the full log.
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindingsWithRegex("Server started"));
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(RunningNoPorts()));
+        _instances.GetLogsAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns<ICollection<string>>(["booting…", "loading world", "Server started on port 7777", "ready"]);
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create().AuthorAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.Verified);
+    }
+
+    [Fact]
+    public async Task NoRegexAndNoPort_GenericReadyLineInLog_VerifiesAndWritesTheObservedRegexBack()
+    {
+        // Draft carries no startup_success_regex and the server binds no local port — but a well-known
+        // ready line appears in the full log. Verify succeeds on the generic fallback, and the observed
+        // line is written into the kept blueprint (a re-persist with overwrite) so it has a real signal.
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(RunningNoPorts()));
+        _instances.GetLogsAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns<ICollection<string>>(["init", "Opened Steam server on 12345", "listening"]);
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create().AuthorAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.Verified);
+        // The observed ready line was written into the blueprint (overwrite re-persist with a non-empty regex).
+        _files.Received().Create(
+            Arg.Is<NativeBlueprintDraft>(d => d.Native.StartupSuccessRegex.Contains("Opened", StringComparison.Ordinal)),
+            true);
     }
 
     // --- Step 10: GUARANTEED teardown, including on an exception -------------------------------------

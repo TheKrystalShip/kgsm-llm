@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Blueprint research is agentic: a bounded research sub-loop drives its OWN `search` + `fetch_url` calls
+  to gather the authoritative pages for a game's native Linux server, then hands them to the synthesizer
+  for sourced extraction. The model does source SELECTION (run several targeted searches, follow the
+  official/wiki pages, look past community Docker wrappers) — what it is good at — while synthesis does
+  the guarded extraction over what was fetched. Replaces the fixed one-query/top-3 pass, which
+  mis-selected sources (it landed on a Docker wrapper and never fetched the page documenting the native
+  launch). Bounded (a handful of model rounds and fetches — research is a background step, not a crawl)
+  and degrades gracefully: any loop failure, or a run that gathers nothing, falls back to the fixed pass,
+  and synthesis still falls back to the deterministic extractor. New `AgenticBlueprintResearch`
+  (the registered `IBlueprintResearch`); `BlueprintResearchAggregator` becomes its fixed-pass fallback.
+
+### Added
 - Blueprint research extracts native-server fields by model synthesis first, falling back to the
   deterministic regex extractor. One LLM call reads the fetched pages in context and returns sourced
   fields as JSON — it can pick the OFFICIAL native launch method over a community Docker wrapper, which a

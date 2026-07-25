@@ -84,10 +84,13 @@ public static class ServiceCollectionExtensions
         // provides. A composition with no model can register DisabledBlueprintSynthesizer first; then
         // research always uses the regex extractor.
         services.TryAddSingleton<IBlueprintSynthesizer, LlmBlueprintSynthesizer>();
-        // The blueprint-authoring research step: web search + fetch, then synthesis-first / regex-fallback
-        // field extraction. Always registered (mirrors SearchAggregator) — whatever the search/fetch/
-        // synthesizer ports resolve to (real or disabled), research degrades along with them.
-        services.AddSingleton<IBlueprintResearch, BlueprintResearchAggregator>();
+        // The blueprint-authoring research step is agentic: a bounded research sub-loop drives its own
+        // search + fetch_url calls to gather the authoritative native-server pages, then synthesizes
+        // sourced fields. The fixed one-query pass (BlueprintResearchAggregator) is registered as its
+        // concrete fallback — used when the model is unavailable or the loop gathers nothing. Both
+        // degrade along with whatever the search/fetch/synthesizer ports resolve to (real or disabled).
+        services.AddSingleton<BlueprintResearchAggregator>();
+        services.AddSingleton<IBlueprintResearch, AgenticBlueprintResearch>();
         // The admin "attempted" stash degrades closed the same way: a host that sets
         // BlueprintAuthoring:StashDir calls AddKgsmAdapters, which registers a concrete filesystem
         // store that wins over this default. Without it, a failed attempt is simply not recorded rather

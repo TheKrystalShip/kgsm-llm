@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Blueprint-authoring pipeline is split at the draft boundary (no behavior change).** The one
+  `AuthorAsync` pipeline is carved into a draft half (gate → slug → existence guard → research →
+  feasibility → build, touching no write authority) and a finalize half (persist → validate → test-install
+  → verify → repair → keep/stash). `AuthorAsync` runs both back-to-back, so the autonomous outcome is
+  identical; the split is the seam the in-chat human-review checkpoint (`assistant-blueprint-review-plan.md`)
+  hangs off — the draft is returned for editing, and finalize runs on the edited draft across a
+  confirmation. A `DraftReady` outcome is defined for that checkpoint (not yet emitted).
 - **"Needs a Steam account" is now MEASURED, not inferred.** Blueprint authoring no longer guesses from
   page phrasing whether a game's server files require an owning Steam account — that inference over-declined
   games (e.g. Barotrauma) whose servers actually download anonymously, killing them at the feasibility gate

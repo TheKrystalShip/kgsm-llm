@@ -85,6 +85,34 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
     public async Task<ToolResult<BlueprintAuthoringData>> AuthorAsync(string game, CancellationToken cancellationToken = default)
     {
+        // The pipeline is split at the draft boundary: DraftAsync researches and builds the draft (or stops
+        // early with a terminal outcome that never touches a write authority), FinalizeAsync test-installs →
+        // verifies → repairs → keeps/stashes. AuthorAsync runs both back-to-back for the autonomous path;
+        // the human-review surface (assistant-blueprint-review-plan.md) instead returns the draft for
+        // in-chat editing and calls FinalizeAsync across a confirmation with the edited draft.
+        var (terminal, ready) = await DraftAsync(game, cancellationToken);
+        return terminal ?? await FinalizeAsync(ready!, cancellationToken);
+    }
+
+    /// <summary>Everything a <see cref="FinalizeAsync"/> run needs from the draft half: the resolved
+    /// display name + canonical slug + subject, the launchable draft, its provenance trail, and the raw
+    /// research findings (carried through for the admin stash written on a finalize failure).</summary>
+    private sealed record DraftContext(
+        string Game,
+        string Slug,
+        ResultRef Subject,
+        NativeBlueprintDraft Draft,
+        List<BlueprintFieldProvenance> Provenance,
+        BlueprintResearchFindings Findings);
+
+    /// <summary>The draft half of the pipeline: disabled gate → slug → existence guard → research →
+    /// feasibility gate → build. Returns a terminal <see cref="ToolResult{TData}"/> when the run stops
+    /// before any test-install (disabled, no safe name, already in the catalog, infeasible, or no
+    /// launchable draft), otherwise a <see cref="DraftContext"/> ready for <see cref="FinalizeAsync"/>.
+    /// Touches no kgsm-lib write authority — only the read-only existence check.</summary>
+    private async Task<(ToolResult<BlueprintAuthoringData>? Terminal, DraftContext? Ready)> DraftAsync(
+        string game, CancellationToken cancellationToken)
+    {
         game = game.Trim();
         var subject = new ResultRef(ResourceKind.Blueprint, game);
 
@@ -93,14 +121,14 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         {
             var summary = $"Automatic blueprint authoring isn't enabled on this host, so I can't research " +
                            $"and build a config for \"{game}\" myself.";
-            return Envelope(subject, summary, BlueprintAuthoringOutcome.Disabled, game, null, [], null, summary, false);
+            return (Envelope(subject, summary, BlueprintAuthoringOutcome.Disabled, game, null, [], null, summary, false), null);
         }
 
         var slug = Slugify(game);
         if (string.IsNullOrEmpty(slug))
         {
             var summary = $"\"{game}\" doesn't give me a safe name to build a blueprint from.";
-            return Envelope(subject, summary, BlueprintAuthoringOutcome.NotFeasible, game, null, [], null, summary, false);
+            return (Envelope(subject, summary, BlueprintAuthoringOutcome.NotFeasible, game, null, [], null, summary, false), null);
         }
 
         // From here on the slug is the canonical id for what this run is about — the subject used by
@@ -121,7 +149,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         if (existing is not null)
         {
             var summary = $"\"{game}\" is already in the catalog (as \"{slug}\") — nothing to build.";
-            return Envelope(subject, summary, BlueprintAuthoringOutcome.AlreadyExists, game, slug, [], null, null, true);
+            return (Envelope(subject, summary, BlueprintAuthoringOutcome.AlreadyExists, game, slug, [], null, null, true), null);
         }
 
         // --- Step 2: research (provenance-tagged) -------------------------------------------------
@@ -140,8 +168,8 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 _ => $"I couldn't find enough online to confirm \"{game}\" can be self-hosted on Linux.",
             };
             await StashAsync(game, null, findings, [], BlueprintAuthoringOutcome.NotFeasible, reason, null, cancellationToken);
-            return Envelope(subject, reason, BlueprintAuthoringOutcome.NotFeasible, game, null,
-                ToProvenance(findings), null, reason, false);
+            return (Envelope(subject, reason, BlueprintAuthoringOutcome.NotFeasible, game, null,
+                ToProvenance(findings), null, reason, false), null);
         }
 
         // --- Step 4: draft (sourced fields only — unknowns stay null/default) ---------------------
@@ -152,8 +180,24 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             var reason = $"I found that \"{game}\" can be self-hosted on Linux, but couldn't pin down exactly " +
                           "how its server is launched from what I found online, so I can't build a working config for it.";
             await StashAsync(game, slug, findings, [], BlueprintAuthoringOutcome.Failed, reason, null, cancellationToken);
-            return Envelope(subject, reason, BlueprintAuthoringOutcome.Failed, game, null, provenance, null, reason, false);
+            return (Envelope(subject, reason, BlueprintAuthoringOutcome.Failed, game, null, provenance, null, reason, false), null);
         }
+
+        return (null, new DraftContext(game, slug, subject, draft, provenance, findings));
+    }
+
+    /// <summary>The finalize half of the pipeline: persist → validate-by-readback → test-install →
+    /// verify → bounded evidence-driven self-repair → guaranteed teardown → keep-or-stash. Runs every
+    /// kgsm-lib write authority; only reached once <see cref="DraftAsync"/> produced a launchable draft
+    /// (the autonomous path) or the user approved/edited one (the review path).</summary>
+    private async Task<ToolResult<BlueprintAuthoringData>> FinalizeAsync(DraftContext ctx, CancellationToken cancellationToken)
+    {
+        var game = ctx.Game;
+        var slug = ctx.Slug;
+        var subject = ctx.Subject;
+        var draft = ctx.Draft;
+        var provenance = ctx.Provenance;
+        var findings = ctx.Findings;
 
         // --- Steps 5-10: persist → validate → test-install → verify → self-repair → teardown -----
         var probeName = BlueprintProbeNaming.ForSlug(slug);

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Blueprint authoring repairs a failed draft from the real install, not just from the web.** When a
+  drafted config test-installs but doesn't boot + listen, the pipeline now reads two ground-truth
+  evidence sources the web research pass never had — the actual installed directory tree (what the
+  download really put on disk, so the executable's true name and location are read rather than guessed)
+  and the game's own launch scripts + boot log — and an LLM repair step proposes corrected launch fields
+  for the next attempt. This replaces the old blind retry (which re-ran the identical draft) with an
+  observe→correct loop: a wrong executable is swapped for the real one on disk, a rejected argument is
+  fixed or dropped from the server's own error, and a readiness line found only in a game-written log
+  file becomes the `startup_success_regex` (with output redirects like Unity's `-logfile` dropped so the
+  readiness line reaches the monitored stdout). The anti-fabrication discipline is stronger than
+  synthesis because the evidence is ground truth — a proposed executable is rejected unless it actually
+  appears in the install tree — and the empirical boot + listen check stays the final backstop. The loop
+  stops as soon as repair has no evidence-based change to make, so it never flaps on an unfixable source.
+  New `IBlueprintRepair` port (fail-closed `DisabledBlueprintRepair` default, `LlmBlueprintRepair` when a
+  model is wired); the persist→install→verify→**repair** loop runs up to three attempts.
+
 ### Fixed
 - Blueprint authoring draft-quality hardening, from a 7-game validation batch (all draft/research
   quality — the empirical boot-verify backstop already prevented any bad blueprint from being kept):

@@ -36,6 +36,8 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     private readonly BlueprintAuthoringOptions _options;
     private readonly IBlueprintResearch _research;
     private readonly IBlueprintFiles _files;
+    private readonly IInstanceFiles _instanceFiles;
+    private readonly IBlueprintRepair _repair;
     private readonly IBlueprintService _blueprints;
     private readonly IInstanceService _instances;
     private readonly IServerOperations _operations;
@@ -49,6 +51,8 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         IOptions<BlueprintAuthoringOptions> options,
         IBlueprintResearch research,
         IBlueprintFiles files,
+        IInstanceFiles instanceFiles,
+        IBlueprintRepair repair,
         IBlueprintService blueprints,
         IInstanceService instances,
         IServerOperations operations,
@@ -61,6 +65,8 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         _options = options.Value;
         _research = research;
         _files = files;
+        _instanceFiles = instanceFiles;
+        _repair = repair;
         _blueprints = blueprints;
         _instances = instances;
         _operations = operations;
@@ -164,6 +170,8 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             if (create.Outcome != FileOpOutcome.Ok)
             {
                 verifyLog.Add($"attempt {attempt}: persist failed ({create.Outcome}: {create.Message})");
+                _files.Remove(slug);
+                _invalidation.Invalidate();
                 break; // a persist failure (bad jail, dir unavailable, io error) won't fix itself on retry
             }
             _invalidation.Invalidate();
@@ -184,8 +192,12 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 break; // never install an unvalidated draft
             }
 
-            // Steps 7-10: test-install, verify, and ALWAYS tear down — guaranteed, not best-effort.
+            // Steps 7-10: test-install, verify, gather evidence for repair, and ALWAYS tear down.
             var installAttempted = false;
+            var installSucceeded = false;
+            string? installError = null;
+            InstanceHealthSnapshot? lastSnapshot = null;
+            RepairEvidence? evidence = null;
             try
             {
                 var (actor, origin) = Provenance();
@@ -195,18 +207,26 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                     () => _instances.Install(slug, null, null, probeName, actor, origin, null, start: true),
                     cancellationToken);
 
-                if (!installResult.IsSuccess)
+                installSucceeded = installResult.IsSuccess;
+                if (!installSucceeded)
                 {
+                    installError = installResult.Stderr;
                     verifyLog.Add($"attempt {attempt}: test-install failed ({installResult.Stderr})");
                 }
                 else
                 {
                     _progress.Report(LlmTools.CreateBlueprint, "verify", "Booting it up and waiting for it to answer…");
-                    (verified, proofLine) = await VerifyAsync(probeName, draft, cancellationToken);
+                    (verified, proofLine, lastSnapshot) = await VerifyAsync(probeName, draft, cancellationToken);
                     verifyLog.Add(verified
                         ? $"attempt {attempt}: verified — {proofLine}"
                         : $"attempt {attempt}: did not verify booting + listening within the timeout");
                 }
+
+                // Gather the ground-truth evidence WHILE the probe's files are still on disk (before the
+                // finally block tears them down): the real install tree, the shipped launch scripts, and
+                // the boot log. Only when we're going to repair (not verified, attempts remain).
+                if (!verified && attempt < maxAttempts)
+                    evidence = GatherEvidence(probeName, installSucceeded, installError, lastSnapshot, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -221,8 +241,31 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 }
             }
 
-            if (!verified && attempt >= maxAttempts)
+            if (verified)
+                break;
+
+            if (attempt >= maxAttempts)
+            {
                 _files.Remove(slug); // exhausted — catalog stays clean
+                _invalidation.Invalidate();
+                break;
+            }
+
+            // B — evidence-driven repair: feed the real install tree + boot log to the model and let it
+            // propose corrected launch fields. A null result means "no better idea than this draft" — stop
+            // rather than burn the remaining attempts re-running an identical config.
+            _progress.Report(LlmTools.CreateBlueprint, "repair", "Reading what actually installed to fix the config…");
+            var (repairedDraft, repairNote) = await TryRepairAsync(game, draft, evidence, cancellationToken);
+            if (repairedDraft is null)
+            {
+                verifyLog.Add($"attempt {attempt}: no evidence-driven repair available — stopping ({repairNote})");
+                _files.Remove(slug);
+                _invalidation.Invalidate();
+                break;
+            }
+
+            verifyLog.Add($"attempt {attempt}: repaired draft from install evidence — {repairNote}");
+            draft = repairedDraft;
         }
 
         if (verified)
@@ -245,7 +288,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
     // --- verify: boots + listens ------------------------------------------------------------------
 
-    private async Task<(bool Verified, string? ProofLine)> VerifyAsync(
+    private async Task<(bool Verified, string? ProofLine, InstanceHealthSnapshot? LastSnapshot)> VerifyAsync(
         string probeName, NativeBlueprintDraft draft, CancellationToken cancellationToken)
     {
         System.Text.RegularExpressions.Regex? successRegex = null;
@@ -265,6 +308,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
 
         var deadline = DateTimeOffset.UtcNow.AddSeconds(Math.Max(5, _options.VerifyTimeoutSeconds));
         var pollInterval = TimeSpan.FromSeconds(Math.Max(1, _options.VerifyPollIntervalSeconds));
+        InstanceHealthSnapshot? last = null;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -274,6 +318,11 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             if (health.IsSuccess)
             {
                 var snap = health.Value!;
+                // Keep the most log-bearing snapshot as the evidence handed to repair on failure: prefer a
+                // later snapshot, but never let an empty-log poll overwrite one that captured real output.
+                if (last is null || snap.RecentLogLines.Count >= last.RecentLogLines.Count)
+                    last = snap;
+
                 var regexMatched = successRegex is not null && snap.RecentLogLines.Any(l => successRegex.IsMatch(l));
                 var portsUp = snap.PortsReachable == true;
 
@@ -282,14 +331,227 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                     var proof = portsUp
                         ? "it booted and is listening on its configured port"
                         : "it booted and its startup message appeared in the logs";
-                    return (true, proof);
+                    return (true, proof, snap);
                 }
             }
 
             await Task.Delay(pollInterval, cancellationToken);
         }
 
-        return (false, null);
+        return (false, null, last);
+    }
+
+    // --- A + B: gather ground-truth evidence, then repair the draft from it --------------------------
+
+    /// <summary>What the repair step reads instead of guessing from the web: the real installed tree, the
+    /// game's own shipped launch scripts, and the boot log of the failed attempt.</summary>
+    private sealed record RepairEvidence(
+        bool InstallSucceeded, string? InstallError, string InstallTree, string LaunchScripts,
+        string BootLog, bool? PortsReachable);
+
+    // The instance's game files land under <working_dir>/install/[executable_subdirectory]/ — IInstanceFiles
+    // jails to <working_dir>, so the install tree is listed from the "install" subdir and every path the
+    // model sees (and every executable_subdirectory it proposes) is relative to that root.
+    private const string InstallRoot = "install";
+    private const int MaxTreeEntries = 300;   // total entries walked into the rendered tree
+    private const int MaxTreeDirs = 60;       // directories descended into (breadth bound)
+    private const int MaxScriptFiles = 6;     // shipped *.sh scripts read in full
+    private const long MaxScriptBytes = 8192; // per-script read ceiling
+    private const int MaxLogFiles = 3;        // game-written log files read for readiness evidence
+    private const long MaxLogBytes = 32768;   // per-log read ceiling (the ready line prints early)
+
+    /// <summary>Reads the probe's real install directory and boot log into a <see cref="RepairEvidence"/>.
+    /// Best-effort: any read failure degrades to an empty section, never throws (except cancellation).</summary>
+    private RepairEvidence GatherEvidence(
+        string probeName, bool installSucceeded, string? installError,
+        InstanceHealthSnapshot? lastSnapshot, CancellationToken cancellationToken)
+    {
+        var tree = new StringBuilder();
+        var scriptPaths = new List<string>();
+        var logPaths = new List<string>();
+        try
+        {
+            WalkInstallTree(probeName, tree, scriptPaths, logPaths, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(ex, "Blueprint-repair evidence: listing the install tree failed for {Probe}", probeName);
+        }
+
+        var scripts = new StringBuilder();
+        foreach (var rel in scriptPaths.Take(MaxScriptFiles))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var read = _instanceFiles.Read(probeName, rel, MaxScriptBytes);
+                if (read.IsOk && read.Value is not null)
+                    scripts.Append("=== ").Append(rel).Append(" ===\n").Append(read.Value.Content).Append("\n\n");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation(ex, "Blueprint-repair evidence: reading script {Path} failed for {Probe}", rel, probeName);
+            }
+        }
+
+        // The boot log kgsm captured (the instance's own stdout .log). This is what BOTH the verify check
+        // and repair read — but a game that redirects its output to its own file (e.g. Unity's `-logfile`)
+        // leaves it empty. So supplement it with any log files the game itself wrote into the install dir:
+        // the readiness line ("Game ID", "Server started") is in there even when kgsm's capture is blank,
+        // which is what lets repair synthesize a startup_success_regex AND learn to drop the redirect.
+        var bootLog = new StringBuilder();
+        if (lastSnapshot is not null && lastSnapshot.RecentLogLines.Count > 0)
+            bootLog.Append("--- monitored stdout (what the readiness check sees) ---\n")
+                   .Append(string.Join("\n", lastSnapshot.RecentLogLines)).Append('\n');
+
+        foreach (var rel in logPaths.Take(MaxLogFiles))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var read = _instanceFiles.Read(probeName, rel, MaxLogBytes);
+                if (read.IsOk && read.Value is not null && !string.IsNullOrWhiteSpace(read.Value.Content))
+                    bootLog.Append("--- game-written log file ").Append(rel)
+                           .Append(" (NOT on monitored stdout — readiness here is invisible to the monitor) ---\n")
+                           .Append(read.Value.Content).Append('\n');
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation(ex, "Blueprint-repair evidence: reading log {Path} failed for {Probe}", rel, probeName);
+            }
+        }
+
+        return new RepairEvidence(installSucceeded, installError, tree.ToString(), scripts.ToString(),
+            bootLog.ToString(), lastSnapshot?.PortsReachable);
+    }
+
+    /// <summary>Bounded breadth-first walk of the install dir: renders one "path (kind, size)" line per
+    /// entry (relative to the install root) and collects the relative paths of <c>*.sh</c> scripts and of
+    /// game-written log files (the two high-value read lists). Bounds keep a pathological tree (thousands
+    /// of files) from blowing the budget.</summary>
+    private void WalkInstallTree(
+        string probeName, StringBuilder tree, List<string> scriptPaths, List<string> logPaths, CancellationToken cancellationToken)
+    {
+        var queue = new Queue<string>();
+        queue.Enqueue(string.Empty); // the install root itself
+        var entries = 0;
+        var dirs = 0;
+
+        while (queue.Count > 0 && entries < MaxTreeEntries && dirs < MaxTreeDirs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var sub = queue.Dequeue();
+            dirs++;
+
+            var listPath = string.IsNullOrEmpty(sub) ? InstallRoot : $"{InstallRoot}/{sub}";
+            var listing = _instanceFiles.List(probeName, listPath, MaxTreeEntries);
+            if (!listing.IsOk || listing.Value is null)
+                continue;
+
+            foreach (var entry in listing.Value.Entries)
+            {
+                if (entries >= MaxTreeEntries)
+                    break;
+                entries++;
+
+                var rel = string.IsNullOrEmpty(sub) ? entry.Name : $"{sub}/{entry.Name}";
+                var size = entry.SizeBytes is { } b ? $", {b} bytes" : string.Empty;
+                tree.Append(rel).Append(" (").Append(entry.Kind.ToString().ToLowerInvariant()).Append(size).Append(")\n");
+
+                if (entry.Kind == FileKind.Dir)
+                    queue.Enqueue(rel);
+                else if (entry.Kind == FileKind.File)
+                {
+                    if (entry.Name.EndsWith(".sh", StringComparison.OrdinalIgnoreCase))
+                        scriptPaths.Add($"{InstallRoot}/{rel}");
+                    else if (IsLogLike(entry.Name))
+                        logPaths.Add($"{InstallRoot}/{rel}");
+                }
+            }
+        }
+    }
+
+    /// <summary>A file the game likely wrote its own startup output to — a <c>.log</c>, or a
+    /// <c>*log*.txt</c> (Unity's <c>-logfile ServerLog.txt</c> is the common shape). Read for the readiness
+    /// line the monitored stdout may be missing.</summary>
+    private static bool IsLogLike(string name) =>
+        name.EndsWith(".log", StringComparison.OrdinalIgnoreCase) ||
+        (name.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) &&
+         name.Contains("log", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Runs the repair model over the gathered evidence and merges its proposal onto the failed
+    /// draft. Returns the corrected draft + a short note, or (null, reason) when there is no usable repair
+    /// (no evidence, model declined, or the proposal changed nothing) — the signal to stop retrying.</summary>
+    private async Task<(NativeBlueprintDraft? Draft, string Note)> TryRepairAsync(
+        string game, NativeBlueprintDraft draft, RepairEvidence? evidence, CancellationToken cancellationToken)
+    {
+        if (evidence is null)
+            return (null, "no install evidence was captured");
+
+        var context = new BlueprintRepairContext(
+            game,
+            draft.Native.ExecutableFile,
+            draft.Native.ExecutableSubdirectory,
+            draft.Native.ExecutableArguments,
+            draft.Native.StartupSuccessRegex,
+            draft.Native.Ports,
+            evidence.InstallSucceeded,
+            evidence.InstallError,
+            evidence.InstallTree,
+            evidence.LaunchScripts,
+            evidence.BootLog,
+            evidence.PortsReachable);
+
+        var proposal = await _repair.RepairAsync(context, cancellationToken);
+        if (proposal is null)
+            return (null, "the repair step had no better idea than the current draft");
+
+        var merged = ApplyRepair(draft, proposal);
+        if (RendersIdentically(draft, merged))
+            return (null, "the repair proposal did not change any launch field");
+
+        return (merged, DescribeRepair(proposal));
+    }
+
+    /// <summary>Merges a repair proposal onto a draft: a non-null proposal field replaces the draft's value;
+    /// null leaves it. Ports arrive as a bare number and re-render to the same UFW tcp|udp shape the draft
+    /// building step uses. The Steam app ids and metadata are preserved untouched.</summary>
+    private static NativeBlueprintDraft ApplyRepair(NativeBlueprintDraft draft, BlueprintRepairProposal p)
+    {
+        var ports = p.Ports is null
+            ? draft.Native.Ports
+            : (string.IsNullOrWhiteSpace(p.Ports) ? string.Empty : $"{p.Ports}/tcp|{p.Ports}/udp");
+
+        return draft with
+        {
+            Native = draft.Native with
+            {
+                ExecutableFile = p.ExecutableFile ?? draft.Native.ExecutableFile,
+                ExecutableSubdirectory = p.ExecutableSubdirectory ?? draft.Native.ExecutableSubdirectory,
+                ExecutableArguments = p.ExecutableArguments ?? draft.Native.ExecutableArguments,
+                StartupSuccessRegex = p.StartupSuccessRegex ?? draft.Native.StartupSuccessRegex,
+                Ports = ports,
+            },
+        };
+    }
+
+    private static bool RendersIdentically(NativeBlueprintDraft a, NativeBlueprintDraft b) =>
+        a.Native.ExecutableFile == b.Native.ExecutableFile &&
+        a.Native.ExecutableSubdirectory == b.Native.ExecutableSubdirectory &&
+        a.Native.ExecutableArguments == b.Native.ExecutableArguments &&
+        a.Native.StartupSuccessRegex == b.Native.StartupSuccessRegex &&
+        a.Native.Ports == b.Native.Ports;
+
+    private static string DescribeRepair(BlueprintRepairProposal p)
+    {
+        var parts = new List<string>();
+        if (p.ExecutableFile is not null) parts.Add($"executable_file→{p.ExecutableFile}");
+        if (p.ExecutableSubdirectory is not null) parts.Add($"executable_subdirectory→{(p.ExecutableSubdirectory.Length == 0 ? "(root)" : p.ExecutableSubdirectory)}");
+        if (p.ExecutableArguments is not null) parts.Add($"executable_arguments→{(p.ExecutableArguments.Length == 0 ? "(none)" : p.ExecutableArguments)}");
+        if (p.StartupSuccessRegex is not null) parts.Add("startup_success_regex updated");
+        if (p.Ports is not null) parts.Add($"ports→{p.Ports}");
+        return parts.Count == 0 ? "no change" : string.Join(", ", parts);
     }
 
     // --- teardown: guaranteed, not best-effort ------------------------------------------------------

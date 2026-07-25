@@ -84,6 +84,12 @@ public static class ServiceCollectionExtensions
         // provides. A composition with no model can register DisabledBlueprintSynthesizer first; then
         // research always uses the regex extractor.
         services.TryAddSingleton<IBlueprintSynthesizer, LlmBlueprintSynthesizer>();
+        // Blueprint repair: after a drafted config test-installs but fails to boot, the LLM reads the REAL
+        // install tree + shipped launch scripts + the boot log and proposes corrected launch fields for
+        // the next attempt — the evidence-driven counterpart to a blind retry. Needs ILlmClient (same as
+        // synthesis). A composition with no model can register DisabledBlueprintRepair first; then the
+        // pipeline runs a single attempt with no evidence-driven correction.
+        services.TryAddSingleton<IBlueprintRepair, LlmBlueprintRepair>();
         // The blueprint-authoring research step is agentic: a bounded research sub-loop drives its own
         // search + fetch_url calls to gather the authoritative native-server pages, then synthesizes
         // sourced fields. The fixed one-query pass (BlueprintResearchAggregator) is registered as its

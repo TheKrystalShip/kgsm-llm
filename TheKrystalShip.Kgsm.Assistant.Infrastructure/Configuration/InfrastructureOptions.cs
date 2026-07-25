@@ -156,9 +156,11 @@ public sealed class BlueprintAuthoringOptions
     /// (mirrors <see cref="RagOptions.IndexPath"/>'s "not configured yet" handling).</summary>
     public string StashDir { get; set; } = string.Empty;
 
-    /// <summary>Bound on the persist→install→verify retry loop (plan step 9) — kept small so a
-    /// genuinely broken source fails fast rather than flapping.</summary>
-    public int MaxAttempts { get; set; } = 2;
+    /// <summary>Bound on the persist→install→verify→repair loop — the first attempt runs the researched
+    /// draft, each subsequent attempt runs a draft the repair step corrected from the real install tree +
+    /// boot log. Kept small so a genuinely unrepairable source fails fast rather than flapping (3 allows the
+    /// initial draft plus two evidence-driven repairs).</summary>
+    public int MaxAttempts { get; set; } = 3;
 
     /// <summary>How long to poll the test-install for "booted + listening" before giving up on that
     /// attempt.</summary>

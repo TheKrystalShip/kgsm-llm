@@ -30,6 +30,8 @@ public sealed class BlueprintAuthoringAggregatorTests
 {
     private readonly IBlueprintResearch _research = Substitute.For<IBlueprintResearch>();
     private readonly IBlueprintFiles _files = Substitute.For<IBlueprintFiles>();
+    private readonly IInstanceFiles _instanceFiles = Substitute.For<IInstanceFiles>();
+    private readonly IBlueprintRepair _repair = Substitute.For<IBlueprintRepair>();
     private readonly IBlueprintService _blueprints = Substitute.For<IBlueprintService>();
     private readonly IInstanceService _instances = Substitute.For<IInstanceService>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
@@ -40,7 +42,8 @@ public sealed class BlueprintAuthoringAggregatorTests
 
     private BlueprintAuthoringAggregator Create(BlueprintAuthoringOptions? options = null) => new(
         Options.Create(options ?? FastOptions()),
-        _research, _files, _blueprints, _instances, _operations, _invalidation, _attempts, _invocation, _progress,
+        _research, _files, _instanceFiles, _repair, _blueprints, _instances, _operations, _invalidation, _attempts,
+        _invocation, _progress,
         NullLogger<BlueprintAuthoringAggregator>.Instance);
 
     /// <summary>Short timeouts so a verify loop that never succeeds still finishes fast in tests.</summary>
@@ -289,8 +292,11 @@ public sealed class BlueprintAuthoringAggregatorTests
     // --- Step 9: bounded self-repair --------------------------------------------------------------------
 
     [Fact]
-    public async Task NeverVerifying_RetriesUpToMaxAttempts_ThenStops()
+    public async Task NeverVerifying_WithNoRepairProposal_StopsAfterFirstAttempt()
     {
+        // With repair returning null ("no better idea than this draft"), a blind retry of the identical
+        // draft is pointless — so the loop stops after one attempt rather than re-running it maxAttempts
+        // times. The catalog is still cleaned and the outcome is honest.
         _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
         _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
         _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
@@ -300,6 +306,41 @@ public sealed class BlueprintAuthoringAggregatorTests
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(NeverBoots()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+        _repair.RepairAsync(Arg.Any<BlueprintRepairContext>(), Arg.Any<CancellationToken>())
+            .Returns((BlueprintRepairProposal?)null);
+
+        var result = await Create(FastOptions(maxAttempts: 3)).AuthorAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.Failed);
+        _instances.Received(1).Install(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>());
+        _instances.Received(1).Uninstall(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>());
+        _files.Received().Remove("terraria"); // catalog stays clean
+    }
+
+    [Fact]
+    public async Task NeverVerifying_WithRepairProposals_RetriesEachWithACorrectedDraft_UpToMaxAttempts()
+    {
+        // Each failed attempt hands the real install evidence to repair, which proposes a CHANGED draft;
+        // the loop re-installs the corrected draft until maxAttempts is exhausted, then stops.
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(NeverBoots()));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+        _instanceFiles.List(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing()));
+        // Two distinct proposals so each merged draft differs from the last (else the "changed nothing"
+        // guard would stop the loop early).
+        _repair.RepairAsync(Arg.Any<BlueprintRepairContext>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new BlueprintRepairProposal("./a.sh", null, null, null, null),
+                new BlueprintRepairProposal("./b.sh", null, null, null, null));
 
         await Create(FastOptions(maxAttempts: 3)).AuthorAsync("Terraria");
 
@@ -307,6 +348,45 @@ public sealed class BlueprintAuthoringAggregatorTests
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>());
         _instances.Received(3).Uninstall(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>());
+        await _repair.Received(2).RepairAsync(Arg.Any<BlueprintRepairContext>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Repair_ReadsRealInstallTree_AndFeedsItToTheRepairStep()
+    {
+        // A (filesystem introspection): the failed attempt's install dir is read via IInstanceFiles and
+        // its tree + a shipped launch script are handed to the repair step as ground-truth evidence.
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(NeverBoots() with { RecentLogLines = ["ERROR: unknown argument -world"] }));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+        _instanceFiles.List("__bp_probe_terraria__", "install", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing
+            {
+                Entries = [new FileEntry("start_server_bepinex.sh", FileKind.File, 512, null)],
+            }));
+        _instanceFiles.Read("__bp_probe_terraria__", "install/start_server_bepinex.sh", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Ok(new FileContent { Content = "export LD_LIBRARY_PATH=./linux64\n./valheim_server.x86_64 -serverport 2456" }));
+        _repair.RepairAsync(Arg.Any<BlueprintRepairContext>(), Arg.Any<CancellationToken>())
+            .Returns((BlueprintRepairProposal?)null);
+
+        await Create(FastOptions(maxAttempts: 2)).AuthorAsync("Terraria");
+
+        // The tree was listed and the script read...
+        _instanceFiles.Received().List("__bp_probe_terraria__", "install", Arg.Any<int>());
+        _instanceFiles.Received().Read("__bp_probe_terraria__", "install/start_server_bepinex.sh", Arg.Any<long>());
+        // ...and both surfaced to the repair step, along with the boot-log line.
+        await _repair.Received(1).RepairAsync(
+            Arg.Is<BlueprintRepairContext>(c =>
+                c.InstallTree.Contains("start_server_bepinex.sh")
+                && c.LaunchScripts.Contains("serverport")
+                && c.BootLog.Contains("unknown argument")),
+            Arg.Any<CancellationToken>());
     }
 
     // --- Step 10: GUARANTEED teardown, including on an exception -------------------------------------

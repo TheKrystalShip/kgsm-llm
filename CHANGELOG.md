@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Blueprint research extracts native-server fields by model synthesis first, falling back to the
+  deterministic regex extractor. One LLM call reads the fetched pages in context and returns sourced
+  fields as JSON — it can pick the OFFICIAL native launch method over a community Docker wrapper, which a
+  regex cannot. No-fabrication is layered: the model is told null-not-guess and to cite a source URL per
+  field; a field is kept only when it cites one of the pages actually fetched; copy-from-source fields
+  (`executable_file`, `steam_app_id`) must also appear verbatim in the fetched text; and the pipeline's
+  empirical boot+listen verification is the final backstop. Any failure (no model wired, transport error,
+  unparseable reply, or no required field sourced) returns null and research falls back to the extractor.
+  New `IBlueprintSynthesizer` port (+ fail-closed `DisabledBlueprintSynthesizer`) and `LlmBlueprintSynthesizer`.
+
 ### Changed
 - The research fact extractor sources `executable_file` from a launch script/binary that is either
   invoked explicitly (`./X.sh`, `bash X.sh`, `sh X.sh`) OR named like a launcher

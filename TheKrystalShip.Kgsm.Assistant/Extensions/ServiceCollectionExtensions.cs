@@ -78,9 +78,15 @@ public static class ServiceCollectionExtensions
         // IEventHistory that wins over this default. Without it, both tools honestly report the
         // monitor as unavailable rather than breaking DI.
         services.TryAddSingleton<IEventHistory, UnavailableEventHistory>();
-        // The blueprint-authoring research step (§3.4-style aggregator): a deterministic composer over
-        // ISearch + IWebFetch above, always registered (mirrors SearchAggregator) — whatever those two
-        // ports resolve to (real or disabled), research degrades along with them.
+        // Blueprint field synthesis: the LLM reads the fetched research pages and extracts the native
+        // server fields (the capable path the deterministic regex extractor is the fallback from). Needs
+        // ILlmClient, which AddLocalLlm — required by this method, same as ServerAssistant below —
+        // provides. A composition with no model can register DisabledBlueprintSynthesizer first; then
+        // research always uses the regex extractor.
+        services.TryAddSingleton<IBlueprintSynthesizer, LlmBlueprintSynthesizer>();
+        // The blueprint-authoring research step: web search + fetch, then synthesis-first / regex-fallback
+        // field extraction. Always registered (mirrors SearchAggregator) — whatever the search/fetch/
+        // synthesizer ports resolve to (real or disabled), research degrades along with them.
         services.AddSingleton<IBlueprintResearch, BlueprintResearchAggregator>();
         // The admin "attempted" stash degrades closed the same way: a host that sets
         // BlueprintAuthoring:StashDir calls AddKgsmAdapters, which registers a concrete filesystem

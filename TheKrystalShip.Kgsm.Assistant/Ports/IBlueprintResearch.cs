@@ -44,10 +44,12 @@ public sealed record BlueprintResearchFindings(
 /// <summary>
 /// The research step of <c>create_blueprint</c> (plan step 2): finds and reads sources for one game and
 /// extracts candidate native-blueprint fields, each tagged with its source. A clean seam over
-/// <see cref="ISearch"/>/<see cref="IWebSearch"/> (find sources) and <see cref="IWebFetch"/> (read
-/// them) — deliberately code-driven best-effort extraction (regex/heuristics over fetched text), not a
-/// nested model call (toolbox-plan's "keeps it viable at 12B" — the model calls one tool and reads a
-/// plain outcome). A field research is not confident about is left out, never fabricated.
+/// <see cref="IWebSearch"/> (find sources) and <see cref="IWebFetch"/> (read them), then field extraction
+/// that prefers model synthesis (<see cref="IBlueprintSynthesizer"/> — reads the pages in context to pick
+/// the authoritative native launch) and falls back to a deterministic regex extractor when no model is
+/// wired or synthesis can't source the required field. A field research is not confident about is left
+/// out, never fabricated — and the whole pipeline's empirical boot+listen verification is the backstop
+/// against a synthesized value that doesn't actually run.
 /// </summary>
 public interface IBlueprintResearch
 {

@@ -5,18 +5,25 @@ using TheKrystalShip.Kgsm.Assistant.Ports;
 namespace TheKrystalShip.Kgsm.Assistant.Blueprints;
 
 /// <summary>
-/// The deterministic <see cref="IBlueprintResearch"/> composer (plan step 2): <see cref="IWebSearch"/>
-/// finds candidate pages, <see cref="IWebFetch"/> reads them, and <see cref="BlueprintFactExtractor"/>
-/// pulls out sourced fields. A pure routing composition over existing ports — no nested model call — so
-/// it is independently testable with fakes for both ports and honors the same budgets (fetch/search
-/// per-message caps live in the assistant gate, same as every other <c>search</c>/<c>fetch_url</c> call).
-/// Never throws (neither underlying port does).
+/// The <see cref="IBlueprintResearch"/> composer (plan step 2): <see cref="IWebSearch"/> finds candidate
+/// pages, <see cref="IWebFetch"/> reads them, and the fetched text is turned into sourced fields — first
+/// by model synthesis (<see cref="IBlueprintSynthesizer"/>), falling back to the deterministic
+/// <see cref="BlueprintFactExtractor"/> when the model is unconfigured/unreachable or can't source the
+/// required field. Honors the same budgets (fetch/search per-message caps live in the assistant gate, same
+/// as every other <c>search</c>/<c>fetch_url</c> call). Never throws (no underlying step does).
 /// <para>
 /// It reaches <see cref="IWebSearch"/> (the raw web provider) directly rather than the local-index-first
 /// <c>ISearch</c> aggregator: blueprint research needs fetchable third-party pages — an official server
 /// doc, a Steam page, a community setup guide — and those live on the public web, never in this host's
 /// own documentation index. A local-first search answers a "how do I host X" query from KGSM's docs and
 /// never reaches the web, leaving no page to fetch.
+/// </para>
+/// <para>
+/// Synthesis is preferred over the regex extractor because judging which page describes the OFFICIAL
+/// native launch (vs a community Docker wrapper) and what its headless args are needs reading in context,
+/// not pattern-matching; the extractor remains as the always-available fallback so research works even
+/// with no model. A feasibility verdict from synthesis (not-self-hostable / no-native-server) is trusted
+/// as-is — only an inconclusive synthesis (no required field) hands off to the extractor.
 /// </para>
 /// </summary>
 public sealed class BlueprintResearchAggregator : IBlueprintResearch
@@ -28,12 +35,16 @@ public sealed class BlueprintResearchAggregator : IBlueprintResearch
 
     private readonly IWebSearch _webSearch;
     private readonly IWebFetch _webFetch;
+    private readonly IBlueprintSynthesizer _synthesizer;
     private readonly ILogger<BlueprintResearchAggregator> _logger;
 
-    public BlueprintResearchAggregator(IWebSearch webSearch, IWebFetch webFetch, ILogger<BlueprintResearchAggregator> logger)
+    public BlueprintResearchAggregator(
+        IWebSearch webSearch, IWebFetch webFetch, IBlueprintSynthesizer synthesizer,
+        ILogger<BlueprintResearchAggregator> logger)
     {
         _webSearch = webSearch;
         _webFetch = webFetch;
+        _synthesizer = synthesizer;
         _logger = logger;
     }
 
@@ -76,6 +87,13 @@ public sealed class BlueprintResearchAggregator : IBlueprintResearch
                 BlueprintFeasibility.Inconclusive, null, [], webUrls,
                 $"Found {webUrls.Length} candidate source(s) for \"{game}\" but none could be fetched.");
 
+        // Model synthesis first (reads the pages in context); the deterministic extractor is the fallback
+        // when synthesis is unavailable or couldn't source the required field.
+        var synthesized = await _synthesizer.SynthesizeAsync(game, pages, cancellationToken);
+        if (synthesized is not null)
+            return synthesized;
+
+        _logger.LogInformation("Blueprint synthesis inconclusive for \"{Game}\"; using deterministic extraction", game);
         return BlueprintFactExtractor.Extract(game, pages);
     }
 }

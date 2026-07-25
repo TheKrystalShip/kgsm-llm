@@ -23,9 +23,12 @@ public sealed class BlueprintResearchAggregatorTests
 {
     private readonly IWebSearch _search = Substitute.For<IWebSearch>();
     private readonly IWebFetch _fetch = Substitute.For<IWebFetch>();
+    // Default: synthesis returns null (unconfigured/inconclusive) so these tests exercise the deterministic
+    // regex-extraction fallback. The synthesis-first path has its own test that stubs a result.
+    private readonly IBlueprintSynthesizer _synth = Substitute.For<IBlueprintSynthesizer>();
 
     private BlueprintResearchAggregator Sut() =>
-        new(_search, _fetch, NullLogger<BlueprintResearchAggregator>.Instance);
+        new(_search, _fetch, _synth, NullLogger<BlueprintResearchAggregator>.Instance);
 
     private void SearchReturns(params string[] urls) =>
         _search.SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -152,6 +155,40 @@ public sealed class BlueprintResearchAggregatorTests
         Field(findings, "executable_file").Should().Be("ServerApp.x86_64");
         findings.Fields.Should().NotContain(f => f.Name == "executable_arguments");
         findings.Fields.Should().NotContain(f => f.Name == "startup_success_regex");
+    }
+
+    [Fact]
+    public async Task SynthesisResult_IsUsedDirectly_AndSuppressesRegexFallback()
+    {
+        // The page text would make the regex extractor pick the Docker entrypoint "entry.sh"; synthesis
+        // (reading in context) returns the native launcher instead, and its result is used verbatim.
+        SearchReturns("https://guide.example/necesse");
+        PageReturns("https://guide.example/necesse",
+            "Necesse Linux dedicated server. Docker users: ./entry.sh. Native: bash StartServer-nogui.sh.");
+        _synth.SynthesizeAsync("Necesse", Arg.Any<IReadOnlyList<(string, string)>>(), Arg.Any<CancellationToken>())
+            .Returns(new BlueprintResearchFindings(
+                BlueprintFeasibility.Feasible, "Necesse",
+                [new BlueprintResearchField("executable_file", "StartServer-nogui.sh", "https://guide.example/necesse")],
+                ["https://guide.example/necesse"], "synthesized"));
+
+        var findings = await Sut().ResearchAsync("Necesse");
+
+        Field(findings, "executable_file").Should().Be("StartServer-nogui.sh");
+        findings.Narrative.Should().Be("synthesized");
+    }
+
+    [Fact]
+    public async Task SynthesisFeasibilityVerdict_IsTrusted_WithoutRegexFallback()
+    {
+        SearchReturns("https://guide.example/x");
+        PageReturns("https://guide.example/x", "This game has a Linux dedicated server: ./run.sh.");
+        _synth.SynthesizeAsync(Arg.Any<string>(), Arg.Any<IReadOnlyList<(string, string)>>(), Arg.Any<CancellationToken>())
+            .Returns(new BlueprintResearchFindings(
+                BlueprintFeasibility.NotSelfHostable, null, [], ["https://guide.example/x"], "cannot self-host"));
+
+        var findings = await Sut().ResearchAsync("SomeGame");
+
+        findings.Feasibility.Should().Be(BlueprintFeasibility.NotSelfHostable);
     }
 
     private static string? Field(BlueprintResearchFindings findings, string name) =>

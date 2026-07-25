@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **CLI parity for the blueprint-review checkpoint** (`assistant-blueprint-review-plan.md` P4). When the
+  assistant stages a `Blueprint` confirmation, the CLI now opens the drafted YAML in the user's editor
+  (`$VISUAL` → `$EDITOR` → `nano`) for the mandatory review, then finalizes the saved text via
+  `FinalizeBlueprintAsync` — the surface-agnostic parity of the in-chat Monaco card, including the
+  repair-exhaustion **re-edit loop** (a `DraftReady` outcome re-opens the editor with the returned draft
+  and the boot log that explains why it didn't come up). Saving an empty file, or declining the
+  `[y/N]` test-install prompt, abandons cleanly (never a failure); a non-interactive stdin prints the
+  proposal without running it, as with every other confirmation. This also gives the fastest end-to-end
+  live-test loop for the feature without a browser.
+
 - **In-chat review checkpoint for assistant-authored blueprints** (`assistant-blueprint-review-plan.md`).
   `create_blueprint` now DRAFTS only — it researches and builds the config, then returns an editable
   `DraftReady` card carrying the rendered YAML and stages a `Blueprint` confirmation; the test-install +

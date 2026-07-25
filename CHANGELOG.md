@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Blueprint field synthesis maps a documented world/save NAME or data/install PATH onto KGSM's
+  `$instance_*` runtime placeholders in `executable_arguments` (`$instance_level_name`,
+  `$instance_saves_dir`, `$instance_install_dir`), which KGSM substitutes at server-creation time —
+  instead of keeping a doc placeholder like `[Save name]` verbatim. A launch arg from a page that read
+  `-world [Save name]` now drafts as `-world $instance_level_name`, matching how the shipped blueprints
+  are written. Only a name/path the docs clearly leave for the user is substituted; every other flag
+  stays exactly as the page shows it.
+
 ### Added
 - Blueprint research is agentic: a bounded research sub-loop drives its OWN `search` + `fetch_url` calls
   to gather the authoritative pages for a game's native Linux server, then hands them to the synthesizer

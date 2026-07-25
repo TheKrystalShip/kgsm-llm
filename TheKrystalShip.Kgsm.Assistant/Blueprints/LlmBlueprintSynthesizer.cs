@@ -44,6 +44,17 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
         "launch script/binary the game itself ships.\n" +
         "- executable_arguments must be the flags that launch the server HEADLESS / non-interactively (so it " +
         "boots and listens without waiting for keyboard input).\n" +
+        "- executable_arguments runs under KGSM, which substitutes these placeholders at server-creation " +
+        "time — USE them instead of a literal path/name or a doc placeholder like [World], <name>, or " +
+        "YOUR_SAVE:\n" +
+        "    $instance_level_name  = the world / save / level name (use wherever the docs put a world or " +
+        "save NAME)\n" +
+        "    $instance_saves_dir   = absolute path to the saves/data directory\n" +
+        "    $instance_install_dir = absolute path to the server's install directory\n" +
+        "  Keep every other documented flag and value exactly as the page shows it. Examples: a page's " +
+        "\"-world <SaveName>\" becomes \"-world $instance_level_name\"; \"--start-server /path/to/save\" " +
+        "becomes \"--start-server $instance_saves_dir/$instance_level_name\". Only substitute a KGSM " +
+        "placeholder for a name/path the docs clearly leave for the user to fill in — never invent flags.\n" +
         "- steam_app_id is the DEDICATED SERVER app id (the id used in a `steamcmd +app_update <id>` command), " +
         "NOT the client/game app id from a store page.\n" +
         "- For every non-null field, set its matching *_source to the EXACT page URL (copied from the list the " +

@@ -84,23 +84,12 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
         "NOT the client/game app id from a store page. client_steam_app_id is the CLIENT/game app id players " +
         "buy and launch to connect (the store-page id), when the page states it; else null. If the game is " +
         "not installed through SteamCMD at all, use null for steam_app_id.\n" +
-        "- requires_steam_account is a WARNING (it decides whether to even attempt an install), not a " +
-        "blueprint value — so here you MAY reasonably infer it, unlike the fields above. Set it true ONLY " +
-        "when the SERVER DOWNLOAD itself needs an owning account. Strong signals: the steamcmd command logs " +
-        "in with a personal account (`+login <username>`) rather than `+login anonymous`; the docs " +
-        "explicitly say the SERVER files can't be downloaded anonymously; or the server downloads under the " +
-        "SAME app id as the paid client (no separate server app). IMPORTANT: if the DEDICATED-SERVER app id " +
-        "is DIFFERENT from the client app id, a free standalone dedicated-server app exists → ownership is " +
-        "NOT required → set false. Generic 'you must own the game to play' prose about the CLIENT is NOT " +
-        "sufficient on its own. When in doubt, set false — the automated test-install uses anonymous login " +
-        "and a false 'true' wrongly declines a game that would actually install.\n" +
         "- For every non-null field, set its matching *_source to the EXACT page URL (copied from the list the " +
         "user gives you) that stated it. If you cannot cite a provided URL for a value, use null for the value.\n\n" +
         "JSON shape (use exactly these keys):\n" +
         "{\n" +
         "  \"self_hostable\": true|false|null,\n" +
         "  \"native_linux_server\": true|false|null,\n" +
-        "  \"requires_steam_account\": true|false|null,\n" +
         "  \"executable_file\": string|null, \"executable_file_source\": string|null,\n" +
         "  \"executable_subdirectory\": string|null, \"executable_subdirectory_source\": string|null,\n" +
         "  \"executable_arguments\": string|null, \"executable_arguments_source\": string|null,\n" +
@@ -152,10 +141,9 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
                 return new BlueprintResearchFindings(
                     BlueprintFeasibility.NoNativeLinuxServer, null, [], urls,
                     $"Sources for \"{game}\" did not confirm a native-Linux dedicated server.");
-            if (ReadBool(root, "requires_steam_account") == true)
-                return new BlueprintResearchFindings(
-                    BlueprintFeasibility.RequiresSteamAccount, null, [], urls,
-                    $"Sources for \"{game}\" indicate its server files require a Steam account that owns the game — the autonomous anonymous test-install can't download it.");
+            // Whether the server files need an owning Steam account is decided EMPIRICALLY by the pipeline
+            // (an anonymous test-install of an owned title downloads nothing → an empty install dir), not
+            // inferred here — inference over-declined games that actually download anonymously.
 
             var fields = new List<BlueprintResearchField>();
             AddField(fields, root, "executable_file", urls, combined, requireInText: true);

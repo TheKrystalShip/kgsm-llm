@@ -197,6 +197,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             // Steps 7-10: test-install, verify, gather evidence for repair, and ALWAYS tear down.
             var installAttempted = false;
             var installSucceeded = false;
+            var emptyDownload = false;
             string? installError = null;
             InstanceHealthSnapshot? lastSnapshot = null;
             RepairEvidence? evidence = null;
@@ -215,6 +216,15 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                     installError = installResult.Stderr;
                     verifyLog.Add($"attempt {attempt}: test-install failed ({installResult.Stderr})");
                 }
+                // A Steam-account-owned title downloads NOTHING under the anonymous login the test-install
+                // uses — SteamCMD connects, reports "Update state (0x0)", and kgsm reports success with an
+                // EMPTY install dir. That empty dir (measured, not inferred) is the honest signal that the
+                // server files aren't anonymously downloadable — surfaced as RequiresSteamAccount below.
+                else if (!InstallHasGameFiles(probeName))
+                {
+                    emptyDownload = true;
+                    verifyLog.Add($"attempt {attempt}: install reported success but produced no game files (anonymous download got nothing)");
+                }
                 else
                 {
                     _progress.Report(LlmTools.CreateBlueprint, "verify", "Booting it up and waiting for it to answer…");
@@ -227,7 +237,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 // Gather the ground-truth evidence WHILE the probe's files are still on disk (before the
                 // finally block tears them down): the real install tree, the shipped launch scripts, and
                 // the boot log. Only when we're going to repair (not verified, attempts remain).
-                if (!verified && attempt < maxAttempts)
+                if (!verified && !emptyDownload && attempt < maxAttempts)
                     evidence = await GatherEvidence(probeName, installSucceeded, installError, lastSnapshot, cancellationToken);
             }
             catch (Exception ex)
@@ -241,6 +251,19 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                     _progress.Report(LlmTools.CreateBlueprint, "teardown", "Cleaning up the test copy…");
                     await TeardownAsync(probeName);
                 }
+            }
+
+            // An empty anonymous download won't change on retry — surface the measured "needs an owning
+            // account" outcome now (the enum's only producer is this empirical check, not a research guess).
+            if (emptyDownload)
+            {
+                _files.Remove(slug);
+                _invalidation.Invalidate();
+                var reason = $"I installed \"{game}\" but the anonymous download produced no server files — its " +
+                              $"server files most likely need a Steam account that owns the game, which the automatic " +
+                              $"test-install can't use. You can still add \"{game}\" manually with an owning account.";
+                await StashAsync(game, slug, findings, verifyLog, BlueprintAuthoringOutcome.NotFeasible, reason, RenderForStash(draft), cancellationToken);
+                return Envelope(subject, reason, BlueprintAuthoringOutcome.NotFeasible, game, null, provenance, null, reason, false);
             }
 
             if (verified)
@@ -442,6 +465,45 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     private const long MaxLogBytes = 32768;   // per-log read ceiling (the ready line prints early)
 
     private const int RepairLogLines = 600;   // full-log tail handed to the repair step as boot evidence
+
+    // SteamCMD's own bookkeeping dir — present (holding only an appmanifest) even when an anonymous download
+    // of an owned title fetched no actual game files, so it must NOT count as "the game installed".
+    private const string SteamMetadataDir = "steamapps";
+
+    /// <summary>True if the install dir holds at least one real game FILE (checked one level deep,
+    /// ignoring SteamCMD's <c>steamapps</c> metadata dir). A Steam-account-owned title downloads nothing
+    /// under the anonymous test-install login: the install "succeeds" but leaves only
+    /// <c>steamapps/appmanifest_&lt;id&gt;.acf</c> and no game files — this is the measured signal for that
+    /// case. A listing failure (dir absent) reads as "no files", the same conservative outcome.</summary>
+    private bool InstallHasGameFiles(string probeName)
+    {
+        try
+        {
+            var root = _instanceFiles.List(probeName, InstallRoot, 100);
+            if (!root.IsOk || root.Value is null)
+                return false;
+
+            foreach (var entry in root.Value.Entries)
+            {
+                if (entry.Kind == FileKind.File)
+                    return true;
+                if (entry.Kind == FileKind.Dir)
+                {
+                    if (entry.Name.Equals(SteamMetadataDir, StringComparison.OrdinalIgnoreCase))
+                        continue; // SteamCMD metadata, not game content
+                    var sub = _instanceFiles.List(probeName, $"{InstallRoot}/{entry.Name}", 100);
+                    if (sub.IsOk && sub.Value is not null && sub.Value.Entries.Any(e => e.Kind == FileKind.File))
+                        return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(ex, "Blueprint authoring: checking the install dir for game files failed for {Probe}", probeName);
+            return false;
+        }
+    }
 
     /// <summary>Reads the probe's real install directory and boot log into a <see cref="RepairEvidence"/>.
     /// Best-effort: any read failure degrades to an empty section, never throws (except cancellation).</summary>

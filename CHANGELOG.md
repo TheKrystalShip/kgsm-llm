@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **"Needs a Steam account" is now MEASURED, not inferred.** Blueprint authoring no longer guesses from
+  page phrasing whether a game's server files require an owning Steam account — that inference over-declined
+  games (e.g. Barotrauma) whose servers actually download anonymously, killing them at the feasibility gate
+  before any install. Instead the pipeline attempts the anonymous test-install and checks the result: a
+  Steam-account-owned title downloads NOTHING under anonymous login (SteamCMD connects, reports
+  `Update state (0x0)`, and the install "succeeds" with an empty install dir), so an empty install dir after
+  a successful install is the honest signal that the files aren't anonymously downloadable — surfaced as the
+  "needs an owning account, add it manually" outcome. Anonymously-installable games now proceed to verify
+  instead of being wrongly declined. The `requires_steam_account` inference is removed from both the LLM
+  synthesis prompt and the deterministic extractor's phrase gate.
 - **Blueprint-authoring readiness verification reads the full boot log, not a 3-line tail.** The verify
   step matched the startup-success regex against the status snapshot's `recent_logs` (only the last three
   lines), so a ready line that printed during boot and scrolled away was missed and a healthy server read

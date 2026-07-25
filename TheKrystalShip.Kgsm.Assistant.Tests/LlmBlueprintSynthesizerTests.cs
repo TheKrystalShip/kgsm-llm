@@ -74,17 +74,22 @@ public sealed class LlmBlueprintSynthesizerTests
     }
 
     [Fact]
-    public async Task RequiresOwnedSteamAccount_SurfacesAsAFeasibilityStop_BeforeAnyDraft()
+    public async Task OwnershipIsNotInferred_FieldsStillExtract_DecidedEmpiricallyDownstream()
     {
-        ModelReturns("""
-        { "self_hostable": true, "native_linux_server": true, "requires_steam_account": true }
+        // A page saying "you must own the game" no longer stops synthesis — whether the SERVER files need
+        // an owning account is measured by the anonymous test-install (an owned title downloads nothing),
+        // not guessed here. So the fields extract normally and the pipeline proceeds to the install.
+        const string url = "https://guide.example/starbound";
+        ModelReturns($$"""
+        { "self_hostable": true, "native_linux_server": true,
+          "executable_file": "starbound_server", "executable_file_source": "{{url}}" }
         """);
 
         var findings = await Sut().SynthesizeAsync("Starbound",
-            Page("https://guide.example/starbound", "You must own Starbound on Steam; steamcmd +login <username> is required."));
+            Page(url, "Run starbound_server to host. You must own Starbound on Steam to play."));
 
-        findings!.Feasibility.Should().Be(BlueprintFeasibility.RequiresSteamAccount);
-        findings.Fields.Should().BeEmpty("an account-gated game stops before field extraction — nothing to draft");
+        findings!.Feasibility.Should().Be(BlueprintFeasibility.Feasible);
+        Field(findings, "executable_file").Should().Be("starbound_server");
     }
 
     [Fact]

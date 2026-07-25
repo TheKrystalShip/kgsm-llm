@@ -71,17 +71,6 @@ internal static class BlueprintFactExtractor
         "linux is not supported",
     ];
 
-    // Deliberately narrow to phrases about the SERVER DOWNLOAD needing an owning account — the
-    // deterministic fallback can't compare server-vs-client app ids, so a generic "you must own the game
-    // to play" (about the CLIENT) must not trip this gate and wrongly decline an anonymously-installable
-    // server. See BlueprintFeasibility.RequiresSteamAccount and the synthesis-path rule.
-    private static readonly string[] RequiresSteamAccountPhrases =
-    [
-        "not available anonymously", "anonymous login will not work",
-        "cannot be downloaded anonymously", "server files require a steam account",
-        "account that owns the game to download",
-    ];
-
     private static readonly string[] NativeLinuxSignals =
     [
         "linux dedicated server", "linux server", "steamcmd", "dedicated server for linux",
@@ -108,10 +97,8 @@ internal static class BlueprintFactExtractor
                 BlueprintFeasibility.NoNativeLinuxServer, null, [], urls,
                 $"Sources for \"{game}\" did not confirm a native-Linux dedicated server.");
 
-        if (Array.Exists(RequiresSteamAccountPhrases, combinedLower.Contains))
-            return new BlueprintResearchFindings(
-                BlueprintFeasibility.RequiresSteamAccount, null, [], urls,
-                $"Sources for \"{game}\" indicate its server files require a Steam account that owns the game.");
+        // Whether the server files need an owning Steam account is decided EMPIRICALLY by the pipeline (an
+        // anonymous test-install of an owned title downloads nothing), not inferred from page phrasing.
 
         var fields = new List<BlueprintResearchField>();
         foreach (var (url, text) in pages)

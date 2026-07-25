@@ -40,6 +40,16 @@ public sealed class BlueprintAuthoringAggregatorTests
     private readonly AsyncLocalInvocationContext _invocation = new();
     private readonly ITurnProgress _progress = Substitute.For<ITurnProgress>();
 
+    /// <summary>Makes the install-dir check see real game files (so a test reaches verify/repair). A test
+    /// that omits this leaves the install dir empty, which the pipeline reads as an owned-title download
+    /// that produced nothing (the Steam-account-required path).</summary>
+    private void WithInstalledFiles() =>
+        _instanceFiles.List(Arg.Any<string>(), "install", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing
+            {
+                Entries = [new FileEntry("server.x86_64", FileKind.File, 1000, null)],
+            }));
+
     private BlueprintAuthoringAggregator Create(BlueprintAuthoringOptions? options = null) => new(
         Options.Create(options ?? FastOptions()),
         _research, _files, _instanceFiles, _repair, _blueprints, _instances, _operations, _invalidation, _attempts,
@@ -109,6 +119,66 @@ public sealed class BlueprintAuthoringAggregatorTests
         _files.DidNotReceiveWithAnyArgs().Create(default!);
     }
 
+    // --- empirical Steam-account-required: measured from an empty anonymous download ----------------
+
+    [Fact]
+    public async Task InstallProducesNoGameFiles_ReportsNeedsAccount_Measured_NotInferred()
+    {
+        // A Steam-account-owned title downloads NOTHING under the anonymous test-install login: the install
+        // "succeeds" but the install dir is empty. That measured empty dir — not a research guess — is what
+        // declines it, so it never wastes a verify/repair cycle and never reaches the catalog.
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" }); // absent, then readback ok
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0)); // install "succeeds" …
+        // … but produced no files (no WithInstalledFiles() here) — the install dir is empty.
+        _instanceFiles.List(Arg.Any<string>(), "install", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing { Entries = [] }));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create(FastOptions(maxAttempts: 3)).AuthorAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.NotFeasible);
+        result.Data.Reason.Should().Contain("account");
+        // It installed exactly once (no retry — an empty download won't change), never verified, and left
+        // the catalog clean.
+        _instances.Received(1).Install(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>());
+        await _repair.DidNotReceiveWithAnyArgs().RepairAsync(default!, default);
+        _files.Received().Remove("terraria");
+        _instances.Received(1).Uninstall(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task InstallLeavesOnlySteamappsMetadata_StillReportsNeedsAccount()
+    {
+        // The real shape of an owned-title anonymous download: SteamCMD writes only
+        // install/steamapps/appmanifest_<id>.acf and no game files. The steamapps metadata dir must not
+        // count as "the game installed", so this is still detected as the needs-an-account case.
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        // install/ holds only the steamapps metadata dir …
+        _instanceFiles.List(Arg.Any<string>(), "install", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing { Entries = [new FileEntry("steamapps", FileKind.Dir, null, null)] }));
+        // … whose only content is an appmanifest (no game files).
+        _instanceFiles.List(Arg.Any<string>(), "install/steamapps", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing { Entries = [new FileEntry("appmanifest_211820.acf", FileKind.File, 200, null)] }));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        var result = await Create(FastOptions(maxAttempts: 3)).AuthorAsync("Terraria");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.NotFeasible);
+        result.Data.Reason.Should().Contain("account");
+        await _repair.DidNotReceiveWithAnyArgs().RepairAsync(default!, default);
+    }
+
     // --- Step 3: feasibility gates -------------------------------------------------------------------
 
     [Theory]
@@ -154,6 +224,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningAndListening()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -184,6 +255,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningAndListening()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -242,6 +314,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningAndListening()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -267,6 +340,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningAndListening()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -288,6 +362,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(NeverBoots()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -315,6 +390,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(NeverBoots()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -342,11 +418,13 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(NeverBoots()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+        // The install produced real files (so the install-dir check passes and it reaches verify/repair).
         _instanceFiles.List(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<int>())
-            .Returns(FileOpResult<DirListing>.Ok(new DirListing()));
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing { Entries = [new FileEntry("server.x86_64", FileKind.File, 100, null)] }));
         // Two distinct proposals so each merged draft differs from the last (else the "changed nothing"
         // guard would stop the loop early).
         _repair.RepairAsync(Arg.Any<BlueprintRepairContext>(), Arg.Any<CancellationToken>())
@@ -374,6 +452,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(NeverBoots()));
         // The boot log fed to repair now comes from the full captured log (kgsm-lib GetLogsAsync), not the
@@ -418,6 +497,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningNoPorts()));
         _instances.GetLogsAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -441,6 +521,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningNoPorts()));
         _instances.GetLogsAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -484,6 +565,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Throws(new InvalidOperationException("monitor socket exploded"));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -521,6 +603,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningAndListening()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
@@ -584,6 +667,7 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
         _instances.Install(default!, default, default, default, default, default, default, default)
             .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
         _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Result.Success(RunningAndListening()));
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));

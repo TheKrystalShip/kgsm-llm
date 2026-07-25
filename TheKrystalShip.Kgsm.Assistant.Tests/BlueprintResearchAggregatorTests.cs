@@ -141,17 +141,19 @@ public sealed class BlueprintResearchAggregatorTests
     }
 
     [Fact]
-    public async Task SteamAccountRequiredPhrase_StopsWithThatFeasibility_ViaExtractorFallback()
+    public async Task SteamAccountRequiredPhrase_NoLongerStops_OwnershipDecidedEmpirically()
     {
-        // Synthesis is stubbed to null (default), so the deterministic extractor runs and its phrase gate
-        // catches the ownership requirement before extracting fields.
+        // The deterministic extractor no longer gates on ownership phrasing — whether the server files need
+        // an owning account is measured by the anonymous test-install downstream, not inferred from a page.
         SearchReturns("https://guide.example/starbound");
         PageReturns("https://guide.example/starbound",
-            "Starbound has a Linux dedicated server. You need a Steam account that owns the game to download the server files.");
+            "Starbound has a Linux dedicated server. You need a Steam account that owns the game to download the server files.\n" +
+            "steamcmd +login anonymous +app_update 211820 validate +quit\nThen run ./starbound_server. Port 21025.");
 
         var findings = await Sut().ResearchAsync("Starbound");
 
-        findings.Feasibility.Should().Be(BlueprintFeasibility.RequiresSteamAccount);
+        findings.Feasibility.Should().NotBe(BlueprintFeasibility.RequiresSteamAccount,
+            "ownership is no longer inferred from page phrasing — the test-install measures it");
     }
 
     [Fact]

@@ -57,7 +57,9 @@ public sealed class AgenticBlueprintResearch : IBlueprintResearch
         "- the exact command-line ARGUMENTS to launch it headless (non-interactively)\n" +
         "- the primary network PORT(s)\n" +
         "- the SteamCMD DEDICATED-SERVER app id (from a `steamcmd +app_update <id>` command), if it's a Steam game\n" +
-        "- a server-ready LOG LINE, if documented\n\n" +
+        "- a server-ready LOG LINE, if documented\n" +
+        "- whether a Steam account that OWNS the game is required to download the server (vs an anonymous " +
+        "download) — check the Steam page / setup docs for whether it's a paid game whose server ships with it\n\n" +
         "How to work:\n" +
         "- Run SEVERAL targeted searches, not one: the official site/wiki, the Steam page, \"how to run <game> " +
         "dedicated server linux\", the specific launch command or script name.\n" +

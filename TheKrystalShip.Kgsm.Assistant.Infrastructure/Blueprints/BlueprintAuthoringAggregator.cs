@@ -130,6 +130,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             {
                 BlueprintFeasibility.NotSelfHostable => $"\"{game}\" doesn't appear to be self-hostable — there's no dedicated/community server for it.",
                 BlueprintFeasibility.NoNativeLinuxServer => $"\"{game}\" doesn't have a native Linux dedicated server that I can set up automatically.",
+                BlueprintFeasibility.RequiresSteamAccount => $"\"{game}\"'s server files download only through a Steam account that owns the game, so I can't automatically download and test-run it to confirm a working config. You can still add it manually with an account that owns \"{game}\".",
                 _ => $"I couldn't find enough online to confirm \"{game}\" can be self-hosted on Linux.",
             };
             await StashAsync(game, null, findings, [], BlueprintAuthoringOutcome.NotFeasible, reason, null, cancellationToken);

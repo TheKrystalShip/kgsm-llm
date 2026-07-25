@@ -18,6 +18,12 @@ public enum BlueprintFeasibility
     /// both out of scope for v1).</summary>
     NoNativeLinuxServer,
 
+    /// <summary>A native-Linux server exists, but its files download only through a Steam account that
+    /// OWNS the game (not the anonymous SteamCMD login the autonomous test-install uses). The blueprint
+    /// can't be empirically verified without those credentials, so authoring stops and the requirement is
+    /// surfaced honestly rather than failing opaquely at the download.</summary>
+    RequiresSteamAccount,
+
     /// <summary>Research turned up nothing usable (no sources, or nothing conclusive in what was fetched).
     /// Treated the same as infeasible — the pipeline never proceeds on a guess.</summary>
     Inconclusive,

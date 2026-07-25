@@ -73,6 +73,20 @@ public sealed class LlmBlueprintSynthesizerTests
         findings.Should().BeNull();
     }
 
+    [Fact]
+    public async Task RequiresOwnedSteamAccount_SurfacesAsAFeasibilityStop_BeforeAnyDraft()
+    {
+        ModelReturns("""
+        { "self_hostable": true, "native_linux_server": true, "requires_steam_account": true }
+        """);
+
+        var findings = await Sut().SynthesizeAsync("Starbound",
+            Page("https://guide.example/starbound", "You must own Starbound on Steam; steamcmd +login <username> is required."));
+
+        findings!.Feasibility.Should().Be(BlueprintFeasibility.RequiresSteamAccount);
+        findings.Fields.Should().BeEmpty("an account-gated game stops before field extraction — nothing to draft");
+    }
+
     private static string? Field(BlueprintResearchFindings findings, string name) =>
         findings.Fields.FirstOrDefault(f => f.Name == name)?.Value;
 }

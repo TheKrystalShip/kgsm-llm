@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Blueprint authoring detects when a game's server files require a Steam account that OWNS the game
+  (e.g. Starbound) and stops with an honest, specific reason instead of failing opaquely at the
+  anonymous test-install. Research/synthesis infers the requirement from signals (the docs say you must
+  own the game, a `+login <username>` steamcmd command, or the server downloading under the paid game's
+  own app id) — this is a warning that gates the install, not a written blueprint value, so reasonable
+  inference is allowed here (a false positive only declines a game the user can still add manually). New
+  `BlueprintFeasibility.RequiresSteamAccount`; the user-facing outcome says the game needs an owning
+  account and can be added manually. A deterministic phrase gate in the regex extractor catches it on the
+  fallback path too.
+
 ### Changed
 - Blueprint field synthesis maps a documented world/save NAME or data/install PATH onto KGSM's
   `$instance_*` runtime placeholders in `executable_arguments` (`$instance_level_name`,

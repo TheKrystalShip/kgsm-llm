@@ -141,6 +141,20 @@ public sealed class BlueprintResearchAggregatorTests
     }
 
     [Fact]
+    public async Task SteamAccountRequiredPhrase_StopsWithThatFeasibility_ViaExtractorFallback()
+    {
+        // Synthesis is stubbed to null (default), so the deterministic extractor runs and its phrase gate
+        // catches the ownership requirement before extracting fields.
+        SearchReturns("https://guide.example/starbound");
+        PageReturns("https://guide.example/starbound",
+            "Starbound has a Linux dedicated server. You need a Steam account that owns the game to download the server files.");
+
+        var findings = await Sut().ResearchAsync("Starbound");
+
+        findings.Feasibility.Should().Be(BlueprintFeasibility.RequiresSteamAccount);
+    }
+
+    [Fact]
     public async Task ChmodLineOnly_DoesNotFabricateExecutableArguments()
     {
         SearchReturns("https://guide.example/x");

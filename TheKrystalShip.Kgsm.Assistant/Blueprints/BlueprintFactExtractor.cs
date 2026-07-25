@@ -71,6 +71,13 @@ internal static class BlueprintFactExtractor
         "linux is not supported",
     ];
 
+    private static readonly string[] RequiresSteamAccountPhrases =
+    [
+        "steam account that owns", "account that owns the game", "must own the game",
+        "requires you to own", "own the game on steam", "not available anonymously",
+        "anonymous login will not work", "cannot be downloaded anonymously",
+    ];
+
     private static readonly string[] NativeLinuxSignals =
     [
         "linux dedicated server", "linux server", "steamcmd", "dedicated server for linux",
@@ -96,6 +103,11 @@ internal static class BlueprintFactExtractor
             return new BlueprintResearchFindings(
                 BlueprintFeasibility.NoNativeLinuxServer, null, [], urls,
                 $"Sources for \"{game}\" did not confirm a native-Linux dedicated server.");
+
+        if (Array.Exists(RequiresSteamAccountPhrases, combinedLower.Contains))
+            return new BlueprintResearchFindings(
+                BlueprintFeasibility.RequiresSteamAccount, null, [], urls,
+                $"Sources for \"{game}\" indicate its server files require a Steam account that owns the game.");
 
         var fields = new List<BlueprintResearchField>();
         foreach (var (url, text) in pages)

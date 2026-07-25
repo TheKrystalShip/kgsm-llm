@@ -53,7 +53,13 @@ public sealed class AgenticBlueprintResearch : IBlueprintResearch
         "fetch_url(url).\n\n" +
         "Gather, from real pages:\n" +
         "- the native Linux server LAUNCH script/binary (the file run directly on Linux — NOT a Docker " +
-        "entrypoint like entry.sh; look past containerization to the script the game itself ships)\n" +
+        "entrypoint like entry.sh; look past containerization to the script the game itself ships). The " +
+        "exact EXECUTABLE FILENAME is essential — hunt for it specifically (e.g. DedicatedServer, " +
+        "srcds_run, StartServer.sh, the .x86_64 binary; for a Java server it is run via `java -jar <file>`, " +
+        "for a .NET server via `dotnet <file>.dll`). If you have the app id and port but not the launch " +
+        "file, keep searching — the file is the one fact the config can't be built without. Prefer the " +
+        "game's OWN launch/wrapper script (start_server.sh, _launch.sh) over the raw binary — the script " +
+        "sets up the environment (LD_LIBRARY_PATH) the binary needs.\n" +
         "- the exact command-line ARGUMENTS to launch it headless (non-interactively)\n" +
         "- the primary network PORT(s)\n" +
         "- the SteamCMD DEDICATED-SERVER app id (from a `steamcmd +app_update <id>` command), if it's a Steam game\n" +

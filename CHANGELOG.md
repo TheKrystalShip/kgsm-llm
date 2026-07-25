@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Blueprint authoring draft-quality hardening, from a 7-game validation batch (all draft/research
+  quality — the empirical boot-verify backstop already prevented any bad blueprint from being kept):
+  - **Fabricated launch-arg variables are rejected.** Synthesis sometimes invented `$SERVER_PORT` /
+    `$SERVER_NAME` / `$SERVER_PASSWORD` — KGSM defines no such variables, so they resolved to empty at
+    runtime and the server never booted. The prompt now forbids any `$…` token outside the three real
+    `$instance_*` placeholders, and a deterministic guard drops the whole `executable_arguments` string
+    if it still references a foreign variable (the server boots on its defaults instead of broken flags).
+  - **Interpreter-launched servers are modelled.** A Java server's executable is `java` with
+    `-jar <file>` in the arguments (not the `.jar`); a .NET server's is `dotnet` with `<file>.dll`.
+  - **`executable_subdirectory` and `client_steam_app_id` are extracted** — a binary that runs from a
+    subfolder (e.g. `bin/x64/factorio`) is split into subdirectory + filename instead of crammed into
+    the executable field, and the client/store app id is captured alongside the dedicated-server id.
+  - **Arguments stay minimal and portable** — the prompt drops cosmetic flags and absolute host paths
+    (e.g. `/opt/<game>/server-settings.json`) that won't exist on a fresh install.
+  - **`requires_steam_account` no longer false-positives.** A different dedicated-server app id from the
+    client id means a free standalone server app exists → ownership is NOT required; generic "you must
+    own the game to play" prose about the client no longer declines an anonymously-installable server
+    (both the synthesis rule and the deterministic-fallback phrase gate).
+  - **The game's own wrapper launch script is preferred over the raw binary.** When a game ships both a
+    wrapper (e.g. `start_server.sh`, `_launch.sh`) and a raw binary (e.g. `valheim_server.x86_64`), the
+    script is the executable — it sets up the runtime (LD_LIBRARY_PATH, working dir) the binary needs.
+    (This is the same "look past the wrapper" instinct as the Docker-entrypoint exclusion, but inverted:
+    a Docker `entry.sh` is still excluded; the game's own native launcher is preferred.)
+  - **The agentic researcher hunts the server executable filename as a first-class goal** (a run that
+    found the app id and port but not the launch file previously produced no draft).
+  - **Slugs match the catalog convention** (`abioticfactor`, `corekeeper` — concatenated, no hyphens),
+    so the existence-guard recognises an already-present multi-word game instead of drafting a duplicate.
+
 ### Added
 - Blueprint authoring detects when a game's server files require a Steam account that OWNS the game
   (e.g. Starbound) and stops with an honest, specific reason instead of failing opaquely at the

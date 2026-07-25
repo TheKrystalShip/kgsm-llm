@@ -87,6 +87,91 @@ public sealed class LlmBlueprintSynthesizerTests
         findings.Fields.Should().BeEmpty("an account-gated game stops before field extraction — nothing to draft");
     }
 
+    [Fact]
+    public async Task FabricatedNonInstancePlaceholderInArgs_IsDropped_ButValidFieldsSurvive()
+    {
+        // The model invented $SERVER_PORT (KGSM defines no such variable → it resolves to empty at
+        // runtime and the server never binds). The whole arg string is unreliable → dropped; the server
+        // boots on its defaults. The genuinely-valid fields (executable, app id) are unaffected.
+        const string url = "https://guide.example/valheim";
+        ModelReturns($$"""
+        {
+          "self_hostable": true, "native_linux_server": true,
+          "executable_file": "valheim_server.x86_64", "executable_file_source": "{{url}}",
+          "executable_arguments": "-port \"$SERVER_PORT\" -world $instance_level_name", "executable_arguments_source": "{{url}}",
+          "steam_app_id": "896660", "steam_app_id_source": "{{url}}"
+        }
+        """);
+
+        var findings = await Sut().SynthesizeAsync("Valheim",
+            Page(url, "Run valheim_server.x86_64 -port <PORT> -world [World]. steamcmd +app_update 896660."));
+
+        findings!.Feasibility.Should().Be(BlueprintFeasibility.Feasible);
+        findings.Fields.Should().NotContain(f => f.Name == "executable_arguments",
+            "a fabricated $SERVER_PORT makes the whole arg string resolve-to-empty at runtime");
+        Field(findings, "executable_file").Should().Be("valheim_server.x86_64");
+        Field(findings, "steam_app_id").Should().Be("896660");
+    }
+
+    [Fact]
+    public async Task InstancePlaceholdersOnly_InArgs_PassTheForeignPlaceholderGuard()
+    {
+        const string url = "https://guide.example/necesse";
+        ModelReturns($$"""
+        {
+          "self_hostable": true, "native_linux_server": true,
+          "executable_file": "StartServer-nogui.sh", "executable_file_source": "{{url}}",
+          "executable_arguments": "-world $instance_level_name -localdir $instance_saves_dir", "executable_arguments_source": "{{url}}"
+        }
+        """);
+
+        var findings = await Sut().SynthesizeAsync("Necesse",
+            Page(url, "Run StartServer-nogui.sh -world [name] -localdir [dir]."));
+
+        Field(findings!, "executable_arguments").Should().Be("-world $instance_level_name -localdir $instance_saves_dir");
+    }
+
+    [Fact]
+    public async Task JavaInterpreterShape_ReportsInterpreterAsExecutable_JarInArgs()
+    {
+        const string url = "https://guide.example/mc";
+        ModelReturns($$"""
+        {
+          "self_hostable": true, "native_linux_server": true,
+          "executable_file": "java", "executable_file_source": "{{url}}",
+          "executable_arguments": "-Xmx4G -jar server.jar nogui", "executable_arguments_source": "{{url}}"
+        }
+        """);
+
+        var findings = await Sut().SynthesizeAsync("Minecraft",
+            Page(url, "Start the server with: java -Xmx4G -jar server.jar nogui"));
+
+        Field(findings!, "executable_file").Should().Be("java", "an interpreter-launched server runs THROUGH java, which is the executable");
+        Field(findings!, "executable_arguments").Should().Be("-Xmx4G -jar server.jar nogui");
+    }
+
+    [Fact]
+    public async Task ExecutableSubdirectory_AndClientAppId_AreExtracted()
+    {
+        const string url = "https://guide.example/factorio";
+        ModelReturns($$"""
+        {
+          "self_hostable": true, "native_linux_server": true,
+          "executable_file": "factorio", "executable_file_source": "{{url}}",
+          "executable_subdirectory": "bin/x64", "executable_subdirectory_source": "{{url}}",
+          "steam_app_id": null,
+          "client_steam_app_id": "427520", "client_steam_app_id_source": "{{url}}"
+        }
+        """);
+
+        var findings = await Sut().SynthesizeAsync("Factorio",
+            Page(url, "Run bin/x64/factorio to start the server. Its Steam app id is 427520."));
+
+        Field(findings!, "executable_file").Should().Be("factorio", "the subdirectory is split out, not crammed into the filename");
+        Field(findings!, "executable_subdirectory").Should().Be("bin/x64");
+        Field(findings!, "client_steam_app_id").Should().Be("427520");
+    }
+
     private static string? Field(BlueprintResearchFindings findings, string name) =>
         findings.Fields.FirstOrDefault(f => f.Name == name)?.Value;
 }

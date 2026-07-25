@@ -42,8 +42,27 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
         "Do NOT report a Docker/container entrypoint (e.g. entry.sh, docker-entrypoint.sh, or a start script " +
         "defined inside a Dockerfile) as the executable — look past containerization wrappers to the native " +
         "launch script/binary the game itself ships.\n" +
+        "- executable_file is the thing you RUN. Some servers run THROUGH an interpreter — report the " +
+        "interpreter as executable_file and put the artifact in executable_arguments:\n" +
+        "    * a Java server (a .jar): executable_file is \"java\", and \"-jar <thefile>.jar\" goes in " +
+        "executable_arguments — NOT the .jar as executable_file.\n" +
+        "    * a .NET server (a .dll): executable_file is \"dotnet\", and \"<thefile>.dll\" goes in " +
+        "executable_arguments — NOT the .dll as executable_file.\n" +
+        "  Otherwise executable_file is the native script/binary run directly (e.g. StartServer.sh, " +
+        "srv.x86_64, DedicatedServer).\n" +
+        "- PREFER THE GAME'S OWN LAUNCH SCRIPT over the raw binary. When the game ships a wrapper script " +
+        "(e.g. start_server.sh, _launch.sh, start_server_bepinex.sh) AND a raw binary (e.g. " +
+        "valheim_server.x86_64, CoreKeeperServer.x86_64), the SCRIPT is executable_file — it sets up the " +
+        "runtime the binary needs (exports LD_LIBRARY_PATH, cd's into the install dir, sets env). Running " +
+        "the raw binary directly usually fails to load its bundled libraries. Use the raw binary ONLY when " +
+        "the docs show it run directly with no wrapper script present. (This is still NOT a Docker " +
+        "entrypoint — a Docker entry.sh stays excluded.)\n" +
+        "- executable_subdirectory: if the executable lives in a subfolder of the install dir (e.g. the docs " +
+        "run \"bin/x64/factorio\"), put the SUBFOLDER (\"bin/x64\") here and ONLY the filename (\"factorio\") " +
+        "in executable_file. If the executable sits at the install root, use null.\n" +
         "- executable_arguments must be the flags that launch the server HEADLESS / non-interactively (so it " +
-        "boots and listens without waiting for keyboard input).\n" +
+        "boots and listens without waiting for keyboard input). Keep them MINIMAL: only the flags the docs " +
+        "show are needed to launch and listen. Omit cosmetic/optional flags.\n" +
         "- executable_arguments runs under KGSM, which substitutes these placeholders at server-creation " +
         "time — USE them instead of a literal path/name or a doc placeholder like [World], <name>, or " +
         "YOUR_SAVE:\n" +
@@ -51,21 +70,30 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
         "save NAME)\n" +
         "    $instance_saves_dir   = absolute path to the saves/data directory\n" +
         "    $instance_install_dir = absolute path to the server's install directory\n" +
-        "  Keep every other documented flag and value exactly as the page shows it. Examples: a page's " +
-        "\"-world <SaveName>\" becomes \"-world $instance_level_name\"; \"--start-server /path/to/save\" " +
-        "becomes \"--start-server $instance_saves_dir/$instance_level_name\". Only substitute a KGSM " +
-        "placeholder for a name/path the docs clearly leave for the user to fill in — never invent flags.\n" +
+        "  These three are the ONLY variables that exist. NEVER write any other $VARIABLE — not " +
+        "$SERVER_PORT, $SERVER_NAME, $SERVER_PASSWORD, $PORT, or anything else: KGSM does not define them, " +
+        "so they resolve to EMPTY and the server fails to boot. For a value the docs leave for the user " +
+        "(a port, a server name, a password), write a concrete literal from the docs (e.g. \"-port 2456\") " +
+        "or OMIT that optional flag entirely. Do NOT include an absolute host path that won't exist on a " +
+        "fresh install (e.g. /opt/<game>/server-settings.json) — use a $instance_* path or omit the flag. " +
+        "If the executable is a wrapper SCRIPT that reads its own config, prefer EMPTY arguments unless the " +
+        "docs clearly show flags it accepts. Examples: \"-world <SaveName>\" becomes " +
+        "\"-world $instance_level_name\"; \"--start-server /path/to/save\" becomes " +
+        "\"--start-server $instance_saves_dir/$instance_level_name\". Never invent flags.\n" +
         "- steam_app_id is the DEDICATED SERVER app id (the id used in a `steamcmd +app_update <id>` command), " +
-        "NOT the client/game app id from a store page.\n" +
+        "NOT the client/game app id from a store page. client_steam_app_id is the CLIENT/game app id players " +
+        "buy and launch to connect (the store-page id), when the page states it; else null. If the game is " +
+        "not installed through SteamCMD at all, use null for steam_app_id.\n" +
         "- requires_steam_account is a WARNING (it decides whether to even attempt an install), not a " +
-        "blueprint value — so here you MAY reasonably infer it, unlike the fields above. Set it true when " +
-        "the server files download only through a Steam account that OWNS the game. Signals: the docs say " +
-        "you must own/buy the game to run a server; the steamcmd command logs in with a personal account " +
-        "(`+login <username>`) rather than `+login anonymous`; or the server is downloaded with the SAME " +
-        "Steam app id as the paid game itself (a server that ships inside the game, rather than a separate " +
-        "free dedicated-server app, needs ownership). If those signals are present, set true even if no " +
-        "single sentence states it outright. Set false when anonymous SteamCMD is shown to work. This " +
-        "matters because the automated test-install uses anonymous login.\n" +
+        "blueprint value — so here you MAY reasonably infer it, unlike the fields above. Set it true ONLY " +
+        "when the SERVER DOWNLOAD itself needs an owning account. Strong signals: the steamcmd command logs " +
+        "in with a personal account (`+login <username>`) rather than `+login anonymous`; the docs " +
+        "explicitly say the SERVER files can't be downloaded anonymously; or the server downloads under the " +
+        "SAME app id as the paid client (no separate server app). IMPORTANT: if the DEDICATED-SERVER app id " +
+        "is DIFFERENT from the client app id, a free standalone dedicated-server app exists → ownership is " +
+        "NOT required → set false. Generic 'you must own the game to play' prose about the CLIENT is NOT " +
+        "sufficient on its own. When in doubt, set false — the automated test-install uses anonymous login " +
+        "and a false 'true' wrongly declines a game that would actually install.\n" +
         "- For every non-null field, set its matching *_source to the EXACT page URL (copied from the list the " +
         "user gives you) that stated it. If you cannot cite a provided URL for a value, use null for the value.\n\n" +
         "JSON shape (use exactly these keys):\n" +
@@ -74,9 +102,11 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
         "  \"native_linux_server\": true|false|null,\n" +
         "  \"requires_steam_account\": true|false|null,\n" +
         "  \"executable_file\": string|null, \"executable_file_source\": string|null,\n" +
+        "  \"executable_subdirectory\": string|null, \"executable_subdirectory_source\": string|null,\n" +
         "  \"executable_arguments\": string|null, \"executable_arguments_source\": string|null,\n" +
         "  \"ports\": string|null, \"ports_source\": string|null,\n" +
         "  \"steam_app_id\": string|null, \"steam_app_id_source\": string|null,\n" +
+        "  \"client_steam_app_id\": string|null, \"client_steam_app_id_source\": string|null,\n" +
         "  \"startup_success_regex\": string|null, \"startup_success_regex_source\": string|null\n" +
         "}";
 
@@ -129,9 +159,11 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
 
             var fields = new List<BlueprintResearchField>();
             AddField(fields, root, "executable_file", urls, combined, requireInText: true);
-            AddField(fields, root, "executable_arguments", urls, combined, requireInText: false);
+            AddField(fields, root, "executable_subdirectory", urls, combined, requireInText: true);
+            AddField(fields, root, "executable_arguments", urls, combined, requireInText: false, normalize: RejectForeignPlaceholders);
             AddField(fields, root, "ports", urls, combined, requireInText: false, normalize: NormalizePort);
             AddField(fields, root, "steam_app_id", urls, combined, requireInText: true, normalize: NormalizeDigits);
+            AddField(fields, root, "client_steam_app_id", urls, combined, requireInText: true, normalize: NormalizeDigits);
             AddField(fields, root, "startup_success_regex", urls, combined, requireInText: false);
 
             // The one strictly-required native field: if synthesis couldn't source it, hand off to the
@@ -240,5 +272,25 @@ public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
     {
         var m = Regex.Match(v, @"\d{3,8}");
         return m.Success ? m.Value : string.Empty;
+    }
+
+    // KGSM defines exactly these launch-time variables; everything else in a $token is a hallucination
+    // that resolves to an empty string at runtime and breaks the boot.
+    private static readonly Regex DollarToken = new(@"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", RegexOptions.Compiled);
+
+    /// <summary>Guards <c>executable_arguments</c>: if the value references any <c>$VARIABLE</c> other than
+    /// the real <c>$instance_*</c> placeholders (the model sometimes invents <c>$SERVER_PORT</c> etc., which
+    /// KGSM never substitutes → they resolve to empty and the server fails to boot), the whole argument
+    /// string is unreliable, so it is dropped (returns empty → <see cref="AddField"/> omits the field, and
+    /// the server boots on its defaults instead of with broken flags). A clean value passes through
+    /// unchanged.</summary>
+    private static string RejectForeignPlaceholders(string v)
+    {
+        foreach (Match m in DollarToken.Matches(v))
+        {
+            if (!m.Groups[1].Value.StartsWith("instance_", StringComparison.Ordinal))
+                return string.Empty;
+        }
+        return v;
     }
 }

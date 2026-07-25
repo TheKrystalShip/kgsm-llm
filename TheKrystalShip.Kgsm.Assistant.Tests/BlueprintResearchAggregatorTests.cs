@@ -155,6 +155,24 @@ public sealed class BlueprintResearchAggregatorTests
     }
 
     [Fact]
+    public async Task GenericMustOwnClientPhrase_DoesNotFalselyStop_WhenServerDownloadsAnonymously()
+    {
+        // A page can say "you must own the game to play" (about the CLIENT) while the SERVER downloads
+        // anonymously under its own app id. The deterministic fallback can't compare app ids, so its
+        // phrase gate must be narrow enough not to decline a game that would actually install.
+        SearchReturns("https://guide.example/romestead");
+        PageReturns("https://guide.example/romestead",
+            "Romestead has a Linux dedicated server. You must own the game to play. Install the server:\n" +
+            "steamcmd +login anonymous +app_update 4763510 validate +quit\n" +
+            "Then run ./Server.sh. It listens on port 8050.");
+
+        var findings = await Sut().ResearchAsync("Romestead");
+
+        findings.Feasibility.Should().NotBe(BlueprintFeasibility.RequiresSteamAccount,
+            "a client-ownership phrase must not gate a server that downloads anonymously");
+    }
+
+    [Fact]
     public async Task ChmodLineOnly_DoesNotFabricateExecutableArguments()
     {
         SearchReturns("https://guide.example/x");

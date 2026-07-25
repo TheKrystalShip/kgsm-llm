@@ -325,8 +325,10 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         var provenance = new List<BlueprintFieldProvenance>
         {
             new("executable_file", Value("executable_file"), Value("executable_file") is null ? null : Source("executable_file")),
+            new("executable_subdirectory", Value("executable_subdirectory"), Value("executable_subdirectory") is null ? null : Source("executable_subdirectory")),
             new("executable_arguments", Value("executable_arguments"), Value("executable_arguments") is null ? null : Source("executable_arguments")),
             new("steam_app_id", Value("steam_app_id"), Value("steam_app_id") is null ? null : Source("steam_app_id")),
+            new("client_steam_app_id", Value("client_steam_app_id"), Value("client_steam_app_id") is null ? null : Source("client_steam_app_id")),
             new("ports", Value("ports"), Value("ports") is null ? null : Source("ports")),
             new("startup_success_regex", Value("startup_success_regex"), Value("startup_success_regex") is null ? null : Source("startup_success_regex")),
         };
@@ -345,6 +347,8 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             ? string.Empty
             : $"{portNumber}/tcp|{portNumber}/udp";
 
+        var clientAppId = int.TryParse(Value("client_steam_app_id"), out var cAppId) ? cAppId : 0;
+
         var draft = new NativeBlueprintDraft
         {
             Name = slug,
@@ -352,9 +356,11 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             Native = new NativeBlueprintNativeDraft
             {
                 ExecutableFile = executableFile,
+                ExecutableSubdirectory = Value("executable_subdirectory") ?? string.Empty,
                 ExecutableArguments = Value("executable_arguments") ?? string.Empty,
                 Ports = ports,
                 SteamAppId = steamAppId,
+                ClientSteamAppId = clientAppId,
                 StartupSuccessRegex = Value("startup_success_regex") ?? string.Empty,
             },
         };
@@ -365,29 +371,23 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     private static List<BlueprintFieldProvenance> ToProvenance(BlueprintResearchFindings findings) =>
         findings.Fields.Select(f => new BlueprintFieldProvenance(f.Name, f.Value, f.SourceUrl)).ToList();
 
-    /// <summary>Lowercase kgsm-safe slug (<c>[a-z0-9]+(?:[-_][a-z0-9]+)*</c>, ≤64 chars) — the same shape
-    /// <c>IBlueprintFiles</c> requires. A game name that reduces to nothing safe (e.g. all punctuation)
-    /// yields an empty string, handled by the caller as "no safe name".</summary>
+    /// <summary>Lowercase kgsm-safe slug — concatenated ASCII alphanumerics, ≤64 chars, matching the
+    /// convention every shipped blueprint follows (<c>abioticfactor</c>, <c>corekeeper</c>,
+    /// <c>dontstarvetogether</c> — no separators). Word boundaries are dropped, not hyphenated, so the
+    /// existence-guard's slug matches the catalog file name for a game that is already present. A game
+    /// name that reduces to nothing safe (e.g. all punctuation) yields an empty string, handled by the
+    /// caller as "no safe name".</summary>
     private static string Slugify(string game)
     {
         var sb = new StringBuilder();
-        var lastWasSeparator = true; // suppress a leading separator
         foreach (var c in game.Trim().ToLowerInvariant())
         {
             if (char.IsAsciiLetterOrDigit(c))
-            {
                 sb.Append(c);
-                lastWasSeparator = false;
-            }
-            else if (!lastWasSeparator)
-            {
-                sb.Append('-');
-                lastWasSeparator = true;
-            }
         }
 
-        var slug = sb.ToString().Trim('-', '_');
-        return slug.Length > 64 ? slug[..64].TrimEnd('-', '_') : slug;
+        var slug = sb.ToString();
+        return slug.Length > 64 ? slug[..64] : slug;
     }
 
     // --- admin stash ---------------------------------------------------------------------------------

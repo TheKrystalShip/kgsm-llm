@@ -71,11 +71,15 @@ internal static class BlueprintFactExtractor
         "linux is not supported",
     ];
 
+    // Deliberately narrow to phrases about the SERVER DOWNLOAD needing an owning account — the
+    // deterministic fallback can't compare server-vs-client app ids, so a generic "you must own the game
+    // to play" (about the CLIENT) must not trip this gate and wrongly decline an anonymously-installable
+    // server. See BlueprintFeasibility.RequiresSteamAccount and the synthesis-path rule.
     private static readonly string[] RequiresSteamAccountPhrases =
     [
-        "steam account that owns", "account that owns the game", "must own the game",
-        "requires you to own", "own the game on steam", "not available anonymously",
-        "anonymous login will not work", "cannot be downloaded anonymously",
+        "not available anonymously", "anonymous login will not work",
+        "cannot be downloaded anonymously", "server files require a steam account",
+        "account that owns the game to download",
     ];
 
     private static readonly string[] NativeLinuxSignals =

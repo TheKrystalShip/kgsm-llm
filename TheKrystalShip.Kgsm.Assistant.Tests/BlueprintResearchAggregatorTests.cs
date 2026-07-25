@@ -94,6 +94,21 @@ public sealed class BlueprintResearchAggregatorTests
     }
 
     [Fact]
+    public async Task LauncherNamedWithoutInvoker_IsStillSourcedAsExecutableFile()
+    {
+        // Necesse's launch script is referenced by name, not as "./…" — the "start/server/launch/run"
+        // name gate lets it through while an unrelated steamcmd.sh in the same doc is ignored.
+        SearchReturns("https://guide.example/necesse");
+        PageReturns("https://guide.example/necesse",
+            "Necesse has a Linux dedicated server. First run steamcmd.sh to download it, then launch the\n" +
+            "server with StartServer-nogui.sh. It opens on port 14159.");
+
+        var findings = await Sut().ResearchAsync("Necesse");
+
+        Field(findings, "executable_file").Should().Be("StartServer-nogui.sh");
+    }
+
+    [Fact]
     public async Task SteamcmdAppUpdate_SourcesTheDedicatedServerAppId()
     {
         SearchReturns("https://guide.example/necesse");

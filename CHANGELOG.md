@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The research fact extractor sources `executable_file` from a launch script/binary that is either
+  invoked explicitly (`./X.sh`, `bash X.sh`, `sh X.sh`) OR named like a launcher
+  (`StartServer-nogui.sh`, `*server*`/`*start*`/`*launch*`/`*run*` + `.sh`/`.x86_64`/`.x64`) — many
+  dedicated-server docs name the script without a `./` prefix. The launcher-name gate keeps an
+  unrelated `steamcmd.sh`/`install.sh` in the same page from being mistaken for it; a wrong pick is
+  still caught by the empirical boot+listen verification.
+
 - The research fact extractor sources `steam_app_id` only from an unambiguous dedicated-server download
   context — a steamcmd `+app_update <id>` command, or text that explicitly names the dedicated/server
   app id. A bare store-page `app/<id>` URL or a plain "App ID: <id>" is no longer matched: that is

@@ -23,9 +23,18 @@ internal static class BlueprintFactExtractor
         @"(?:app_update\s+|(?:dedicated[- ]?server|server)[^\d\n]{0,40}?app\s*id[:\s]+)(\d{3,8})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // A relative launch command for the server binary/script: "./ServerName.sh" / "./server.x86_64".
+    // The server binary/script, when INVOKED: "./ServerName.sh", "bash StartServer.sh", "sh run.sh".
+    // Highest confidence — an explicit invocation is unambiguously the thing you launch.
     private static readonly Regex ExecutableHint = new(
-        @"\.\/([A-Za-z0-9_.\-]+\.(?:sh|x86_64|x64))\b", RegexOptions.Compiled);
+        @"(?:\.\/|\b(?:bash|sh)\s+)([A-Za-z0-9_.\-]+\.(?:sh|x86_64|x64))\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Fallback: a launcher-LOOKING filename mentioned without an explicit invoker (e.g. Necesse's
+    // "StartServer-nogui.sh", referenced by name rather than as "./…"). Gated to names containing
+    // start/server/launch/run so it doesn't grab an unrelated script from the same doc (steamcmd.sh,
+    // install.sh). A wrong pick is still caught downstream by the boot+listen verification.
+    private static readonly Regex ExecutableNameHint = new(
+        @"\b([A-Za-z0-9_.\-]*(?:start|server|launch|run)[A-Za-z0-9_.\-]*\.(?:sh|x86_64|x64))\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // "port 27015" / "ports: 27015" style mentions — a single representative port, not a full range.
     private static readonly Regex PortHint = new(
@@ -93,6 +102,7 @@ internal static class BlueprintFactExtractor
         {
             TryAdd(fields, "steam_app_id", SteamAppId, text, url);
             TryAdd(fields, "executable_file", ExecutableHint, text, url);
+            TryAdd(fields, "executable_file", ExecutableNameHint, text, url); // fallback: launcher-looking name, no explicit invoker
             TryAdd(fields, "ports", PortHint, text, url);
             TryAdd(fields, "executable_arguments", LaunchArgsHint, text, url, clean: CleanArgs);
             TryAddPhrase(fields, "startup_success_regex", StartupReadyPhrases, text, url);

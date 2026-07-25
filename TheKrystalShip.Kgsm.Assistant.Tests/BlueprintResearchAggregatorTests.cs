@@ -94,6 +94,35 @@ public sealed class BlueprintResearchAggregatorTests
     }
 
     [Fact]
+    public async Task SteamcmdAppUpdate_SourcesTheDedicatedServerAppId()
+    {
+        SearchReturns("https://guide.example/necesse");
+        PageReturns("https://guide.example/necesse",
+            "Necesse has a Linux dedicated server. Install it with SteamCMD:\n" +
+            "steamcmd +login anonymous +app_update 1169370 validate +quit\n" +
+            "It listens on port 14159.");
+
+        var findings = await Sut().ResearchAsync("Necesse");
+
+        Field(findings, "steam_app_id").Should().Be("1169370", "the +app_update id is the dedicated-server app id");
+    }
+
+    [Fact]
+    public async Task BareStoreUrl_DoesNotMistakeTheClientAppIdForTheServer()
+    {
+        // A store/steamdb URL carries the CLIENT app id (Necesse client = 1169040). Installing against a
+        // client id is wrong, so with no server-download context the field stays unsourced (→ schema 0).
+        SearchReturns("https://guide.example/necesse");
+        PageReturns("https://guide.example/necesse",
+            "Necesse ships a Linux dedicated server. See the store page: " +
+            "https://store.steampowered.com/app/1169040 for details. It listens on port 14159.");
+
+        var findings = await Sut().ResearchAsync("Necesse");
+
+        findings.Fields.Should().NotContain(f => f.Name == "steam_app_id");
+    }
+
+    [Fact]
     public async Task ChmodLineOnly_DoesNotFabricateExecutableArguments()
     {
         SearchReturns("https://guide.example/x");

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The research fact extractor sources `steam_app_id` only from an unambiguous dedicated-server download
+  context — a steamcmd `+app_update <id>` command, or text that explicitly names the dedicated/server
+  app id. A bare store-page `app/<id>` URL or a plain "App ID: <id>" is no longer matched: that is
+  typically the CLIENT app id (installing against which is wrong), so the field stays unsourced (the
+  schema's `0` = "not a Steam download") rather than carrying a misattributed client id.
 - Blueprint research reaches the web provider (`IWebSearch`) directly instead of the local-index-first
   `ISearch` aggregator. Authoring a blueprint needs fetchable third-party pages (an official server doc,
   a setup guide); a local-first search answered the "how do I host X" query from this host's own

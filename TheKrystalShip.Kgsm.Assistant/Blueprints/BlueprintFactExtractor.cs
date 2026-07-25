@@ -13,10 +13,15 @@ namespace TheKrystalShip.Kgsm.Assistant.Blueprints;
 /// </summary>
 internal static class BlueprintFactExtractor
 {
-    // A Steam App ID as it commonly appears in setup docs: "App ID: 1234567", "app/1234567" (a
-    // steamdb/store URL), or a steamcmd invocation ("+app_update 1234567").
+    // The DEDICATED-SERVER Steam App ID, taken ONLY from an unambiguous server-download context: a
+    // steamcmd "+app_update <id>" command (the id steamcmd pulls the server files with), or text that
+    // explicitly ties the id to the dedicated/server app. A bare store-page "app/<id>" URL or a plain
+    // "App ID: <id>" is deliberately NOT matched — that is typically the CLIENT app id (e.g. Terraria's
+    // 105600, Necesse's client 1169040), and a client id is the wrong thing to SteamCMD-install; leaving
+    // it unsourced (→ the schema's 0 = "not a Steam download") is the honest, safe default.
     private static readonly Regex SteamAppId = new(
-        @"(?:app(?:\/|\s*id[:\s]+|_update\s+))(\d{3,8})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"(?:app_update\s+|(?:dedicated[- ]?server|server)[^\d\n]{0,40}?app\s*id[:\s]+)(\d{3,8})",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // A relative launch command for the server binary/script: "./ServerName.sh" / "./server.x86_64".
     private static readonly Regex ExecutableHint = new(

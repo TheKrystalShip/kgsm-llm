@@ -731,6 +731,39 @@ public sealed class BlueprintAuthoringAggregatorTests
     }
 
     [Fact]
+    public async Task ReviseAsync_ValidYaml_ReturnsEditableDraftReady_AndNeverInstalls()
+    {
+        // Conversational refinement of an open draft: re-validate + re-render, hand back a fresh editable
+        // draft. No test-install (that's still Save/FinalizeAsync).
+        _files.TryParse(Arg.Any<string>()).Returns(FileOpResult<NativeBlueprintDraft>.Ok(ParsedDraft()));
+        _files.Render(Arg.Any<NativeBlueprintDraft>())
+            .Returns("name: terraria\nruntime: native\nmetadata:\n  max_players: 8\n");
+
+        var result = await Create().ReviseAsync("name: terraria\nmetadata:\n  max_players: 8\n");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.DraftReady);
+        result.Data.Editable.Should().BeTrue();
+        result.Data.DraftYaml.Should().Contain("max_players");
+        result.Data.BlueprintName.Should().Be("terraria");
+        _instances.DidNotReceiveWithAnyArgs().Install(default!);
+        _files.DidNotReceiveWithAnyArgs().Create(default!);
+    }
+
+    [Fact]
+    public async Task ReviseAsync_UnparseableRevision_ComesBackEditable_DraftNotLost()
+    {
+        _files.TryParse(Arg.Any<string>())
+            .Returns(FileOpResult<NativeBlueprintDraft>.Fail(FileOpOutcome.InvalidDraft, "not valid yaml"));
+
+        var result = await Create().ReviseAsync("this: is: broken: yaml");
+
+        result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.DraftReady);
+        result.Data.Editable.Should().BeTrue();
+        result.Data.DraftYaml.Should().Contain("broken"); // the attempted content is handed back, not lost
+        _instances.DidNotReceiveWithAnyArgs().Install(default!);
+    }
+
+    [Fact]
     public async Task FinalizeAsync_UnparseableEdit_ComesBackEditable_NeverInstalls()
     {
         _files.TryParse(Arg.Any<string>())

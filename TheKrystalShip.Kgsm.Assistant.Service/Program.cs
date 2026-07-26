@@ -362,11 +362,11 @@ secured.MapPost("/turn", async (
     {
         await SseTurnWriter.WriteAsync(
             http, assistant, tokens, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds,
-            principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools);
+            principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, request.DraftYaml);
         return Results.Empty;
     }
 
-    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct);
+    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct, request.DraftYaml);
 
     if (result.IsFailure)
     {

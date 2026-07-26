@@ -69,6 +69,12 @@ public static class LlmTools
     // to confirm. See LlmTools.AuthorizedActions for why this needs its own tier.
     public static readonly Tool CreateBlueprint = new("create_blueprint");
 
+    // Updates the blueprint draft the user is currently reviewing in the editor — re-validates the
+    // supplied full YAML and re-shows it as a fresh draft. Offered ONLY on a turn that carries an open
+    // draft (ServerAssistant filters it out otherwise), so the model can act on the current content the
+    // SPA sends rather than fabricating a "changed" draft it has no way to actually mutate.
+    public static readonly Tool ReviseBlueprint = new("revise_blueprint");
+
     // Authorized read (offered only to action-authorized callers — exposes file
     // contents, so gated like the command tier even though it mutates nothing).
     // read_file replaces the old single-purpose view_config_file: it reads any text file
@@ -243,6 +249,12 @@ public static class LlmTools
         "game",
         "The game to add, by its common name (e.g. \"Terraria\", \"Rust\") — not a blueprint slug.");
 
+    private static readonly LlmToolParameter ReviseYaml = new(
+        "revised_yaml",
+        "The COMPLETE updated blueprint YAML — the whole document (the current draft with the requested " +
+        "change applied), not a fragment or a diff. Base it on the open draft's current content shown to " +
+        "you this turn; change only what the user asked for and keep every other field as-is.");
+
     public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
     {
         LlmToolDefinition.Create(GetStatus,
@@ -379,6 +391,25 @@ public static class LlmTools
     };
 
     /// <summary>
+    /// revise_blueprint — authorized + inline like <see cref="AuthorizedActions"/>, but offered ONLY on a
+    /// turn that carries an open draft (its content is injected into that turn), so it is NOT part of
+    /// <see cref="All"/>; <c>ServerAssistant.SelectTools</c> appends it when a draft is present. Kept out of
+    /// the default catalog so the model can't call it with nothing to revise, and so the unfiltered-catalog
+    /// reference identity of <see cref="All"/> holds on an ordinary turn.
+    /// </summary>
+    public static readonly LlmToolDefinition ReviseBlueprintTool =
+        LlmToolDefinition.Create(ReviseBlueprint,
+            "UPDATES the blueprint draft the user is CURRENTLY reviewing in the editor. Use this whenever " +
+            "they ask to change, populate, fix, or add anything to the open draft — a metadata field " +
+            "(min/recommended RAM, max players, disk), a port, the launch args, anything. The draft's " +
+            "current YAML is given to you in THIS turn's context: take it, apply ONLY the requested change " +
+            "(research any values first with search if you need them), and pass the COMPLETE updated YAML " +
+            "as revised_yaml. It re-validates and shows the user the updated draft to review and save — " +
+            "nothing is installed. You have NO other way to change the draft: NEVER say you updated, " +
+            "populated, or added to it unless you called this tool and it succeeded.",
+            ReviseYaml);
+
+    /// <summary>
     /// Every server command — all propose-only (§3.5). The dispatcher STAGES each for
     /// human confirmation; none runs in the agent loop. Descriptions say so explicitly,
     /// so the model narrates "I've proposed…", never "I've done it."
@@ -447,9 +478,11 @@ public static class LlmTools
         StagedCommands.Select(t => t.Tool).ToHashSet();
 
     /// <summary>Tools of the authorized, autonomous (confirm-free) actions; refused for unauthorized
-    /// callers, run inline (never staged) — see <see cref="AuthorizedActions"/>.</summary>
+    /// callers, run inline (never staged) — see <see cref="AuthorizedActions"/>. Includes the
+    /// draft-only <see cref="ReviseBlueprint"/> (offered conditionally, but the same authorized+inline
+    /// tier as create_blueprint when it IS offered).</summary>
     public static readonly IReadOnlySet<Tool> AuthorizedActionTools =
-        AuthorizedActions.Select(t => t.Tool).ToHashSet();
+        AuthorizedActions.Select(t => t.Tool).Append(ReviseBlueprint).ToHashSet();
 
     /// <summary>All valid tool names, for validating client requests against the server catalog.</summary>
     public static IReadOnlySet<Tool> AllToolNames => All.Select(t => t.Tool).ToHashSet();

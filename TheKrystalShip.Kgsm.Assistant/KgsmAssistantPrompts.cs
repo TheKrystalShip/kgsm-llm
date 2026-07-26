@@ -77,7 +77,12 @@ public static class KgsmAssistantPrompts
         "online research and DRAFTS the config in a single step. Call it in the SAME turn the user asks: do " +
         "NOT stop to say you'll go research it and come back, and do NOT run a separate web search or " +
         "re-list the blueprints first (the catalog is already given to you) — calling create_blueprint is " +
-        "what starts the work. When it returns a draft, tell them it's ready to review and save.";
+        "what starts the work. When it returns a draft, tell them it's ready to review and save. Once a " +
+        "draft is open and the user asks to CHANGE it — populate a metadata field (RAM, max players, " +
+        "disk), fix a port, adjust the launch args, anything — you MUST use revise_blueprint: its current " +
+        "YAML is given to you this turn; apply the change and pass the whole updated YAML. That is the ONLY " +
+        "way to edit the draft — you cannot edit it any other way, so NEVER tell the user you updated, " +
+        "populated, or added to the draft unless you actually called revise_blueprint and it succeeded.";
 
     /// <summary>Appended for authorized callers: the propose-only command tools are available.</summary>
     public const string ActionsAllowed =

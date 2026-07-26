@@ -107,6 +107,19 @@ public class ServerAssistant : IServerAssistant
         _logger = logger;
     }
 
+    /// <summary>A turn-specific context block appended to the system prompt when the user is reviewing an
+    /// open blueprint draft: the draft's CURRENT content (edits included — the SPA sends what's in the
+    /// editor) plus the instruction to change it only via revise_blueprint. This is what lets the model
+    /// actually revise a draft — it cannot see the editor otherwise, and tool results aren't replayed into
+    /// later turns' context.</summary>
+    private static string OpenDraftContext(string yaml) =>
+        "\n\nThe user is currently reviewing an OPEN, unsaved blueprint draft in the editor. Its current " +
+        "content is:\n```yaml\n" + yaml.Trim() + "\n```\nIf they ask to change, populate, fix, or add " +
+        "anything to it, call revise_blueprint with the COMPLETE updated YAML (this exact content with only " +
+        "the requested change applied — research values first if needed). That is the ONLY way to edit the " +
+        "draft; never claim you changed it unless revise_blueprint succeeded. If they just ask what it " +
+        "contains, answer from the content above.";
+
     /// <summary>
     /// Two-axis tool selection (§3.2): authorization picks the set the caller MAY
     /// use (read-only vs all), then client-requested subset may narrow it further,
@@ -119,9 +132,16 @@ public class ServerAssistant : IServerAssistant
     /// NOT returned — the error propagates to the caller.
     /// </summary>
     private Result<IReadOnlyList<LlmToolDefinition>> SelectTools(
-        string userPrompt, bool canPerformActions, IReadOnlyList<string>? requestedTools)
+        string userPrompt, bool canPerformActions, IReadOnlyList<string>? requestedTools, bool draftOpen = false)
     {
         var authorized = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+
+        // revise_blueprint is kept OUT of the default catalog (so All keeps its unfiltered-reference
+        // identity and the model can't revise nothing). It's APPENDED only for an authorized caller on a
+        // turn that actually carries an open draft, with authoring enabled — the one situation where there
+        // is a draft to change and its content is injected into this turn's context.
+        if (draftOpen && canPerformActions && _blueprintAuthoringFlags.Available)
+            authorized = authorized.Append(LlmTools.ReviseBlueprintTool).ToArray();
 
         // §D7 omit-when-disabled: the unified `search` tool is offered only when at least one source
         // backs it (RAG enabled and/or a web provider configured). Removed BEFORE the requested-tool
@@ -183,9 +203,11 @@ public class ServerAssistant : IServerAssistant
         bool think = false,
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? openDraftYaml = null)
     {
-        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools);
+        var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
+        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen);
         if (toolResult.IsFailure)
             return AssistantResult.Fail(toolResult.Error!);
 
@@ -196,7 +218,7 @@ public class ServerAssistant : IServerAssistant
         {
             ConversationId = conversationId,
             UserPrompt = userPrompt,
-            SystemPrompt = prompt.Text,
+            SystemPrompt = draftOpen ? prompt.Text + OpenDraftContext(openDraftYaml!) : prompt.Text,
             SystemPromptHash = prompt.TemplateHash,
             Tools = tools,
             Gate = BuildGate(canPerformActions),
@@ -222,9 +244,11 @@ public class ServerAssistant : IServerAssistant
         bool think = false,
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default,
+        string? openDraftYaml = null)
     {
-        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools);
+        var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
+        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen);
         if (toolResult.IsFailure)
         {
             yield return AssistantStreamEvent.Error(toolResult.Error!);
@@ -238,7 +262,7 @@ public class ServerAssistant : IServerAssistant
         {
             ConversationId = conversationId,
             UserPrompt = userPrompt,
-            SystemPrompt = prompt.Text,
+            SystemPrompt = draftOpen ? prompt.Text + OpenDraftContext(openDraftYaml!) : prompt.Text,
             SystemPromptHash = prompt.TemplateHash,
             Tools = tools,
             Gate = BuildGate(canPerformActions),
@@ -675,6 +699,14 @@ public class ServerAssistant : IServerAssistant
                 authored++;
                 return ToolGate.Allow;
             }
+
+            // revise_blueprint: authorized + inline like create_blueprint (SelectTools only offers it on a
+            // draft-bearing turn). Refuse an unauthorized caller as defense in depth; no per-message cap of
+            // its own — a user may refine a draft several times, and the loop-iteration guard bounds runaway.
+            if (call.Name == LlmTools.ReviseBlueprint)
+                return canPerformActions
+                    ? ToolGate.Allow
+                    : ToolGate.Refuse("Refused: you don't have permission to perform server actions.");
 
 
             // search is read-only (open to everyone), but each call adds a loop iteration (and a web

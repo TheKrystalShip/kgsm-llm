@@ -51,7 +51,8 @@ internal static class SseTurnWriter
         bool canPerformActions,
         bool think = false,
         bool autoExecute = false,
-        IReadOnlyList<string>? requestedTools = null)
+        IReadOnlyList<string>? requestedTools = null,
+        string? openDraftYaml = null)
     {
         var response = http.Response;
         response.StatusCode = StatusCodes.Status200OK;
@@ -73,7 +74,7 @@ internal static class SseTurnWriter
         try
         {
             await foreach (var ev in assistant
-                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, autoExecute, requestedTools, ct))
+                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, autoExecute, requestedTools, ct, openDraftYaml))
             {
                 switch (ev.Kind)
                 {

@@ -38,6 +38,16 @@ public interface IBlueprintAuthoring
     /// that won't parse or trips the placeholder guard likewise comes back as an editable DraftReady with an
     /// explanation.</summary>
     Task<ToolResult<BlueprintAuthoringData>> FinalizeAsync(string game, string editedYaml, CancellationToken cancellationToken = default);
+
+    /// <summary>Conversational refinement of an OPEN draft (before it's saved): takes the full revised YAML
+    /// the model produced from the draft the user is reviewing, re-validates it (the same structural parse +
+    /// <c>$instance_*</c>-only placeholder guard as <see cref="FinalizeAsync"/>), and returns a fresh
+    /// <see cref="BlueprintAuthoringOutcome.DraftReady"/> card with the normalized YAML — NO test-install.
+    /// This is what lets the assistant actually change a draft from chat instead of only producing the first
+    /// one; the surface re-stages a Blueprint confirmation from it, exactly like the initial draft. An edit
+    /// that won't parse or trips the guard comes back as an editable DraftReady with an explanation, never a
+    /// hard failure.</summary>
+    Task<ToolResult<BlueprintAuthoringData>> ReviseAsync(string revisedYaml, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Default <see cref="IBlueprintAuthoring"/> for hosts that haven't enabled blueprint
@@ -55,6 +65,9 @@ internal sealed class DisabledBlueprintAuthoring : IBlueprintAuthoring
 
     public Task<ToolResult<BlueprintAuthoringData>> FinalizeAsync(string game, string editedYaml, CancellationToken cancellationToken = default) =>
         Task.FromResult(Disabled(game));
+
+    public Task<ToolResult<BlueprintAuthoringData>> ReviseAsync(string revisedYaml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Disabled("that game"));
 
     private static ToolResult<BlueprintAuthoringData> Disabled(string game)
     {

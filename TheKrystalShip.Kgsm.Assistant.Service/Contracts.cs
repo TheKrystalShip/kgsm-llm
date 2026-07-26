@@ -26,7 +26,13 @@ public sealed record TurnRequest(
     // Sanitised + length-capped server-side; null ⇒ the bare per-user conversation (one running thread),
     // preserving the prior single-context behaviour. On the trusted-relay path the api forwards this as
     // the X-Relay-Conversation-Id header instead of this body field.
-    string? ConversationId = null);
+    string? ConversationId = null,
+    // The CURRENT content of a blueprint draft the user is reviewing in the editor, when this turn carries
+    // one (the SPA sends what's in the Monaco card, edits included). When present, the assistant offers
+    // revise_blueprint and injects this content into the turn so the model can actually change the draft
+    // from chat — the only way to edit it, and what stops it fabricating "I updated the draft". Null on an
+    // ordinary turn. Not identity-bearing; re-validated when a revision is saved.
+    string? DraftYaml = null);
 
 /// <summary>
 /// A tool parameter, as returned by <c>GET /tools</c>.

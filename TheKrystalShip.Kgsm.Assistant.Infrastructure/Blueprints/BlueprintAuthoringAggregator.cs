@@ -154,6 +154,50 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         return await RunFinalizeAsync(ctx, reviewable: true, cancellationToken);
     }
 
+    public Task<ToolResult<BlueprintAuthoringData>> ReviseAsync(
+        string revisedYaml, CancellationToken cancellationToken = default)
+    {
+        // Conversational refinement of an OPEN, unsaved draft: re-validate the model's revised YAML and
+        // hand it straight back as a fresh editable DraftReady — NO test-install (that's still the Save/
+        // FinalizeAsync step). Same structural + placeholder funnel FinalizeAsync uses, so a bad edit is
+        // recoverable in the editor rather than a hard failure. Never throws (mirrors the port contract).
+        if (!_options.Enabled)
+        {
+            var summary = "Automatic blueprint authoring isn't enabled on this host, so I can't revise a draft here.";
+            var subj = new ResultRef(ResourceKind.Blueprint, "blueprint");
+            return Task.FromResult(Envelope(subj, summary, BlueprintAuthoringOutcome.Disabled, "the draft", null, [], null, summary, false));
+        }
+
+        var parsed = _files.TryParse(revisedYaml);
+        if (!parsed.IsOk || parsed.Value is null)
+        {
+            var subj = new ResultRef(ResourceKind.Blueprint, "blueprint");
+            var reason = $"I couldn't read that as a blueprint ({parsed.Message ?? "it isn't valid"}). The draft is unchanged — I left it as it was for you to review.";
+            // Hand the text back editable so the open draft is never lost to a bad revision.
+            return Task.FromResult(Envelope(subj, reason, BlueprintAuthoringOutcome.DraftReady, "the draft", null, [], null, reason, false,
+                draftYaml: revisedYaml, evidence: null, editable: true));
+        }
+
+        var draft = parsed.Value;
+        var slug = draft.Name;
+        var subject = new ResultRef(ResourceKind.Blueprint, slug);
+        var display = draft.Metadata?.DisplayName ?? slug;
+
+        if (HasForeignPlaceholder(draft.Native.ExecutableArguments))
+        {
+            var reason = "The launch arguments use a variable KGSM won't fill in — only $instance_* variables are substituted. Fix it and I'll re-show the draft.";
+            return Task.FromResult(Envelope(subject, reason, BlueprintAuthoringOutcome.DraftReady, display, slug,
+                ProvenanceFromDraft(draft), null, reason, false, draftYaml: revisedYaml, evidence: null, editable: true));
+        }
+
+        // Re-render from the parsed model so the returned YAML is normalized (same shape the first draft
+        // used), then re-show it as an editable draft for the user to review and save.
+        var yaml = _files.Render(draft);
+        var okSummary = $"I've updated the draft for \"{display}\". Review the changes below and save it when you're happy.";
+        return Task.FromResult(Envelope(subject, okSummary, BlueprintAuthoringOutcome.DraftReady, display, slug,
+            ProvenanceFromDraft(draft), null, null, false, draftYaml: yaml, evidence: null, editable: true));
+    }
+
     /// <summary>Everything a <see cref="RunFinalizeAsync"/> run needs from the draft half: the resolved
     /// display name + canonical slug + subject, the launchable draft, its provenance trail, and the raw
     /// research findings (carried through for the admin stash written on a finalize failure).</summary>

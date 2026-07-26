@@ -103,6 +103,8 @@ public class ToolDispatcher : IToolDispatcher
                 return await FetchUrlAsync(call, cancellationToken);
             if (call.Name == LlmTools.CreateBlueprint)
                 return await CreateBlueprintAsync(call, cancellationToken);
+            if (call.Name == LlmTools.ReviseBlueprint)
+                return await ReviseBlueprintAsync(call, cancellationToken);
             if (call.Name == LlmTools.ReadFile)
                 return await ReadFileAsync(call, cancellationToken);
             if (call.Name == LlmTools.ListFiles)
@@ -236,6 +238,33 @@ public class ToolDispatcher : IToolDispatcher
                 "Drafted a starting config and shown it to the user in an editor to review and edit. NOTHING is " +
                 "installed yet — the test-install runs only when they save it. Tell them to review/tweak the " +
                 "config and save it to have you test-run and verify it; do NOT claim the game is added yet.",
+                ToolResultCard.From(result));
+        }
+
+        return new ToolOutput(result.Summary, ToolResultCard.From(result));
+    }
+
+    private async Task<ToolOutput> ReviseBlueprintAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var revisedYaml = call.Arg("revised_yaml");
+        if (string.IsNullOrWhiteSpace(revisedYaml))
+            return "Error: revise_blueprint needs the complete updated YAML in 'revised_yaml'.";
+
+        // Same staging as create_blueprint: a successful revision is a fresh editable draft — re-stage a
+        // Blueprint confirmation carrying the new YAML (superseding the prior draft's token) and hand back
+        // the updated card. The user's Save still runs the test-install/verify (FinalizeAsync).
+        var result = await _blueprintAuthoring.ReviseAsync(revisedYaml, cancellationToken);
+        var data = result.Data;
+        if (data is not null && data.Outcome == BlueprintAuthoringOutcome.DraftReady && data.DraftYaml is not null)
+        {
+            _confirmations.Stage(new PendingConfirmation(
+                ConfirmationKind.Blueprint, data.BlueprintName ?? data.Game,
+                InstanceName: data.Game, ConfigValue: data.DraftYaml));
+
+            return new ToolOutput(
+                "Applied the change and re-showed the updated draft in the editor. NOTHING is installed yet — " +
+                "the test-install runs only when they save it. Tell them what you changed and to review/save; " +
+                "do NOT claim the game is added yet.",
                 ToolResultCard.From(result));
         }
 

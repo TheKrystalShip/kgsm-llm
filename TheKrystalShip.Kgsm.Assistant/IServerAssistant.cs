@@ -145,7 +145,12 @@ public interface IServerAssistant
         bool think = false,
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        // The current content of a blueprint draft the user is reviewing in the editor, when this turn
+        // carries one (the SPA sends it). Present ⇒ revise_blueprint is offered and the draft is injected
+        // into this turn's context so the model can change it. Last param (after ct) to keep every existing
+        // positional caller/mock unshifted.
+        string? openDraftYaml = null);
 
     /// <summary>
     /// Streaming counterpart to <see cref="RunAsync"/>: same policy (tool offering, gate, blast
@@ -163,7 +168,10 @@ public interface IServerAssistant
         bool think = false,
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        // The current content of an open blueprint draft this turn carries (see RunAsync). Last param to
+        // keep existing positional callers unshifted.
+        string? openDraftYaml = null);
 
     /// <summary>
     /// Executes a previously-staged destructive operation after a human has confirmed

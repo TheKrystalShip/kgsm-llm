@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The assistant can now REVISE an open blueprint draft from chat (`revise_blueprint`).** Previously the
+  only blueprint tool was `create_blueprint` (the initial draft); when a user asked to change or populate a
+  draft ("populate the metadata"), the model had no way to do it and would falsely claim it had — a
+  fabrication. A new `revise_blueprint` tool takes the complete updated YAML, re-validates it through the
+  same structural + `$instance_*` placeholder funnel as finalize, and re-shows a fresh editable draft (no
+  test-install). The turn now carries the draft's CURRENT content (the SPA sends what's in the editor, edits
+  included) injected into the model's context, so it revises the actual content the user sees rather than a
+  stale copy — tool results aren't replayed into later turns, so this is the only way the model can see the
+  draft. `revise_blueprint` is offered ONLY on a turn that carries an open draft (authorized callers,
+  authoring enabled), kept out of the default catalog. The prompt makes the anti-fabrication rule explicit:
+  the model must never claim it changed the draft unless `revise_blueprint` actually succeeded.
+
 ### Changed
 - **Assistant now drafts a missing-game blueprint in one turn instead of stalling.** Asked to add a
   game the catalog lacks, the model would run a manual `search`/`list_blueprints`, announce "I'll go

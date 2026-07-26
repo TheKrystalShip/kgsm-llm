@@ -53,16 +53,45 @@ public class ServerAssistantTests
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>
     private async Task<AgentTurn> CaptureTurnAsync(
         bool canPerformActions, SearchOptions? search = null, FetchOptions? fetch = null,
-        BlueprintAuthoringFlags? blueprint = null)
+        BlueprintAuthoringFlags? blueprint = null, string? draft = null)
     {
         AgentTurn? captured = null;
         _agent.RunAsync(Arg.Do<AgentTurn>(t => captured = t), Arg.Any<CancellationToken>())
             .Returns(Result.Success(new AgentRunResult("ok", null)));
 
-        await Create(search, fetch, blueprint).RunAsync(Conversation, "do it", canPerformActions);
+        await Create(search, fetch, blueprint).RunAsync(Conversation, "do it", canPerformActions, openDraftYaml: draft);
 
         captured.Should().NotBeNull();
         return captured!;
+    }
+
+    [Fact]
+    public async Task ReviseBlueprint_IsOffered_WhenADraftIsOpen_AndAuthorized()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: true,
+            blueprint: new BlueprintAuthoringFlags { Available = true }, draft: "name: tf2\nruntime: native\n");
+
+        turn.Tools.Should().Contain(t => t.Tool == LlmTools.ReviseBlueprint);
+        // The open draft's content is injected into this turn's system prompt so the model can revise it.
+        turn.SystemPrompt.Should().Contain("name: tf2");
+    }
+
+    [Fact]
+    public async Task ReviseBlueprint_IsOmitted_WhenNoDraftOpen()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = true });
+
+        turn.Tools.Should().NotContain(t => t.Tool == LlmTools.ReviseBlueprint);
+        turn.Tools.Should().BeSameAs(LlmTools.All);   // no draft ⇒ the unfiltered catalog reference holds
+    }
+
+    [Fact]
+    public async Task ReviseBlueprint_IsOmitted_ForUnauthorizedCaller_EvenWithADraft()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false,
+            blueprint: new BlueprintAuthoringFlags { Available = true }, draft: "name: tf2\n");
+
+        turn.Tools.Should().NotContain(t => t.Tool == LlmTools.ReviseBlueprint);
     }
 
     private static LlmToolCall Call(Tool name) =>

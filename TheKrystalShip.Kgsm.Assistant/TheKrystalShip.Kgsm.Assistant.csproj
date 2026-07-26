@@ -7,7 +7,7 @@
 
     <PackageId>TheKrystalShip.Kgsm.Assistant</PackageId>
     <Authors>Heisenberg</Authors>
-    <Version>1.22.2</Version>
+    <Version>1.23.0</Version>
     <PackageProjectUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
     <RepositoryType>GitHub</RepositoryType>

@@ -172,7 +172,7 @@ internal static class SseTurnWriter
         }
     }
 
-    private static async Task WriteEventAsync<T>(
+    internal static async Task WriteEventAsync<T>(
         HttpResponse response, string eventName, T payload, CancellationToken ct)
     {
         // Emit BOTH the SSE `event:` name and an in-band `type` discriminator (same value), so a

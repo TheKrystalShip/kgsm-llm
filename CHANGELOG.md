@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (v1.24.0) — blueprint finalize is STREAMED (progress + heartbeats)
+- **`POST /confirm` now STREAMS a blueprint finalize as Server-Sent Events** when the caller sends
+  `Accept: text/event-stream` (the api relay does). A finalize is minutes of test-install → boot →
+  verify → bounded-repair with long *silent* stretches (a SteamCMD download, a boot-log poll). Delivered
+  as a single buffered response, that silence is a multi-minute idle socket that an idle-connection reaper
+  on a remote path (NAT, a middlebox, the browser) drops — after which the chat's "verifying" card spun
+  forever with no terminal result even though the finalize had completed server-side. Streaming fixes both
+  halves: the pipeline's own `ITurnProgress` steps (research / install / verify / repair) are relayed as
+  `progress` frames so the user sees it advancing; a keep-alive heartbeat every 15s keeps bytes flowing so
+  no reaper fires; and a terminal `result` frame carries the whole `ConfirmResponse` (the same payload a
+  buffered caller gets) so the card ALWAYS reaches a terminal state. A non-streaming caller (CLI, a plain
+  JSON client) keeps the buffered `ConfirmResponse` contract unchanged. New `SseConfirmWriter`; new
+  `TurnStream.Result` event name.
+
 ### Added
 - **The assistant can now REVISE an open blueprint draft from chat (`revise_blueprint`).** Previously the
   only blueprint tool was `create_blueprint` (the initial draft); when a user asked to change or populate a

@@ -213,6 +213,13 @@ public static class TurnStream
     public const string CommandProposed = "command.proposed";
     public const string Done = "done";
     public const string Error = "error";
+
+    /// <summary>`result` — the terminal frame of a STREAMED <c>/confirm</c> blueprint finalize: carries the
+    /// whole <see cref="ConfirmResponse"/> (the same buffered callers get) once the test-install → verify →
+    /// repair pipeline lands. Distinct from <see cref="Done"/> (a turn's assembled reply text); a finalize's
+    /// outcome is the rich card + any re-edit token, not a text stream. Preceded by <see cref="Progress"/>
+    /// steps and heartbeat comments that keep the minutes-long stream's socket alive.</summary>
+    public const string Result = "result";
 }
 
 /// <summary>`text.delta` — one incremental slice of the assistant's reply text.</summary>

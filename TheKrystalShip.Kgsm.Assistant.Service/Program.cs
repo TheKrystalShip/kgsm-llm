@@ -442,6 +442,24 @@ secured.MapPost("/confirm", async (
             editedYaml = stagedDraft;
         }
 
+        // A finalize is minutes of test-install → verify → repair with long silent stretches. Buffered into
+        // one response, that silence lets an idle-connection reaper on a remote path drop the socket, leaving
+        // the chat card spinning with no terminal result. A caller that opts into `Accept: text/event-stream`
+        // (the SPA, via the api relay) gets it STREAMED instead: progress steps + keep-alive heartbeats keep
+        // the socket warm, and a terminal `result` frame carries the same ConfirmResponse. Everyone else
+        // (CLI, a plain JSON caller) keeps the buffered contract below. Token/authority/draft were all resolved
+        // above, so the SSE path only ever commits 200 after a clean validation.
+        var wantsStream = http.Request.Headers.Accept
+            .Any(v => v is not null && v.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase));
+        if (wantsStream)
+        {
+            await SseConfirmWriter.WriteAsync(
+                http, assistant, http.RequestServices.GetRequiredService<ITurnProgress>(),
+                tokens, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds,
+                principal, game, editedYaml!, canPerform);
+            return Results.Empty;
+        }
+
         var outcome = await assistant.FinalizeBlueprintAsync(game, editedYaml!, canPerform, ct);
         var data = outcome.Data;
 

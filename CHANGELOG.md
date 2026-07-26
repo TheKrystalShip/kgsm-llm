@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Assistant now drafts a missing-game blueprint in one turn instead of stalling.** Asked to add a
+  game the catalog lacks, the model would run a manual `search`/`list_blueprints`, announce "I'll go
+  research this and come back," and then STOP — the user had to say "continue" before `create_blueprint`
+  ever ran. The authorized system-prompt stances and the `create_blueprint` tool description now state
+  that the tool is self-contained (it does its OWN research and drafting) and must be called DIRECTLY in
+  the same turn — no separate pre-search, no re-listing the already-injected catalog, no "I'll research
+  and return" narration. Calling it IS how the work starts; after it returns, the model reports the draft
+  is ready to review and save.
+
 ### Fixed
 - **Blueprint-review Save was denied on a Discord-less relay host ("You don't have permission to add a
   blueprint to the catalog").** The `/confirm` handler re-derived action authority ONLY from the Discord

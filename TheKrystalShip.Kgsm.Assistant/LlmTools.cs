@@ -367,12 +367,14 @@ public static class LlmTools
             "AUTHORS a game type that is genuinely MISSING from the catalog: researches it online and " +
             "DRAFTS a server config, then shows it to the user in an editor to review and tweak. The " +
             "test-install + verification runs LATER, only when they save the config — so calling this " +
-            "does NOT add the game yet. After it returns, tell the user a draft is ready for them to " +
+            "does NOT add the game yet. It does its OWN online research, so call it DIRECTLY, in the same " +
+            "turn the user asks — do NOT run a separate search/fetch_url or list_blueprints first, and do " +
+            "NOT announce that you'll go research it and come back; calling this tool IS how the research " +
+            "and drafting start. After it returns, tell the user a draft is ready for them to " +
             "review and save; do NOT claim the game is added or installed. Use this ONLY when the game " +
             "is not in list_blueprints / not offered by install_server — for a game that's already " +
-            "installable, propose install_server instead. Do NOT use this to look something up (use " +
-            "search/fetch_url for that). Not every game can be self-hosted or has a native Linux " +
-            "server — relay the outcome honestly either way.",
+            "installable, propose install_server instead. Not every game can be self-hosted or has a native " +
+            "Linux server — relay the outcome honestly either way.",
             BlueprintGame),
     };
 

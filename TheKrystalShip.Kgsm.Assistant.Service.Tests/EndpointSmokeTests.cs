@@ -15,6 +15,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant;
+using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
@@ -199,6 +200,79 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // The engine call was attributed to the confirming Discord user, via the assistant surface —
         // NOT the bare OS-user fallback (which would be null, null → unattributed audit row).
         instances.Received(1).Start("inst", "discord:User One", "assistant");
+    }
+
+    [Fact]
+    public async Task Confirm_Relay_BlueprintFinalize_CanActHeaderGrantsAuthority()
+    {
+        // The blueprint-review Save arrives on the trusted-relay path (kgsm-api). Authority MUST come from
+        // X-Relay-Can-Act exactly as the propose side does — a relay host with no Discord config has no bot
+        // to re-derive from, so ignoring the header would deny every finalize. The api's /confirm is
+        // operator-gated, so it forwards can-act=true; here we prove the assistant honors it.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.FinalizeBlueprintAsync("Satisfactory", "edited-yaml", true, Arg.Any<CancellationToken>())
+            .Returns(new ToolResult<BlueprintAuthoringData>(
+                LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "satisfactory"),
+                "Added Satisfactory.",
+                new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Satisfactory", "satisfactory", [], "it booted", null, true)));
+
+        var factory = Factory(assistant, configure: b =>
+        {
+            b.UseSetting("Assistant:Relay:Secret", "relay-secret");
+            b.UseSetting("Assistant:ActionsEnabled", "true");
+            b.UseSetting("Assistant:Confirmation:Key", "test-key");
+        });
+        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
+        var token = tokenSvc.Create(
+            new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"), "relayuser");
+
+        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", canAct: true);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await assistant.Received(1).FinalizeBlueprintAsync("Satisfactory", "edited-yaml", true, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Confirm_Relay_BlueprintFinalize_WithoutCanAct_IsDenied()
+    {
+        // Fail-closed: a relay confirm that does NOT speak X-Relay-Can-Act (absent) must reach the finalize
+        // with canPerform=false, never silently authorized.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.FinalizeBlueprintAsync("Satisfactory", "edited-yaml", false, Arg.Any<CancellationToken>())
+            .Returns(new ToolResult<BlueprintAuthoringData>(
+                LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "Satisfactory"),
+                "denied",
+                new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, "Satisfactory", null, [], null, "denied", false)));
+
+        var factory = Factory(assistant, configure: b =>
+        {
+            b.UseSetting("Assistant:Relay:Secret", "relay-secret");
+            b.UseSetting("Assistant:ActionsEnabled", "true");
+            b.UseSetting("Assistant:Confirmation:Key", "test-key");
+        });
+        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
+        var token = tokenSvc.Create(
+            new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"), "relayuser");
+
+        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", canAct: false);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await assistant.Received(1).FinalizeBlueprintAsync("Satisfactory", "edited-yaml", false, Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>POSTs /confirm over the trusted-relay path with the relay secret + forwarded identity and,
+    /// optionally, the <c>X-Relay-Can-Act</c> authority header.</summary>
+    private static async Task<HttpResponseMessage> RelayConfirmAsync(
+        HttpClient client, string token, string editedContent, string secret, string userId, bool? canAct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/confirm")
+        {
+            Content = JsonContent.Create(new { token, editedContent }),
+        };
+        request.Headers.Add("X-Relay-Secret", secret);
+        request.Headers.Add("X-Relay-User", userId);
+        if (canAct is not null) request.Headers.Add("X-Relay-Can-Act", canAct.Value ? "true" : "false");
+        return await client.SendAsync(request);
     }
 
     [Fact]

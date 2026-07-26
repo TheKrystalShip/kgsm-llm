@@ -92,6 +92,62 @@ public sealed class AgenticBlueprintResearchTests
         findings.Narrative.Should().Be("FIXED");
     }
 
+    [Fact]
+    public async Task RepeatedFetchOfSameUrl_SpendsNoBudget_SoADifferentSourceStillGetsFetched()
+    {
+        // The model asks for the SAME page more times than the whole fetch budget (6), then a different
+        // source. Re-fetches must be short-circuited (one request, no budget spent) so the fresh source is
+        // still reached — the failure mode where a model spun on one long wiki page and never gathered a
+        // second source, burning the budget on identical reads.
+        var fetchCalls = new LlmToolCall[]
+        {
+            new(new Tool("fetch_url"), Args(("url", "https://wiki.example/Big"))),
+            new(new Tool("fetch_url"), Args(("url", "https://wiki.example/Big"))),
+            new(new Tool("fetch_url"), Args(("url", "https://wiki.example/Big"))),
+            new(new Tool("fetch_url"), Args(("url", "https://wiki.example/Big"))),
+            new(new Tool("fetch_url"), Args(("url", "https://wiki.example/Big"))),
+            new(new Tool("fetch_url"), Args(("url", "https://wiki.example/Big"))),
+            new(new Tool("fetch_url"), Args(("url", "https://wiki.example/Big"))),
+            new(new Tool("fetch_url"), Args(("url", "https://other.example/Guide"))),
+        };
+        _llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Result<LlmResponse>.Success(new LlmResponse(null, fetchCalls)),
+                     Result<LlmResponse>.Success(new LlmResponse("done", [])));
+        _fetch.FetchAsync("https://wiki.example/Big", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new WebFetchResult("https://wiki.example/Big", 200, "text/html", null, "boilerplate", false)));
+        _fetch.FetchAsync("https://other.example/Guide", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new WebFetchResult("https://other.example/Guide", 200, "text/html", null, "./run.sh steamcmd +app_update 1", false)));
+        _synth.SynthesizeAsync("Big", Arg.Any<IReadOnlyList<(string, string)>>(), Arg.Any<CancellationToken>())
+            .Returns(new BlueprintResearchFindings(BlueprintFeasibility.Feasible, "Big", [], [], "S"));
+
+        await Sut(FixedReturning("FIXED")).ResearchAsync("Big");
+
+        await _fetch.Received(1).FetchAsync("https://wiki.example/Big", Arg.Any<CancellationToken>());
+        await _fetch.Received(1).FetchAsync("https://other.example/Guide", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LongPage_KeepsTheDeepLaunchSection_NotJustTheBoilerplateHead()
+    {
+        // A page longer than the per-page cap whose launch instructions sit far past a nav/TOC block: a
+        // plain head cut throws them away (extraction then sees only boilerplate). The keyword-centered
+        // slice must carry the launch section into what synthesis reads.
+        var page = new string('x', 9000) + " Starting the server on Linux: run ./FactoryServer.sh -log";
+        var fetchCall = new LlmResponse(null, [new LlmToolCall(new Tool("fetch_url"), Args(("url", "https://sat.example/Dedicated")))]);
+        _llm.ChatAsync(Arg.Any<IReadOnlyList<LlmMessage>>(), Arg.Any<IReadOnlyList<LlmToolDefinition>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Result<LlmResponse>.Success(fetchCall), Result<LlmResponse>.Success(new LlmResponse("done", [])));
+        _fetch.FetchAsync("https://sat.example/Dedicated", Arg.Any<CancellationToken>())
+            .Returns(Result.Success(new WebFetchResult("https://sat.example/Dedicated", 200, "text/html", null, page, false)));
+        _synth.SynthesizeAsync("Satisfactory", Arg.Any<IReadOnlyList<(string, string)>>(), Arg.Any<CancellationToken>())
+            .Returns(new BlueprintResearchFindings(BlueprintFeasibility.Feasible, "Satisfactory", [], [], "S"));
+
+        await Sut(FixedReturning("FIXED")).ResearchAsync("Satisfactory");
+
+        await _synth.Received(1).SynthesizeAsync("Satisfactory",
+            Arg.Is<IReadOnlyList<(string, string)>>(pages => pages.Any(p => p.Item2.Contains("FactoryServer.sh"))),
+            Arg.Any<CancellationToken>());
+    }
+
     private static IReadOnlyDictionary<string, string?> Args(params (string Key, string? Value)[] kv) =>
         kv.ToDictionary(x => x.Key, x => x.Value);
 }

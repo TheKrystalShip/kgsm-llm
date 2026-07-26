@@ -413,8 +413,16 @@ secured.MapPost("/confirm", async (
         !string.Equals(stagedBy, principal.UserId, StringComparison.Ordinal))
         return Results.BadRequest(new { error = "Invalid or expired confirmation." });
 
-    // Re-derive authority FRESH at confirm time — never trust it from the token.
-    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    // Re-derive authority FRESH at confirm time — never trust it from the token. Mirror the /turn
+    // path exactly (the confirm executes a mutation, so it must read authority the SAME way the propose
+    // did): on the trusted-relay path the api's verified operator-tier decision arrives as X-Relay-Can-Act
+    // (BearerAuthFilter stashed it) — a Discord-less relay host has no bot to re-derive from, so honoring
+    // the header is the only correct source; a direct session bearer falls back to the Discord action role.
+    bool canPerform;
+    if (http.Items.TryGetValue(BearerAuthFilter.RelayCanActKey, out var relayObj) && relayObj is bool relayCanAct)
+        canPerform = relayCanAct && assistantOptions.Value.ActionsEnabled && tokens.IsConfigured;
+    else
+        canPerform = await auth.CanPerformActionsAsync(principal, ct);
     // The confirming user is the authority for the action they just approved (origin=assistant).
     using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
 

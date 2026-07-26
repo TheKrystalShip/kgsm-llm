@@ -28,10 +28,22 @@ namespace TheKrystalShip.Kgsm.Assistant.Blueprints;
 public sealed class AgenticBlueprintResearch : IBlueprintResearch
 {
     private const int MaxRounds = 6;        // model turns before we stop and extract from what we have
-    private const int MaxFetches = 6;       // page reads budget across the whole pass
+    private const int MaxFetches = 6;       // distinct page reads budget across the whole pass
     private const int MaxResultsShown = 5;  // search hits surfaced to the model per query
     private const int MaxCharsPerPage = 8000;   // kept per page for the final synthesis
     private const int FeedbackChars = 5000;     // fed back to the model per fetch (context control)
+
+    // Substrings that mark the launch-relevant part of a long doc (the section extraction actually needs:
+    // the native launch script/binary, its headless args, the SteamCMD app-update line, the ready log).
+    // Used to keep a window CENTERED on that section rather than head-truncating a page — a big wiki puts
+    // its launch instructions far below a nav + a full table of contents + a requirements block, which a
+    // plain head cut throws away (why extraction saw only boilerplate and produced no launch file).
+    private static readonly string[] LaunchKeywords =
+    [
+        "steamcmd", "app_update", "dedicated server", "starting the server", "start the server",
+        "-nogui", "nogui", "srcds", "execstart", "java -jar", "dotnet ", "./", ".sh", ".x86_64",
+        "launch", "command line", "systemd",
+    ];
 
     private static readonly Tool SearchTool = new("search");
     private static readonly Tool FetchTool = new("fetch_url");
@@ -118,15 +130,21 @@ public sealed class AgenticBlueprintResearch : IBlueprintResearch
         if (pages.Count == 0)
             return await _fixed.ResearchAsync(game, cancellationToken);
 
-        _logger.LogInformation("Agentic research gathered {Count} page(s) for \"{Game}\"", pages.Count, game);
+        _logger.LogInformation("Agentic research gathered {Count} page(s) for \"{Game}\": {Urls}",
+            pages.Count, game, string.Join(", ", pages.Select(p => p.Url)));
         var synthesized = await _synthesizer.SynthesizeAsync(game, pages, cancellationToken);
-        return synthesized ?? BlueprintFactExtractor.Extract(game, pages);
+        var findings = synthesized ?? BlueprintFactExtractor.Extract(game, pages);
+        _logger.LogInformation(
+            "Blueprint research for \"{Game}\": feasibility={Feasibility}, {FieldCount} field(s) sourced ({Source})",
+            game, findings.Feasibility, findings.Fields.Count, synthesized is null ? "regex fallback" : "model synthesis");
+        return findings;
     }
 
     private async Task<List<(string Url, string Text)>> GatherAsync(string game, CancellationToken cancellationToken)
     {
         var pages = new List<(string Url, string Text)>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);      // FINAL urls actually gathered
+        var requested = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // urls the model has already asked for
         var messages = new List<LlmMessage>
         {
             LlmMessage.System(SystemPrompt),
@@ -160,16 +178,28 @@ public sealed class AgenticBlueprintResearch : IBlueprintResearch
                 }
                 else if (call.Name == FetchTool)
                 {
-                    if (fetches >= MaxFetches)
-                    {
-                        messages.Add(LlmMessage.Tool(FetchTool, "Fetch budget reached — summarize what you have and finish."));
-                        continue;
-                    }
-
                     var url = call.Arg("url");
                     if (string.IsNullOrWhiteSpace(url))
                     {
                         messages.Add(LlmMessage.Tool(FetchTool, "No url provided."));
+                        continue;
+                    }
+
+                    // A re-fetch of a URL already asked for spends NO budget and does no request — it would
+                    // only return the same page. Tell the model plainly so it moves to a DIFFERENT source
+                    // instead of spinning on one page (a long wiki it kept re-reading was burning the whole
+                    // fetch budget without ever gathering a second source).
+                    if (!requested.Add(url.Trim()))
+                    {
+                        messages.Add(LlmMessage.Tool(FetchTool,
+                            "You already fetched that URL — its text is above. Fetch a DIFFERENT source, or " +
+                            "if you have the launch script + args + port (+ app id for a Steam game), finish."));
+                        continue;
+                    }
+
+                    if (fetches >= MaxFetches)
+                    {
+                        messages.Add(LlmMessage.Tool(FetchTool, "Fetch budget reached — summarize what you have and finish."));
                         continue;
                     }
 
@@ -178,8 +208,8 @@ public sealed class AgenticBlueprintResearch : IBlueprintResearch
                     if (fetch.IsSuccess && fetch.Value is not null)
                     {
                         if (seen.Add(fetch.Value.FinalUrl))
-                            pages.Add((fetch.Value.FinalUrl, Cap(fetch.Value.Text, MaxCharsPerPage)));
-                        messages.Add(LlmMessage.Tool(FetchTool, Cap(fetch.Value.Text, FeedbackChars)));
+                            pages.Add((fetch.Value.FinalUrl, Slice(fetch.Value.Text, MaxCharsPerPage)));
+                        messages.Add(LlmMessage.Tool(FetchTool, Slice(fetch.Value.Text, FeedbackChars)));
                     }
                     else
                     {
@@ -207,6 +237,38 @@ public sealed class AgenticBlueprintResearch : IBlueprintResearch
         return sb.ToString();
     }
 
-    private static string Cap(string text, int max) =>
-        text.Length > max ? text[..max] : text;
+    /// <summary>Keeps at most <paramref name="max"/> chars of a page, but for an over-length page keeps
+    /// the HEAD (where the game name / app id / feasibility usually sit) PLUS a window centered on the
+    /// first launch-relevant section below the head — so a long doc whose launch instructions sit far past
+    /// a nav + table-of-contents + requirements block still hands the launch script/args/port to
+    /// extraction. Falls back to a plain head cut when no launch keyword appears below the head.</summary>
+    private static string Slice(string text, int max)
+    {
+        if (text.Length <= max)
+            return text;
+
+        var headLen = max / 2;
+        var deep = FirstKeywordIndex(text, headLen);
+        if (deep < 0)
+            return text[..max]; // nothing launch-relevant deeper than the head — old head-cut behaviour
+
+        var windowLen = max - headLen;
+        var start = Math.Max(headLen, deep - windowLen / 4);
+        var end = Math.Min(text.Length, start + windowLen);
+        return string.Concat(text.AsSpan(0, headLen), "\n\n[…]\n\n", text.AsSpan(start, end - start));
+    }
+
+    /// <summary>Earliest index of any <see cref="LaunchKeywords"/> hit at or after <paramref name="from"/>,
+    /// or -1 if none.</summary>
+    private static int FirstKeywordIndex(string text, int from)
+    {
+        var best = -1;
+        foreach (var kw in LaunchKeywords)
+        {
+            var i = text.IndexOf(kw, from, StringComparison.OrdinalIgnoreCase);
+            if (i >= 0 && (best < 0 || i < best))
+                best = i;
+        }
+        return best;
+    }
 }

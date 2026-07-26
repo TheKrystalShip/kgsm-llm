@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Blueprint-review Save was denied on a Discord-less relay host ("You don't have permission to add a
+  blueprint to the catalog").** The `/confirm` handler re-derived action authority ONLY from the Discord
+  bot, unlike `/turn` which honors the trusted relay's `X-Relay-Can-Act` header. On a host fronted by
+  kgsm-api with no Discord OAuth configured, the propose (turn) was authorized but the finalize (confirm)
+  was not — so the draft appeared but Save failed. `/confirm` now derives authority exactly as `/turn`
+  does: the relay's `X-Relay-Can-Act` on the trusted-relay path (ANDed with `ActionsEnabled` + a
+  configured confirmation key), Discord only for a direct session bearer. (Pairs with the kgsm-api fix
+  that forwards `X-Relay-Can-Act` on the confirm relay — its `/assistant/confirm` is operator-gated, so
+  the header is the verified tier.)
+- **Blueprint research no longer non-deterministically fails to find the launch script on long docs.**
+  Two faults in the agentic research sub-loop (`AgenticBlueprintResearch`) made `create_blueprint`
+  succeed or fail on the *same* game+guide from run to run:
+  - **The fetch budget was spent on identical re-reads.** A `fetch_url` of a URL the model had already
+    read still counted against the six-page budget (and re-issued the request), so a model that spun on
+    one long wiki page burned the whole budget without ever gathering a second source. A repeat request
+    is now short-circuited — no request, no budget spent — with a note telling the model to fetch a
+    *different* source or finish, freeing the budget to reach a compact page that actually names the
+    launch script.
+  - **Per-page truncation was a plain head cut**, which on a big MediaWiki article (huge nav + full
+    table of contents + a requirements block before the "Starting the server" section) kept only
+    boilerplate and dropped the launch instructions extraction needs. Long pages are now sliced to keep
+    the head *plus a window centered on the first launch-relevant section* (SteamCMD app-update line,
+    the `.sh`/binary launch, headless args, the ready log), so the launch script reaches synthesis.
+
+  Research also now logs the gathered URLs and the final feasibility/field-count/source (synthesis vs
+  regex fallback), so a failed draft is diagnosable from the journal.
+
 ### Added
 - **CLI parity for the blueprint-review checkpoint** (`assistant-blueprint-review-plan.md` P4). When the
   assistant stages a `Blueprint` confirmation, the CLI now opens the drafted YAML in the user's editor

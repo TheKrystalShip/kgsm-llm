@@ -28,7 +28,7 @@ internal static class ConversationHistoryMapper
     public static ConversationHistoryEntryDto ToEntryDto(ConversationEntry e) =>
         e.Kind == ConversationEntryKind.Checkpoint
             ? new ConversationHistoryEntryDto("checkpoint", e.CreatedAt, CheckpointSummary: e.CheckpointSummary)
-            : new ConversationHistoryEntryDto("turn", e.CreatedAt, Turn: ToTurnDto(e.Turn!));
+            : new ConversationHistoryEntryDto("turn", e.CreatedAt, Turn: ToTurnDto(e.Turn!), StartedAt: e.Turn!.StartedAt);
 
     private static ConversationTurnDto ToTurnDto(ConversationTurnRecord t) =>
         new(

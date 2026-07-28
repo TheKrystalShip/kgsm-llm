@@ -160,7 +160,7 @@ internal static class SseTurnWriter
 
                     case AssistantEventKind.Final:
                         await WriteEventAsync(response, TurnStream.Done,
-                            new DoneEvent(ev.Text ?? string.Empty, UsageDto.From(ev.Usage)), ct);
+                            new DoneEvent(ev.Text ?? string.Empty, DateTimeOffset.UtcNow, UsageDto.From(ev.Usage)), ct);
                         break;
                 }
             }

@@ -151,7 +151,8 @@ public sealed record ConversationHistoryEntryDto(
     string Kind,
     DateTimeOffset CreatedAt,
     ConversationTurnDto? Turn = null,
-    string? CheckpointSummary = null);
+    string? CheckpointSummary = null,
+    DateTimeOffset? StartedAt = null);
 
 /// <summary>
 /// One completed turn, in the §5·a vocabulary: the user <see cref="Prompt"/>, the assistant
@@ -303,7 +304,7 @@ public sealed record CommandProposedEvent(
 /// `done` — terminal success; the full assembled reply plus the turn's token <see cref="Usage"/>
 /// (used / available, in tokens) for the SPA's context meter (both fields additive over §5·a's empty `done`).
 /// </summary>
-public sealed record DoneEvent(string Text, UsageDto? Usage = null);
+public sealed record DoneEvent(string Text, DateTimeOffset CompletedAt, UsageDto? Usage = null);
 
 /// <summary>
 /// `error` — terminal failure surfaced in-band (the stream is already HTTP 200). <see cref="Code"/>

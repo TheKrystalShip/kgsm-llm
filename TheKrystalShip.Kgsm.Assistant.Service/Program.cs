@@ -168,7 +168,17 @@ app.MapPost("/events", async (
     {
         using var doc = JsonDocument.Parse(body);
         if (doc.RootElement.TryGetProperty("EventType", out var eventType))
-            logger.LogInformation("kgsm event received: {EventType}", eventType.GetString());
+        {
+            string? type = eventType.GetString();
+            logger.LogInformation("kgsm event received: {EventType}", type);
+            // A blueprint_* event is the only phase where the change is NOT to a server's runtime
+            // state but to a blueprint FILE on disk — a category the inventory also caches (the
+            // blueprint catalog) and needs to drop. The typed line makes a web-originated blueprint
+            // edit's cache-bust visible to operators skimming journalctl for "why did the assistant
+            // see the new values".
+            if (!string.IsNullOrEmpty(type) && type.StartsWith("blueprint_", StringComparison.Ordinal))
+                logger.LogInformation("blueprint event from kgsm: {EventType} — invalidating blueprint inventory", type);
+        }
     }
     catch (JsonException)
     {

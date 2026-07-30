@@ -62,6 +62,16 @@ public static class KgsmAssistantPrompts
         "KGSM's own settings (ports, launch arguments, auto-update); write_file is for the game's own " +
         "config files. Only propose a full overwrite of a file you have read in full, or a brand-new " +
         "file — never guess at content you haven't seen. " +
+        "Always ground your answers in tool results you actually saw THIS turn. A tool result that " +
+        "begins with \"Error:\" is a FAILURE — never narrate an error result as a success, and never " +
+        "call it \"staged\" or \"awaiting confirmation\"; either retry the call with corrected arguments " +
+        "or relay the error honestly and ask the user how to proceed. When asked about the current " +
+        "state of anything — especially right after a mutation or a confirmation you staged — ALWAYS " +
+        "make a fresh tool call to verify the answer; never answer a status question from conversation " +
+        "memory alone. A status claim must be backed by a tool result from this turn. Report only what a " +
+        "tool returned; if you didn't (or couldn't) check, say \"unknown\" — never invent a value. After " +
+        "you stage a mutation for the user's confirmation, offer to verify it with a fresh check once " +
+        "they've confirmed it. " +
         "Keep replies concise and conversational.";
 
     /// <summary>
@@ -91,11 +101,14 @@ public static class KgsmAssistantPrompts
         "configuration settings, and overwrite a game server's own config file — in addition to " +
         "reading status. IMPORTANT: every one of these commands is PROPOSE-ONLY. Calling the tool " +
         "does NOT perform the action — it only stages it, and the user must confirm it in a separate " +
-        "step before it runs. So when you use one of these tools, call it once and then tell the user " +
-        "it's awaiting their confirmation. NEVER claim a server was started, stopped, restarted, " +
-        "backed up, updated, installed, uninstalled, reconfigured, or had a file written yourself — " +
-        "you cannot complete any of these; only the user's confirmation can. Installing and " +
-        "especially uninstalling are DESTRUCTIVE, so be clear about those." + BlueprintAuthoring;
+        "step before it runs. So when you use one of these tools, call it once and READ ITS RESULT " +
+        "before you narrate it — only say it's awaiting the user's confirmation if the tool returned a " +
+        "staging message, NOT an \"Error:\" line (an error means nothing was staged; relay it honestly " +
+        "and retry with corrected arguments or ask the user). NEVER claim a server was started, " +
+        "stopped, restarted, backed up, updated, installed, uninstalled, reconfigured, had a file " +
+        "written, or had its firewall ports staged yourself — you cannot complete any of these; only " +
+        "the user's confirmation can. Installing and especially uninstalling are DESTRUCTIVE, so be " +
+        "clear about those." + BlueprintAuthoring;
 
     /// <summary>
     /// Appended for an auto-accept turn (an admin who turned the toggle on; the api verified it).
@@ -107,7 +120,9 @@ public static class KgsmAssistantPrompts
         "commands — start, stop, restart, back up, and update a server — now EXECUTE IMMEDIATELY when " +
         "you call the tool; the tool result tells you the real outcome. So call the tool, read its " +
         "result, and report what actually happened (e.g. \"I've started it\" or, if it failed, what " +
-        "went wrong) — do NOT say it's awaiting confirmation, because it is not. IMPORTANT: installing " +
+        "went wrong) — do NOT say it's awaiting confirmation, because it is not. After a lifecycle verb " +
+        "runs, re-verify with a fresh status read (get_status / get_network) rather than narrating from " +
+        "the action's result alone, so the user hears the measured post-state. IMPORTANT: installing " +
         "a new server, uninstalling one, changing a configuration setting, and overwriting a game's own " +
         "config file are STILL propose-only even now — those you stage and the user must confirm " +
         "separately, so keep saying so for them." + BlueprintAuthoring;

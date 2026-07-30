@@ -18,6 +18,7 @@ using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Core.Interfaces;
@@ -289,6 +290,39 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    /// <summary>A blueprint_* event from kgsm must reach the inventory invalidation seam — the
+    /// whole reason Phase 2 of blueprint-editor-plan.md emits these events. A web-originated
+    /// blueprint edit lands via this webhook; without an invalidate the assistant's blueprint
+    /// catalog serves stale data on the next turn. The webhook has no secret configured here, so
+    /// the signature check is silently bypassed (the dev/host path; production requires it).
+    /// Pins the contract: any 2xx + exactly one <see cref="IInventoryInvalidation.Invalidate"/>
+    /// call per envelope, regardless of payload shape.</summary>
+    [Fact]
+    public async Task Events_BlueprintEvent_InvalidatesInventoryOnce()
+    {
+        var inventory = Substitute.For<IInventoryInvalidation>();
+        var client = Factory(configure: b =>
+        {
+            // No webhook secret ⇒ the handler skips signature verification and processes the body
+            // (the loud "secret not configured — signature NOT enforced" log path; mirrors how the
+            // dev host runs today).
+            b.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IInventoryInvalidation>();
+                services.AddSingleton(inventory);
+            });
+        }).CreateClient();
+
+        var envelope = """{"EventType":"blueprint_updated","Data":{"BlueprintName":"factorio","Tier":"user","OverridesSystem":true,"Runtime":"native"},"Timestamp":"2026-07-28T12:00:00Z"}""";
+        var response = await client.PostAsync("/events",
+            new StringContent(envelope, Encoding.UTF8, "application/json"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        // The CRITICAL assertion: blueprint events must drive an invalidate. Any future refactor that
+        // gated the invalidation on instance-only event types would regress here.
+        inventory.Received(1).Invalidate();
     }
 
     [Fact]

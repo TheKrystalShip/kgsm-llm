@@ -747,20 +747,28 @@ public class ToolDispatcherTests
     }
 
     // --- open_ports (propose-only staged command) ---
+    // The tool takes ONLY the instance name — the configured (blueprint) ports are read
+    // deterministically from kgsm via IServerOperations.GetConfiguredPortsAsync, so the model
+    // never supplies or guesses a port spec. The tests stub that read to exercise staging,
+    // the router opt-in, and the honest-error paths (no configured ports; a malformed engine
+    // spec that fails the defensive re-parse).
 
-    private static LlmToolCall OpenPortsCall(string instance, string ports) =>
+    private static LlmToolCall OpenPortsCall(string instance, bool includeRouter = false) =>
         new(LlmTools.OpenPorts, new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
-            ["ports"] = ports,
+            ["include_router"] = includeRouter ? "true" : null,
         });
 
     [Fact]
-    public async Task OpenPorts_StagesCanonicalSpec_ForConfirmation()
+    public async Task OpenPorts_StagesConfiguredSpec_ForConfirmation()
     {
+        _operations.GetConfiguredPortsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("25565/tcp"));
+
         using (_confirmations.BeginTurn())
         {
-            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft", "25565/tcp"))).Summary;
+            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft"))).Summary;
 
             summary.Should().Contain("Staged").And.Contain("25565/tcp").And.Contain("HOST firewall only");
             _confirmations.Staged.Should().ContainSingle()
@@ -773,16 +781,12 @@ public class ToolDispatcherTests
     [Fact]
     public async Task OpenPorts_IncludeRouter_StagesRouterScope()
     {
+        _operations.GetConfiguredPortsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("25565/tcp"));
+
         using (_confirmations.BeginTurn())
         {
-            var call = new LlmToolCall(LlmTools.OpenPorts, new Dictionary<string, string?>
-            {
-                ["instance_name"] = "minecraft",
-                ["ports"] = "25565/tcp",
-                ["include_router"] = "true",
-            });
-
-            var summary = (await Create().ExecuteAsync(call)).Summary;
+            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft", includeRouter: true))).Summary;
 
             // The router opt-in rides ConfigKey ("router"); the port spec stays on ConfigValue.
             summary.Should().Contain("router");
@@ -794,11 +798,32 @@ public class ToolDispatcherTests
     }
 
     [Fact]
-    public async Task OpenPorts_InvalidSpec_IsRejected_NothingStaged()
+    public async Task OpenPorts_NoConfiguredPorts_IsRejected_NothingStaged()
     {
+        _operations.GetConfiguredPortsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<string>("'minecraft' has no ports configured in its blueprint — nothing to open."));
+
         using (_confirmations.BeginTurn())
         {
-            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft", "not-a-port"))).Summary;
+            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft"))).Summary;
+
+            summary.Should().StartWith("Error");
+            summary.Should().Contain("no ports configured");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task OpenPorts_MalformedConfiguredSpec_IsRejected_NothingStaged()
+    {
+        // Defensive: the engine's configured spec is re-validated through PortSpecParser. A malformed
+        // spec (a future kgsm regression) short-circuits with an honest error and stages nothing.
+        _operations.GetConfiguredPortsAsync("minecraft", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("not-a-port"));
+
+        using (_confirmations.BeginTurn())
+        {
+            var summary = (await Create().ExecuteAsync(OpenPortsCall("minecraft"))).Summary;
 
             summary.Should().StartWith("Error");
             _confirmations.Staged.Should().BeEmpty();

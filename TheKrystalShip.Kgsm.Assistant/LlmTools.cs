@@ -95,9 +95,12 @@ public static class LlmTools
     public static readonly Tool UninstallServer = new("uninstall_server");
     public static readonly Tool SetConfigValue = new("set_config_value");
 
-    // Propose opening ports for an instance. Staged for human confirmation like every command; on confirm
-    // it opens the host firewall (via the kgsm-firewall authority), and — when include_router is set — also
-    // sets up the router/UPnP forward (via the watchdog), honoring the instance's port-forwarding gate.
+    // Propose opening a server's firewall ports for it. The model supplies only the instance name (and
+    // optionally include_router); the configured port spec is read deterministically from kgsm's instance
+    // info — never passed by the model — so there is no port to guess. Staged for human confirmation
+    // like every command; on confirm it opens the host firewall (via the kgsm-firewall authority), and —
+    // when include_router is set — also sets up the router/UPnP forward (via the watchdog), honoring the
+    // instance's port-forwarding gate.
     public static readonly Tool OpenPorts = new("open_ports");
 
     // Propose overwriting a text file inside a server's OWN directory with COMPLETE new content —
@@ -194,12 +197,6 @@ public static class LlmTools
         "verb",
         "Which lifecycle action to take on the server: start, stop, restart, update, or backup.",
         AllowedValues: ServerCommandVerbs);
-
-    private static readonly LlmToolParameter OpenPortsSpec = new(
-        "ports",
-        "The port(s) to open — e.g. \"34197/udp\", \"27015/tcp\", or a range " +
-        "\"27015:27020/udp\". Separate multiple with commas. Include the protocol (tcp or udp); if you " +
-        "omit it, both are opened.");
 
     private static readonly LlmToolParameter IncludeRouter = new(
         "include_router",
@@ -442,12 +439,15 @@ public static class LlmTools
             InstanceName, ConfigKey, ConfigValue),
 
         LlmToolDefinition.Create(OpenPorts,
-            "Propose opening ports for a server so players can reach it — e.g. its game port. Staged for " +
-            "human confirmation; it does not run until a person confirms. By default it opens the host's own " +
-            "firewall only. To ALSO make the server reachable from the internet, set include_router to true — " +
-            "that additionally sets up the router/UPnP forward for the same ports (only effective if the " +
-            "server has port-forwarding enabled; otherwise the router leg is skipped).",
-            InstanceName, OpenPortsSpec, IncludeRouter),
+            "Propose opening this server's firewall ports so players can reach it. You do NOT pass the " +
+            "ports — they are read automatically from the server's configured (blueprint) ports, so just " +
+            "give the instance name. Staged for human confirmation; it does not run until a person " +
+            "confirms. By default it opens the host's own firewall only. To ALSO make the server reachable " +
+            "from the internet, set include_router to true — that additionally sets up the router/UPnP " +
+            "forward for the same ports (only effective if the server has port-forwarding enabled; " +
+            "otherwise the router leg is skipped). If the server has no ports configured, the tool " +
+            "returns an honest error and nothing is staged — relay that to the user.",
+            InstanceName, IncludeRouter),
 
         LlmToolDefinition.Create(WriteFile,
             "Propose OVERWRITING a text file inside a game server's OWN directory — e.g. its actual " +

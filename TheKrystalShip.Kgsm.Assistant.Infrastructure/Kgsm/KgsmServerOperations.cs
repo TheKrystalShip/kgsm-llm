@@ -101,6 +101,36 @@ internal sealed class KgsmServerOperations : IServerOperations
         }
     }
 
+    /// <summary>
+    /// Reads the instance's structured info (kgsm's <c>instances info --json</c>) and renders its
+    /// <see cref="Instance.Ports"/> (the canonical <see cref="PortMapping"/> list) back to a UFW-style
+    /// spec string via <see cref="PortMappingExtensions.ToUfwSpec"/>. The assistant's <c>open_ports</c>
+    /// tool consumes this so the model never supplies or guesses ports — the configured ports are the
+    /// engine's truth. An unknown instance or one with no ports configured maps to a failed Result
+    /// (honest reason, never fabricated), never throws.
+    /// </summary>
+    public async Task<Result<string>> GetConfiguredPortsAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var info = await Task.Run(() => _instances.GetInstanceInfo(instance), cancellationToken);
+            if (info is null)
+                return Result.Failure<string>($"'{instance}' did not return instance info (it may not be a known instance).");
+            var ports = info.Ports;
+            if (ports is null || ports.Count == 0)
+                return Result.Failure<string>($"'{instance}' has no ports configured in its blueprint — nothing to open.");
+            var spec = ports.ToUfwSpec();
+            if (string.IsNullOrWhiteSpace(spec))
+                return Result.Failure<string>($"'{instance}' has no ports configured in its blueprint — nothing to open.");
+            return Result.Success(spec);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetConfiguredPorts failed for {Instance}", instance);
+            return Result.Failure<string>(ex.Message);
+        }
+    }
+
     /// <summary>Cap on bytes read from a config file — bounds what flows into the model's context.</summary>
     private const int MaxFileBytes = 64 * 1024;
 

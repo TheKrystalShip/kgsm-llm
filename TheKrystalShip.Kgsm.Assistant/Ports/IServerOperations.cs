@@ -27,6 +27,16 @@ public interface IServerOperations
     Task<Result<string>> GetStatusAsync(string instance, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The configured (blueprint) port spec for an instance, as the canonical UFW-style string
+    /// (e.g. <c>"34197/udp"</c>, <c>"27015:27020/tcp,34197/udp"</c>) read straight from kgsm's
+    /// structured instance info — the deterministic source for the <c>open_ports</c> tool, so the
+    /// model never has to supply or guess ports. Returns a failed <see cref="Result"/> (with an
+    /// honest reason) when the instance is unknown or has no ports configured — never a fabricated
+    /// spec, and never throws.
+    /// </summary>
+    Task<Result<string>> GetConfiguredPortsAsync(string instance, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Reads a UTF-8 text file belonging to an instance, <b>path-bound to the
     /// instance's install directory</b>: the implementation canonicalizes the path
     /// and refuses anything that resolves outside that directory (a <c>..</c> escape

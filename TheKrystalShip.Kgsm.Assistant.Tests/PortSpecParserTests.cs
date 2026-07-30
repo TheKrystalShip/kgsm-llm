@@ -7,7 +7,7 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
-/// The <c>open_ports</c> spec parser is the single home for turning the model's free-text ports into
+/// The <c>open_ports</c> spec parser is the single home for turning a UFW-style port spec into
 /// validated rules and back to the canonical string carried on the confirmation token. These pin the
 /// accepted forms, the no-protocol → both-protocols expansion, range/round-trip fidelity, and that a
 /// malformed / out-of-range spec is rejected with a message (never silently staged).

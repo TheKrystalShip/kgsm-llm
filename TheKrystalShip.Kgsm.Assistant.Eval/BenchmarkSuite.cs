@@ -273,8 +273,10 @@ internal static class BenchmarkSuite
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
         // Open ports (staged): host firewall only, and the include_router leg proven via the staged payload.
-        Single("C11", "open port <n> for <game>", true, new[] { FixtureRole.UniqueGame },
-            "open port 27015 for {unique_game}",
+        // The tool reads the instance's configured (blueprint) ports deterministically from kgsm, so the
+        // prompt names the server (not a port number) — the model calls open_ports with only the instance.
+        Single("C11", "open the firewall ports for <game>", true, new[] { FixtureRole.UniqueGame },
+            "open the firewall ports for {unique_game}",
             C.Stages(ConfirmationKind.OpenPorts),
             C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),

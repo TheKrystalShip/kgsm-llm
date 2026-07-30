@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (v1.25.1) — webhook surfaces blueprint events for cache invalidation
+
+- **The `POST /events` webhook now logs a typed line for `blueprint_*` events** alongside the
+  generic envelope log. kgsm emits `blueprint_created`/`_updated`/`_removed` (Phase 2 of
+  `blueprint-editor-plan.md`) when a game's `*.bp.yaml` is edited through the Control Panel or
+  authored by the assistant — the webhook has always invalidated the inventory unconditionally on
+  every event, so blueprint edits already dropped the assistant's blueprint catalog cache; the new
+  log line just makes a web-originated edit's cache-bust visible to an operator skimming
+  `journalctl` for "why did the assistant see the new values on the next turn". No behaviour change:
+  the `IInventoryInvalidation.Invalidate()` call site is unchanged. The 8 manual
+  `_invalidation.Invalidate()` calls inside `BlueprintAuthoringAggregator` stay as belt-and-braces —
+  they are the CLI surface's only freshness path (the CLI has no webhook), and the plan frames them
+  as best-effort redundancy on top of the event subscription.
+
+### Changed (v1.25.0) — honest, evidence-driven assistant; `open_ports` resolves its own ports
+
+- **`open_ports` no longer takes a `ports` argument — it reads the instance's configured (blueprint)
+  ports deterministically from kgsm.** A real chat session surfaced the model guessing `ports:"default"`
+  (the parser rejected it, the dispatcher returned an `Error:` tool result, and the model then
+  fabricated "I've staged the request" with nothing staged). The tool now takes only the instance name
+  (+ optional `include_router`); the handler fetches the structured port spec from kgsm's `instances
+  info` via a new `IServerOperations.GetConfiguredPortsAsync`, renders it to the canonical UFW string
+  through kgsm-lib's `PortMappingExtensions.ToUfwSpec`, and re-validates it through the single
+  `PortSpecParser` so the stage-time and confirm-time paths never drift. An instance with no configured
+  ports returns an honest error and stages nothing. There is no model-supplied port to guess wrong.
+- **The system prompt now enforces an honesty + evidence contract.** The Preamble tells the model that
+  a tool result beginning with `Error:` is a failure (never narrate it as staged/success — retry with
+  corrected arguments or relay the error), that a status question must be backed by a fresh tool call
+  this turn (especially right after a mutation/confirmation — never from memory), and that it reports
+  measured values or "unknown", never invents. `ActionsAllowed` extends the "NEVER claim …" umbrella to
+  "had its firewall ports staged" and adds "read the tool's result before you narrate it." `ActionsAuto`
+  adds "re-verify with a fresh status read after a lifecycle verb runs." A light proactivity nudge has it
+  offer to verify a mutation once the user confirms it. These target the two remaining failures from the
+  same session: the fabricated staging claim (the model narrated past an error) and the assumed
+  post-action status (the model answered from memory without a tool call).
+
 ### Changed (v1.24.0) — blueprint finalize is STREAMED (progress + heartbeats)
 - **`POST /confirm` now STREAMS a blueprint finalize as Server-Sent Events** when the caller sends
   `Accept: text/event-stream` (the api relay does). A finalize is minutes of test-install → boot →

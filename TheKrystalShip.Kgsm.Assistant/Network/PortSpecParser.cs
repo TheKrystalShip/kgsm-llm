@@ -4,11 +4,11 @@ using System.Text.RegularExpressions;
 namespace TheKrystalShip.Kgsm.Assistant.Network;
 
 /// <summary>
-/// Parses and renders the <c>open_ports</c> port specification — the single home for how the model's
-/// free-text port argument (e.g. <c>"34197/udp"</c>, <c>"27015:27020/tcp, 27016/tcp"</c>) becomes a
-/// validated list of <see cref="PortRule"/>s, and how that list round-trips back to a canonical string
-/// (carried on the confirmation token as the config value). Shared by the dispatcher (stage-time
-/// validation) and the confirm path (re-parse) so the two can never drift.
+/// Parses and renders the <c>open_ports</c> port specification — the single home for turning a
+/// UFW-style port spec (e.g. <c>"34197/udp"</c>, <c>"27015:27020/tcp, 27016/tcp"</c>) into a validated
+/// list of <see cref="PortRule"/>s, and how that list round-trips back to a canonical string (carried on
+/// the confirmation token as the config value). Shared by the dispatcher (stage-time validation of the
+/// instance's configured spec) and the confirm path (re-parse) so the two can never drift.
 /// <para>
 /// Accepted forms per entry: <c>port</c>, <c>port/proto</c>, <c>start:end</c>, <c>start:end/proto</c>.
 /// Entries are separated by commas or pipes. A protocol is <c>tcp</c> or <c>udp</c>; when omitted the

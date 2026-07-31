@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — headless deploys (`setup.sh` once, `deploy.sh` forever after)
+- **`deploy/setup.sh` provisions the host once** (asks for sudo; idempotent): chowns
+  `/opt/kgsm-assistant` to the deploying user, seeds `/etc/kgsm-assistant/service.env`, creates the
+  `service`/`cli`/`indexer`/`docs` tree plus `/var/lib/kgsm-assistant` and the
+  `/usr/local/bin/kgsm-assistant-cli` symlink, puts the real units in `/etc/kgsm-assistant/systemd/`
+  with the `/etc/systemd/system/` entries symlinked to them, installs a polkit grant scoped to this
+  project's units, and verifies the grant with the same unprivileged `systemctl` calls `deploy.sh`
+  makes. Only `kgsm-assistant-service.service` is enabled — `kgsm-rag-indexer.service` stays opt-in.
+- **`deploy/deploy.sh` runs with no `sudo` and no prompts**, and refuses up-front (before building)
+  with "run `deploy/setup.sh`" when the host is not provisioned.
+- `deploy/deploy-common.sh` carries the project block plus the shared helpers, sourced by both entry
+  points so they cannot drift. Canonical template and contract:
+  `tks/scripts/deploy-template/README.md`.
+
 ### Changed (v1.25.1) — webhook surfaces blueprint events for cache invalidation
 
 - **The `POST /events` webhook now logs a typed line for `blueprint_*` events** alongside the

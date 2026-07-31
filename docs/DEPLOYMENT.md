@@ -51,24 +51,32 @@ from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead 
 Every key, its default, and its env-var form: **[`CONFIGURATION.md`](./CONFIGURATION.md)**. Secrets
 go in the env file **only** — never in a committed `appsettings.json`.
 
-## 0.1 · Deploy in one command — `deploy/deploy.sh` (recommended)
+## 0.1 · Deploy in two commands — `deploy/setup.sh` then `deploy/deploy.sh` (recommended)
 
-Once the prerequisites in §1–2 are satisfied, the supported path is the script. It builds, publishes,
-installs the systemd units (substituting `User=`/`Group=` to **you**, the invoking user), seeds the
-env file from the template if absent, enables the service, and blocks on a real `/health` 200:
+Once the prerequisites in §1–2 are satisfied, the supported path is the scripts. This is the
+ecosystem-wide pattern (`tks/scripts/deploy-template/README.md`): **`setup.sh` once per host,
+`deploy.sh` forever after.**
 
 ```bash
 cd ~/tks/kgsm-llm
-./deploy/deploy.sh                 # Service + CLI
-./deploy/deploy.sh --with-indexer  # also build + enable the RAG indexer (needs Ollama)
+./deploy/setup.sh                  # ONCE per host — asks for sudo
+./deploy/deploy.sh                 # Service + CLI — no sudo, no prompts
+./deploy/deploy.sh --with-indexer  # also build + start the RAG indexer (needs Ollama)
 ```
 
-Run it **as the service user, not root** — it builds as you and `sudo`s only the systemd/root-path
-steps. It preflight-checks the .NET 10 ASP.NET runtime and the `kgsm-lib` sibling (§1) and fails fast
-if either is missing. On the **first** run it prints a reminder to fill in
-`/etc/kgsm-assistant/service.env` (the table above) and restart; on later runs it hot-swaps the
-binaries and leaves your env untouched. Non-interactive (CI):
-`SUDO='sudo -A' SUDO_ASKPASS=/path/to/askpass ./deploy/deploy.sh`.
+`setup.sh` provisions everything privileged: it creates `/opt/kgsm-assistant/{service,cli,indexer,docs}`
+and `/var/lib/kgsm-assistant` owned by you, seeds `/etc/kgsm-assistant/service.env` from the template if
+absent (never clobbering it), puts the real unit files in `/etc/kgsm-assistant/systemd/` with
+`/etc/systemd/system/` symlinks to them, symlinks the CLI onto `PATH`, installs a scoped polkit grant so
+you can drive `systemctl` for these units with no password, enables the service, and verifies that grant
+works. It enables the **service** only — the RAG indexer is opt-in and stays off until you enable it.
+
+`deploy.sh` then builds, publishes, refreshes the units if they changed, swaps the binaries, and blocks
+on a real `/health` 200 — with **no privilege at all**. Run both **as the service user, not root**. It
+preflight-checks the .NET 10 ASP.NET runtime and the `kgsm-lib` sibling (§1) and fails fast if either is
+missing; if the host was never provisioned it says so and stops before building. Your env file is never
+touched by a deploy. Non-interactive setup (CI):
+`SUDO='sudo -A' SUDO_ASKPASS=/path/to/askpass ./deploy/setup.sh`.
 
 **The numbered sections below are the manual, step-by-step equivalent** plus the deeper reference
 (Ollama tuning, RAG end-to-end, reverse proxy, troubleshooting). Read them to understand — or
@@ -302,7 +310,7 @@ pending confirmations are rejected and the service falls back to read-only.
 
 ### 6.3 Run under systemd
 
-`deploy/deploy.sh` ([§0.1](#01--deploy-in-one-command--deploydeploysh-recommended)) does all of
+`deploy/setup.sh` + `deploy/deploy.sh` ([§0.1](#01--deploy-in-two-commands--deploysetupsh-then-deploydeploysh-recommended)) do all of
 this for you; the manual equivalent (copy the unit + env template from [`../deploy/`](../deploy/),
 also covered in [`../deploy/README.md`](../deploy/README.md)) is:
 

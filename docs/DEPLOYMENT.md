@@ -53,9 +53,9 @@ go in the env file **only** — never in a committed `appsettings.json`.
 
 ## 0.1 · Deploy in two commands — `deploy/setup.sh` then `deploy/deploy.sh` (recommended)
 
-Once the prerequisites in §1–2 are satisfied, the supported path is the scripts. This is the
-ecosystem-wide pattern (`tks/scripts/deploy-template/README.md`): **`setup.sh` once per host,
-`deploy.sh` forever after.**
+Once the prerequisites in §1–2 are satisfied, the supported path is the scripts: **`setup.sh` once
+per host, `deploy.sh` forever after.** Everything the two scripts need lives in `deploy/`, so this
+works from a standalone clone; every sibling `kgsm-*` repo carries the same pattern.
 
 ```bash
 cd ~/tks/kgsm-llm

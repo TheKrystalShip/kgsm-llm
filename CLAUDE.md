@@ -41,6 +41,35 @@ dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --seed 42   # gro
 > `-c Release` on `dotnet run` reuses the Release build so stdout is just the answer; a bare
 > `dotnet run` rebuilds in Debug and prints build output first.
 
+## Deploying
+
+```bash
+./deploy/setup.sh    # ONCE per host. Asks for sudo. Idempotent, re-runnable.
+./deploy/deploy.sh   # every deploy. NO sudo, NO prompts.
+```
+
+Note the install prefix keeps the *assistant's* name, not the repo's: everything lands under
+`/opt/kgsm-assistant`, configured from `/etc/kgsm-assistant/service.env`.
+
+`setup.sh` is the only part that needs privilege. It chowns `/opt/kgsm-assistant` to you, seeds the
+env file, creates the `service`/`cli`/`indexer`/`docs` subtrees plus `/var/lib/kgsm-assistant` and
+the `/usr/local/bin/kgsm-assistant-cli` symlink, puts the real units in **user-owned**
+`/etc/kgsm-assistant/systemd/` with the `/etc/systemd/system/` entries symlinked to them, installs a
+polkit rule scoped to this project's units, and then verifies the grant by making the same
+unprivileged `systemctl` calls the deploy will. Both units are installed but only
+`kgsm-assistant-service.service` is **enabled** — `kgsm-rag-indexer.service` is opt-in, so
+provisioning a host never silently starts indexing.
+
+That setup is what makes `deploy.sh` **need no privilege at all**: the prefix is yours so installing
+is a plain file write, a changed unit is a plain file write into the user-owned directory, and every
+`systemctl` verb goes through the polkit grant. It refuses **before building**, with *"run
+`deploy/setup.sh`"*, on an unprovisioned host. If some *other* operation seems to need root, stop and
+ask — don't reintroduce `sudo` into `deploy.sh`.
+
+`deploy-common.sh` holds the paths/units/helpers both scripts share. The three files are
+self-contained, so a standalone clone deploys with no other repo checked out; every `kgsm-*` repo
+carries this same pattern. Cold-start runbook: `docs/DEPLOYMENT.md`.
+
 ## Architecture (the parts that span files)
 
 The layer cake — **one brain, many surfaces** (full diagram + rationale in `docs/ARCHITECTURE.md`):

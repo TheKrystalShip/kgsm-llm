@@ -7,8 +7,10 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 /// seam lets a host force a refresh without a friend-assembly dependency on the internal type.
 /// <para>
 /// Registered against the same singleton instance as <c>IServerInventory</c>, so invalidating here
-/// and reading there hit one cache. The HTTP service calls it from its <c>/events</c> webhook; the
-/// CLI calls it after a confirmed mutating action (it has no webhook — TTL + this is its freshness).
+/// and reading there hit one cache. Three callers, each an independent freshness path: the HTTP
+/// service's <c>KgsmEventListener</c> (the engine's events over its own socket) and its
+/// <c>/events</c> webhook, and the blueprint authoring lane after its own writes — which is the
+/// CLI's only path, since it binds no socket and has no webhook.
 /// </para>
 /// </summary>
 public interface IInventoryInvalidation

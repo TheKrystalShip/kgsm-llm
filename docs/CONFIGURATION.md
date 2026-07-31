@@ -124,13 +124,14 @@ Append-only JSONL of turns, for prompt-tuning/eval. **On by default in the CLI**
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
 | `Path` | `/usr/local/bin/kgsm` | `KGSM__Path` | Path to `kgsm.sh`. The CLI **validates this at startup** (exits `2` if missing) |
+| `EventSocketPath` | _(empty)_ | `KGSM__EventSocketPath` | Unix socket this process **binds** to receive kgsm's engine events; a blueprint write invalidates the blueprint cache. Empty = bind nothing. The service unit sets `/run/kgsm-assistant/events.sock`; the CLI leaves it empty (binding is exclusive). kgsm delivers only to paths listed in its own `event_socket_filenames` |
 
 ### `InventoryCache` — kgsm read cache (`InventoryCacheOptions`)
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
 | `InstancesTtlSeconds` | `300` | `InventoryCache__InstancesTtlSeconds` | Instance-list cache TTL (backstop; the webhook invalidates) |
-| `BlueprintsTtlSeconds` | `600` | `InventoryCache__BlueprintsTtlSeconds` | Blueprint-list cache TTL |
+| `BlueprintsTtlSeconds` | `600` | `InventoryCache__BlueprintsTtlSeconds` | Blueprint-list cache TTL (backstop; a `blueprint_*` event invalidates) |
 
 ### `Monitor` — kgsm-monitor metrics socket (`MonitorOptions`)
 

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v1.26.0) — the assistant listens to the engine's events
+
+- **`kgsm-assistant-service` binds its own kgsm event socket
+  (`/run/kgsm-assistant/events.sock`) and drops its blueprint cache the moment a blueprint is
+  written.** A blueprint edited anywhere else on the host — the Control Panel's library editor,
+  another operator's CLI — used to be invisible here until the catalog TTL expired, so the assistant
+  answered from a stale snapshot. It now invalidates on the engine's own
+  `blueprint_created`/`_updated`/`_removed`, so the next turn reads the new values.
+- **The listener is opt-in per host, via the new `KGSM:EventSocketPath`
+  (`KGSM__EventSocketPath`).** Binding a unix socket is exclusive, so only a resident host may
+  listen: `AddKgsmEventListener()` registers nothing when the path is unset, which is what keeps a
+  one-shot `kgsm-assistant-cli` run from taking the socket away from the service. The service's unit
+  sets the path and gets `RuntimeDirectory=kgsm-assistant`; kgsm delivers there only when the same
+  path is listed in its `event_socket_filenames` (it ships in the engine's default list).
+- Events only make an existing cache fresher — nothing gates a read on them, so the assistant still
+  runs standalone with no socket, on the TTL alone. The 8 manual `_invalidation.Invalidate()` calls
+  in `BlueprintAuthoringAggregator` and the `POST /events` webhook both remain as independent
+  freshness paths.
+- **kgsm-lib 1.42.0 → 1.45.0** for the blueprint event types. The bump also moves
+  `IBlueprintFiles` onto a constructor that needs `IBlueprintService` + `IEventManagementService`:
+  both are now registered, and `BlueprintFilesWiringTests` asserts the write authority resolves, a
+  break that is otherwise invisible until the first blueprint write.
+
 ### Changed — headless deploys (`setup.sh` once, `deploy.sh` forever after)
 - **`deploy/setup.sh` provisions the host once** (asks for sudo; idempotent): chowns
   `/opt/kgsm-assistant` to the deploying user, seeds `/etc/kgsm-assistant/service.env`, creates the

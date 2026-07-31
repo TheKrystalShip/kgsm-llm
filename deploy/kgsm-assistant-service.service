@@ -26,8 +26,21 @@ ExecStart=/opt/kgsm-assistant/service/kgsm-assistant
 # Plain HTTP on loopback — terminate TLS at a reverse proxy (nginx) in front. See DEPLOYMENT.md.
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://127.0.0.1:5180
+# The engine's events reach this service over its own socket, so a blueprint edited elsewhere (the
+# Control Panel, another operator's CLI) invalidates the assistant's blueprint cache at once. kgsm
+# delivers here only when this path is listed in its config's event_socket_filenames; unset, the
+# service simply binds nothing and falls back to the cache TTL.
+Environment=KGSM__EventSocketPath=/run/kgsm-assistant/events.sock
 # Secrets + non-default config live here (chmod 600, root:root or kgsm:kgsm). Template: assistant.env.example
 EnvironmentFile=/etc/kgsm-assistant/service.env
+
+# systemd creates this owned by the service user; the event socket above is bound inside it.
+RuntimeDirectory=kgsm-assistant
+RuntimeDirectoryMode=0750
+# Keep /run/kgsm-assistant across restarts so systemd never removes it while the service runs.
+# Belt to the listener's suspenders: kgsm-lib's UnixSocketClient re-binds if the socket file is
+# unlinked, but preserving the directory prevents the systemd-driven removal class outright.
+RuntimeDirectoryPreserve=yes
 
 Restart=on-failure
 RestartSec=5

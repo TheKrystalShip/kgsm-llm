@@ -49,6 +49,11 @@ builder.Services.AddKgsmAssistant();
 // wins over the library's fail-closed DisabledWebSearch default. AddKgsmAdapters reads the KGSM,
 // InventoryCache and WebSearch config sections.
 builder.Services.AddKgsmAdapters(builder.Configuration);
+// This host is resident, so it listens to the engine's events: a blueprint edited in the Control
+// Panel or from another operator's CLI drops the blueprint cache here immediately, instead of the
+// assistant answering from a stale catalog until the TTL expires. Binds only when
+// KGSM:EventSocketPath is set (the CLI never sets it — see AddKgsmEventListener).
+builder.Services.AddKgsmEventListener(builder.Configuration);
 // The startup orphan sweep for create_blueprint test-install probes (plan step 10's backstop) — the
 // first IHostedService in this repo. Runs once at startup and exits; see its own doc comment.
 builder.Services.AddHostedService<BlueprintProbeSweepService>();
@@ -171,11 +176,13 @@ app.MapPost("/events", async (
         {
             string? type = eventType.GetString();
             logger.LogInformation("kgsm event received: {EventType}", type);
-            // A blueprint_* event is the only phase where the change is NOT to a server's runtime
+            // A blueprint_* event is the only kind where the change is NOT to a server's runtime
             // state but to a blueprint FILE on disk — a category the inventory also caches (the
             // blueprint catalog) and needs to drop. The typed line makes a web-originated blueprint
             // edit's cache-bust visible to operators skimming journalctl for "why did the assistant
-            // see the new values".
+            // see the new values". A host wired to the event socket invalidates on the same events
+            // through KgsmEventListener; the two paths are redundant on purpose, since which
+            // transport kgsm uses is the engine's configuration to make, not this service's.
             if (!string.IsNullOrEmpty(type) && type.StartsWith("blueprint_", StringComparison.Ordinal))
                 logger.LogInformation("blueprint event from kgsm: {EventType} — invalidating blueprint inventory", type);
         }

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
@@ -45,14 +46,13 @@ public static class ServiceCollectionExtensions
             ?? throw new InvalidOperationException("KGSM configuration section is missing.");
 
         // We register the command-executor service graph (which shells out to kgsm) by hand
-        // instead of KGSM.Lib's AddKgsmServices: that also wires IUnixSocketClient / IEventService
-        // / IKgsmClient, whose construction auto-starts the Unix-socket event listener and would
-        // contend with the bot for the single kgsm event socket. The HTTP service receives events
-        // over its /events webhook and the CLI doesn't follow events at all, so neither host may
-        // bind that socket — hence we register only the IKgsmCommandExecutor graph the inventory
-        // needs and omit those three socket-bound singletons. (SocketPath is left empty: nothing
-        // here follows logs over the socket.)
-        services.AddSingleton(new KgsmOptions { KgsmPath = kgsm.Path });
+        // instead of KGSM.Lib's AddKgsmServices: that also wires IKgsmClient, whose constructor
+        // calls Events.Initialize() and so binds the event socket the moment the graph is built.
+        // Whether this process listens is a per-HOST decision, not a per-graph one — the CLI is a
+        // one-shot with no cache to keep warm, the HTTP service is resident and wants events — so
+        // the listener is a separate opt-in call (AddKgsmEventListener) and the shared graph stays
+        // socket-free. SocketPath is carried on KgsmOptions for the hosts that do opt in.
+        services.AddSingleton(new KgsmOptions { KgsmPath = kgsm.Path, SocketPath = kgsm.EventSocketPath });
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         services.AddSingleton<IKgsmCommandExecutor, KgsmCommandExecutor>();
         services.AddSingleton<ILogSubscriptionService, LogSubscriptionService>();
@@ -60,7 +60,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IInstanceService, InstanceService>();
         services.AddSingleton<IInstanceFiles, InstanceFiles>(); // jailed file I/O for read/list/write_file — no socket dep, injects IInstanceService only
         services.AddSingleton<IBlueprintService, BlueprintService>();
-        services.AddSingleton<IBlueprintFiles, BlueprintFiles>(); // create_blueprint's write-side authority — no socket dep, injects IKgsmCommandExecutor only
+        // A blueprint write is reported to the ecosystem by the engine's own `kgsm events emit`, so
+        // the write-side authority needs the emit seam — shelling out like everything else here, no
+        // socket. Provenance (who edited, through what) rides the emit, so the audit row downstream
+        // names the real actor instead of the service account.
+        services.AddSingleton<IEventManagementService, EventManagementService>();
+        services.AddSingleton<IBlueprintFiles, BlueprintFiles>(); // create_blueprint's write-side authority — no socket dep
         services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
         services.AddSingleton<IWatcherService, WatcherService>(); // port-reachability probe for run_health_check
 
@@ -266,6 +271,30 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IBlueprintAttemptStore, FileSystemBlueprintAttemptStore>();
         services.AddSingleton<IBlueprintAuthoring, BlueprintAuthoringAggregator>();
         services.PostConfigure<BlueprintAuthoringFlags>(o => o.Available = blueprintAuthoring.Enabled);
+
+        return services;
+    }
+
+    /// <summary>
+    /// Opts a resident host into receiving kgsm's engine events, so a blueprint changed elsewhere
+    /// (the Control Panel's library editor, another operator's CLI) drops this process's blueprint
+    /// cache instead of being answered from a stale snapshot until the TTL expires.
+    /// <para>
+    /// Call AFTER <see cref="AddKgsmAdapters"/>, which carries the socket path onto the kgsm-lib
+    /// options. A no-op when <c>KGSM:EventSocketPath</c> is unset — binding is exclusive, so the
+    /// listener is opt-in per host and a one-shot CLI stays out of the service's way. The assistant
+    /// runs fully without it; events only make an existing cache fresher, never gate a read.
+    /// </para>
+    /// </summary>
+    public static IServiceCollection AddKgsmEventListener(this IServiceCollection services, IConfiguration config)
+    {
+        var kgsm = config.GetSection(KgsmConnectionOptions.Section).Get<KgsmConnectionOptions>();
+        if (string.IsNullOrWhiteSpace(kgsm?.EventSocketPath))
+            return services;
+
+        services.AddSingleton<IUnixSocketClient, UnixSocketClient>();
+        services.AddSingleton<IEventService, EventService>();
+        services.AddHostedService<KgsmEventListener>();
 
         return services;
     }

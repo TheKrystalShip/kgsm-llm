@@ -27,6 +27,8 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <!-- IHostedService only: the kgsm event listener binds its socket on host start. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
   </ItemGroup>
 
@@ -45,7 +47,7 @@
     <!-- The single C#<->kgsm chokepoint, consumed as the packed NuGet from the local feed
          (nuget.config → /home/heisen/local-nuget), same pattern as kgsm-watchdog / kgsm-api /
          kgsm-monitor. Bump this version when a new kgsm-lib is packed. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.42.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.45.0" />
   </ItemGroup>
 
 </Project>

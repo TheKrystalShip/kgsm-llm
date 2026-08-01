@@ -1,0 +1,739 @@
+{
+  "schemaVersion": 1,
+  "id": "assistant",
+  "displayName": "Assistant",
+  "unit": "kgsm-assistant-service.service",
+  "role": "The KGSM assistant — answers questions about this host and performs authorized actions on it.",
+  "onDemand": false,
+  "applyMode": "restart",
+  "floorSources": [
+    { "kind": "systemd-unit", "path": "/etc/kgsm-assistant/systemd/kgsm-assistant-service.service" },
+    { "kind": "env-file", "path": "/etc/kgsm-assistant/service.env" },
+    { "kind": "appsettings", "path": "/opt/kgsm-assistant/service/appsettings.json" }
+  ],
+  "groups": [
+    { "id": "general", "label": "General", "order": 1 },
+    { "id": "model", "label": "Model", "order": 2 },
+    { "id": "agent", "label": "Agent loop", "order": 3 },
+    { "id": "conversation", "label": "Conversation history", "order": 4 },
+    { "id": "kgsm", "label": "KGSM & leaf connections", "order": 5 },
+    { "id": "cache", "label": "Inventory cache", "order": 6 },
+    { "id": "actions", "label": "Actions & secrets", "order": 7 },
+    { "id": "discord", "label": "Discord sign-in", "order": 8 },
+    { "id": "session", "label": "Sessions", "order": 9 },
+    { "id": "websearch", "label": "Web search", "order": 10 },
+    { "id": "webfetch", "label": "Web fetch", "order": 11 },
+    { "id": "authoring", "label": "Blueprint authoring", "order": 12 },
+    { "id": "rag", "label": "Knowledge base", "order": 13 }
+  ],
+  "fields": [
+    {
+      "key": "logLevel",
+      "env": "Logging__LogLevel__Default",
+      "label": "Log level",
+      "description": "Minimum severity this leaf logs.",
+      "group": "general",
+      "type": "enum",
+      "values": ["Trace", "Debug", "Information", "Warning", "Error", "Critical"],
+      "default": "Information",
+      "risk": "safe"
+    },
+    {
+      "key": "bindAddress",
+      "env": "ASPNETCORE_URLS",
+      "label": "Listen address",
+      "description": "Address the assistant serves on. It stays on loopback; anything reaching it from outside this host comes through the Control Panel API.",
+      "group": "general",
+      "type": "string",
+      "default": "http://127.0.0.1:5180",
+      "risk": "wiring",
+      "pairedApiKey": "KGSM_API_ASSISTANT_URL"
+    },
+
+    {
+      "key": "ollamaEndpoint",
+      "env": "Ollama__Endpoint",
+      "label": "Ollama endpoint",
+      "description": "Where the language model is served from. Everything the assistant says comes through here, so an unreachable endpoint leaves it unable to answer at all.",
+      "group": "model",
+      "type": "string",
+      "default": "http://localhost:11434",
+      "risk": "wiring"
+    },
+    {
+      "key": "ollamaModel",
+      "env": "Ollama__Model",
+      "label": "Model",
+      "description": "Name of the model to run, as Ollama knows it. It has to be pulled on the endpoint above and has to support tool calling, or the assistant can answer but never act.",
+      "group": "model",
+      "type": "string",
+      "default": "gemma4:12b",
+      "risk": "wiring"
+    },
+    {
+      "key": "ollamaNumCtx",
+      "env": "Ollama__NumCtx",
+      "label": "Context window",
+      "description": "How many tokens of context the model is given. Larger holds more conversation and more tool output at once, and costs more memory on the machine serving the model.",
+      "group": "model",
+      "type": "int",
+      "default": "32768",
+      "min": 512,
+      "unit": "tokens",
+      "risk": "safe"
+    },
+    {
+      "key": "ollamaTimeoutSec",
+      "env": "Ollama__TimeoutSeconds",
+      "label": "Model timeout",
+      "description": "How long to wait for the model to finish a response before giving up on it.",
+      "group": "model",
+      "type": "int",
+      "default": "300",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "ollamaTemperature",
+      "env": "Ollama__Temperature",
+      "label": "Temperature",
+      "description": "How much the model varies its wording. Low keeps answers consistent and literal, which is what tool calling wants; high makes them more inventive.",
+      "group": "model",
+      "type": "float",
+      "default": "0.3",
+      "min": 0,
+      "max": 2,
+      "risk": "safe"
+    },
+    {
+      "key": "ollamaSeed",
+      "env": "Ollama__Seed",
+      "label": "Sampling seed",
+      "description": "Fixes the model's randomness so the same question gives the same answer, which is useful when comparing runs. Leave it unset for normal use.",
+      "group": "model",
+      "type": "int",
+      "risk": "safe"
+    },
+    {
+      "key": "ollamaThink",
+      "env": "Ollama__Think",
+      "label": "Thinking mode",
+      "description": "Asks the model to reason before answering, on models that support it. Slower, and only worth it for a model trained for it.",
+      "group": "model",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+
+    {
+      "key": "agentMaxIterations",
+      "env": "LlmAgent__MaxIterations",
+      "label": "Maximum tool steps",
+      "description": "How many times the assistant may call a tool while working on one message before it has to answer with what it has.",
+      "group": "agent",
+      "type": "int",
+      "default": "16",
+      "min": 1,
+      "risk": "safe"
+    },
+    {
+      "key": "agentMaxToolOutputChars",
+      "env": "LlmAgent__MaxToolOutputChars",
+      "label": "Tool output limit",
+      "description": "How much of a tool's output the model is shown. Truncating keeps a long listing from crowding out the conversation.",
+      "group": "agent",
+      "type": "int",
+      "default": "1500",
+      "min": 100,
+      "unit": "chars",
+      "risk": "safe"
+    },
+    {
+      "key": "agentIterationLimitReply",
+      "env": "LlmAgent__IterationLimitReply",
+      "label": "Step-limit reply",
+      "description": "What the assistant says when it hits the tool-step limit without reaching an answer.",
+      "group": "agent",
+      "type": "string",
+      "risk": "safe"
+    },
+
+    {
+      "key": "conversationDbPath",
+      "env": "Conversation__DatabasePath",
+      "label": "Conversation database",
+      "description": "File holding past conversations, which is both the assistant's memory and the record the Control Panel reads. Pointing it elsewhere starts an empty history and leaves the old one behind.",
+      "group": "conversation",
+      "type": "path",
+      "default": "/var/lib/kgsm-assistant/conversations.db",
+      "risk": "destructive"
+    },
+
+    {
+      "key": "kgsmPath",
+      "env": "KGSM__Path",
+      "label": "KGSM executable",
+      "description": "Path to the KGSM executable. Everything the assistant knows about this host's servers is read through it.",
+      "group": "kgsm",
+      "type": "path",
+      "default": "/usr/local/bin/kgsm",
+      "risk": "wiring"
+    },
+    {
+      "key": "kgsmEventSocket",
+      "env": "KGSM__EventSocketPath",
+      "label": "KGSM event socket",
+      "description": "Socket the engine delivers events on, which is how the assistant notices a blueprint changed elsewhere. It must be listed in the engine's own event socket configuration. Unset, the assistant falls back to re-reading on a timer.",
+      "group": "kgsm",
+      "type": "path",
+      "default": "/run/kgsm-assistant/events.sock",
+      "risk": "wiring"
+    },
+    {
+      "key": "monitorSocket",
+      "env": "Monitor__SocketPath",
+      "label": "Monitor socket",
+      "description": "The metrics daemon's socket, where the assistant reads resource usage from. Wrong and it simply reports metrics as unavailable.",
+      "group": "kgsm",
+      "type": "path",
+      "default": "/run/kgsm-monitor/metrics.sock",
+      "risk": "wiring"
+    },
+    {
+      "key": "watchdogSocket",
+      "env": "Watchdog__SocketPath",
+      "label": "Watchdog socket",
+      "description": "The supervisor's control socket, which the assistant starts and stops servers through.",
+      "group": "kgsm",
+      "type": "path",
+      "default": "/run/kgsm-watchdog/control.sock",
+      "risk": "wiring"
+    },
+    {
+      "key": "firewallSocket",
+      "env": "Firewall__SocketPath",
+      "label": "Firewall socket",
+      "description": "The firewall authority's socket, which the assistant opens and closes server ports through.",
+      "group": "kgsm",
+      "type": "path",
+      "default": "/run/kgsm-firewall/firewall.sock",
+      "risk": "wiring"
+    },
+
+    {
+      "key": "cacheInstancesTtlSec",
+      "env": "InventoryCache__InstancesTtlSeconds",
+      "label": "Server list cache",
+      "description": "How long the list of servers is reused before being re-read from KGSM.",
+      "group": "cache",
+      "type": "int",
+      "default": "300",
+      "min": 0,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "cacheBlueprintsTtlSec",
+      "env": "InventoryCache__BlueprintsTtlSeconds",
+      "label": "Blueprint cache",
+      "description": "How long the blueprint catalog is reused before being re-read from KGSM.",
+      "group": "cache",
+      "type": "int",
+      "default": "600",
+      "min": 0,
+      "unit": "s",
+      "risk": "safe"
+    },
+
+    {
+      "key": "actionsEnabled",
+      "env": "Assistant__ActionsEnabled",
+      "label": "Allow actions",
+      "description": "Whether the assistant may do anything, rather than only answer questions. With this off it can still read and explain, but every start, stop, install or edit is refused.",
+      "group": "actions",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+    {
+      "key": "confirmationKey",
+      "env": "Assistant__Confirmation__Key",
+      "label": "Confirmation signing key",
+      "description": "Secret used to sign the token that carries a staged action from proposal to confirmation. Unset, nothing can be confirmed and every action is refused.",
+      "group": "actions",
+      "type": "secret",
+      "risk": "wiring",
+      "dependsOn": "actionsEnabled"
+    },
+    {
+      "key": "confirmationTtlSec",
+      "env": "Assistant__Confirmation__TtlSeconds",
+      "label": "Confirmation lifetime",
+      "description": "How long a proposed action stays confirmable. Keep it short: it is how long a stale confirmation could still be used.",
+      "group": "actions",
+      "type": "int",
+      "default": "300",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "webhookSecret",
+      "env": "Assistant__Webhook__Secret",
+      "label": "Engine webhook secret",
+      "description": "Shared secret proving an inbound engine event really came from KGSM. It has to match the engine's own webhook secret. Unset, event signatures are not checked at all.",
+      "group": "actions",
+      "type": "secret",
+      "risk": "wiring"
+    },
+    {
+      "key": "relaySecret",
+      "env": "Assistant__Relay__Secret",
+      "label": "Control Panel relay secret",
+      "description": "Shared secret letting the co-located Control Panel API ask on a signed-in user's behalf without a second login. It has to match the API's own relay secret, or the panel's chat stops working. The relay forwards who is asking, never what they are allowed to do.",
+      "group": "actions",
+      "type": "secret",
+      "risk": "wiring",
+      "pairedApiKey": "KGSM_API_ASSISTANT_RELAY_SECRET"
+    },
+
+    {
+      "key": "discordClientId",
+      "env": "DiscordOAuth__ClientId",
+      "label": "Discord application id",
+      "description": "The Discord application users sign in through. The same application as the bot's.",
+      "group": "discord",
+      "type": "string",
+      "risk": "wiring"
+    },
+    {
+      "key": "discordClientSecret",
+      "env": "DiscordOAuth__ClientSecret",
+      "label": "Discord client secret",
+      "description": "Secret for that application, used to complete a sign-in server-side.",
+      "group": "discord",
+      "type": "secret",
+      "risk": "wiring"
+    },
+    {
+      "key": "discordBotToken",
+      "env": "DiscordOAuth__BotToken",
+      "label": "Discord bot token",
+      "description": "Token for the same application, used to look up whether someone is in the server and holds the action role. Sign-in itself only ever asks Discord for a user's identity, never their roles.",
+      "group": "discord",
+      "type": "secret",
+      "risk": "wiring"
+    },
+    {
+      "key": "discordGuildId",
+      "env": "DiscordOAuth__GuildId",
+      "label": "Discord server id",
+      "description": "The Discord server whose membership decides who may sign in.",
+      "group": "discord",
+      "type": "string",
+      "risk": "wiring"
+    },
+    {
+      "key": "discordActionRoleId",
+      "env": "DiscordOAuth__ActionRoleId",
+      "label": "Action role id",
+      "description": "Role whose holders may perform actions — the same role the Discord bot checks. Empty means no one is authorized.",
+      "group": "discord",
+      "type": "string",
+      "risk": "wiring"
+    },
+    {
+      "key": "discordRedirectUri",
+      "env": "DiscordOAuth__RedirectUri",
+      "label": "Sign-in redirect",
+      "description": "Where Discord sends someone back to after they approve. It has to match the redirect registered on the Discord application exactly.",
+      "group": "discord",
+      "type": "string",
+      "risk": "wiring"
+    },
+    {
+      "key": "discordScopes",
+      "env": "DiscordOAuth__Scopes",
+      "label": "Sign-in scopes",
+      "description": "What sign-in asks Discord for. Identity alone is enough, because roles are read with the bot token instead.",
+      "group": "discord",
+      "type": "string",
+      "default": "identify",
+      "risk": "wiring"
+    },
+
+    {
+      "key": "sessionTtlSec",
+      "env": "Auth__SessionTtlSeconds",
+      "label": "Session lifetime",
+      "description": "How long a sign-in lasts before the user has to sign in again.",
+      "group": "session",
+      "type": "int",
+      "default": "3600",
+      "min": 60,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "roleCacheTtlSec",
+      "env": "Auth__RoleCacheTtlSeconds",
+      "label": "Role cache lifetime",
+      "description": "How long a user's role decision is reused before Discord is asked again. Longer means fewer calls to Discord and a longer wait before a revoked role takes effect.",
+      "group": "session",
+      "type": "int",
+      "default": "60",
+      "min": 0,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "stateTtlSec",
+      "env": "Auth__StateTtlSeconds",
+      "label": "Sign-in window",
+      "description": "How long someone has to finish a sign-in once it starts before they have to begin again.",
+      "group": "session",
+      "type": "int",
+      "default": "300",
+      "min": 30,
+      "unit": "s",
+      "risk": "safe"
+    },
+
+    {
+      "key": "webSearchApiKey",
+      "env": "WebSearch__ApiKey",
+      "label": "Web search API key",
+      "description": "Key for the web search provider. Unset, the assistant has no web search and says so instead of guessing.",
+      "group": "websearch",
+      "type": "secret",
+      "risk": "safe"
+    },
+    {
+      "key": "webSearchMaxResults",
+      "env": "WebSearch__MaxResults",
+      "label": "Results per search",
+      "description": "How many results one search brings back for the assistant to read.",
+      "group": "websearch",
+      "type": "int",
+      "default": "4",
+      "min": 1,
+      "risk": "safe"
+    },
+    {
+      "key": "webSearchDepth",
+      "env": "WebSearch__SearchDepth",
+      "label": "Search depth",
+      "description": "How hard the provider looks. Advanced is slower and costs more per search.",
+      "group": "websearch",
+      "type": "enum",
+      "values": ["basic", "advanced"],
+      "default": "basic",
+      "risk": "safe"
+    },
+    {
+      "key": "webSearchTimeoutSec",
+      "env": "WebSearch__TimeoutSeconds",
+      "label": "Search timeout",
+      "description": "How long to wait for a search before continuing without it.",
+      "group": "websearch",
+      "type": "int",
+      "default": "10",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "webSearchMaxCallsPerDay",
+      "env": "WebSearch__MaxCallsPerDay",
+      "label": "Daily search budget",
+      "description": "How many searches may run in a day, so a runaway conversation cannot spend the whole quota.",
+      "group": "websearch",
+      "type": "int",
+      "default": "200",
+      "min": 0,
+      "risk": "safe"
+    },
+
+    {
+      "key": "webFetchEnabled",
+      "env": "WebFetch__Enabled",
+      "label": "Allow fetching pages",
+      "description": "Whether the assistant may open a page it found, rather than only reading search summaries.",
+      "group": "webfetch",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+    {
+      "key": "webFetchTimeoutSec",
+      "env": "WebFetch__TimeoutSeconds",
+      "label": "Fetch timeout",
+      "description": "How long to wait for a page before giving up on it.",
+      "group": "webfetch",
+      "type": "int",
+      "default": "8",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe",
+      "dependsOn": "webFetchEnabled"
+    },
+    {
+      "key": "webFetchMaxContentBytes",
+      "env": "WebFetch__MaxContentBytes",
+      "label": "Maximum page size",
+      "description": "How much of a page is read before the rest is discarded.",
+      "group": "webfetch",
+      "type": "int",
+      "default": "3145728",
+      "min": 1024,
+      "unit": "bytes",
+      "risk": "safe",
+      "dependsOn": "webFetchEnabled"
+    },
+    {
+      "key": "webFetchMaxRedirects",
+      "env": "WebFetch__MaxRedirects",
+      "label": "Maximum redirects",
+      "description": "How many redirects to follow before treating the page as unreachable.",
+      "group": "webfetch",
+      "type": "int",
+      "default": "5",
+      "min": 0,
+      "risk": "safe",
+      "dependsOn": "webFetchEnabled"
+    },
+    {
+      "key": "webFetchMaxCallsPerDay",
+      "env": "WebFetch__MaxCallsPerDay",
+      "label": "Daily fetch budget",
+      "description": "How many pages may be opened in a day.",
+      "group": "webfetch",
+      "type": "int",
+      "default": "200",
+      "min": 0,
+      "risk": "safe",
+      "dependsOn": "webFetchEnabled"
+    },
+
+    {
+      "key": "authoringEnabled",
+      "env": "BlueprintAuthoring__Enabled",
+      "label": "Allow drafting blueprints",
+      "description": "Whether the assistant may research an unknown game and draft a blueprint for it. Off, it says the game is unsupported instead.",
+      "group": "authoring",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+    {
+      "key": "authoringStashDir",
+      "env": "BlueprintAuthoring__StashDir",
+      "label": "Draft directory",
+      "description": "Where drafts are kept while they are being verified. Empty uses a temporary location.",
+      "group": "authoring",
+      "type": "path",
+      "risk": "safe",
+      "dependsOn": "authoringEnabled"
+    },
+    {
+      "key": "authoringMaxAttempts",
+      "env": "BlueprintAuthoring__MaxAttempts",
+      "label": "Draft attempts",
+      "description": "How many times a draft may be revised and re-verified before the attempt is abandoned.",
+      "group": "authoring",
+      "type": "int",
+      "default": "3",
+      "min": 1,
+      "risk": "safe",
+      "dependsOn": "authoringEnabled"
+    },
+    {
+      "key": "authoringVerifyTimeoutSec",
+      "env": "BlueprintAuthoring__VerifyTimeoutSeconds",
+      "label": "Verification timeout",
+      "description": "How long a drafted server gets to install and come up before the draft is judged not to work.",
+      "group": "authoring",
+      "type": "int",
+      "default": "240",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe",
+      "dependsOn": "authoringEnabled"
+    },
+    {
+      "key": "authoringVerifyPollSec",
+      "env": "BlueprintAuthoring__VerifyPollIntervalSeconds",
+      "label": "Verification check interval",
+      "description": "How often a drafted server is checked while it is coming up.",
+      "group": "authoring",
+      "type": "int",
+      "default": "5",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe",
+      "dependsOn": "authoringEnabled"
+    },
+
+    {
+      "key": "ragEnabled",
+      "env": "Rag__Enabled",
+      "label": "Use the knowledge base",
+      "description": "Whether the assistant may search indexed documentation for grounding. Off, it answers from the model and live host data alone.",
+      "group": "rag",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+    {
+      "key": "ragIndexPath",
+      "env": "Rag__IndexPath",
+      "label": "Index file",
+      "description": "The index the indexer produced, which searches read. A missing file is an expected state before the indexer has run: searching simply returns nothing.",
+      "group": "rag",
+      "type": "path",
+      "risk": "wiring",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragTopK",
+      "env": "Rag__TopK",
+      "label": "Passages per search",
+      "description": "How many passages a search returns for the assistant to read.",
+      "group": "rag",
+      "type": "int",
+      "default": "5",
+      "min": 1,
+      "risk": "safe",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragMinScore",
+      "env": "Rag__MinScore",
+      "label": "Passage score floor",
+      "description": "How similar a passage must be to be returned at all. Keep it permissive: whether the results were good enough to use is decided afterwards, and dropping everything here pre-empts that decision.",
+      "group": "rag",
+      "type": "float",
+      "default": "0",
+      "min": 0,
+      "max": 1,
+      "risk": "safe",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragLocalMinScore",
+      "env": "Rag__LocalMinScore",
+      "label": "Fall-back-to-web threshold",
+      "description": "How good the best local passage has to be for the assistant to trust it. Below this it searches the web instead.",
+      "group": "rag",
+      "type": "float",
+      "default": "0.35",
+      "min": 0,
+      "max": 1,
+      "risk": "safe",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragMaxContextChars",
+      "env": "Rag__MaxContextChars",
+      "label": "Grounding text limit",
+      "description": "How much retrieved text the model is given at once.",
+      "group": "rag",
+      "type": "int",
+      "default": "6000",
+      "min": 500,
+      "unit": "chars",
+      "risk": "safe",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragSourcePattern",
+      "env": "Rag__SourcePattern",
+      "label": "Document pattern",
+      "description": "Which files to pick up when walking a source directory during indexing.",
+      "group": "rag",
+      "type": "string",
+      "default": "*.md",
+      "risk": "safe"
+    },
+    {
+      "key": "ragChunkSize",
+      "env": "Rag__ChunkSize",
+      "label": "Chunk size",
+      "description": "How large each indexed passage is. Changing it means the existing index no longer matches and has to be rebuilt.",
+      "group": "rag",
+      "type": "int",
+      "default": "2000",
+      "min": 100,
+      "unit": "chars",
+      "risk": "destructive"
+    },
+    {
+      "key": "ragChunkOverlap",
+      "env": "Rag__ChunkOverlap",
+      "label": "Chunk overlap",
+      "description": "How much each passage repeats of the one before, so a sentence spanning a boundary is still findable. Must be smaller than the chunk size.",
+      "group": "rag",
+      "type": "int",
+      "default": "200",
+      "min": 0,
+      "unit": "chars",
+      "risk": "destructive"
+    },
+    {
+      "key": "ragEmbeddingModel",
+      "env": "Rag__EmbeddingModel",
+      "label": "Embedding model",
+      "description": "Model used to turn text into the vectors searches compare. It has to be the same model the index was built with, or every search scores as unrelated.",
+      "group": "rag",
+      "type": "string",
+      "default": "embeddinggemma",
+      "risk": "wiring",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragEmbeddingEndpoint",
+      "env": "Rag__Endpoint",
+      "label": "Embedding endpoint",
+      "description": "Where the embedding model is served from. Usually the same Ollama as the chat model.",
+      "group": "rag",
+      "type": "string",
+      "default": "http://localhost:11434",
+      "risk": "wiring",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragEmbeddingTimeoutSec",
+      "env": "Rag__TimeoutSeconds",
+      "label": "Embedding timeout",
+      "description": "How long to wait for the embedding model when turning a question into a vector.",
+      "group": "rag",
+      "type": "int",
+      "default": "120",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragDocumentPrefix",
+      "env": "Rag__DocumentPrefix",
+      "label": "Document prefix",
+      "description": "Text prepended to a passage before it is embedded, for models trained to expect one. It has to match what the index was built with.",
+      "group": "rag",
+      "type": "string",
+      "risk": "wiring",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragQueryPrefix",
+      "env": "Rag__QueryPrefix",
+      "label": "Query prefix",
+      "description": "Text prepended to a question before it is embedded, for models trained to expect one. It has to match what the index was built with.",
+      "group": "rag",
+      "type": "string",
+      "risk": "wiring",
+      "dependsOn": "ragEnabled"
+    }
+  ]
+}

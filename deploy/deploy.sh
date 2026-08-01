@@ -78,6 +78,10 @@ fi
 # ── 2. Refresh the units if they changed (we own the files; systemd reads them via symlinks) ──
 install_units_unprivileged
 
+# ── 2b. Publish the leaf config descriptor ────────────────────────────────────
+# Before the swap, so the surface kgsm-api reads never lags the binary that implements it.
+install_leaf_descriptor
+
 # ── 3. The swap ────────────────────────────────────────────────────────────────
 log "stopping ${SERVICE}"
 sysctl_do stop "$SERVICE" || true

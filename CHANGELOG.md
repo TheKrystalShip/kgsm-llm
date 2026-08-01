@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v1.27.0) — the Control Panel can configure this service
+
+- **`deploy/kgsm-llm.leaf.json` declares every setting the service binds** — all 64 of them, from the
+  model and the agent loop through Discord sign-in, web search and the knowledge base, grouped into
+  13 sections with each setting's type, coded default, bounds, unit and risk. `deploy.sh` installs it
+  into `/var/lib/kgsm/leaves/` under the leaf id **`assistant`** (this repo is `kgsm-llm`, but the
+  leaf kgsm-api knows is named for what it does), and the Control Panel renders the configuration
+  page from it. Nothing in kgsm-api needs to know about this service for that to work.
+- **A coverage test fails the build if the descriptor and the code disagree.** It walks the options
+  types the service actually binds, so a property added to a bound options class is caught the moment
+  it exists, and a descriptor entry naming a setting nothing binds is caught too — an override written
+  for one would be reported as applied while changing nothing.
+- The six secrets stay write-only: a read reports only that a value exists, never the value, and
+  never a default. The relay secret names the API setting it must match; the listen address names the
+  API's view of it.
+- **Four list settings are deliberately not on the panel** — `Auth:AllowedOrigins`,
+  `WebFetch:AllowedHosts`, `WebFetch:DeniedHosts` and `Rag:Sources`. A list binds from indexed keys,
+  which one environment variable cannot express, so declaring them would promise an edit the panel
+  could not deliver. They stay a file edit, and the coverage test pins the exclusion so it cannot
+  grow silently.
+
 ### Added (v1.26.0) — the assistant listens to the engine's events
 
 - **`kgsm-assistant-service` binds its own kgsm event socket

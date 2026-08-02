@@ -678,6 +678,12 @@ public class ToolDispatcher : IToolDispatcher
     /// the key-safety policy (denylist); this stage does not pre-judge the key, so a
     /// refusal surfaces only at confirm time. An empty value is allowed (clears the
     /// setting); a missing/blank key short-circuits to the model.
+    /// <para>The one key family this stage DOES pre-judge is the server note
+    /// (<c>note</c>/<c>note_updated_by</c>/<c>note_updated_at</c>): kgsm accepts them as ordinary
+    /// runtime values, but the note is player-facing text with its own surface that owns the encoding
+    /// and the attribution stamp. Writing it raw here would put an unencoded body into a file that is
+    /// sourced as <c>key="value"</c> and credit the edit to nobody, so a chat turn cannot rewrite a
+    /// note.</para>
     /// </summary>
     private async Task<string> StageSetConfigAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
@@ -688,6 +694,11 @@ public class ToolDispatcher : IToolDispatcher
         var key = call.Arg("config_key")?.Trim();
         if (string.IsNullOrWhiteSpace(key))
             return "Error: no config_key was provided.";
+
+        if (IsServerNoteKey(key))
+            return "Error: the server note is not editable from chat. It is written from the control " +
+                   "panel's server page (the 'Server note' card), which records who wrote it. Tell the " +
+                   "user to edit it there.";
 
         // The value is intentionally NOT trimmed and may be the empty string (clearing
         // the setting). A model that omits it entirely is treated as clearing it.
@@ -700,6 +711,13 @@ public class ToolDispatcher : IToolDispatcher
                "with a button has been shown to the user. This is NOT done yet and will only run " +
                "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
     }
+
+    // The server note's three config keys. Matched case-insensitively so a model that shouts the key
+    // doesn't slip past the gate.
+    private static bool IsServerNoteKey(string key) =>
+        key.Equals("note", StringComparison.OrdinalIgnoreCase)
+        || key.Equals("note_updated_by", StringComparison.OrdinalIgnoreCase)
+        || key.Equals("note_updated_at", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Propose-only (§3.5): resolves the instance, reads its configured (blueprint) port spec

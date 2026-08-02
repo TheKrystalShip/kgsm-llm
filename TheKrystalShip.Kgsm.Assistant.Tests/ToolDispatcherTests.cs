@@ -1318,6 +1318,28 @@ public class ToolDispatcherTests
         }
     }
 
+    [Theory]
+    [InlineData("note")]
+    [InlineData("note_updated_by")]
+    [InlineData("note_updated_at")]
+    [InlineData("NOTE")]
+    public async Task SetConfig_ServerNoteKey_DoesNotStage(string key)
+    {
+        // The server note is player-facing text with its own panel surface, which owns the encoding
+        // and records who wrote it. kgsm would accept these keys as ordinary runtime values, so the
+        // gate lives here: a chat turn must not be able to rewrite a note raw and unattributed.
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(SetConfigCall("minecraft", key, "anything"));
+
+            result.Should().Contain("not editable from chat");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+
+        await _operations.DidNotReceive().SetInstanceConfigValueAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     // --- write_file staging ------------------------------------------------------------------
 
     [Fact]

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (v1.28.0) — the server note is not editable from chat
+
+- **`set_config_value` refuses the server note's keys** (`note`, `note_updated_by`, `note_updated_at`)
+  and tells the user to edit it on the control panel's server page. kgsm accepts them as ordinary
+  runtime values, so nothing downstream would have stopped a chat turn from rewriting a player-facing
+  note — raw and unencoded into a file that is sourced as `key="value"`, credited to nobody. The note
+  has one surface that owns its encoding and records who wrote it, and this keeps it that way. The
+  refusal happens at staging, so the user hears it immediately rather than after clicking Confirm.
+
 ### Added (v1.27.0) — the Control Panel can configure this service
 
 - **`deploy/kgsm-llm.leaf.json` declares every setting the service binds** — all 64 of them, from the

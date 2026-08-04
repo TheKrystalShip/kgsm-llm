@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (v1.29.2) — the config panel no longer claims a journal default the service does not have
+
+- **`kgsmJournalDir` declares no `default` in the leaf descriptor**, because the service genuinely
+  has none: `KgsmConnectionOptions.JournalDir` is empty unless configured, and empty means this host
+  reads no events at all. The descriptor had named `/var/lib/kgsm/events` as the coded default,
+  which the panel renders as the fallback provenance tier — so clearing the override read as
+  "falls back to the standard journal" when it actually turns event reading off and leaves the
+  blueprint cache on its TTL. The standard location moves into the description, where it informs
+  without claiming to be what the code does.
+
+  The descriptor coverage test does not catch this class of error: it checks that `enum`, `int` and
+  `bool` defaults are well-formed and in range, but a `path` default is a free string it cannot
+  compare against the source.
+
 ### Changed — kgsm-lib 2.0.0 (the socket event transport is gone)
 - **Pinned to `TheKrystalShip.KGSM.Lib` 2.0.0**, which removes `UnixSocketClient`,
   `KgsmEventTransport` and `KgsmOptions.SocketPath`/`EventTransport`. This service already read the

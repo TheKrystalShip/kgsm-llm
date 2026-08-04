@@ -184,10 +184,9 @@
       "key": "kgsmJournalDir",
       "env": "KGSM__JournalDir",
       "label": "KGSM event journal",
-      "description": "Directory holding the engine's event journal, which the assistant reads to notice a blueprint changed elsewhere. Read-only and shared with every other consumer — nothing needs configuring on the engine side. Unset, the assistant falls back to re-reading on a timer.",
+      "description": "Directory holding the engine's event journal, which the assistant reads to notice a blueprint changed elsewhere. Read-only and shared with every other consumer — nothing needs configuring on the engine side. Cleared, the assistant reads no events at all and falls back to re-reading blueprints on a timer. The standard location is /var/lib/kgsm/events.",
       "group": "kgsm",
       "type": "path",
-      "default": "/var/lib/kgsm/events",
       "risk": "wiring"
     },
     {

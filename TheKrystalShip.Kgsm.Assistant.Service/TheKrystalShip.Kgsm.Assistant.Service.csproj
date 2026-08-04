@@ -14,7 +14,16 @@
          runtime). Publish-only props; the RID is supplied at publish time (deploy/deploy.sh). -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
+
+    <!-- The leaf config descriptor is generated from the settings types in this project and in the
+         assemblies it names in LeafDescriptor.cs. -->
+    <LeafSettingsFile>kgsm-assistant.settings.json</LeafSettingsFile>
+    <LeafDescriptorFile>$(MSBuildProjectDirectory)/../deploy/kgsm-llm.leaf.json</LeafDescriptorFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.1.0" PrivateAssets="all" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- The settings file ships beside the binary and Program.cs loads it by absolute path. The SDK

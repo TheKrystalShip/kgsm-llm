@@ -7,24 +7,85 @@
   "onDemand": false,
   "applyMode": "restart",
   "floorSources": [
-    { "kind": "appsettings", "path": "/opt/kgsm-assistant/service/kgsm-assistant.settings.json" },
-    { "kind": "systemd-unit", "path": "/etc/kgsm-assistant/systemd/kgsm-assistant-service.service" },
-    { "kind": "env-file", "path": "/etc/kgsm-assistant/service.env" }
+    {
+      "kind": "appsettings",
+      "path": "/opt/kgsm-assistant/service/kgsm-assistant.settings.json"
+    },
+    {
+      "kind": "systemd-unit",
+      "path": "/etc/kgsm-assistant/systemd/kgsm-assistant-service.service"
+    },
+    {
+      "kind": "env-file",
+      "path": "/etc/kgsm-assistant/service.env"
+    }
   ],
   "groups": [
-    { "id": "general", "label": "General", "order": 1 },
-    { "id": "model", "label": "Model", "order": 2 },
-    { "id": "agent", "label": "Agent loop", "order": 3 },
-    { "id": "conversation", "label": "Conversation history", "order": 4 },
-    { "id": "kgsm", "label": "KGSM & leaf connections", "order": 5 },
-    { "id": "cache", "label": "Inventory cache", "order": 6 },
-    { "id": "actions", "label": "Actions & secrets", "order": 7 },
-    { "id": "discord", "label": "Discord sign-in", "order": 8 },
-    { "id": "session", "label": "Sessions", "order": 9 },
-    { "id": "websearch", "label": "Web search", "order": 10 },
-    { "id": "webfetch", "label": "Web fetch", "order": 11 },
-    { "id": "authoring", "label": "Blueprint authoring", "order": 12 },
-    { "id": "rag", "label": "Knowledge base", "order": 13 }
+    {
+      "id": "general",
+      "label": "General",
+      "order": 1
+    },
+    {
+      "id": "model",
+      "label": "Model",
+      "order": 2
+    },
+    {
+      "id": "agent",
+      "label": "Agent loop",
+      "order": 3
+    },
+    {
+      "id": "conversation",
+      "label": "Conversation history",
+      "order": 4
+    },
+    {
+      "id": "kgsm",
+      "label": "KGSM & leaf connections",
+      "order": 5
+    },
+    {
+      "id": "cache",
+      "label": "Inventory cache",
+      "order": 6
+    },
+    {
+      "id": "actions",
+      "label": "Actions & secrets",
+      "order": 7
+    },
+    {
+      "id": "discord",
+      "label": "Discord sign-in",
+      "order": 8
+    },
+    {
+      "id": "session",
+      "label": "Sessions",
+      "order": 9
+    },
+    {
+      "id": "websearch",
+      "label": "Web search",
+      "order": 10
+    },
+    {
+      "id": "webfetch",
+      "label": "Web fetch",
+      "order": 11
+    },
+    {
+      "id": "authoring",
+      "label": "Blueprint authoring",
+      "order": 12
+    },
+    {
+      "id": "rag",
+      "label": "Knowledge base",
+      "order": 13
+    }
   ],
   "fields": [
     {
@@ -34,7 +95,14 @@
       "description": "Minimum severity this leaf logs.",
       "group": "general",
       "type": "enum",
-      "values": ["Trace", "Debug", "Information", "Warning", "Error", "Critical"],
+      "values": [
+        "Trace",
+        "Debug",
+        "Information",
+        "Warning",
+        "Error",
+        "Critical"
+      ],
       "default": "Information",
       "risk": "safe"
     },
@@ -45,11 +113,10 @@
       "description": "Address the assistant serves on. It stays on loopback; anything reaching it from outside this host comes through the Control Panel API.",
       "group": "general",
       "type": "string",
-      "default": "http://127.0.0.1:5180",
+      "default": "http://localhost:5180",
       "risk": "wiring",
       "pairedApiKey": "Api__AssistantBaseUrl"
     },
-
     {
       "key": "promptsDirectory",
       "env": "Prompts__Directory",
@@ -59,7 +126,6 @@
       "type": "path",
       "risk": "wiring"
     },
-
     {
       "key": "ollamaEndpoint",
       "env": "Ollama__Endpoint",
@@ -135,7 +201,6 @@
       "default": "false",
       "risk": "safe"
     },
-
     {
       "key": "agentMaxIterations",
       "env": "LlmAgent__MaxIterations",
@@ -165,11 +230,10 @@
       "label": "Step-limit reply",
       "description": "What the assistant says when it hits the tool-step limit without reaching an answer.",
       "group": "agent",
-      "default": "I wasn't able to finish that after a few steps \u2014 could you rephrase or break it down?",
       "type": "string",
+      "default": "I wasn't able to finish that after a few steps — could you rephrase or break it down?",
       "risk": "safe"
     },
-
     {
       "key": "conversationDbPath",
       "env": "Conversation__DatabasePath",
@@ -180,7 +244,6 @@
       "default": "/var/lib/kgsm-assistant/conversations.db",
       "risk": "destructive"
     },
-
     {
       "key": "kgsmPath",
       "env": "KGSM__Path",
@@ -230,7 +293,6 @@
       "default": "/run/kgsm-firewall/firewall.sock",
       "risk": "wiring"
     },
-
     {
       "key": "cacheInstancesTtlSec",
       "env": "InventoryCache__InstancesTtlSeconds",
@@ -255,7 +317,6 @@
       "unit": "s",
       "risk": "safe"
     },
-
     {
       "key": "actionsEnabled",
       "env": "Assistant__ActionsEnabled",
@@ -307,7 +368,6 @@
       "risk": "wiring",
       "pairedApiKey": "Api__AssistantRelaySecret"
     },
-
     {
       "key": "discordClientId",
       "env": "DiscordOAuth__ClientId",
@@ -372,7 +432,6 @@
       "default": "identify",
       "risk": "wiring"
     },
-
     {
       "key": "sessionTtlSec",
       "env": "Auth__SessionTtlSeconds",
@@ -409,7 +468,6 @@
       "unit": "s",
       "risk": "safe"
     },
-
     {
       "key": "webSearchApiKey",
       "env": "WebSearch__ApiKey",
@@ -437,7 +495,10 @@
       "description": "How hard the provider looks. Advanced is slower and costs more per search.",
       "group": "websearch",
       "type": "enum",
-      "values": ["basic", "advanced"],
+      "values": [
+        "basic",
+        "advanced"
+      ],
       "default": "basic",
       "risk": "safe"
     },
@@ -464,7 +525,6 @@
       "min": 0,
       "risk": "safe"
     },
-
     {
       "key": "webFetchEnabled",
       "env": "WebFetch__Enabled",
@@ -525,7 +585,6 @@
       "risk": "safe",
       "dependsOn": "webFetchEnabled"
     },
-
     {
       "key": "authoringEnabled",
       "env": "BlueprintAuthoring__Enabled",
@@ -584,7 +643,6 @@
       "risk": "safe",
       "dependsOn": "authoringEnabled"
     },
-
     {
       "key": "ragEnabled",
       "env": "Rag__Enabled",
@@ -624,35 +682,9 @@
       "description": "How similar a passage must be to be returned at all. Keep it permissive: whether the results were good enough to use is decided afterwards, and dropping everything here pre-empts that decision.",
       "group": "rag",
       "type": "float",
-      "default": "0",
+      "default": "0.0",
       "min": 0,
       "max": 1,
-      "risk": "safe",
-      "dependsOn": "ragEnabled"
-    },
-    {
-      "key": "ragLocalMinScore",
-      "env": "Rag__LocalMinScore",
-      "label": "Fall-back-to-web threshold",
-      "description": "How good the best local passage has to be for the assistant to trust it. Below this it searches the web instead.",
-      "group": "rag",
-      "type": "float",
-      "default": "0.35",
-      "min": 0,
-      "max": 1,
-      "risk": "safe",
-      "dependsOn": "ragEnabled"
-    },
-    {
-      "key": "ragMaxContextChars",
-      "env": "Rag__MaxContextChars",
-      "label": "Grounding text limit",
-      "description": "How much retrieved text the model is given at once.",
-      "group": "rag",
-      "type": "int",
-      "default": "6000",
-      "min": 500,
-      "unit": "chars",
       "risk": "safe",
       "dependsOn": "ragEnabled"
     },
@@ -691,14 +723,29 @@
       "risk": "destructive"
     },
     {
-      "key": "ragEmbeddingModel",
-      "env": "Rag__EmbeddingModel",
-      "label": "Embedding model",
-      "description": "Model used to turn text into the vectors searches compare. It has to be the same model the index was built with, or every search scores as unrelated.",
+      "key": "ragLocalMinScore",
+      "env": "Rag__LocalMinScore",
+      "label": "Fall-back-to-web threshold",
+      "description": "How good the best local passage has to be for the assistant to trust it. Below this it searches the web instead.",
       "group": "rag",
-      "type": "string",
-      "default": "embeddinggemma",
-      "risk": "wiring",
+      "type": "float",
+      "default": "0.35",
+      "min": 0,
+      "max": 1,
+      "risk": "safe",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragMaxContextChars",
+      "env": "Rag__MaxContextChars",
+      "label": "Grounding text limit",
+      "description": "How much retrieved text the model is given at once.",
+      "group": "rag",
+      "type": "int",
+      "default": "6000",
+      "min": 500,
+      "unit": "chars",
+      "risk": "safe",
       "dependsOn": "ragEnabled"
     },
     {
@@ -709,6 +756,17 @@
       "group": "rag",
       "type": "string",
       "default": "http://localhost:11434",
+      "risk": "wiring",
+      "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "ragEmbeddingModel",
+      "env": "Rag__EmbeddingModel",
+      "label": "Embedding model",
+      "description": "Model used to turn text into the vectors searches compare. It has to be the same model the index was built with, or every search scores as unrelated.",
+      "group": "rag",
+      "type": "string",
+      "default": "embeddinggemma",
       "risk": "wiring",
       "dependsOn": "ragEnabled"
     },

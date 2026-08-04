@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the leaf config descriptor is generated, not written
+- **`deploy/kgsm-llm.leaf.json` is now written by `TheKrystalShip.KGSM.LeafConfig` on every build**, from
+  `[LeafField]` attributes and `<panel>` doc tags on `the bound settings types`. A knob lives in two places —
+  the property and the settings-file key — instead of three, and the descriptor cannot describe a
+  variable this leaf does not read: the `env` name is derived from the property's position under its
+  bound section, and the default from the settings file itself. **Edit the settings class, not the
+  JSON.**
+- **A field's operator-facing prose comes from a `<panel>` tag**, falling back to `<summary>` with a
+  build message naming the field. The two are separate because they answer different questions: the
+  summary tells a developer what the value means to the code, the panel tells whoever runs the host
+  what changing it does.
+- **`LeafDescriptorTests` is gone.** Every check it made — settings coverage in both directions, the
+  field vocabulary, group and `dependsOn` references, enum values and defaults, bounds, floor-source
+  order — now runs in the generator, at the point the file is produced rather than after, and in one
+  implementation shared by every leaf instead of a copy per repo.
+- The package is **build-only** and declares no dependencies: the attributes arrive as source and the
+  generator reads this assembly's metadata in its own process, so nothing reaches the published
+  output and this leaf gains no reflection.
+
+- **Two descriptor defaults were wrong and are now read from the settings file.** `bindAddress`
+  published `http://127.0.0.1:5180` while the file declares `http://localhost:5180` — the deployed
+  value passed off as the coded one, on the screen whose whole job is saying where a value came from.
+  `ragMinScore` published `0` against the file's `0.0`. The `Urls` configuration key and the
+  `ASPNETCORE_URLS` variable are one setting reached two ways, which the field now says outright.
+- **The `Rag` section's fields render in a slightly different order.** It is bound from three types in
+  three assemblies, and fields follow their declaring type; no key, default or bound changed.
+- **`SearchOptions.LocalEnabled`/`WebEnabled`/`Available` are marked `[LeafIgnore]`.** They are
+  computed at composition, not configuration, and their doc comments already said so — now the build
+  agrees.
+
 ### Changed — one settings file, and it declares the whole surface
 
 - **`appsettings.json` is now `kgsm-assistant.settings.json`**, matching the ecosystem's

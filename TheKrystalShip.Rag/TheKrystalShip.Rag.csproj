@@ -15,7 +15,16 @@
       indexer executable in Phase 3. All JSON goes through the source-generated RagJsonContext.
     -->
     <IsAotCompatible>true</IsAotCompatible>
+
+    <!-- This project declares bound settings sections, so it compiles the descriptor attributes and
+         emits the documentation file their <panel> tags travel in. It generates nothing itself — the
+         Service owns that step and names this assembly. -->
+    <GenerateLeafDescriptor>false</GenerateLeafDescriptor>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.1.0" PrivateAssets="all" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />

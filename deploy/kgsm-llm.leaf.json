@@ -47,7 +47,7 @@
       "type": "string",
       "default": "http://127.0.0.1:5180",
       "risk": "wiring",
-      "pairedApiKey": "KGSM_API_ASSISTANT_URL"
+      "pairedApiKey": "Api__AssistantBaseUrl"
     },
 
     {
@@ -294,7 +294,7 @@
       "group": "actions",
       "type": "secret",
       "risk": "wiring",
-      "pairedApiKey": "KGSM_API_ASSISTANT_RELAY_SECRET"
+      "pairedApiKey": "Api__AssistantRelaySecret"
     },
 
     {

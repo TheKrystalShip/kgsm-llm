@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.1.0" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.2.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

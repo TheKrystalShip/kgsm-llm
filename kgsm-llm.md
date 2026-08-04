@@ -144,7 +144,7 @@ trace; `think:false` did **not** fix it; ruled out primacy/positional bias by re
 tools). **Once the current instance + blueprint names are in the system prompt, both
 models route directly** — no wasted round-trip (important on a single-GPU latency-
 sensitive box). → **Always inject the live lists each turn; refresh them off the kgsm
-events socket the bot already uses.**
+event journal the bot already tails.**
 
 ---
 

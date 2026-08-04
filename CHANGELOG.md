@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — kgsm-lib 2.0.0 (the socket event transport is gone)
+- **Pinned to `TheKrystalShip.KGSM.Lib` 2.0.0**, which removes `UnixSocketClient`,
+  `KgsmEventTransport` and `KgsmOptions.SocketPath`/`EventTransport`. This service already read the
+  journal, so the only change here is dropping the now-nonexistent `EventTransport = Journal` line —
+  there is no transport left to select. No behaviour change.
+
 ### Changed (v1.29.0) — engine events come from the journal, not a socket
 
 - **`KGSM__JournalDir` replaces `KGSM__EventSocketPath`.** The service tails the engine's

@@ -55,7 +55,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(new KgsmOptions
         {
             KgsmPath = kgsm.Path,
-            EventTransport = KgsmEventTransport.Journal,
             EventJournalDirectory = string.IsNullOrWhiteSpace(kgsm.JournalDir)
                 ? KgsmOptions.DefaultEventJournalDirectory
                 : kgsm.JournalDir,

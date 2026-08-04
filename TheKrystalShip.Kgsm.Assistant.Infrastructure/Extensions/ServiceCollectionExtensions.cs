@@ -47,12 +47,22 @@ public static class ServiceCollectionExtensions
 
         // We register the command-executor service graph (which shells out to kgsm) by hand
         // instead of KGSM.Lib's AddKgsmServices: that also wires IKgsmClient, whose constructor
-        // calls Events.Initialize() and so binds the event socket the moment the graph is built.
-        // Whether this process listens is a per-HOST decision, not a per-graph one — the CLI is a
-        // one-shot with no cache to keep warm, the HTTP service is resident and wants events — so
-        // the listener is a separate opt-in call (AddKgsmEventListener) and the shared graph stays
-        // socket-free. SocketPath is carried on KgsmOptions for the hosts that do opt in.
-        services.AddSingleton(new KgsmOptions { KgsmPath = kgsm.Path, SocketPath = kgsm.EventSocketPath });
+        // calls Events.Initialize() and so starts reading the moment the graph is built. Whether
+        // this process listens is a per-HOST decision, not a per-graph one — the CLI is a one-shot
+        // with no cache to keep warm, the HTTP service is resident and wants events — so the
+        // listener is a separate opt-in call (AddKgsmEventListener) and the shared graph stays
+        // event-free. The journal settings ride on KgsmOptions for the hosts that do opt in.
+        services.AddSingleton(new KgsmOptions
+        {
+            KgsmPath = kgsm.Path,
+            EventTransport = KgsmEventTransport.Journal,
+            EventJournalDirectory = string.IsNullOrWhiteSpace(kgsm.JournalDir)
+                ? KgsmOptions.DefaultEventJournalDirectory
+                : kgsm.JournalDir,
+            // Tail: this listener exists only to drop a cache when a blueprint changes. Replaying
+            // history would re-invalidate for edits already reflected in what the next read returns.
+            EventStartPosition = EventStartPosition.Tail
+        });
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         services.AddSingleton<IKgsmCommandExecutor, KgsmCommandExecutor>();
         services.AddSingleton<ILogSubscriptionService, LogSubscriptionService>();
@@ -280,19 +290,22 @@ public static class ServiceCollectionExtensions
     /// (the Control Panel's library editor, another operator's CLI) drops this process's blueprint
     /// cache instead of being answered from a stale snapshot until the TTL expires.
     /// <para>
-    /// Call AFTER <see cref="AddKgsmAdapters"/>, which carries the socket path onto the kgsm-lib
-    /// options. A no-op when <c>KGSM:EventSocketPath</c> is unset — binding is exclusive, so the
-    /// listener is opt-in per host and a one-shot CLI stays out of the service's way. The assistant
-    /// runs fully without it; events only make an existing cache fresher, never gate a read.
+    /// Call AFTER <see cref="AddKgsmAdapters"/>, which carries the journal settings onto the
+    /// kgsm-lib options. A no-op when <c>KGSM:JournalDir</c> is unset — the listener is opt-in per
+    /// host because a one-shot CLI has no cache to keep warm, not because it would contend with
+    /// anything: the journal is a file, so any number of readers coexist. The assistant runs fully
+    /// without it; events only make an existing cache fresher, never gate a read.
     /// </para>
     /// </summary>
     public static IServiceCollection AddKgsmEventListener(this IServiceCollection services, IConfiguration config)
     {
         var kgsm = config.GetSection(KgsmConnectionOptions.Section).Get<KgsmConnectionOptions>();
-        if (string.IsNullOrWhiteSpace(kgsm?.EventSocketPath))
+        if (string.IsNullOrWhiteSpace(kgsm?.JournalDir))
             return services;
 
-        services.AddSingleton<IUnixSocketClient, UnixSocketClient>();
+        services.AddSingleton<IEventCursorStore, NullEventCursorStore>();
+        services.AddSingleton<IEventJournalReader, EventJournalReader>();
+        services.AddSingleton<IEventSource>(sp => sp.GetRequiredService<IEventJournalReader>());
         services.AddSingleton<IEventService, EventService>();
         services.AddHostedService<KgsmEventListener>();
 

@@ -51,8 +51,8 @@ builder.Services.AddKgsmAssistant();
 builder.Services.AddKgsmAdapters(builder.Configuration);
 // This host is resident, so it listens to the engine's events: a blueprint edited in the Control
 // Panel or from another operator's CLI drops the blueprint cache here immediately, instead of the
-// assistant answering from a stale catalog until the TTL expires. Binds only when
-// KGSM:EventSocketPath is set (the CLI never sets it — see AddKgsmEventListener).
+// assistant answering from a stale catalog until the TTL expires. Reads only when
+// KGSM:JournalDir is set (the CLI never sets it — see AddKgsmEventListener).
 builder.Services.AddKgsmEventListener(builder.Configuration);
 // The startup orphan sweep for create_blueprint test-install probes (plan step 10's backstop) — the
 // first IHostedService in this repo. Runs once at startup and exits; see its own doc comment.

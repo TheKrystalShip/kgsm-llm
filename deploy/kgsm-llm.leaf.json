@@ -181,13 +181,13 @@
       "risk": "wiring"
     },
     {
-      "key": "kgsmEventSocket",
-      "env": "KGSM__EventSocketPath",
-      "label": "KGSM event socket",
-      "description": "Socket the engine delivers events on, which is how the assistant notices a blueprint changed elsewhere. It must be listed in the engine's own event socket configuration. Unset, the assistant falls back to re-reading on a timer.",
+      "key": "kgsmJournalDir",
+      "env": "KGSM__JournalDir",
+      "label": "KGSM event journal",
+      "description": "Directory holding the engine's event journal, which the assistant reads to notice a blueprint changed elsewhere. Read-only and shared with every other consumer — nothing needs configuring on the engine side. Unset, the assistant falls back to re-reading on a timer.",
       "group": "kgsm",
       "type": "path",
-      "default": "/run/kgsm-assistant/events.sock",
+      "default": "/var/lib/kgsm/events",
       "risk": "wiring"
     },
     {

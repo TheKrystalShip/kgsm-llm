@@ -2,7 +2,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 
 /// <summary>
 /// Where to find kgsm. Bound from the "KGSM" config section. <see cref="Path"/> is what the
-/// adapters shell out to for every read and write; <see cref="EventSocketPath"/> is the separate,
+/// adapters shell out to for every read and write; <see cref="JournalDir"/> is the separate,
 /// optional inbound channel for engine events.
 /// </summary>
 public sealed class KgsmConnectionOptions
@@ -12,17 +12,18 @@ public sealed class KgsmConnectionOptions
     public string Path { get; set; } = string.Empty;
 
     /// <summary>
-    /// The unix socket this process binds to receive kgsm's engine events, listed in kgsm's own
-    /// <c>event_socket_filenames</c> so the engine delivers here. Each consumer owns a dedicated
-    /// socket under its own runtime directory — the assistant's is
-    /// <c>/run/kgsm-assistant/events.sock</c> — so binding one never contends with another leaf.
+    /// The directory holding kgsm's append-only event journal, which this process tails to learn
+    /// when a blueprint changed. Read-only and shared: the engine is the sole writer, any number of
+    /// consumers read the same files with no coordination, and nothing here is claimed by this
+    /// process.
     /// <para>
-    /// Empty (the default) means this host binds nothing, which is what the CLI wants: a one-shot
-    /// invocation has no cache to keep warm and must not steal a resident service's socket. Only a
-    /// host that calls <c>AddKgsmEventListener()</c> binds, and only when this is set.
+    /// Empty (the default) means this host reads no events, which is what the CLI wants — a
+    /// one-shot invocation has no cache to keep warm, so tailing anything would be pure cost.
+    /// That is now the whole reason the listener is opt-in: nothing prevents a second reader, so a
+    /// CLI run alongside the resident service would be harmless, merely pointless.
     /// </para>
     /// </summary>
-    public string EventSocketPath { get; set; } = string.Empty;
+    public string JournalDir { get; set; } = string.Empty;
 }
 
 /// <summary>

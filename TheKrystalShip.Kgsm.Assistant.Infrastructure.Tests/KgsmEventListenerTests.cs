@@ -95,7 +95,7 @@ public class KgsmEventListenerTests
 
         services.AddKgsmEventListener(Config(
             ("KGSM:Path", "/usr/local/bin/kgsm"),
-            ("KGSM:EventSocketPath", "/run/kgsm-assistant/events.sock")));
+            ("KGSM:JournalDir", "/var/lib/kgsm/events")));
 
         services.Should().Contain(d => d.ImplementationType == typeof(KgsmEventListener));
         services.Should().Contain(d => d.ServiceType == typeof(IEventService));

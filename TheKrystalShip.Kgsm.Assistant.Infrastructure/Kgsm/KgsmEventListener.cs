@@ -16,8 +16,9 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 /// moment one arrives, so the next turn reads the new values.
 /// </para>
 /// <para>
-/// Only a resident host runs this, and only with <c>KGSM:EventSocketPath</c> set: binding is
-/// exclusive, so a one-shot CLI must never take the socket out from under the service.
+/// Only a resident host runs this, and only with <c>KGSM:JournalDir</c> set — because a one-shot
+/// CLI has no cache to keep warm, not because it would collide with anything. The journal is a
+/// file: readers need no coordination, so a CLI run beside the service would be harmless.
 /// </para>
 /// </summary>
 internal sealed class KgsmEventListener : IHostedService
@@ -42,8 +43,9 @@ internal sealed class KgsmEventListener : IHostedService
         _events.RegisterHandler<BlueprintUpdatedData>(e => OnBlueprintChanged("blueprint_updated", e.BlueprintName));
         _events.RegisterHandler<BlueprintRemovedData>(e => OnBlueprintChanged("blueprint_removed", e.BlueprintName));
 
-        // Binds the socket and starts the read loop. kgsm-lib re-binds on its own if the socket file
-        // is removed underneath us, so a kgsm redeploy does not leave the assistant deaf.
+        // Starts the journal read loop. kgsm-lib tolerates a journal directory that does not exist
+        // yet and picks up the first segment when it appears, so a kgsm redeploy — or a host that
+        // has never emitted an event — never leaves the assistant deaf.
         _events.Initialize();
         return Task.CompletedTask;
     }

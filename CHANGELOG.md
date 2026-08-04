@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (v1.29.0) — engine events come from the journal, not a socket
+
+- **`KGSM__JournalDir` replaces `KGSM__EventSocketPath`.** The service tails the engine's
+  append-only event journal instead of binding a socket for the engine to deliver to, so it claims
+  no path and the engine needs no configuration naming this consumer. The blueprint-cache
+  invalidation handlers are unchanged. It reads from the tail and keeps no position: this listener
+  exists only to drop a cache, and replaying history would re-invalidate for edits already
+  reflected in what the next read returns.
+
+  **The reason the listener stays opt-in has changed.** It used to be a hard constraint — socket
+  binding is exclusive, so a one-shot CLI would have stolen the resident service's socket. A
+  journal is a file: any number of readers coexist, so a CLI run beside the service would now be
+  harmless. It remains opt-in purely because a one-shot invocation has no cache worth keeping warm.
+
 ### Changed (v1.28.0) — the server note is not editable from chat
 
 - **`set_config_value` refuses the server note's keys** (`note`, `note_updated_by`, `note_updated_at`)

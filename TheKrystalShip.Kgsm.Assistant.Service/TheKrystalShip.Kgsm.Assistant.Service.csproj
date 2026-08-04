@@ -17,6 +17,19 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The settings file ships beside the binary and Program.cs loads it by absolute path. The SDK
+         already globs it into Content, so this only adds the copy-to-output the SDK gives by name to
+         "appsettings.json" alone — without it the file publishes but is absent from a local run. -->
+    <Content Update="kgsm-assistant.settings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Update="kgsm-assistant.settings.*.json">
+      <DependentUpon>kgsm-assistant.settings.json</DependentUpon>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Let the test project reach the internal adapters / security helpers. -->
     <InternalsVisibleTo Include="TheKrystalShip.Kgsm.Assistant.Service.Tests" />
     <!-- Let NSubstitute (Castle DynamicProxy) mock the internal IDiscordOAuthClient. -->

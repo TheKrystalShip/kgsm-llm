@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — one settings file, and it declares the whole surface
+
+- **`appsettings.json` is now `kgsm-assistant.settings.json`**, matching the ecosystem's
+  `kgsm-<leaf>.settings.json` naming, and `Program.cs` loads it by absolute path from the binary's
+  own directory rather than relying on the content root. It is inserted at the **front** of the
+  configuration sources, because it is the floor: the unit's `Environment=`,
+  `/etc/kgsm-assistant/service.env` and a command-line argument all still override one key of it.
+  (The CLI and Eval are interactive tools, not leaves, and keep `appsettings.json`.)
+- **Eleven settings the service binds but the file never declared are now declared**, with the value
+  the code already used: `Ollama__Temperature`/`Seed`/`Think`, `LlmAgent__MaxToolOutputChars`/
+  `IterationLimitReply`, `Monitor__SocketPath`, `Watchdog__SocketPath`, `Firewall__SocketPath`,
+  `KGSM__JournalDir`, and the two RAG task prefixes. Reading the file now tells you the whole
+  surface. `Rag__DocumentPrefix`/`QueryPrefix` are declared **null**, not `""` — null resolves the
+  prefix from the embedding model's name, while an empty string is a real prefix meaning "none".
+- **`Prompts__Directory` is declared and described.** The prompt-override directory outranks every
+  other way of setting the assistant's system prompt, it is set on this host, and it was in no
+  settings file, no descriptor and no env template — so the Control Panel could not show it.
+
+### Fixed
+- **`deploy/assistant.env.example` no longer documents `KGSM__EventSocketPath`**, which nothing has
+  read since the engine moved to the event journal. It named the journal directory instead.
+- **`floorSources` lists the settings file first.** The list is lowest-precedence-first, so with the
+  file listed last the Control Panel resolved a knob to the file's value and reported it as the
+  deployed one — showing a blank where the unit sets a real path.
+
+### Added
+- **Four tests hold the settings file, the bound options classes and the leaf descriptor together**:
+  a key in the file that binds to nothing, a bound setting the file never declares, a descriptor
+  default that disagrees with the file, and an env template naming a key the file does not declare
+  each fail the build.
+
 ### Changed
 - **`pairedApiKey` names the Control Panel API's renamed setting.** kgsm-api's environment
   variables are now spelled `Api__<Property>`, and this value is what the API resolves to warn that

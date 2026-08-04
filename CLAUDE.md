@@ -146,7 +146,9 @@ Things that bite if you don't know them:
 | `*.Eval/CLAUDE.md` | The benchmark's design integrity — read before changing how scoring works |
 | `kgsm-llm.md` | **Historical** handoff (2026-06-08). Trust it only for GPU/VRAM tuning + the `gemma4:12b` bake-off + the live-list-injection finding; its status sections are stale |
 
-Config is layered (embedded `appsettings.json` < host file < `Section__Key` env < CLI flags);
+Config is layered (the settings file beside the binary < host file < `Section__Key` env < CLI
+flags); the Service's is `kgsm-assistant.settings.json` and declares its whole surface, while the
+CLI and Eval — interactive tools, not leaves — keep `appsettings.json`;
 **secrets are environment-only** (`docs/CONFIGURATION.md`). The default model is `gemma4:12b`;
 `Ollama:NumCtx` is a **fixed VRAM reservation**, not a ceiling.
 

@@ -7,9 +7,9 @@
   "onDemand": false,
   "applyMode": "restart",
   "floorSources": [
+    { "kind": "appsettings", "path": "/opt/kgsm-assistant/service/kgsm-assistant.settings.json" },
     { "kind": "systemd-unit", "path": "/etc/kgsm-assistant/systemd/kgsm-assistant-service.service" },
-    { "kind": "env-file", "path": "/etc/kgsm-assistant/service.env" },
-    { "kind": "appsettings", "path": "/opt/kgsm-assistant/service/appsettings.json" }
+    { "kind": "env-file", "path": "/etc/kgsm-assistant/service.env" }
   ],
   "groups": [
     { "id": "general", "label": "General", "order": 1 },
@@ -48,6 +48,16 @@
       "default": "http://127.0.0.1:5180",
       "risk": "wiring",
       "pairedApiKey": "Api__AssistantBaseUrl"
+    },
+
+    {
+      "key": "promptsDirectory",
+      "env": "Prompts__Directory",
+      "label": "Prompt overrides directory",
+      "description": "Directory of editable prompt files that replace the assistant's built-in system prompt and tool descriptions. Blank uses the built-in text. A file here outranks every other way of setting the same prompt.",
+      "group": "general",
+      "type": "path",
+      "risk": "wiring"
     },
 
     {
@@ -155,6 +165,7 @@
       "label": "Step-limit reply",
       "description": "What the assistant says when it hits the tool-step limit without reaching an answer.",
       "group": "agent",
+      "default": "I wasn't able to finish that after a few steps \u2014 could you rephrase or break it down?",
       "type": "string",
       "risk": "safe"
     },

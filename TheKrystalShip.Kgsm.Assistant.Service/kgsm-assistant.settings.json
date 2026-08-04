@@ -1,0 +1,148 @@
+{
+  // === KGSM assistant service — configuration ===
+  //
+  // This file declares the service's WHOLE configurable surface, each key with its default. It is
+  // the floor; an environment variable overrides one key of it by spelling that key's path with
+  // "__" — Ollama__Model, Rag__Enabled, Logging__LogLevel__Default. A variable naming a key that is
+  // not declared here binds to nothing.
+  //
+  // Every key maps onto a property of the options class the service binds that section into, and a
+  // test fails the build if the two ever disagree, in either direction, or if the leaf descriptor
+  // (deploy/kgsm-llm.leaf.json — what the Control Panel renders) drifts from either.
+  //
+  // SECRETS ARE DECLARED HERE, NEVER SET HERE. The confirmation key, the webhook and relay secrets,
+  // the Discord credentials and the web-search key are declared blank so the Control Panel can see
+  // they exist; their real values belong in the root-owned /etc/kgsm-assistant/service.env, which is
+  // not in version control.
+  "Urls": "http://localhost:5180",
+  "Ollama": {
+    "Endpoint": "http://localhost:11434",
+    "Model": "gemma4:12b",
+    "NumCtx": 32768,
+    "TimeoutSeconds": 300,
+    "Temperature": 0.3,
+    "Seed": null,
+    "Think": false
+  },
+  "Conversation": {
+    "DatabasePath": "/var/lib/kgsm-assistant/conversations.db"
+  },
+  "KGSM": {
+    "Path": "/usr/local/bin/kgsm",
+    // Blank is the OFF switch, not a missing value: the engine event listener is opt-in and does
+    // not start without a directory here. The unit sets one on a resident host; a one-shot surface
+    // has no use for a journal reader.
+    "JournalDir": ""
+  },
+
+  // The leaves this service reads through. Each is optional: an absent or unreachable socket makes
+  // the matching answer honestly unavailable rather than failing the turn.
+  "Monitor": {
+    "SocketPath": "/run/kgsm-monitor/metrics.sock"
+  },
+  "Watchdog": {
+    "SocketPath": "/run/kgsm-watchdog/control.sock"
+  },
+  "Firewall": {
+    "SocketPath": "/run/kgsm-firewall/firewall.sock"
+  },
+  "LlmAgent": {
+    "MaxIterations": 16,
+    "MaxToolOutputChars": 1500,
+    "IterationLimitReply": "I wasn't able to finish that after a few steps — could you rephrase or break it down?"
+  },
+  "InventoryCache": {
+    "InstancesTtlSeconds": 300,
+    "BlueprintsTtlSeconds": 600
+  },
+
+  // A directory of editable prompt files that override the assistant's built-in system prompt and
+  // tool descriptions, read straight from configuration by the assistant library. Blank leaves the
+  // library's own text in force, which is the host-agnostic default every surface shares.
+  "Prompts": {
+    "Directory": ""
+  },
+
+  // Actions are OFF until switched on. Confirmation tokens are stateless HMACs keyed below, so they
+  // survive a restart only while that key stays the same — a blank key mints a fresh one per boot.
+  "Assistant": {
+    "ActionsEnabled": false,
+    "Confirmation": {
+      "Key": "",
+      "TtlSeconds": 300
+    },
+    "Webhook": {
+      "Secret": ""
+    },
+    "Relay": {
+      "Secret": ""
+    }
+  },
+  "DiscordOAuth": {
+    "ClientId": "",
+    "ClientSecret": "",
+    "BotToken": "",
+    "GuildId": "",
+    "ActionRoleId": "",
+    "RedirectUri": "",
+    "Scopes": "identify"
+  },
+  "Auth": {
+    "SessionTtlSeconds": 3600,
+    "RoleCacheTtlSeconds": 60,
+    "StateTtlSeconds": 300,
+    "AllowedOrigins": []
+  },
+  "WebSearch": {
+    "ApiKey": "",
+    "MaxResults": 4,
+    "SearchDepth": "basic",
+    "TimeoutSeconds": 10,
+    "MaxCallsPerDay": 200
+  },
+  "WebFetch": {
+    "Enabled": false,
+    "TimeoutSeconds": 8,
+    "MaxContentBytes": 3145728,
+    "MaxRedirects": 5,
+    "MaxCallsPerDay": 200,
+    "AllowedHosts": [],
+    "DeniedHosts": []
+  },
+  "BlueprintAuthoring": {
+    "Enabled": false,
+    "StashDir": "",
+    "MaxAttempts": 3,
+    "VerifyTimeoutSeconds": 240,
+    "VerifyPollIntervalSeconds": 5
+  },
+
+  // The local knowledge base. The index is written by kgsm-rag-indexer and read here; a mismatched
+  // embedding model is rejected on load rather than silently answering from a different vector space.
+  "Rag": {
+    "Enabled": false,
+    "IndexPath": "",
+    "TopK": 5,
+    "MinScore": 0.0,
+    "LocalMinScore": 0.35,
+    "MaxContextChars": 6000,
+    "EmbeddingModel": "embeddinggemma",
+    "Endpoint": "http://localhost:11434",
+    "TimeoutSeconds": 120,
+    "Sources": [],
+    "SourcePattern": "*.md",
+    "ChunkSize": 2000,
+    "ChunkOverlap": 200,
+    // null, NOT "": null resolves the task prefix from the embedding model's name, while an empty
+    // string is a real prefix meaning "none at all", which measurably hurts retrieval.
+    "DocumentPrefix": null,
+    "QueryPrefix": null
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning",
+      "TheKrystalShip": "Debug"
+    }
+  }
+}

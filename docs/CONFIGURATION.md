@@ -8,10 +8,12 @@ For *how to deploy* see [`DEPLOYMENT.md`](./DEPLOYMENT.md); for *how the pieces 
 
 All three deployables use the standard .NET configuration stack. Later layers win:
 
-1. **Embedded `appsettings.json`** — shipped next to each binary; the source of truth for defaults.
+1. **The settings file next to the binary** — the **Service** ships `kgsm-assistant.settings.json`,
+   which declares its whole configurable surface with defaults; the CLI and Eval ship
+   `appsettings.json`. A key not declared there binds to nothing, whatever sets it.
 2. **A user/host config file** —
    - **CLI:** `$KGSM_ASSISTANT_CONFIG`, else `--config <path>`, else `~/.config/kgsm-assistant/appsettings.json` (`$XDG_CONFIG_HOME` honored).
-   - **Service:** `appsettings.{ASPNETCORE_ENVIRONMENT}.json` next to the binary (e.g. `appsettings.Production.json`).
+   - **Service:** `kgsm-assistant.settings.{ASPNETCORE_ENVIRONMENT}.json` next to the binary.
 3. **Environment variables** — `Section__Key` form (see below). This is where **secrets** belong.
 4. **CLI flags** (CLI only) — e.g. `--model` wins for the model tag.
 
@@ -36,7 +38,7 @@ Rag__Sources__0=/opt/kgsm-assistant/docs
 ### Secrets — environment-only, never in a file
 
 These must come from the environment (the systemd `EnvironmentFile`, `chmod 600`), never from
-any committed `appsettings.json`:
+any committed settings file — which declares each of them blank so the Control Panel can see it exists:
 
 | Secret | Used by |
 |--------|---------|
@@ -198,8 +200,8 @@ runs a one-shot startup sweep that removes any such probe a prior crash left beh
 ### `Rag` — retrieval, embedder, and index build (one section, three consumers)
 
 The retrieval half (consumer) is read by the CLI & Service; the embedder/build half is read by
-the CLI `index` verb (the standalone indexer takes the same values as CLI flags). The embedded
-`appsettings.json` baseline is **off**, but the shipped Service env template
+the CLI `index` verb (the standalone indexer takes the same values as CLI flags). The settings-file
+baseline is **off**, but the shipped Service env template
 (`deploy/assistant.env.example`) sets `Rag__Enabled=true`, so a default deploy is **on** — see the
 "enabled ≠ working" caveat in [DEPLOYMENT.md §8](./DEPLOYMENT.md#8--rag--local-doc-search).
 

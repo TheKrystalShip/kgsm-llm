@@ -1,5 +1,8 @@
 using System.Text.Json;
 
+using Microsoft.Extensions.Configuration.Json;
+using Microsoft.Extensions.FileProviders;
+
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
@@ -19,6 +22,30 @@ using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Ollama;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// The files declaring the service's whole configurable surface, shipped beside the binary. Resolved
+// against the binary's own directory rather than the content root: under systemd those are not
+// reliably the same place, and a relative path would start the service with none of its
+// configuration instead of failing.
+//
+// Inserted at the FRONT of the source list, because this is the floor: a source added later wins,
+// so everything above it — the unit's Environment=, /etc/kgsm-assistant/service.env, a command-line
+// argument — still overrides one key of it, which is the whole point of declaring the surface here.
+// Appending instead would let the file quietly beat the env file that is supposed to configure a host.
+foreach (string file in new[]
+         {
+             $"kgsm-assistant.settings.{builder.Environment.EnvironmentName}.json",
+             "kgsm-assistant.settings.json",
+         })
+{
+    builder.Configuration.Sources.Insert(0, new JsonConfigurationSource
+    {
+        FileProvider = new PhysicalFileProvider(AppContext.BaseDirectory),
+        Path = file,
+        Optional = file.Contains(builder.Environment.EnvironmentName, StringComparison.Ordinal),
+        ReloadOnChange = false,
+    });
+}
 
 // Ecosystem-standard logging (see ../tks/logging-convention.md): one journald-native SystemdConsole
 // sink (the <N> syslog priority prefix lets `journalctl -p` filter by level). CreateBuilder already

@@ -49,7 +49,7 @@ from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead 
 > with a corpus (§8), set a Tavily key, or both.
 
 Every key, its default, and its env-var form: **[`CONFIGURATION.md`](./CONFIGURATION.md)**. Secrets
-go in the env file **only** — never in a committed `appsettings.json`.
+go in the env file **only** — never in a committed settings file.
 
 ## 0.1 · Deploy in two commands — `deploy/setup.sh` then `deploy/deploy.sh` (recommended)
 
@@ -361,7 +361,7 @@ Make sure the TLS hostname here matches `DiscordOAuth__RedirectUri` and is liste
 ## 8 · RAG — local-doc search
 
 RAG lets the assistant answer from **your own docs** via the `search` tool. The shipped env template
-**enables it by default** (`Rag__Enabled=true`); the embedded `appsettings.json` baseline stays
+**enables it by default** (`Rag__Enabled=true`); the settings-file baseline stays
 `false`, so a consumer with no env override is off. It's a three-part setup — **index the docs →
 enable retrieval on the consumer → keep the index fresh** — coupled by exactly one thing: the on-disk
 `.krag` index file (the indexer writes it; the Service/CLI read it).
@@ -452,7 +452,7 @@ Full indexer reference: [`../TheKrystalShip.Rag.Indexer/README.md`](../TheKrysta
 ### Secrets hygiene
 
 - Supply all secrets **env-only** (the `*.env` file, `chmod 600`). Never put `ClientSecret`,
-  `BotToken`, `WebSearch:ApiKey`, or the confirmation key in `appsettings.json`.
+  `BotToken`, `WebSearch:ApiKey`, or the confirmation key in a committed settings file.
 - `appsettings.Development.json` (CLI) is **gitignored** and may contain a real local Tavily
   key for dev convenience — it is **not** a deployment template. Don't ship it; use the env file.
 - `scripts/tier.env` (gitignored) holds live test Discord creds for `verify-tiers.sh`. Same rule.

@@ -17,7 +17,7 @@ Type=simple
 User=kgsm
 Group=kgsm
 
-# WorkingDirectory is the content root — appsettings.json ships beside the binary and is loaded
+# WorkingDirectory is the content root — kgsm-assistant.settings.json ships beside the binary and is loaded
 # relative to here; without it the service starts with defaults only.
 WorkingDirectory=/opt/kgsm-assistant/service
 # Framework-dependent single-file binary (deploy.sh publishes it with --no-self-contained).

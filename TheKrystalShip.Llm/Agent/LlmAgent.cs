@@ -330,6 +330,7 @@ public class LlmAgent : ILlmAgent
             _conversationStore.AppendTurn(new ConversationTurnRecord
             {
                 ConversationId = turn.ConversationId,
+                UserDisplay = turn.UserDisplay,
                 StartedAt = startedAt,
                 CompletedAt = DateTimeOffset.UtcNow,
                 UserPrompt = turn.UserPrompt,

@@ -138,6 +138,12 @@ public interface IServerAssistant
     /// caller isn't authorized for are silently removed.
     /// </param>
     /// <param name="cancellationToken">Token to cancel the turn.</param>
+    /// <param name="userDisplay">
+    /// Optional display name of the asking user, recorded onto the stored turn so the conversation log
+    /// carries a human-readable name beside the opaque <paramref name="conversationId"/>. The host owns
+    /// it (only the host knows who the id belongs to); null simply records none. Last param to keep
+    /// existing positional callers unshifted.
+    /// </param>
     Task<AssistantResult> RunAsync(
         string conversationId,
         string userPrompt,
@@ -150,7 +156,8 @@ public interface IServerAssistant
         // carries one (the SPA sends it). Present ⇒ revise_blueprint is offered and the draft is injected
         // into this turn's context so the model can change it. Last param (after ct) to keep every existing
         // positional caller/mock unshifted.
-        string? openDraftYaml = null);
+        string? openDraftYaml = null,
+        string? userDisplay = null);
 
     /// <summary>
     /// Streaming counterpart to <see cref="RunAsync"/>: same policy (tool offering, gate, blast
@@ -169,9 +176,10 @@ public interface IServerAssistant
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default,
-        // The current content of an open blueprint draft this turn carries (see RunAsync). Last param to
+        // The current content of an open blueprint draft this turn carries (see RunAsync). Last params to
         // keep existing positional callers unshifted.
-        string? openDraftYaml = null);
+        string? openDraftYaml = null,
+        string? userDisplay = null);
 
     /// <summary>
     /// Executes a previously-staged destructive operation after a human has confirmed

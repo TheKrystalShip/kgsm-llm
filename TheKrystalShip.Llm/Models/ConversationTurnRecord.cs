@@ -46,6 +46,14 @@ public sealed record ConversationTurnRecord
     /// <summary>The opaque, surface-prefixed conversation id (e.g. <c>cli:…</c>, <c>web:…</c>).</summary>
     public required string ConversationId { get; init; }
 
+    /// <summary>
+    /// The display name of the user this turn belongs to, as the host knew it when the turn ran.
+    /// The conversation id carries only an opaque user segment (a Discord snowflake on the web
+    /// surface), so this is the sole place a human-readable name is recorded. <c>null</c> for a turn
+    /// whose host supplied none — a reader shows the raw id then, never a name inferred from it.
+    /// </summary>
+    public string? UserDisplay { get; init; }
+
     public required DateTimeOffset StartedAt { get; init; }
     public required DateTimeOffset CompletedAt { get; init; }
 

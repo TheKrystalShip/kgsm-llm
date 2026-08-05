@@ -22,8 +22,23 @@ public interface IConversationStore
     /// its per-user scope (e.g. <c>web:{userId}</c>) to enumerate that user's chats for a history list,
     /// without loading any transcript. The <c>:</c> boundary keeps <c>web:{user}</c> from matching a
     /// different <c>web:{user2}</c> whose id merely shares a prefix. Empty when nothing matches.
+    /// <para>
+    /// Soft-deleted conversations are excluded unless <paramref name="includeDeleted"/> is set — a
+    /// review surface asks for them (they are retained in full, and a hidden one is exactly what a
+    /// tuning review wants to see), a user's own history list does not.
+    /// </para>
     /// </summary>
-    IReadOnlyList<ConversationSummary> ListConversations(string scopeKey);
+    IReadOnlyList<ConversationSummary> ListConversations(string scopeKey, bool includeDeleted = false);
+
+    /// <summary>
+    /// One <see cref="ConversationActor"/> per distinct <c>{surfacePrefix}:{user}</c> namespace in the
+    /// log, most-recently-active first — the reverse of <see cref="ListConversations"/>, which needs a
+    /// scope key the caller already knows. This is what lets a review surface enumerate WHO has talked
+    /// to the assistant: the store keeps no user registry, so the answer is derived from the ids
+    /// themselves. Counts include soft-deleted conversations
+    /// (<see cref="ConversationActor.DeletedCount"/> says how many). Empty when the surface has none.
+    /// </summary>
+    IReadOnlyList<ConversationActor> ListActors(string surfacePrefix);
 
     /// <summary>
     /// The full conversation history (turns and checkpoints), oldest first — for display and analysis.

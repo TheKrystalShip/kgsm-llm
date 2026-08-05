@@ -29,10 +29,12 @@ public sealed class SqliteConversationStoreTests : IDisposable
 
     private static ConversationTurnRecord Turn(
         string convId, string prompt, string? final,
-        IReadOnlyList<RecordedToolCall>? tools = null, string? thinking = null, bool think = false) =>
+        IReadOnlyList<RecordedToolCall>? tools = null, string? thinking = null, bool think = false,
+        string? display = null) =>
         new()
         {
             ConversationId = convId,
+            UserDisplay = display,
             StartedAt = DateTimeOffset.UtcNow,
             CompletedAt = DateTimeOffset.UtcNow,
             UserPrompt = prompt,
@@ -240,5 +242,126 @@ public sealed class SqliteConversationStoreTests : IDisposable
         tool.Summary.Should().Be("passed with warnings");
         tool.DurationMs.Should().Be(42);
         tool.Card.Should().NotBeNull();   // the §5·a structured card survived the round-trip (as JSON)
+    }
+
+    // ---- the review path: include-deleted, per-conversation signal, and the actor index ----------
+
+    private static ConversationTurnRecord Outcome(string convId, TurnOutcome outcome, string? display = null) =>
+        Turn(convId, "p", "r", display: display) with { Outcome = outcome };
+
+    [Fact]
+    public void ListConversations_IncludeDeleted_ReturnsTheHiddenOnesFlagged()
+    {
+        // A review surface asks for what the owner's own list hides — the transcript was never erased,
+        // and a conversation someone deleted is exactly what a tuning review wants to see.
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:chatA", "kept", "r"));
+        store.AppendTurn(Turn("web:u1:chatB", "hidden", "r"));
+        store.SoftDelete("web:u1:chatB");
+
+        store.ListConversations("web:u1").Select(c => c.ConversationId).Should().Equal("web:u1:chatA");
+
+        var all = store.ListConversations("web:u1", includeDeleted: true);
+        all.Select(c => c.ConversationId).Should().BeEquivalentTo("web:u1:chatA", "web:u1:chatB");
+        all.Single(c => c.ConversationId == "web:u1:chatB").Deleted.Should().BeTrue();
+        all.Single(c => c.ConversationId == "web:u1:chatA").Deleted.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ListConversations_TalliesTheOutcomesThatMarkATurnForReview()
+    {
+        var store = Create();
+        store.AppendTurn(Outcome("web:u1:c", TurnOutcome.Ok));
+        store.AppendTurn(Outcome("web:u1:c", TurnOutcome.Error));
+        store.AppendTurn(Outcome("web:u1:c", TurnOutcome.Error));
+        store.AppendTurn(Outcome("web:u1:c", TurnOutcome.CapHit));
+
+        var summary = store.ListConversations("web:u1").Should().ContainSingle().Subject;
+        summary.TurnCount.Should().Be(4);
+        summary.ErrorTurns.Should().Be(2);
+        summary.CapHitTurns.Should().Be(1);
+    }
+
+    [Fact]
+    public void ListConversations_CarriesTheNewestRecordedName_AndNullWhenNoTurnHasOne()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:c", "first", "r", display: "Old Name"));
+        store.AppendTurn(Turn("web:u1:c", "second", "r", display: "New Name"));
+        store.AppendTurn(Turn("web:u2:c", "anon", "r"));   // no name supplied by the host
+
+        var list = Create().ListConversations("web:u1");
+        list.Should().ContainSingle().Which.UserDisplay.Should().Be("New Name");
+        Create().ListConversations("web:u2").Should().ContainSingle().Which.UserDisplay.Should().BeNull();
+    }
+
+    [Fact]
+    public void ListActors_GroupsByTheUserSegment_MostRecentFirst()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:chatA", "a", "r", display: "Ana"));
+        store.AppendTurn(Turn("web:u1:chatB", "b", "r"));
+        store.AppendTurn(Turn("web:u1", "bare", "r"));        // the pre-per-chat bare key is the same actor
+        store.AppendTurn(Turn("web:u2:chatA", "c", "r"));
+
+        var actors = Create().ListActors("web");
+        actors.Select(a => a.UserId).Should().BeEquivalentTo("u1", "u2");
+
+        var u1 = actors.Single(a => a.UserId == "u1");
+        u1.Surface.Should().Be("web");
+        u1.ConversationCount.Should().Be(3);
+        u1.TurnCount.Should().Be(3);
+        u1.UserDisplay.Should().Be("Ana");      // the one turn that carried a name
+        u1.DeletedCount.Should().Be(0);
+
+        // Most-recently-active first: u2's turn was appended last.
+        actors[0].UserId.Should().Be("u2");
+    }
+
+    [Fact]
+    public void ListActors_CountsSoftDeletedConversationsWithoutHidingTheActor()
+    {
+        // The actor's footprint is the whole log, deleted or not — hiding a conversation from its owner
+        // must not make the person who held it disappear from a review index.
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:chatA", "kept", "r"));
+        store.AppendTurn(Turn("web:u1:chatB", "gone", "r"));
+        store.SoftDelete("web:u1:chatB");
+
+        var actor = Create().ListActors("web").Should().ContainSingle().Subject;
+        actor.ConversationCount.Should().Be(2);
+        actor.DeletedCount.Should().Be(1);
+        actor.TurnCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void ListActors_IsScopedToItsSurface()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:c", "web", "r"));
+        store.AppendTurn(Turn("cli:abc123", "cli", "r"));
+
+        Create().ListActors("web").Should().ContainSingle().Which.UserId.Should().Be("u1");
+        Create().ListActors("cli").Should().ContainSingle().Which.UserId.Should().Be("abc123");
+    }
+
+    [Fact]
+    public void ListActors_DoesNotConfuseUsersWhoseIdsShareAPrefix()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:c", "a", "r"));
+        store.AppendTurn(Turn("web:u10:c", "b", "r"));
+
+        Create().ListActors("web").Select(a => a.UserId).Should().BeEquivalentTo("u1", "u10");
+    }
+
+    [Fact]
+    public void UserDisplay_RoundTripsOntoTheStoredTurn()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1:c", "hello", "hi", display: "Ana Example"));
+
+        Create().GetHistory("web:u1:c").Should().ContainSingle()
+            .Which.Turn!.UserDisplay.Should().Be("Ana Example");
     }
 }

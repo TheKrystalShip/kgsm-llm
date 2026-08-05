@@ -204,7 +204,8 @@ public class ServerAssistant : IServerAssistant
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default,
-        string? openDraftYaml = null)
+        string? openDraftYaml = null,
+        string? userDisplay = null)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
         var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen);
@@ -223,6 +224,7 @@ public class ServerAssistant : IServerAssistant
             Tools = tools,
             Gate = BuildGate(canPerformActions),
             Think = think,
+            UserDisplay = userDisplay,
         };
 
         // The dispatcher stages any proposed commands into this per-turn scope; we drain
@@ -245,7 +247,8 @@ public class ServerAssistant : IServerAssistant
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default,
-        string? openDraftYaml = null)
+        string? openDraftYaml = null,
+        string? userDisplay = null)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
         var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen);
@@ -267,6 +270,7 @@ public class ServerAssistant : IServerAssistant
             Tools = tools,
             Gate = BuildGate(canPerformActions),
             Think = think,
+            UserDisplay = userDisplay,
         };
 
         // CRUCIAL: the dispatcher stages destructive ops into an AsyncLocal confirmation scope

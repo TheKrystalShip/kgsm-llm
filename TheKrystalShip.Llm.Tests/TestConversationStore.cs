@@ -27,27 +27,64 @@ internal sealed class TestConversationStore : IConversationStore
 
     public IReadOnlyList<ConversationEntry> GetHistory(string conversationId) => _entries.ToArray();
 
-    public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey)
+    public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey, bool includeDeleted = false)
     {
         // Mirror the real store: the scope key itself OR its ":"-children, most-recently-active first.
         var prefix = scopeKey + ":";
         return _byConversation
             .Where(kv => (kv.Key == scopeKey || kv.Key.StartsWith(prefix, StringComparison.Ordinal))
-                         && !_deleted.Contains(kv.Key))
-            .Select(kv =>
-            {
-                var turns = kv.Value.Where(e => e.Kind == ConversationEntryKind.Turn).ToList();
-                return new ConversationSummary
-                {
-                    ConversationId = kv.Key,
-                    Title = turns.Count > 0 ? turns[0].Turn!.UserPrompt : null,
-                    CreatedAt = kv.Value[0].CreatedAt,
-                    LastActivityAt = kv.Value[^1].CreatedAt,
-                    TurnCount = turns.Count,
-                };
-            })
+                         && (includeDeleted || !_deleted.Contains(kv.Key)))
+            .Select(kv => Summarize(kv.Key, kv.Value))
             .OrderByDescending(s => s.LastActivityAt)
             .ToList();
+    }
+
+    public IReadOnlyList<ConversationActor> ListActors(string surfacePrefix)
+    {
+        // Mirror the real store: group by the id up to its SECOND ':' ({surface}:{user}), or the whole
+        // id when it has no chat segment.
+        var surface = surfacePrefix.TrimEnd(':');
+        return _byConversation
+            .Where(kv => kv.Key == surface || kv.Key.StartsWith(surface + ":", StringComparison.Ordinal))
+            .GroupBy(kv =>
+            {
+                var rest = kv.Key.Length > surface.Length ? kv.Key[(surface.Length + 1)..] : string.Empty;
+                var cut = rest.IndexOf(':');
+                return cut < 0 ? rest : rest[..cut];
+            })
+            .Select(g => new ConversationActor
+            {
+                Surface = surface,
+                UserId = g.Key,
+                UserDisplay = g.SelectMany(kv => kv.Value)
+                    .Where(e => e.Kind == ConversationEntryKind.Turn && e.Turn!.UserDisplay is not null)
+                    .Select(e => e.Turn!.UserDisplay)
+                    .LastOrDefault(),
+                ConversationCount = g.Count(),
+                DeletedCount = g.Count(kv => _deleted.Contains(kv.Key)),
+                TurnCount = g.SelectMany(kv => kv.Value).Count(e => e.Kind == ConversationEntryKind.Turn),
+                FirstActivityAt = g.Min(kv => kv.Value[0].CreatedAt),
+                LastActivityAt = g.Max(kv => kv.Value[^1].CreatedAt),
+            })
+            .OrderByDescending(a => a.LastActivityAt)
+            .ToList();
+    }
+
+    private ConversationSummary Summarize(string id, List<ConversationEntry> entries)
+    {
+        var turns = entries.Where(e => e.Kind == ConversationEntryKind.Turn).ToList();
+        return new ConversationSummary
+        {
+            ConversationId = id,
+            Title = turns.Count > 0 ? turns[0].Turn!.UserPrompt : null,
+            CreatedAt = entries[0].CreatedAt,
+            LastActivityAt = entries[^1].CreatedAt,
+            TurnCount = turns.Count,
+            UserDisplay = turns.LastOrDefault(t => t.Turn!.UserDisplay is not null)?.Turn!.UserDisplay,
+            Deleted = _deleted.Contains(id),
+            ErrorTurns = turns.Count(t => t.Turn!.Outcome == TurnOutcome.Error),
+            CapHitTurns = turns.Count(t => t.Turn!.Outcome == TurnOutcome.CapHit),
+        };
     }
 
     public IReadOnlyList<LlmMessage> GetModelContext(string conversationId)

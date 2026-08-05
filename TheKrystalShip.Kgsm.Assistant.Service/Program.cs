@@ -103,6 +103,7 @@ builder.Services.AddHttpClient<IDiscordOAuthClient, DiscordOAuthClient>(
     c => c.BaseAddress = new Uri("https://discord.com/"));
 builder.Services.AddScoped<DiscordAuthService>();
 builder.Services.AddScoped<BearerAuthFilter>();
+builder.Services.AddScoped<AdminOnlyFilter>();
 
 // CORS: allow the configured SPA origin to call with an Authorization header. NO
 // AllowCredentials (bearer, not cookies). UseCors is ordered before the secured group so
@@ -143,6 +144,11 @@ app.UseCors();
             "DiscordOAuth:BotToken is unset — guild-membership and role lookups use the bot " +
             "token, so every login will be denied until it is configured.");
 }
+
+// The surface this service's conversation ids are namespaced under: web:{userId}[:{chatId}]. Every
+// key is composed from it, and the review surface is scoped to it — a conversation from another
+// surface in the same database is not this service's to serve.
+const string WebSurface = "web";
 
 // --- Public endpoints --------------------------------------------------------
 // Open: a liveness probe, and the two auth-bootstrap endpoints (a caller has no session yet).
@@ -267,7 +273,7 @@ secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IProm
 secured.MapGet("/conversations", (HttpContext http, IConversationStore store) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    var conversations = store.ListConversations($"web:{principal.UserId}")
+    var conversations = store.ListConversations($"{WebSurface}:{principal.UserId}")
         .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.UserId))
         .ToArray();
     return Results.Ok(conversations);
@@ -282,8 +288,8 @@ secured.MapGet("/conversations/{id}", (string id, HttpContext http, IConversatio
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
     var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"web:{principal.UserId}"
-        : $"web:{principal.UserId}:{chatScope}";
+        ? $"{WebSurface}:{principal.UserId}"
+        : $"{WebSurface}:{principal.UserId}:{chatScope}";
     var entries = store.GetHistory(conversationId)
         .Select(ConversationHistoryMapper.ToEntryDto)
         .ToArray();
@@ -299,8 +305,8 @@ secured.MapDelete("/conversations/{id}", (string id, HttpContext http, IConversa
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
     var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"web:{principal.UserId}"
-        : $"web:{principal.UserId}:{chatScope}";
+        ? $"{WebSurface}:{principal.UserId}"
+        : $"{WebSurface}:{principal.UserId}:{chatScope}";
     store.SoftDelete(conversationId);
     return Results.NoContent();
 });
@@ -317,8 +323,8 @@ secured.MapPost("/conversations/{id}/compact", async (
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
     var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"web:{principal.UserId}"
-        : $"web:{principal.UserId}:{chatScope}";
+        ? $"{WebSurface}:{principal.UserId}"
+        : $"{WebSurface}:{principal.UserId}:{chatScope}";
 
     var result = await compactor.CompactAsync(conversationId, ct);
     if (result.IsFailure)
@@ -326,6 +332,66 @@ secured.MapPost("/conversations/{id}/compact", async (
 
     var outcome = result.Value!;
     return Results.Ok(new CompactionResultDto(outcome.Compacted, outcome.MessagesCompacted, outcome.Summary));
+});
+
+// --- The review surface: reading OTHER users' conversations ------------------
+// Admin-gated (AdminOnlyFilter: the api's forwarded decision on the relay path, the caller's own
+// Discord review role on the session-bearer path — so the leaf's review surface works standalone).
+// Read-only by construction: there is no admin write here, and nothing below can reach a
+// conversation outside the web surface. Chats users have "deleted" ARE listed, flagged — the
+// transcript was never erased, and a hidden conversation is exactly what a tuning review wants.
+var review = app.MapGroup("/admin")
+    .AddEndpointFilter<BearerAuthFilter>()
+    .AddEndpointFilter<AdminOnlyFilter>();
+
+// Everyone who has talked to this assistant, derived from the conversation ids themselves (the store
+// holds no user registry). The list a reviewer picks from.
+review.MapGet("/conversations/users", (IConversationStore store) =>
+{
+    var users = store.ListActors(WebSurface)
+        .Select(a => new AdminConversationUserDto(
+            a.UserId, a.UserDisplay, a.ConversationCount, a.DeletedCount, a.TurnCount,
+            a.FirstActivityAt, a.LastActivityAt))
+        .ToArray();
+    return Results.Ok(users);
+});
+
+// One user's conversations. The user id comes from the list above, so it names an EXISTING namespace;
+// an unknown one is simply an empty list, never an error (nothing is revealed either way).
+review.MapGet("/conversations", (string user, IConversationStore store) =>
+{
+    if (string.IsNullOrWhiteSpace(user))
+        return Results.BadRequest(new { error = "user is required." });
+
+    var conversations = store.ListConversations($"{WebSurface}:{user}", includeDeleted: true)
+        .Select(ReviewConversationId.ToDto)
+        .ToArray();
+    return Results.Ok(conversations);
+});
+
+// One conversation's transcript, addressed by the opaque handle the listing minted. The entries are
+// the SAME shape GET /conversations/{id} returns for your own chat, so a client renders a reviewed
+// transcript through its existing path. A handle that doesn't decode, or decodes outside the web
+// surface, is a 404 — the surface only serves what it lists.
+review.MapGet("/conversations/{id}", (string id, IConversationStore store) =>
+{
+    if (!ReviewConversationId.TryDecode(id, WebSurface, out var conversationId))
+        return Results.NotFound(new { error = "unknown conversation." });
+
+    var userId = ReviewConversationId.UserOf(conversationId, WebSurface);
+    var summary = store.ListConversations($"{WebSurface}:{userId}", includeDeleted: true)
+        .FirstOrDefault(s => s.ConversationId == conversationId);
+    if (summary is null)
+        return Results.NotFound(new { error = "unknown conversation." });
+
+    var entries = store.GetHistory(conversationId)
+        .Select(ConversationHistoryMapper.ToEntryDto)
+        .ToArray();
+
+    return Results.Ok(new AdminConversationHistoryDto(
+        new AdminConversationUserRefDto(userId, summary.UserDisplay),
+        ReviewConversationId.ToDto(summary),
+        entries));
 });
 
 secured.MapPost("/auth/logout", (HttpContext http, DiscordAuthService auth) =>
@@ -389,8 +455,8 @@ secured.MapPost("/turn", async (
             ? rc
             : request.ConversationId);
     var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"web:{principal.UserId}"
-        : $"web:{principal.UserId}:{chatScope}";
+        ? $"{WebSurface}:{principal.UserId}"
+        : $"{WebSurface}:{principal.UserId}:{chatScope}";
 
     // Attribute any server mutation this turn runs to the asking user (origin=assistant); flows down the
     // awaited turn → tool dispatch → kgsm chokepoint. Covers both the SSE and buffered paths below.
@@ -410,7 +476,7 @@ secured.MapPost("/turn", async (
         return Results.Empty;
     }
 
-    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct, request.DraftYaml);
+    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct, request.DraftYaml, principal.DisplayName);
 
     if (result.IsFailure)
     {

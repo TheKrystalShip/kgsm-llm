@@ -140,6 +140,19 @@ public sealed class DiscordOAuthOptions
         NoDefault = true)]
     public string ActionRoleId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Role whose holders may read OTHER users' conversations through the admin review surface.
+    /// Empty/"0" → no session bearer can, and the surface is reachable only through a trusted relay
+    /// that asserts admin itself. Deliberately its own role, not the action role: acting on a server
+    /// and reading someone's chat are different powers.
+    /// </summary>
+    /// <panel>Role whose holders may read other people's assistant conversations, to review how the
+    /// assistant is answering. Empty means nobody signing in here can — separate from the action role
+    /// on purpose.</panel>
+    [LeafField("discordAdminRoleId", "Review role id", Group = "discord", Risk = LeafRisk.Wiring,
+        NoDefault = true)]
+    public string AdminRoleId { get; set; } = string.Empty;
+
     /// <summary>Where Discord redirects after authorize — the SPA's callback URL (HTTPS).</summary>
     /// <panel>Where Discord sends someone back to after they approve. It has to match the redirect
     /// registered on the Discord application exactly.</panel>

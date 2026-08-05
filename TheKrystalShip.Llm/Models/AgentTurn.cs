@@ -72,4 +72,12 @@ public sealed record AgentTurn
     /// or falls back to the server-wide <c>Ollama:Think</c> config default.
     /// </summary>
     public bool Think { get; init; }
+
+    /// <summary>
+    /// Optional display name of the user this turn is for, recorded verbatim onto the turn
+    /// (<see cref="ConversationTurnRecord.UserDisplay"/>). The library neither parses nor derives it —
+    /// only the host knows who the opaque <see cref="ConversationId"/> belongs to. Leave null and the
+    /// turn simply records no name.
+    /// </summary>
+    public string? UserDisplay { get; init; }
 }

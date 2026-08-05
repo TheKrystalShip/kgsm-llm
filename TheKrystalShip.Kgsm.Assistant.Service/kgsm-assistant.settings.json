@@ -84,6 +84,7 @@
     "BotToken": "",
     "GuildId": "",
     "ActionRoleId": "",
+    "AdminRoleId": "",
     "RedirectUri": "",
     "Scopes": "identify"
   },

@@ -142,6 +142,58 @@ public sealed record ConversationHistoryDto(
     string Id,
     IReadOnlyList<ConversationHistoryEntryDto> Entries);
 
+// ---- the review surface (GET /admin/conversations…) ---------------------------------------------
+// An administrator reading OTHER users' conversations, to judge where the assistant needs tuning.
+// Two levels: who has talked to it, and which conversations one of them holds. The transcript itself
+// reuses ConversationHistoryDto above verbatim — a reviewed transcript is the same shape as your own,
+// so a client renders it through the very same path, read-only.
+
+/// <summary>
+/// One row of <c>GET /admin/conversations/users</c>: everyone who has talked to this assistant on the
+/// web surface, with the size and span of their footprint. <see cref="UserId"/> is the opaque Discord
+/// id the conversations are keyed by; <see cref="DisplayName"/> is the newest name any of their turns
+/// recorded and is <c>null</c> for conversations that predate name capture — a client shows the id
+/// then, never a name guessed from it.
+/// </summary>
+public sealed record AdminConversationUserDto(
+    string UserId,
+    string? DisplayName,
+    int ConversationCount,
+    int DeletedCount,
+    int TurnCount,
+    DateTimeOffset FirstActivityAt,
+    DateTimeOffset LastActivityAt);
+
+/// <summary>
+/// One row of <c>GET /admin/conversations?user={userId}</c>. <see cref="Id"/> is an OPAQUE handle for
+/// the transcript endpoint, not a key the client composes — the stored id is the store's business, and
+/// keeping it opaque is what stops a client addressing conversations by construction.
+/// <see cref="Deleted"/> marks one its owner hid (the transcript is retained regardless);
+/// <see cref="ErrorTurns"/>/<see cref="CapHitTurns"/> are the tuning signal — where the assistant
+/// failed or ran out of iterations without answering.
+/// </summary>
+public sealed record AdminConversationDto(
+    string Id,
+    string? Title,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset LastActivityAt,
+    int TurnCount,
+    bool Deleted,
+    int ErrorTurns,
+    int CapHitTurns);
+
+/// <summary>
+/// <c>GET /admin/conversations/{id}</c>: whose conversation it is, its summary row, and the transcript
+/// in the SAME <see cref="ConversationHistoryEntryDto"/> shape the caller's own history returns.
+/// </summary>
+public sealed record AdminConversationHistoryDto(
+    AdminConversationUserRefDto User,
+    AdminConversationDto Conversation,
+    IReadOnlyList<ConversationHistoryEntryDto> Entries);
+
+/// <summary>Who a reviewed conversation belongs to: the opaque id, and a recorded name if there is one.</summary>
+public sealed record AdminConversationUserRefDto(string UserId, string? DisplayName);
+
 /// <summary>
 /// One history entry. <see cref="Kind"/> is <c>turn</c> (then <see cref="Turn"/> is set) or
 /// <c>checkpoint</c> (then <see cref="CheckpointSummary"/> is set — a compaction recap the client shows

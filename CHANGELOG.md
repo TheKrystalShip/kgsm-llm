@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — an administrator can read other users' conversations, to tune the assistant
+
+The conversation log already holds everything a review needs — the prompt, the reply, the thinking,
+the full tool trajectory, iterations, usage and outcome of every turn. What it lacked was a way to
+ask *who* has talked to the assistant and to read one of their conversations. Both are now first
+class, and nothing new is captured to provide them.
+
+- **`IConversationStore.ListActors(surface)`** — one row per `{surface}:{user}` namespace, derived
+  from the conversation ids themselves rather than from a user table the store would then have to
+  keep true. It answers "whose conversations exist", the reverse of `ListConversations`, which needs
+  a scope key the caller already knows.
+- **`ListConversations(scope, includeDeleted)`** — a review sees conversations their owner hid. The
+  transcript was never erased (the log is append-only; a soft-delete is a tombstone), and a hidden
+  conversation is exactly the one a tuning review wants.
+- **A conversation summary carries the signal a reviewer scans for**: `ErrorTurns` and `CapHitTurns`
+  — turns that failed, or that exhausted the iteration cap without answering. Both are derived in SQL
+  from the stored turn payload, so no column, no migration, and every conversation already in the
+  log reports them.
+- **`ConversationTurnRecord.UserDisplay`** — the asking user's display name, supplied by the host
+  through `AgentTurn` and recorded on the turn. The conversation id carries only an opaque user
+  segment (a Discord snowflake), so this is the only place a human-readable name exists. Turns
+  recorded before it have none, and read back as `null`: a reader shows the raw id rather than a name
+  inferred from it.
+- **`GET /admin/conversations/users`, `?user=`, and `/{id}`** on the Service, behind a new
+  `AdminOnlyFilter`. A transcript is addressed by an **opaque handle minted by the listing**, not by
+  a key the client composes, and the handle is refused if it decodes outside the web surface — the
+  surface only ever serves what it listed. The entries come back in the **same shape as your own
+  history**, so a client renders a reviewed transcript through its existing path.
+- **Authority, both ways in.** Over the trusted relay it is the api's verified decision, forwarded as
+  `X-Relay-Admin` and fail-closed exactly like `X-Relay-Can-Act` — an api that does not speak the
+  header cannot open the surface by omission. For a direct session bearer it is the caller's own
+  Discord role, `DiscordOAuth:AdminRoleId`, so the leaf's review surface works with no api in front
+  of it. It is deliberately **not** the action role: acting on a server and reading someone's
+  conversation are different powers. Unset ⇒ no session bearer may review.
+- `RoleCache` keys its entries by **role and user**. The service asks about two roles now, and one
+  slot per user would let "may act" answer "may review".
+
+There is no admin write: no editing, deleting or compacting another user's conversation.
+
 ### Changed — the leaf config descriptor is generated, not written
 - **`deploy/kgsm-llm.leaf.json` is now written by `TheKrystalShip.KGSM.LeafConfig` on every build**, from
   `[LeafField]` attributes and `<panel>` doc tags on `the bound settings types`. A knob lives in two places —

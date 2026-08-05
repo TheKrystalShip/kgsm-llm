@@ -414,6 +414,15 @@
       "risk": "wiring"
     },
     {
+      "key": "discordAdminRoleId",
+      "env": "DiscordOAuth__AdminRoleId",
+      "label": "Review role id",
+      "description": "Role whose holders may read other people's assistant conversations, to review how the assistant is answering. Empty means nobody signing in here can — separate from the action role on purpose.",
+      "group": "discord",
+      "type": "string",
+      "risk": "wiring"
+    },
+    {
       "key": "discordRedirectUri",
       "env": "DiscordOAuth__RedirectUri",
       "label": "Sign-in redirect",

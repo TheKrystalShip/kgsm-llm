@@ -115,8 +115,11 @@ internal sealed class DiscordAuthService
 
         var sessionToken = _sessions.Create(session);
 
-        // Seed the role cache from the member we already have — saves the first re-fetch.
-        _roleCache.Set(user.Id, HasActionRole(member.Roles));
+        // Seed the role cache from the member we already have — saves the first re-fetch. Both roles
+        // come off the same member object, so the review decision costs nothing extra here.
+        _roleCache.Set(_discord.ActionRoleId, user.Id, HasActionRole(member.Roles));
+        if (AdminRoleConfigured)
+            _roleCache.Set(_discord.AdminRoleId, user.Id, member.Roles.Contains(_discord.AdminRoleId, StringComparer.Ordinal));
 
         return new AuthSessionResult(sessionToken, user.DisplayName);
     }
@@ -144,7 +147,7 @@ internal sealed class DiscordAuthService
         if (!_assistant.ActionsEnabled || !_tokens.IsConfigured || !ActionRoleConfigured)
             return false;
 
-        if (_roleCache.TryGet(principal.UserId, out var cached))
+        if (_roleCache.TryGet(_discord.ActionRoleId, principal.UserId, out var cached))
             return cached;
 
         // Re-derive authority from the bot by user id. A null member (left the guild, or a
@@ -152,7 +155,28 @@ internal sealed class DiscordAuthService
         // until its own expiry; there is no caller token to expire and force a re-login.
         var member = await _oauth.GetGuildMemberAsync(principal.UserId, ct);
         var hasRole = member is not null && HasActionRole(member.Roles);
-        _roleCache.Set(principal.UserId, hasRole);
+        _roleCache.Set(_discord.ActionRoleId, principal.UserId, hasRole);
+        return hasRole;
+    }
+
+    /// <summary>
+    /// Whether this principal may read OTHER users' conversations (the review surface). Same live
+    /// derivation as <see cref="CanPerformActionsAsync"/> — the bot, by user id, behind the same
+    /// short-TTL cache — against its OWN role: acting on a server and reading someone's chat are
+    /// different powers. No configured review role ⇒ nobody, so a host that never set one cannot have
+    /// the surface opened by a session bearer.
+    /// </summary>
+    public async Task<bool> IsAdminAsync(AuthPrincipal principal, CancellationToken ct = default)
+    {
+        if (!AdminRoleConfigured)
+            return false;
+
+        if (_roleCache.TryGet(_discord.AdminRoleId, principal.UserId, out var cached))
+            return cached;
+
+        var member = await _oauth.GetGuildMemberAsync(principal.UserId, ct);
+        var hasRole = member is not null && member.Roles.Contains(_discord.AdminRoleId, StringComparer.Ordinal);
+        _roleCache.Set(_discord.AdminRoleId, principal.UserId, hasRole);
         return hasRole;
     }
 
@@ -164,6 +188,9 @@ internal sealed class DiscordAuthService
 
     private bool ActionRoleConfigured =>
         !string.IsNullOrEmpty(_discord.ActionRoleId) && _discord.ActionRoleId != "0";
+
+    private bool AdminRoleConfigured =>
+        !string.IsNullOrEmpty(_discord.AdminRoleId) && _discord.AdminRoleId != "0";
 
     private bool HasActionRole(string[] roles) =>
         ActionRoleConfigured && roles.Contains(_discord.ActionRoleId, StringComparer.Ordinal);

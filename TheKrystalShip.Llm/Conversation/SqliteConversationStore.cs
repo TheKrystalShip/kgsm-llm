@@ -97,7 +97,7 @@ public sealed class SqliteConversationStore : IConversationStore
     // The longest a derived title is kept (first prompt, single-lined). Slack over the ~40 the SPA shows.
     private const int TitleMaxLength = 80;
 
-    public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey)
+    public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey, bool includeDeleted = false)
     {
         // Match the scope key itself (the bare per-user conversation) OR its ":"-children (per-chat ids).
         // scopeKey is surface:userId — neither segment carries a LIKE wildcard (% or _), so the pattern
@@ -106,31 +106,53 @@ public sealed class SqliteConversationStore : IConversationStore
 
         using var connection = Open();
 
-        // One row per conversation: bounds + turn count. SUM(kind='turn') counts turns, excluding
-        // checkpoints. Ordered most-recently-active first so the surface's list reads newest-down.
-        var summaries = new List<(string Id, DateTimeOffset Created, DateTimeOffset Last, int Turns)>();
+        // One row per conversation: bounds, turn count, per-outcome tallies, and whether it is
+        // soft-deleted. SUM(kind='turn') counts turns, excluding checkpoints; the outcome tallies read
+        // the stored payload through json_extract (the payload IS the turn record, so no column and no
+        // migration is needed for a field it already carries). Ordered most-recently-active first so
+        // the surface's list reads newest-down.
+        var summaries = new List<(string Id, DateTimeOffset Created, DateTimeOffset Last, int Turns,
+            bool Deleted, int Errors, int CapHits, string? Display)>();
         using (var agg = connection.CreateCommand())
         {
-            agg.CommandText =
+            // Soft-deleted = the newest tombstone out-ids every content (turn/checkpoint) entry. A
+            // resuming turn is newer than the tombstone → not deleted (latest-entry-wins). A
+            // tombstone-only id (no content at all) counts as deleted. The owner's own list filters
+            // these out; a review listing keeps them and flags each one.
+            const string DeletedExpr =
                 """
+                MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
+                    > MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END)
+                """;
+            agg.CommandText =
+                $"""
                 SELECT conversation_id,
                        MIN(created_at) AS created,
                        MAX(created_at) AS last,
-                       SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns
+                       SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns,
+                       {DeletedExpr} AS is_deleted,
+                       SUM(CASE WHEN kind = $turn AND json_extract(payload, '$.outcome') = 'error'
+                                THEN 1 ELSE 0 END) AS errors,
+                       SUM(CASE WHEN kind = $turn AND json_extract(payload, '$.outcome') = 'capHit'
+                                THEN 1 ELSE 0 END) AS cap_hits,
+                       -- The newest name any turn recorded; null when none carries one.
+                       (SELECT json_extract(n.payload, '$.userDisplay')
+                        FROM conversation_entries n
+                        WHERE n.conversation_id = conversation_entries.conversation_id
+                          AND n.kind = $turn
+                          AND json_extract(n.payload, '$.userDisplay') IS NOT NULL
+                        ORDER BY n.id DESC LIMIT 1) AS display
                 FROM conversation_entries
                 WHERE conversation_id = $scope OR conversation_id LIKE $child
                 GROUP BY conversation_id
-                -- Hide soft-deleted conversations: excluded when the newest tombstone out-ids every
-                -- content (turn/checkpoint) entry. A resuming turn is newer than the tombstone → it
-                -- re-appears (latest-entry-wins). A tombstone-only id (no content) is excluded too.
-                HAVING MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
-                     < MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END)
+                HAVING $includeDeleted OR NOT ({DeletedExpr})
                 ORDER BY last DESC;
                 """;
             agg.Parameters.AddWithValue("$turn", KindTurn);
             agg.Parameters.AddWithValue("$deleted", KindDeleted);
             agg.Parameters.AddWithValue("$scope", scopeKey);
             agg.Parameters.AddWithValue("$child", childPattern);
+            agg.Parameters.AddWithValue("$includeDeleted", includeDeleted ? 1 : 0);
             using var reader = agg.ExecuteReader();
             while (reader.Read())
             {
@@ -138,7 +160,11 @@ public sealed class SqliteConversationStore : IConversationStore
                     reader.GetString(0),
                     DateTimeOffset.Parse(reader.GetString(1)),
                     DateTimeOffset.Parse(reader.GetString(2)),
-                    reader.GetInt32(3)));
+                    reader.GetInt32(3),
+                    reader.GetInt64(4) != 0,
+                    reader.GetInt32(5),
+                    reader.GetInt32(6),
+                    reader.IsDBNull(7) ? null : reader.GetString(7)));
             }
         }
 
@@ -177,7 +203,95 @@ public sealed class SqliteConversationStore : IConversationStore
             CreatedAt = s.Created,
             LastActivityAt = s.Last,
             TurnCount = s.Turns,
+            UserDisplay = s.Display,
+            Deleted = s.Deleted,
+            ErrorTurns = s.Errors,
+            CapHitTurns = s.CapHits,
         }).ToList();
+    }
+
+    public IReadOnlyList<ConversationActor> ListActors(string surfacePrefix)
+    {
+        // The actor namespace is the id up to its SECOND ':' — {surface}:{user} — or the whole id when
+        // it has no chat segment (the bare per-user conversation). Derived in SQL from the ids
+        // themselves: the store holds no user table, and inventing one would mean a second source of
+        // truth for who exists.
+        var surface = surfacePrefix.TrimEnd(':');
+        var pattern = surface + ":%";
+
+        using var connection = Open();
+        using var cmd = connection.CreateCommand();
+        // actor = surface || ':' || <segment after the surface, up to the next ':' if there is one>.
+        // instr() returns 0 when the remainder has no ':' (no chat segment) → take the whole remainder.
+        const string ActorExpr =
+            """
+            $surface || ':' || (
+                CASE WHEN instr(substr(conversation_id, length($surface) + 2), ':') = 0
+                     THEN substr(conversation_id, length($surface) + 2)
+                     ELSE substr(conversation_id, length($surface) + 2,
+                                 instr(substr(conversation_id, length($surface) + 2), ':') - 1)
+                END)
+            """;
+        // Per conversation first (deleted-ness is a per-conversation property — the newest tombstone
+        // out-idding every content entry), then rolled up per actor. Doing it in one pass would count
+        // a tombstone as if it were the conversation's state rather than the id's.
+        cmd.CommandText =
+            $"""
+            WITH per_conversation AS (
+                SELECT {ActorExpr} AS actor,
+                       conversation_id,
+                       MIN(created_at) AS created,
+                       MAX(created_at) AS last,
+                       SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns,
+                       MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
+                           > MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END) AS is_deleted
+                FROM conversation_entries
+                WHERE conversation_id = $surface OR conversation_id LIKE $pattern
+                GROUP BY conversation_id
+            )
+            SELECT actor,
+                   COUNT(*) AS conversations,
+                   SUM(is_deleted) AS deleted,
+                   SUM(turns) AS turns,
+                   MIN(created) AS first_at,
+                   MAX(last) AS last_at,
+                   (SELECT json_extract(n.payload, '$.userDisplay')
+                    FROM conversation_entries n
+                    WHERE (n.conversation_id = per_conversation.actor
+                           OR n.conversation_id LIKE per_conversation.actor || ':%')
+                      AND n.kind = $turn
+                      AND json_extract(n.payload, '$.userDisplay') IS NOT NULL
+                    ORDER BY n.id DESC LIMIT 1) AS display
+            FROM per_conversation
+            GROUP BY actor
+            ORDER BY last_at DESC;
+            """;
+        cmd.Parameters.AddWithValue("$turn", KindTurn);
+        cmd.Parameters.AddWithValue("$deleted", KindDeleted);
+        cmd.Parameters.AddWithValue("$surface", surface);
+        cmd.Parameters.AddWithValue("$pattern", pattern);
+
+        var actors = new List<ConversationActor>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var actor = reader.GetString(0);
+            // actor is "{surface}:{user}"; the user segment is everything past the surface + ':'.
+            var userId = actor.Length > surface.Length + 1 ? actor[(surface.Length + 1)..] : string.Empty;
+            actors.Add(new ConversationActor
+            {
+                Surface = surface,
+                UserId = userId,
+                UserDisplay = reader.IsDBNull(6) ? null : reader.GetString(6),
+                ConversationCount = reader.GetInt32(1),
+                DeletedCount = reader.GetInt32(2),
+                TurnCount = reader.GetInt32(3),
+                FirstActivityAt = DateTimeOffset.Parse(reader.GetString(4)),
+                LastActivityAt = DateTimeOffset.Parse(reader.GetString(5)),
+            });
+        }
+
+        return actors;
     }
 
     // A conversation's display title: its first prompt, collapsed to a single line and length-capped.

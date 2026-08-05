@@ -51,6 +51,16 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     public const string RelayAutoActKey = "relayAutoAct";
 
     /// <summary>
+    /// Key under which the trusted relay's ADMIN decision is stored (a <c>bool</c>), set ONLY on the
+    /// authenticated relay path from <c>X-Relay-Admin</c>. The api forwards its verified admin-tier
+    /// decision; the review endpoints trust it instead of a Discord role lookup, exactly as
+    /// <see cref="RelayCanActKey"/> works for actions. Orthogonal to acting: reading other people's
+    /// conversations is its own power. Absent/non-"true" ⇒ false, so a relay that doesn't speak this
+    /// header can never open the review surface.
+    /// </summary>
+    public const string RelayAdminKey = "relayAdmin";
+
+    /// <summary>
     /// Key under which the trusted relay's per-CHAT conversation id is stored (a <c>string</c>), set
     /// ONLY on the authenticated relay path from <c>X-Relay-Conversation-Id</c>. It is a SUB-scope of
     /// the forwarded user's memory namespace — the /turn handler keys memory as
@@ -66,6 +76,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     private const string RelayUserNameHeader = "X-Relay-User-Name";
     private const string RelayCanActHeader = "X-Relay-Can-Act";
     private const string RelayAutoActHeader = "X-Relay-Auto-Act";
+    private const string RelayAdminHeader = "X-Relay-Admin";
     private const string RelayConversationIdHeader = "X-Relay-Conversation-Id";
 
     private readonly DiscordAuthService _auth;
@@ -108,6 +119,10 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             // secret already matched) and same fail-closed default — anything but "true" ⇒ propose-only.
             context.HttpContext.Items[RelayAutoActKey] =
                 string.Equals(request.Headers[RelayAutoActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            // The api's admin decision, for the review surface. Same trust basis (the secret matched)
+            // and same fail-closed default — anything but "true" leaves the surface shut.
+            context.HttpContext.Items[RelayAdminKey] =
+                string.Equals(request.Headers[RelayAdminHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
             // The per-chat conversation id — a SUB-scope of THIS user's memory (the handler keys
             // web:{userId}[:{id}]). Stored raw; the handler sanitises + caps it. Never cross-user: the
             // user id is the authoritative prefix. Absent ⇒ unset ⇒ the handler uses the bare per-user

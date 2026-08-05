@@ -24,4 +24,22 @@ public sealed record ConversationSummary
 
     /// <summary>Number of completed turns in the conversation (checkpoints excluded).</summary>
     public required int TurnCount { get; init; }
+
+    /// <summary>
+    /// The newest display name recorded on any of the conversation's turns; <c>null</c> when no turn
+    /// carries one (<see cref="ConversationTurnRecord.UserDisplay"/>). Never derived from the id.
+    /// </summary>
+    public string? UserDisplay { get; init; }
+
+    /// <summary>
+    /// Whether the conversation is soft-deleted — hidden from its owner's own list while every turn
+    /// stays in the log. Always <c>false</c> in a listing that excludes them.
+    /// </summary>
+    public bool Deleted { get; init; }
+
+    /// <summary>Turns that failed in the backend (<see cref="TurnOutcome.Error"/>).</summary>
+    public int ErrorTurns { get; init; }
+
+    /// <summary>Turns that exhausted the iteration cap without a final answer (<see cref="TurnOutcome.CapHit"/>).</summary>
+    public int CapHitTurns { get; init; }
 }

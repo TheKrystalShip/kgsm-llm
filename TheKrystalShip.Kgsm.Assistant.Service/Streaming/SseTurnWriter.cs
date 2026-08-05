@@ -74,7 +74,7 @@ internal static class SseTurnWriter
         try
         {
             await foreach (var ev in assistant
-                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, autoExecute, requestedTools, ct, openDraftYaml))
+                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, autoExecute, requestedTools, ct, openDraftYaml, principal.DisplayName))
             {
                 switch (ev.Kind)
                 {

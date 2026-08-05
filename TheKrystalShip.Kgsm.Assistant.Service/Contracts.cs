@@ -180,7 +180,8 @@ public sealed record AdminConversationDto(
     int TurnCount,
     bool Deleted,
     int ErrorTurns,
-    int CapHitTurns);
+    int CapHitTurns,
+    int NegativeTurns);
 
 /// <summary>
 /// <c>GET /admin/conversations/{id}</c>: whose conversation it is, its summary row, and the transcript
@@ -216,7 +217,8 @@ public sealed record AdminToolStatDto(
 /// <c>null</c> for turns recorded without one; <see cref="MedianMs"/> is <c>null</c> when none of the
 /// version's turns was timed.
 /// </summary>
-public sealed record AdminPromptVersionDto(string? Hash, int Turns, int OkTurns, long? MedianMs);
+public sealed record AdminPromptVersionDto(
+    string? Hash, int Turns, int OkTurns, long? MedianMs, int NegativeTurns, int RatedTurns);
 
 /// <summary>Turns started on one UTC day (<c>yyyy-MM-dd</c>), for the activity strip.</summary>
 public sealed record AdminDailyTurnsDto(string Date, int Turns);
@@ -255,7 +257,25 @@ public sealed record AdminConversationStatsDto(
     IReadOnlyList<AdminToolStatDto> Tools,
     IReadOnlyList<AdminPromptVersionDto> PromptVersions,
     IReadOnlyList<AdminDailyTurnsDto> Activity,
-    AdminAssistantRuntimeDto Runtime);
+    AdminAssistantRuntimeDto Runtime,
+    int RatedTurns,
+    int PositiveTurns,
+    int NegativeTurns,
+    double? SatisfactionPercent,
+    IReadOnlyList<AdminFeedbackNoteDto> FeedbackNotes);
+
+/// <summary>
+/// One thumbs-down and what its author wrote about it — the only record of WHY an answer failed, and
+/// the first thing a tuning pass reads. <see cref="ConversationId"/> is the same opaque handle the
+/// listing mints, so a reviewer can open the conversation the complaint came from;
+/// <see cref="TurnId"/> names the turn inside it, and <see cref="Prompt"/> is what was asked.
+/// </summary>
+public sealed record AdminFeedbackNoteDto(
+    string ConversationId,
+    long TurnId,
+    string Note,
+    string? Prompt,
+    DateTimeOffset At);
 
 /// <summary>
 /// What the assistant is currently configured to be, alongside the numbers describing what it did.
@@ -279,7 +299,24 @@ public sealed record ConversationHistoryEntryDto(
     DateTimeOffset CreatedAt,
     ConversationTurnDto? Turn = null,
     string? CheckpointSummary = null,
-    DateTimeOffset? StartedAt = null);
+    DateTimeOffset? StartedAt = null,
+    long TurnId = 0,
+    TurnFeedbackDto? Feedback = null);
+
+/// <summary>
+/// The verdict its owner left on one turn. <see cref="Rating"/> is <c>"up"</c> or <c>"down"</c>;
+/// <see cref="Note"/> is what they wrote about a thumbs-down, and is <c>null</c> when they wrote
+/// nothing. An unrated turn carries no <c>TurnFeedbackDto</c> at all rather than a neutral one — "not
+/// asked" and "answered indifferently" are different facts.
+/// </summary>
+public sealed record TurnFeedbackDto(string Rating, string? Note, DateTimeOffset At);
+
+/// <summary>
+/// <c>POST /conversations/{id}/turns/{turnId}/feedback</c>: how the caller judged one of their own
+/// answers. <see cref="Rating"/> is <c>"up"</c>, <c>"down"</c>, or <c>null</c> to withdraw a verdict
+/// already left. <see cref="Note"/> is the optional "what went wrong", offered only on a thumbs-down.
+/// </summary>
+public sealed record TurnFeedbackRequest(string? Rating, string? Note);
 
 /// <summary>
 /// One completed turn, in the §5·a vocabulary: the user <see cref="Prompt"/>, the assistant
@@ -430,8 +467,14 @@ public sealed record CommandProposedEvent(
 /// <summary>
 /// `done` — terminal success; the full assembled reply plus the turn's token <see cref="Usage"/>
 /// (used / available, in tokens) for the SPA's context meter (both fields additive over §5·a's empty `done`).
+/// <para>
+/// <see cref="TurnId"/> names the turn just recorded, so a client can act on the answer it received —
+/// rating it — without inferring which turn was "the last one". It is <c>0</c> when the turn could not
+/// be persisted; a client reads that as "not addressable" and offers nothing to act on.
+/// </para>
 /// </summary>
-public sealed record DoneEvent(string Text, DateTimeOffset CompletedAt, UsageDto? Usage = null);
+public sealed record DoneEvent(
+    string Text, DateTimeOffset CompletedAt, UsageDto? Usage = null, long TurnId = 0);
 
 /// <summary>
 /// `error` — terminal failure surfaced in-band (the stream is already HTTP 200). <see cref="Code"/>

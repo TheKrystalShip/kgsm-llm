@@ -20,6 +20,14 @@ public sealed record ConversationEntry
 {
     public required ConversationEntryKind Kind { get; init; }
 
+    /// <summary>
+    /// The entry's durable id in the log — the handle that addresses ONE turn. A turn is otherwise
+    /// identifiable only by its position, which is no use to anything that has to name a specific
+    /// answer later (rating it, linking to it). <c>0</c> for an entry that was constructed rather than
+    /// read back from storage.
+    /// </summary>
+    public long Id { get; init; }
+
     /// <summary>When the entry was appended (turn completion, or checkpoint creation).</summary>
     public required DateTimeOffset CreatedAt { get; init; }
 
@@ -28,6 +36,12 @@ public sealed record ConversationEntry
 
     /// <summary>The summary when <see cref="Kind"/> is <see cref="ConversationEntryKind.Checkpoint"/>; else <c>null</c>.</summary>
     public string? CheckpointSummary { get; init; }
+
+    /// <summary>
+    /// The verdict its owner left on this turn, when they left one; <c>null</c> when unrated (the
+    /// overwhelmingly common case — an unrated turn is not a neutral one).
+    /// </summary>
+    public TurnFeedback? Feedback { get; init; }
 
     public static ConversationEntry ForTurn(ConversationTurnRecord turn) =>
         new() { Kind = ConversationEntryKind.Turn, CreatedAt = turn.CompletedAt, Turn = turn };

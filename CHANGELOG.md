@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Turn feedback: an answer's reader can mark it helpful or unhelpful, with an optional note on a
+  thumbs-down. Stored as a `feedback` entry in the same append-only log (latest-wins, so re-rating and
+  un-rating are appends), never as an edit to the turn it judges, and never replayed into the model's
+  context. `POST /conversations/{id}/turns/{turnId}/feedback` is principal-scoped, and the store
+  additionally verifies the turn belongs to the named conversation — entry ids are log-wide, so the
+  route alone would let a caller reach a neighbouring id.
+- Turns are addressable: `AppendTurn` returns the entry id, which rides `AgentEvent.Final` out to the
+  SSE `done` frame and appears on every history entry. A surface can now act on a specific answer
+  instead of inferring which turn was the last one.
+- `GET /admin/conversations/stats` reports rated/positive/negative turn counts, a satisfaction rate
+  (null until something is rated), per-prompt-version verdict counts, and the notes people wrote.
+
+### Fixed
+- Conversation recency and soft-delete resolution ignore feedback entries, so rating an old chat no
+  longer reorders its owner's history and rating a turn in a hidden chat no longer un-hides it.
+
+
 ### Added — the corpus roll-up behind the assistant's operator overview
 
 `GET /admin/conversations/stats` (admin-gated, like the rest of the review surface) answers "how is

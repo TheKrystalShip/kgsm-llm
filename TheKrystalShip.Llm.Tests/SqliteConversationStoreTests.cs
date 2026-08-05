@@ -577,4 +577,198 @@ public sealed class SqliteConversationStoreTests : IDisposable
 
         Create().GetStats("web").ThinkingTurns.Should().Be(1);
     }
+
+    // ── Turn feedback: the only signal in the corpus that says whether an answer was any GOOD ──────────
+
+    [Fact]
+    public void AppendTurn_ReturnsTheIdThatAddressesThatTurn()
+    {
+        var store = Create();
+        var first = store.AppendTurn(Turn("c1", "q1", "a1"));
+        var second = store.AppendTurn(Turn("c1", "q2", "a2"));
+
+        first.Should().BeGreaterThan(0);
+        second.Should().NotBe(first);
+        store.GetHistory("c1").Select(e => e.Id).Should().Equal(first, second);
+    }
+
+    [Fact]
+    public void SetTurnFeedback_RidesBackOnTheTurnItJudges()
+    {
+        var store = Create();
+        var turnId = store.AppendTurn(Turn("c1", "q1", "a1"));
+        store.AppendTurn(Turn("c1", "q2", "a2"));
+
+        store.SetTurnFeedback("c1", turnId, TurnFeedbackRating.Down, "  told me the wrong port  ").Should().BeTrue();
+
+        var history = Create().GetHistory("c1");
+        history[0].Feedback.Should().BeEquivalentTo(
+            new { Rating = TurnFeedbackRating.Down, Note = "told me the wrong port" },
+            o => o.ExcludingMissingMembers());
+        // An unrated turn carries no verdict at all — never a neutral one.
+        history[1].Feedback.Should().BeNull();
+    }
+
+    [Fact]
+    public void SetTurnFeedback_LatestVerdictWins_AndClearingRemovesIt()
+    {
+        var store = Create();
+        var turnId = store.AppendTurn(Turn("c1", "q1", "a1"));
+
+        store.SetTurnFeedback("c1", turnId, TurnFeedbackRating.Down, "wrong");
+        store.SetTurnFeedback("c1", turnId, TurnFeedbackRating.Up, null);
+        Create().GetHistory("c1")[0].Feedback!.Rating.Should().Be(TurnFeedbackRating.Up);
+
+        store.SetTurnFeedback("c1", turnId, null, null);
+        Create().GetHistory("c1")[0].Feedback.Should().BeNull();
+    }
+
+    [Fact]
+    public void SetTurnFeedback_RefusesATurnOutsideTheNamedConversation()
+    {
+        // Entry ids ascend across the WHOLE log, so a caller correctly scoped to its own conversation
+        // could otherwise rate a stranger's turn just by naming a neighbouring id.
+        var store = Create();
+        var mine = store.AppendTurn(Turn("web:me:a", "q", "a"));
+        var theirs = store.AppendTurn(Turn("web:someone-else:a", "q", "a"));
+
+        store.SetTurnFeedback("web:me:a", theirs, TurnFeedbackRating.Down, "not mine to rate").Should().BeFalse();
+        store.SetTurnFeedback("web:me:a", mine, TurnFeedbackRating.Down, null).Should().BeTrue();
+
+        Create().GetHistory("web:someone-else:a")[0].Feedback.Should().BeNull();
+    }
+
+    [Fact]
+    public void Feedback_IsNeverReplayedIntoTheModelContext()
+    {
+        // A verdict is an analysis record, like Thinking. Feeding it back as conversation would change
+        // the next answer.
+        var store = Create();
+        var turnId = store.AppendTurn(Turn("c1", "q1", "a1"));
+        store.SetTurnFeedback("c1", turnId, TurnFeedbackRating.Down, "that was useless");
+
+        Create().GetModelContext("c1").Select(m => m.Content).Should().Equal("q1", "a1");
+    }
+
+    [Fact]
+    public void Feedback_DoesNotCountAsConversationActivity()
+    {
+        // Rating an old chat must not reorder someone's history list, so a verdict may not move the
+        // conversation's timestamps.
+        var store = Create();
+        var older = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var turnId = store.AppendTurn(Turn("web:u:old", "q", "a") with { StartedAt = older, CompletedAt = older });
+        store.AppendTurn(Turn("web:u:new", "q", "a"));
+
+        var before = Create().ListConversations("web:u").Select(c => c.ConversationId).ToList();
+        store.SetTurnFeedback("web:u:old", turnId, TurnFeedbackRating.Up, null);
+
+        Create().ListConversations("web:u").Select(c => c.ConversationId).Should().Equal(before);
+        Create().ListConversations("web:u").Single(c => c.ConversationId == "web:u:old")
+            .LastActivityAt.Should().Be(older);
+    }
+
+    [Fact]
+    public void Feedback_DoesNotResurrectASoftDeletedConversation()
+    {
+        // Deleted-ness is "the newest tombstone out-ids every content entry". A verdict is bookkeeping
+        // about a turn, not new content, so rating one inside a hidden chat must not un-hide it.
+        var store = Create();
+        var turnId = store.AppendTurn(Turn("web:u:a", "q", "a"));
+        store.SoftDelete("web:u:a");
+
+        store.SetTurnFeedback("web:u:a", turnId, TurnFeedbackRating.Down, "still bad");
+
+        Create().ListConversations("web:u").Should().BeEmpty();
+        Create().ListConversations("web:u", includeDeleted: true).Should().ContainSingle()
+            .Which.Deleted.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ListConversations_CountsTheNegativeVerdictsThatStand()
+    {
+        var store = Create();
+        var bad = store.AppendTurn(Turn("web:u:a", "q1", "a1"));
+        var alsoBad = store.AppendTurn(Turn("web:u:a", "q2", "a2"));
+        var recanted = store.AppendTurn(Turn("web:u:a", "q3", "a3"));
+        store.SetTurnFeedback("web:u:a", bad, TurnFeedbackRating.Down, null);
+        store.SetTurnFeedback("web:u:a", alsoBad, TurnFeedbackRating.Down, null);
+        store.SetTurnFeedback("web:u:a", recanted, TurnFeedbackRating.Down, null);
+        store.SetTurnFeedback("web:u:a", recanted, TurnFeedbackRating.Up, null);
+
+        Create().ListConversations("web:u").Single().NegativeTurns.Should().Be(2);
+    }
+
+    [Fact]
+    public void GetStats_ReportsSatisfactionWithItsCoverage()
+    {
+        var store = Create();
+        var good = store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        var bad = store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));   // never rated
+        store.SetTurnFeedback("web:u:a", good, TurnFeedbackRating.Up, null);
+        store.SetTurnFeedback("web:u:a", bad, TurnFeedbackRating.Down, "wrong answer");
+
+        var stats = Create().GetStats("web");
+
+        stats.Turns.Should().Be(3);
+        stats.RatedTurns.Should().Be(2);          // the coverage a rate is meaningless without
+        stats.PositiveTurns.Should().Be(1);
+        stats.NegativeTurns.Should().Be(1);
+        stats.SatisfactionPercent.Should().Be(50);
+    }
+
+    [Fact]
+    public void GetStats_ReportsNoSatisfactionRateWhenNothingWasRated()
+    {
+        // Null, not 0% — a corpus nobody voted on has no satisfaction rate, and zero would assert that
+        // every answer failed. Same rule the duration percentiles follow.
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+
+        var stats = Create().GetStats("web");
+        stats.SatisfactionPercent.Should().BeNull();
+        stats.RatedTurns.Should().Be(0);
+    }
+
+    [Fact]
+    public void GetStats_BucketsVerdictsByPromptVersion()
+    {
+        // The whole reason the prompt hash is recorded: change the prompt, and the next bucket's
+        // thumbs-down rate is directly comparable to the last.
+        var store = Create();
+        var oldBad = store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, promptHash: "old"));
+        var newGood = store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, promptHash: "new"));
+        store.SetTurnFeedback("web:u:a", oldBad, TurnFeedbackRating.Down, null);
+        store.SetTurnFeedback("web:u:a", newGood, TurnFeedbackRating.Up, null);
+
+        var versions = Create().GetStats("web").PromptVersions;
+
+        versions.Single(v => v.Hash == "old").Should().BeEquivalentTo(
+            new { NegativeTurns = 1, RatedTurns = 1 }, o => o.ExcludingMissingMembers());
+        versions.Single(v => v.Hash == "new").Should().BeEquivalentTo(
+            new { NegativeTurns = 0, RatedTurns = 1 }, o => o.ExcludingMissingMembers());
+    }
+
+    [Fact]
+    public void GetStats_SurfacesWhatPeopleWroteOnAThumbsDown()
+    {
+        var store = Create();
+        var bad = store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        var silent = store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        var praised = store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        store.SetTurnFeedback("web:u:a", bad, TurnFeedbackRating.Down, "invented a server that doesn't exist");
+        store.SetTurnFeedback("web:u:a", silent, TurnFeedbackRating.Down, null);
+        store.SetTurnFeedback("web:u:a", praised, TurnFeedbackRating.Up, "nice");
+
+        var notes = Create().GetStats("web").FeedbackNotes;
+
+        // Only explained thumbs-down: an unexplained one has nothing to read, and a thumbs-up note is
+        // not a complaint to triage.
+        notes.Should().ContainSingle();
+        notes[0].Note.Should().Be("invented a server that doesn't exist");
+        notes[0].TurnId.Should().Be(bad);
+        notes[0].ConversationId.Should().Be("web:u:a");
+        notes[0].Prompt.Should().Be("p");
+    }
 }

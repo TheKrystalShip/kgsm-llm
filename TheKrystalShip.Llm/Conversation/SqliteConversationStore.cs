@@ -29,6 +29,10 @@ public sealed class SqliteConversationStore : IConversationStore
     // hidden from ListConversations, but every turn STAYS in the log — the corpus is never destroyed.
     // Append-only and latest-wins: a later turn (a resume) is newer than the tombstone → it un-hides.
     private const string KindDeleted = "deleted";
+    // The owner's verdict on ONE turn, carried as {turnId, rating, note} and resolved latest-wins — the
+    // same append-only shape as the tombstone above. Re-rating and un-rating are both just appends, so a
+    // rated turn's own record is never rewritten, and the corpus keeps the fact that a verdict changed.
+    private const string KindFeedback = "feedback";
 
     // The recap wording prepended to a checkpoint summary when projected into the model's context, so
     // the model reads it as a compacted recap rather than a normal assistant message.
@@ -112,6 +116,28 @@ public sealed class SqliteConversationStore : IConversationStore
             END)
         """;
 
+    // A verdict is bookkeeping ABOUT a turn, not activity IN the conversation, so every aggregate that
+    // treats an entry as the conversation happening has to skip it: rating an old chat must not bump it
+    // to the top of its owner's list, and rating a turn inside a hidden chat must not out-id the
+    // tombstone and resurrect it.
+    private const string NotFeedbackSql = "kind <> $feedback";
+
+    // The verdict that stands for each rated turn: the newest feedback row per turn id, since re-rating
+    // appends rather than rewrites. A cleared verdict is the newest row too and carries a null rating,
+    // which is how un-rating resolves back to "no verdict". Turn ids are log-wide unique, so partitioning
+    // by the id alone is enough. Expects $feedback plus a scope predicate supplied by the caller.
+    private const string LatestVerdictSql =
+        """
+        SELECT conversation_id,
+               json_extract(payload, '$.turnId') AS turn_id,
+               json_extract(payload, '$.rating') AS rating,
+               json_extract(payload, '$.note')   AS note,
+               created_at                        AS rated_at,
+               ROW_NUMBER() OVER (PARTITION BY json_extract(payload, '$.turnId') ORDER BY id DESC) AS rn
+        FROM conversation_entries
+        WHERE kind = $feedback
+        """;
+
     public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey, bool includeDeleted = false)
     {
         // Match the scope key itself (the bare per-user conversation) OR its ":"-children (per-chat ids).
@@ -135,15 +161,15 @@ public sealed class SqliteConversationStore : IConversationStore
             // tombstone-only id (no content at all) counts as deleted. The owner's own list filters
             // these out; a review listing keeps them and flags each one.
             const string DeletedExpr =
-                """
+                $"""
                 MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
-                    > MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END)
+                    > MAX(CASE WHEN kind <> $deleted AND {NotFeedbackSql} THEN id ELSE 0 END)
                 """;
             agg.CommandText =
                 $"""
                 SELECT conversation_id,
-                       MIN(created_at) AS created,
-                       MAX(created_at) AS last,
+                       MIN(CASE WHEN {NotFeedbackSql} THEN created_at END) AS created,
+                       MAX(CASE WHEN {NotFeedbackSql} THEN created_at END) AS last,
                        SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns,
                        {DeletedExpr} AS is_deleted,
                        SUM(CASE WHEN kind = $turn AND json_extract(payload, '$.outcome') = 'error'
@@ -165,6 +191,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 """;
             agg.Parameters.AddWithValue("$turn", KindTurn);
             agg.Parameters.AddWithValue("$deleted", KindDeleted);
+            agg.Parameters.AddWithValue("$feedback", KindFeedback);
             agg.Parameters.AddWithValue("$scope", scopeKey);
             agg.Parameters.AddWithValue("$child", childPattern);
             agg.Parameters.AddWithValue("$includeDeleted", includeDeleted ? 1 : 0);
@@ -211,6 +238,27 @@ public sealed class SqliteConversationStore : IConversationStore
             }
         }
 
+        // Per conversation, how many turns their owner marked as unhelpful — what makes a conversation
+        // worth reading in a review listing. Counted from the verdict that STANDS for each turn, so a
+        // thumbs-down later changed to a thumbs-up (or cleared) stops counting.
+        var negatives = new Dictionary<string, int>(StringComparer.Ordinal);
+        using (var down = connection.CreateCommand())
+        {
+            down.CommandText =
+                $"""
+                SELECT conversation_id, COUNT(*)
+                FROM ({LatestVerdictSql} AND (conversation_id = $scope OR conversation_id LIKE $child))
+                WHERE rn = 1 AND rating = 'down'
+                GROUP BY conversation_id;
+                """;
+            down.Parameters.AddWithValue("$feedback", KindFeedback);
+            down.Parameters.AddWithValue("$scope", scopeKey);
+            down.Parameters.AddWithValue("$child", childPattern);
+            using var reader = down.ExecuteReader();
+            while (reader.Read())
+                negatives[reader.GetString(0)] = reader.GetInt32(1);
+        }
+
         return summaries.Select(s => new ConversationSummary
         {
             ConversationId = s.Id,
@@ -222,6 +270,7 @@ public sealed class SqliteConversationStore : IConversationStore
             Deleted = s.Deleted,
             ErrorTurns = s.Errors,
             CapHitTurns = s.CapHits,
+            NegativeTurns = negatives.TryGetValue(s.Id, out var n) ? n : 0,
         }).ToList();
     }
 
@@ -244,11 +293,11 @@ public sealed class SqliteConversationStore : IConversationStore
             WITH per_conversation AS (
                 SELECT {ActorSql} AS actor,
                        conversation_id,
-                       MIN(created_at) AS created,
-                       MAX(created_at) AS last,
+                       MIN(CASE WHEN {NotFeedbackSql} THEN created_at END) AS created,
+                       MAX(CASE WHEN {NotFeedbackSql} THEN created_at END) AS last,
                        SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns,
                        MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
-                           > MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END) AS is_deleted
+                           > MAX(CASE WHEN kind <> $deleted AND {NotFeedbackSql} THEN id ELSE 0 END) AS is_deleted
                 FROM conversation_entries
                 WHERE conversation_id = $surface OR conversation_id LIKE $pattern
                 GROUP BY conversation_id
@@ -272,6 +321,7 @@ public sealed class SqliteConversationStore : IConversationStore
             """;
         cmd.Parameters.AddWithValue("$turn", KindTurn);
         cmd.Parameters.AddWithValue("$deleted", KindDeleted);
+        cmd.Parameters.AddWithValue("$feedback", KindFeedback);
         cmd.Parameters.AddWithValue("$surface", surface);
         cmd.Parameters.AddWithValue("$pattern", pattern);
 
@@ -318,7 +368,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     SELECT conversation_id,
                            {ActorSql} AS actor,
                            MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
-                               > MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END) AS is_deleted
+                               > MAX(CASE WHEN kind <> $deleted AND {NotFeedbackSql} THEN id ELSE 0 END) AS is_deleted
                     FROM conversation_entries
                     WHERE conversation_id = $surface OR conversation_id LIKE $pattern
                     GROUP BY conversation_id
@@ -326,6 +376,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 SELECT COUNT(*), SUM(is_deleted), COUNT(DISTINCT actor) FROM per_conversation;
                 """;
             shape.Parameters.AddWithValue("$deleted", KindDeleted);
+            shape.Parameters.AddWithValue("$feedback", KindFeedback);
             shape.Parameters.AddWithValue("$surface", surface);
             shape.Parameters.AddWithValue("$pattern", pattern);
             using var reader = shape.ExecuteReader();
@@ -346,11 +397,40 @@ public sealed class SqliteConversationStore : IConversationStore
         var contextPercents = new List<double>();
         var windows = new HashSet<int>();
         int turns = 0, ok = 0, error = 0, capHit = 0, cancelled = 0, unrecorded = 0, thinking = 0, toolless = 0;
-        var byPrompt = new Dictionary<string, (int Turns, int Ok, List<long> Durations)>(StringComparer.Ordinal);
+        var byPrompt = new Dictionary<string, (int Turns, int Ok, List<long> Durations, int Rated, int Negative)>(StringComparer.Ordinal);
         var byDay = new SortedDictionary<string, int>(StringComparer.Ordinal);
         // A prompt hash is nullable, and a dictionary cannot key on null — this stands in for "no hash
         // recorded" and is mapped back to null on the way out.
         const string NoHash = " none";
+
+        // The verdict standing on each rated turn, read BEFORE the turns themselves so the per-turn pass
+        // can attribute each one to its prompt-version bucket in the same sweep. Only judged turns appear
+        // here: an unrated turn is absent, never a neutral entry.
+        var verdicts = new Dictionary<long, (TurnFeedbackRating Rating, string? Note, DateTimeOffset At, string ConversationId)>();
+        using (var judged = connection.CreateCommand())
+        {
+            judged.CommandText =
+                $"""
+                SELECT turn_id, rating, note, rated_at, conversation_id
+                FROM ({LatestVerdictSql} AND (conversation_id = $surface OR conversation_id LIKE $pattern))
+                WHERE rn = 1 AND rating IS NOT NULL;
+                """;
+            judged.Parameters.AddWithValue("$feedback", KindFeedback);
+            judged.Parameters.AddWithValue("$surface", surface);
+            judged.Parameters.AddWithValue("$pattern", pattern);
+            using var reader = judged.ExecuteReader();
+            while (reader.Read())
+            {
+                verdicts[reader.GetInt64(0)] = (
+                    reader.GetString(1) == "down" ? TurnFeedbackRating.Down : TurnFeedbackRating.Up,
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    DateTimeOffset.Parse(reader.GetString(3)),
+                    reader.GetString(4));
+            }
+        }
+
+        int ratedTurns = 0, positiveTurns = 0, negativeTurns = 0;
+        var notes = new List<FeedbackNote>();
 
         using (var perTurn = connection.CreateCommand())
         {
@@ -364,7 +444,9 @@ public sealed class SqliteConversationStore : IConversationStore
                        json_extract(payload, '$.completedAt'),
                        json_extract(payload, '$.usage.usedTokens'),
                        json_extract(payload, '$.usage.contextWindow'),
-                       json_array_length(payload, '$.tools')
+                       json_array_length(payload, '$.tools'),
+                       id,
+                       json_extract(payload, '$.userPrompt')
                 FROM conversation_entries
                 WHERE kind = $turn AND (conversation_id = $surface OR conversation_id LIKE $pattern);
                 """;
@@ -421,10 +503,37 @@ public sealed class SqliteConversationStore : IConversationStore
 
                 if (reader.IsDBNull(8) || reader.GetInt32(8) == 0) toolless++;
 
+                // The verdict its owner left, if any. Rolled up whole-corpus AND into this turn's prompt
+                // bucket, which is what makes "did that prompt edit help?" answerable from the same read.
+                var judgement = verdicts.TryGetValue(reader.GetInt64(9), out var v)
+                    ? (TurnFeedbackRating?)v.Rating
+                    : null;
+                if (judgement is not null)
+                {
+                    ratedTurns++;
+                    if (judgement == TurnFeedbackRating.Down) negativeTurns++; else positiveTurns++;
+                    if (judgement == TurnFeedbackRating.Down && !string.IsNullOrWhiteSpace(v.Note))
+                    {
+                        notes.Add(new FeedbackNote
+                        {
+                            ConversationId = v.ConversationId,
+                            TurnId = reader.GetInt64(9),
+                            Note = v.Note!,
+                            Prompt = reader.IsDBNull(10) ? null : DeriveTitle(reader.GetString(10)),
+                            At = v.At,
+                        });
+                    }
+                }
+
                 if (!byPrompt.TryGetValue(hash, out var bucket))
-                    bucket = (0, 0, new List<long>());
+                    bucket = (0, 0, new List<long>(), 0, 0);
                 if (durationMs.HasValue) bucket.Durations.Add(durationMs.Value);
-                byPrompt[hash] = (bucket.Turns + 1, bucket.Ok + (outcome == "ok" ? 1 : 0), bucket.Durations);
+                byPrompt[hash] = (
+                    bucket.Turns + 1,
+                    bucket.Ok + (outcome == "ok" ? 1 : 0),
+                    bucket.Durations,
+                    bucket.Rated + (judgement is not null ? 1 : 0),
+                    bucket.Negative + (judgement == TurnFeedbackRating.Down ? 1 : 0));
             }
         }
 
@@ -510,11 +619,22 @@ public sealed class SqliteConversationStore : IConversationStore
                     Turns = kv.Value.Turns,
                     OkTurns = kv.Value.Ok,
                     MedianMs = Percentile(kv.Value.Durations, 50),
+                    NegativeTurns = kv.Value.Negative,
+                    RatedTurns = kv.Value.Rated,
                 })
                 .OrderByDescending(p => p.Turns)
                 .ThenBy(p => p.Hash, StringComparer.Ordinal)
                 .ToList(),
             Activity = byDay.Select(kv => new DailyTurnCount { Date = kv.Key, Turns = kv.Value }).ToList(),
+            RatedTurns = ratedTurns,
+            PositiveTurns = positiveTurns,
+            NegativeTurns = negativeTurns,
+            // No votes means no satisfaction rate — not a rate of zero, which would assert that every
+            // answer failed. Same rule the durations above follow.
+            SatisfactionPercent = ratedTurns > 0
+                ? Math.Round(positiveTurns * 100.0 / ratedTurns, 1)
+                : null,
+            FeedbackNotes = notes.OrderByDescending(n => n.At).ToList(),
         };
     }
 
@@ -581,10 +701,8 @@ public sealed class SqliteConversationStore : IConversationStore
         return messages;
     }
 
-    public void AppendTurn(ConversationTurnRecord turn)
-    {
-        Insert(turn.ConversationId, KindTurn, turn.CompletedAt, JsonSerializer.Serialize(turn, Json));
-    }
+    public long AppendTurn(ConversationTurnRecord turn)
+        => Insert(turn.ConversationId, KindTurn, turn.CompletedAt, JsonSerializer.Serialize(turn, Json));
 
     public void AddCheckpoint(string conversationId, string summary)
     {
@@ -598,7 +716,39 @@ public sealed class SqliteConversationStore : IConversationStore
         Insert(conversationId, KindDeleted, DateTimeOffset.UtcNow, string.Empty);
     }
 
-    private void Insert(string conversationId, string kind, DateTimeOffset createdAt, string payload)
+    public bool SetTurnFeedback(string conversationId, long turnId, TurnFeedbackRating? rating, string? note)
+    {
+        // Entry ids are sequential across the WHOLE log, so an id alone says nothing about who owns it.
+        // Confirm this id is a turn of THIS conversation before recording anything against it: without
+        // that, a caller correctly scoped to its own conversation could still rate a stranger's turn by
+        // naming a neighbouring id.
+        using (var connection = Open())
+        using (var check = connection.CreateCommand())
+        {
+            check.CommandText =
+                "SELECT 1 FROM conversation_entries WHERE id = $id AND conversation_id = $cid AND kind = $turn;";
+            check.Parameters.AddWithValue("$id", turnId);
+            check.Parameters.AddWithValue("$cid", conversationId);
+            check.Parameters.AddWithValue("$turn", KindTurn);
+            if (check.ExecuteScalar() is null)
+                return false;
+        }
+
+        // A cleared rating is stored as a record with a null rating rather than by removing the earlier
+        // one — latest-wins resolution then reads it as "no verdict", and the log stays append-only.
+        var payload = JsonSerializer.Serialize(
+            new FeedbackPayload(turnId, rating, string.IsNullOrWhiteSpace(note) ? null : note.Trim()), Json);
+        Insert(conversationId, KindFeedback, DateTimeOffset.UtcNow, payload);
+        return true;
+    }
+
+    /// <summary>
+    /// The stored shape of a <see cref="KindFeedback"/> entry. A null <see cref="Rating"/> is a cleared
+    /// verdict, which is why the property is nullable rather than the record being absent.
+    /// </summary>
+    private sealed record FeedbackPayload(long TurnId, TurnFeedbackRating? Rating, string? Note);
+
+    private long Insert(string conversationId, string kind, DateTimeOffset createdAt, string payload)
     {
         lock (_writeGate)
         {
@@ -608,12 +758,15 @@ public sealed class SqliteConversationStore : IConversationStore
                 """
                 INSERT INTO conversation_entries (conversation_id, kind, created_at, payload)
                 VALUES ($cid, $kind, $createdAt, $payload);
+                SELECT last_insert_rowid();
                 """;
             cmd.Parameters.AddWithValue("$cid", conversationId);
             cmd.Parameters.AddWithValue("$kind", kind);
             cmd.Parameters.AddWithValue("$createdAt", createdAt.ToString("O"));
             cmd.Parameters.AddWithValue("$payload", payload);
-            cmd.ExecuteNonQuery();
+            // Read back under the same lock as the insert — last_insert_rowid() is per-connection, and
+            // the connection is this call's own, so it can only ever name the row just written.
+            return Convert.ToInt64(cmd.ExecuteScalar());
         }
     }
 
@@ -622,16 +775,21 @@ public sealed class SqliteConversationStore : IConversationStore
         using var connection = Open();
         using var cmd = connection.CreateCommand();
         cmd.CommandText =
-            "SELECT kind, created_at, payload FROM conversation_entries WHERE conversation_id = $cid ORDER BY id ASC;";
+            "SELECT id, kind, created_at, payload FROM conversation_entries WHERE conversation_id = $cid ORDER BY id ASC;";
         cmd.Parameters.AddWithValue("$cid", conversationId);
 
         var entries = new List<ConversationEntry>();
+        // Verdicts are appended after the turn they judge, so they are collected on the way past and
+        // attached below. Latest-wins falls out of the id ordering: a later verdict simply overwrites
+        // the earlier one in the map, and a cleared one leaves a null behind.
+        var feedback = new Dictionary<long, TurnFeedback?>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            var kind = reader.GetString(0);
-            var createdAt = DateTimeOffset.Parse(reader.GetString(1));
-            var payload = reader.GetString(2);
+            var id = reader.GetInt64(0);
+            var kind = reader.GetString(1);
+            var createdAt = DateTimeOffset.Parse(reader.GetString(2));
+            var payload = reader.GetString(3);
 
             if (kind == KindDeleted)
             {
@@ -639,15 +797,39 @@ public sealed class SqliteConversationStore : IConversationStore
                 // (and its payload is empty, so it must not reach the turn deserializer below).
                 continue;
             }
+            if (kind == KindFeedback)
+            {
+                var recorded = JsonSerializer.Deserialize<FeedbackPayload>(payload, Json);
+                if (recorded is not null)
+                {
+                    feedback[recorded.TurnId] = recorded.Rating is null
+                        ? null
+                        : new TurnFeedback(recorded.Rating.Value, recorded.Note, createdAt);
+                }
+                continue;
+            }
             if (kind == KindCheckpoint)
             {
-                entries.Add(ConversationEntry.ForCheckpoint(payload, createdAt));
+                entries.Add(ConversationEntry.ForCheckpoint(payload, createdAt) with { Id = id });
             }
             else
             {
                 var turn = JsonSerializer.Deserialize<ConversationTurnRecord>(payload, Json);
                 if (turn is not null)
-                    entries.Add(ConversationEntry.ForTurn(turn));
+                    entries.Add(ConversationEntry.ForTurn(turn) with { Id = id });
+            }
+        }
+
+        if (feedback.Count == 0)
+            return entries;
+
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (entries[i].Kind == ConversationEntryKind.Turn
+                && feedback.TryGetValue(entries[i].Id, out var verdict)
+                && verdict is not null)
+            {
+                entries[i] = entries[i] with { Feedback = verdict };
             }
         }
 

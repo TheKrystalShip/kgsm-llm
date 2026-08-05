@@ -38,7 +38,8 @@ public sealed record AgentEvent(
     string? ToolSummary = null,
     LlmUsage? Usage = null,
     string? ToolCallId = null,
-    object? ToolData = null)
+    object? ToolData = null,
+    long TurnId = 0)
 {
     public static AgentEvent Token(string delta) => new(AgentEventKind.Token, Text: delta);
     public static AgentEvent Thinking(string delta) => new(AgentEventKind.Thinking, Text: delta);
@@ -48,8 +49,13 @@ public sealed record AgentEvent(
     public static AgentEvent ToolResult(Tool tool, string summary, string? id = null, object? data = null) =>
         new(AgentEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id, ToolData: data);
 
-    /// <summary>The terminal success event: the full reply plus the producing call's token usage (if any).</summary>
-    public static AgentEvent Final(string text, LlmUsage? usage = null) =>
-        new(AgentEventKind.Final, Text: text, Usage: usage);
+    /// <summary>
+    /// The terminal success event: the full reply, the producing call's token usage (if any), and the
+    /// id the turn was stored under. That id is what lets a surface act on the answer it just received
+    /// — rating it, linking to it — instead of inferring which turn "the last one" was; it is <c>0</c>
+    /// when the turn could not be persisted, which a surface reads as "not addressable".
+    /// </summary>
+    public static AgentEvent Final(string text, LlmUsage? usage = null, long turnId = 0) =>
+        new(AgentEventKind.Final, Text: text, Usage: usage, TurnId: turnId);
     public static AgentEvent Error(string error) => new(AgentEventKind.Error, ErrorMessage: error);
 }

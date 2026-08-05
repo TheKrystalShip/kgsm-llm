@@ -81,8 +81,8 @@ public class LlmAgent : ILlmAgent
                 {
                     var text = message.Content ?? string.Empty;
                     // Usage of the producing (final) call — the turn's context occupancy.
-                    PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, message.Usage, null, null);
-                    return Result.Success(new AgentRunResult(text, message.Usage));
+                    var turnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, message.Usage, null, null);
+                    return Result.Success(new AgentRunResult(text, message.Usage, turnId));
                 }
 
                 await ExecuteToolRoundAsync(message.ToolCalls, working, gate, trajectory, cancellationToken);
@@ -91,8 +91,8 @@ public class LlmAgent : ILlmAgent
             _logger.LogWarning(
                 "Agent hit the {Max}-iteration cap for conversation {Conversation}",
                 _options.MaxIterations, turn.ConversationId);
-            PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null, null);
-            return Result.Success(new AgentRunResult(_options.IterationLimitReply, null));
+            var cappedTurnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null, null);
+            return Result.Success(new AgentRunResult(_options.IterationLimitReply, null, cappedTurnId));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -238,18 +238,18 @@ public class LlmAgent : ILlmAgent
 
                 // Final turn: persist the whole turn (the canonical record), then signal completion.
                 var text = content.ToString().Trim();
-                PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, usage, null, thinking.ToString());
+                var turnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, usage, null, thinking.ToString());
                 recorded = true;
-                yield return AgentEvent.Final(text, usage);
+                yield return AgentEvent.Final(text, usage, turnId);
                 yield break;
             }
 
             _logger.LogWarning(
                 "Agent hit the {Max}-iteration cap (stream) for conversation {Conversation}",
                 _options.MaxIterations, turn.ConversationId);
-            PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null, thinking.ToString());
+            var cappedTurnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null, thinking.ToString());
             recorded = true;
-            yield return AgentEvent.Final(_options.IterationLimitReply);
+            yield return AgentEvent.Final(_options.IterationLimitReply, turnId: cappedTurnId);
         }
         finally
         {
@@ -319,15 +319,16 @@ public class LlmAgent : ILlmAgent
 
     /// <summary>
     /// Appends one completed turn to the canonical conversation store, failure-isolated: a store write
-    /// error is logged, never propagated — a turn must not fail over its own bookkeeping.
+    /// error is logged, never propagated — a turn must not fail over its own bookkeeping. Returns the id
+    /// the turn was stored under, or 0 when the write failed and the turn has no durable handle.
     /// </summary>
-    private void PersistTurn(
+    private long PersistTurn(
         AgentTurn turn, DateTimeOffset startedAt, IReadOnlyList<RecordedToolCall> trajectory,
         int iterations, TurnOutcome outcome, string? final, LlmUsage? usage, string? error, string? thinking)
     {
         try
         {
-            _conversationStore.AppendTurn(new ConversationTurnRecord
+            return _conversationStore.AppendTurn(new ConversationTurnRecord
             {
                 ConversationId = turn.ConversationId,
                 UserDisplay = turn.UserDisplay,
@@ -349,8 +350,11 @@ public class LlmAgent : ILlmAgent
         }
         catch (Exception ex)
         {
-            // Defence in depth: never fail a turn over persisting its record.
+            // Defence in depth: never fail a turn over persisting its record. The turn is unaddressable
+            // after this — 0 says so, and a surface that can't name the turn simply offers nothing to act
+            // on rather than pointing at whatever id happens to be nearby.
             _logger.LogWarning(ex, "Failed to persist conversation turn for {Conversation}", turn.ConversationId);
+            return 0;
         }
     }
 

@@ -42,4 +42,10 @@ public sealed record ConversationSummary
 
     /// <summary>Turns that exhausted the iteration cap without a final answer (<see cref="TurnOutcome.CapHit"/>).</summary>
     public int CapHitTurns { get; init; }
+
+    /// <summary>
+    /// Turns whose owner marked the answer unhelpful — what makes a conversation worth reading. Counted
+    /// from the verdict that currently stands, so a thumbs-down later changed or cleared stops counting.
+    /// </summary>
+    public int NegativeTurns { get; init; }
 }

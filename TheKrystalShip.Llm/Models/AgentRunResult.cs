@@ -6,4 +6,4 @@ namespace TheKrystalShip.Llm.Models;
 /// iteration-cap reply). The streaming path carries the same usage on its terminal
 /// <c>AgentEvent.Final</c>, so both paths expose context occupancy identically.
 /// </summary>
-public sealed record AgentRunResult(string Text, LlmUsage? Usage);
+public sealed record AgentRunResult(string Text, LlmUsage? Usage, long TurnId = 0);

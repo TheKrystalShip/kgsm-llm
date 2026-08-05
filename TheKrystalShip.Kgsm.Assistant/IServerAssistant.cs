@@ -81,7 +81,8 @@ public sealed record AssistantStreamEvent(
     object? ToolData = null,
     string? ProgressKey = null,
     string? ProgressLabel = null,
-    string? ProgressStatus = null)
+    string? ProgressStatus = null,
+    long TurnId = 0)
 {
     public static AssistantStreamEvent Token(string delta) => new(AssistantEventKind.Token, Text: delta);
     public static AssistantStreamEvent Thinking(string delta) => new(AssistantEventKind.Thinking, Text: delta);
@@ -99,9 +100,13 @@ public sealed record AssistantStreamEvent(
     public static AssistantStreamEvent Confirmation(PendingConfirmation confirmation) =>
         new(AssistantEventKind.Confirmation, StagedConfirmation: confirmation);
 
-    /// <summary>The terminal success event: the full reply plus the turn's token usage (if any).</summary>
-    public static AssistantStreamEvent Final(string text, LlmUsage? usage = null) =>
-        new(AssistantEventKind.Final, Text: text, Usage: usage);
+    /// <summary>
+    /// The terminal success event: the full reply, the turn's token usage (if any), and the id the turn
+    /// was recorded under so a surface can act on the answer it just received rather than infer which
+    /// turn "the last one" was. <c>0</c> when the turn was not persisted and has no durable handle.
+    /// </summary>
+    public static AssistantStreamEvent Final(string text, LlmUsage? usage = null, long turnId = 0) =>
+        new(AssistantEventKind.Final, Text: text, Usage: usage, TurnId: turnId);
     public static AssistantStreamEvent Error(string error) => new(AssistantEventKind.Error, ErrorMessage: error);
 }
 

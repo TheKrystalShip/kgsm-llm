@@ -63,8 +63,13 @@ public interface IConversationStore
     /// </summary>
     IReadOnlyList<LlmMessage> GetModelContext(string conversationId);
 
-    /// <summary>Appends one completed turn (the canonical per-turn delta) to the history log.</summary>
-    void AppendTurn(ConversationTurnRecord turn);
+    /// <summary>
+    /// Appends one completed turn (the canonical per-turn delta) to the history log, returning the
+    /// entry id it was stored under — the handle that addresses this turn specifically. The caller
+    /// hands that id to the surface so a client can act on the answer it just received (rate it)
+    /// without having to guess which turn "the last one" was.
+    /// </summary>
+    long AppendTurn(ConversationTurnRecord turn);
 
     /// <summary>
     /// Appends a compaction checkpoint carrying <paramref name="summary"/>. Non-destructive: prior
@@ -79,4 +84,17 @@ public interface IConversationStore
     /// soft-delete and the conversation reappears. <see cref="GetHistory"/> still returns its transcript.
     /// </summary>
     void SoftDelete(string conversationId);
+
+    /// <summary>
+    /// Records the owner's verdict on one turn, or clears it when <paramref name="rating"/> is
+    /// <c>null</c>. Append-only and latest-wins, like the soft-delete tombstone: re-rating appends,
+    /// it never rewrites the turn, and the turn record itself is untouched either way.
+    /// <para>
+    /// <paramref name="turnId"/> is checked to be a turn <b>of <paramref name="conversationId"/></b>
+    /// and <c>false</c> is returned when it is not. Entry ids are sequential across the whole log, so
+    /// without that check a caller scoped to its own conversation could still rate someone else's turn
+    /// by naming a neighbouring id.
+    /// </para>
+    /// </summary>
+    bool SetTurnFeedback(string conversationId, long turnId, TurnFeedbackRating? rating, string? note);
 }

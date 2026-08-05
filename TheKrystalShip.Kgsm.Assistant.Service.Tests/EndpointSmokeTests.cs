@@ -844,6 +844,90 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Conversation_Relay_Feedback_ScopesToCallerAndRecordsTheVerdict()
+    {
+        // The key is composed exactly like the reads/delete (web:<userId>:<chatId>), so a caller can only
+        // ever rate a turn in its OWN conversation. The store's own ownership check is the second half of
+        // that guard — entry ids are log-wide, so the route alone is not enough.
+        var store = new RecordingConversationStore();
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayJsonAsync(
+            factory.CreateClient(), "/conversations/chatA/turns/42/feedback", "relay-secret", "relayuser",
+            """{"rating":"down","note":"named a server that doesn't exist"}""");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        store.Feedback.Should().Be((
+            "web:relayuser:chatA", 42L, (Llm.Models.TurnFeedbackRating?)Llm.Models.TurnFeedbackRating.Down,
+            "named a server that doesn't exist"));
+    }
+
+    [Fact]
+    public async Task Conversation_Relay_Feedback_DropsANoteLeftOnAThumbsUp()
+    {
+        // A note is the "what went wrong" behind a thumbs-down. Keeping one on a thumbs-up would file a
+        // complaint against an answer its reader said was fine.
+        var store = new RecordingConversationStore();
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayJsonAsync(
+            factory.CreateClient(), "/conversations/chatA/turns/7/feedback", "relay-secret", "relayuser",
+            """{"rating":"up","note":"ignore me"}""");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        store.Feedback!.Value.Rating.Should().Be(Llm.Models.TurnFeedbackRating.Up);
+        store.Feedback!.Value.Note.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Conversation_Relay_Feedback_NullRatingWithdrawsTheVerdict()
+    {
+        var store = new RecordingConversationStore();
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayJsonAsync(
+            factory.CreateClient(), "/conversations/chatA/turns/7/feedback", "relay-secret", "relayuser",
+            """{"rating":null}""");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        store.Feedback!.Value.Rating.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Conversation_Relay_Feedback_RejectsARatingThatIsNeitherThumb()
+    {
+        var store = new RecordingConversationStore();
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayJsonAsync(
+            factory.CreateClient(), "/conversations/chatA/turns/7/feedback", "relay-secret", "relayuser",
+            """{"rating":"sideways"}""");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        store.Feedback.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Conversation_Relay_Feedback_IsNotFoundWhenTheTurnIsNotTheCallers()
+    {
+        // The store refuses a turn id that is not part of the named conversation; the endpoint reports it
+        // as unknown rather than confirming a write that did not happen.
+        var store = new RecordingConversationStore { FeedbackAccepted = false };
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayJsonAsync(
+            factory.CreateClient(), "/conversations/chatA/turns/999/feedback", "relay-secret", "relayuser",
+            """{"rating":"down"}""");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
     public async Task Conversation_Relay_Compact_ScopesToCallerAndReturnsOutcome()
     {
         // POST /conversations/{id}/compact composes the key exactly like the reads/delete
@@ -1214,6 +1298,18 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         RelaySendAsync(client, HttpMethod.Get, path, secret, userId, admin);
 
     /// <summary>Sends any method to a secured path over the trusted-relay path (secret + forwarded id).</summary>
+    private static async Task<HttpResponseMessage> RelayJsonAsync(
+        HttpClient client, string path, string secret, string userId, string json)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("X-Relay-Secret", secret);
+        request.Headers.Add("X-Relay-User", userId);
+        return await client.SendAsync(request);
+    }
+
     private static async Task<HttpResponseMessage> RelaySendAsync(
         HttpClient client, HttpMethod method, string path, string secret, string userId, bool? admin = null)
     {
@@ -1264,9 +1360,21 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
     }
 
     public IReadOnlyList<Llm.Models.LlmMessage> GetModelContext(string conversationId) => Array.Empty<Llm.Models.LlmMessage>();
-    public void AppendTurn(Llm.Models.ConversationTurnRecord turn) { }
+    public long AppendTurn(Llm.Models.ConversationTurnRecord turn) => 0;
     public void AddCheckpoint(string conversationId, string summary) { }
     public void SoftDelete(string conversationId) => DeletedKey = conversationId;
+
+    /// <summary>What the feedback endpoint asked for, so a test can assert the key it composed.</summary>
+    public (string ConversationId, long TurnId, Llm.Models.TurnFeedbackRating? Rating, string? Note)? Feedback { get; private set; }
+
+    /// <summary>Set false to make the store report the turn as not belonging to the named conversation.</summary>
+    public bool FeedbackAccepted { get; set; } = true;
+
+    public bool SetTurnFeedback(string conversationId, long turnId, Llm.Models.TurnFeedbackRating? rating, string? note)
+    {
+        Feedback = (conversationId, turnId, rating, note);
+        return FeedbackAccepted;
+    }
 
     /// <summary>What <c>GetStats</c> hands back, and the surface it was asked for.</summary>
     public Llm.Models.ConversationStats Stats { get; set; } = EmptyStats;
@@ -1286,6 +1394,9 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
         Tools = Array.Empty<Llm.Models.ToolStat>(),
         PromptVersions = Array.Empty<Llm.Models.PromptVersionStat>(),
         Activity = Array.Empty<Llm.Models.DailyTurnCount>(),
+        // No votes means no satisfaction rate — null, not 0%, which would read as "every answer failed".
+        RatedTurns = 0, PositiveTurns = 0, NegativeTurns = 0, SatisfactionPercent = null,
+        FeedbackNotes = Array.Empty<Llm.Models.FeedbackNote>(),
     };
 }
 

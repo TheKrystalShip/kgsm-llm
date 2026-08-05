@@ -327,6 +327,9 @@ public class ServerAssistant : IServerAssistant
             using var progressScope = _progress.BeginTurn(writer);
             var finalText = string.Empty;
             LlmUsage? finalUsage = null;
+            // The id the loop recorded this turn under, carried out to the surface so a client can rate
+            // the answer it just received. 0 when the turn was not persisted.
+            long finalTurnId = 0;
             var errored = false;
 
             await foreach (var ev in _agent.RunStreamAsync(turn, cancellationToken)
@@ -361,6 +364,7 @@ public class ServerAssistant : IServerAssistant
                     case AgentEventKind.Final:
                         finalText = ev.Text ?? string.Empty;
                         finalUsage = ev.Usage;
+                        finalTurnId = ev.TurnId;
                         break;
                     case AgentEventKind.Error:
                         // Terminal: a failed turn stages nothing to confirm.
@@ -380,7 +384,8 @@ public class ServerAssistant : IServerAssistant
                 foreach (var confirmation in scope.Staged)
                     await writer.WriteAsync(AssistantStreamEvent.Confirmation(confirmation), cancellationToken);
 
-                await writer.WriteAsync(AssistantStreamEvent.Final(finalText, finalUsage), cancellationToken);
+                await writer.WriteAsync(
+                    AssistantStreamEvent.Final(finalText, finalUsage, finalTurnId), cancellationToken);
             }
         }
         finally

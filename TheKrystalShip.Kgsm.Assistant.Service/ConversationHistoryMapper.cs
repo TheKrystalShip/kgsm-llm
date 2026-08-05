@@ -28,7 +28,15 @@ internal static class ConversationHistoryMapper
     public static ConversationHistoryEntryDto ToEntryDto(ConversationEntry e) =>
         e.Kind == ConversationEntryKind.Checkpoint
             ? new ConversationHistoryEntryDto("checkpoint", e.CreatedAt, CheckpointSummary: e.CheckpointSummary)
-            : new ConversationHistoryEntryDto("turn", e.CreatedAt, Turn: ToTurnDto(e.Turn!), StartedAt: e.Turn!.StartedAt);
+            : new ConversationHistoryEntryDto(
+                "turn", e.CreatedAt, Turn: ToTurnDto(e.Turn!), StartedAt: e.Turn!.StartedAt,
+                // The id is what makes a REPLAYED answer ratable, not just a live one — and history is
+                // the bulk of the corpus, so without it the feature would only ever reach the newest turn.
+                TurnId: e.Id,
+                Feedback: ToFeedbackDto(e.Feedback));
+
+    private static TurnFeedbackDto? ToFeedbackDto(TurnFeedback? f) =>
+        f is null ? null : new TurnFeedbackDto(f.Rating.ToString().ToLowerInvariant(), f.Note, f.At);
 
     private static ConversationTurnDto ToTurnDto(ConversationTurnRecord t) =>
         new(

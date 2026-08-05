@@ -313,6 +313,41 @@ secured.MapDelete("/conversations/{id}", (string id, HttpContext http, IConversa
     return Results.NoContent();
 });
 
+// How the caller judged one of their OWN answers — the only signal in the corpus that says whether an
+// answer was any good, as opposed to how it ran. Deliberately on the user-facing group, not the review
+// one: this is satisfaction, written by the person the answer was for, and a reviewer's opinion of
+// someone else's conversation is a different fact that the read-only review surface does not collect.
+// The key is composed exactly as the reads above, and the store additionally verifies the turn belongs
+// to it, so neither the route nor the id can reach another user's turn.
+secured.MapPost("/conversations/{id}/turns/{turnId:long}/feedback", (
+    string id, long turnId, TurnFeedbackRequest request, HttpContext http, IConversationStore store) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var chatScope = ConversationScope.Sanitize(id);
+    var conversationId = string.IsNullOrEmpty(chatScope)
+        ? $"{WebSurface}:{principal.UserId}"
+        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+
+    // A null rating withdraws a verdict already left; anything else must name one of the two.
+    TurnFeedbackRating? rating = request.Rating?.ToLowerInvariant() switch
+    {
+        "up" => TurnFeedbackRating.Up,
+        "down" => TurnFeedbackRating.Down,
+        null or "" => null,
+        _ => (TurnFeedbackRating?)(-1),
+    };
+    if (rating == (TurnFeedbackRating)(-1))
+        return Results.BadRequest(new { error = "rating must be 'up', 'down', or null." });
+
+    // A note explains a thumbs-down. Keeping one on a thumbs-up would record a complaint against an
+    // answer the person said was fine, which is not a thing any reader could act on.
+    var note = rating == TurnFeedbackRating.Down ? request.Note : null;
+
+    return store.SetTurnFeedback(conversationId, turnId, rating, note)
+        ? Results.NoContent()
+        : Results.NotFound(new { error = "unknown turn." });
+});
+
 // Compact one of the caller's chats on demand: summarise its history in place to free up the context
 // window, returning a CompactionOutcome. The key is composed exactly as the reads/delete above — the
 // server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever address the caller's
@@ -390,11 +425,19 @@ review.MapGet("/conversations/stats", (
         stats.ThinkingTurns, stats.TurnsWithoutTool, stats.ToolCalls,
         tools,
         stats.PromptVersions
-            .Select(p => new AdminPromptVersionDto(p.Hash, p.Turns, p.OkTurns, p.MedianMs)).ToArray(),
+            .Select(p => new AdminPromptVersionDto(
+                p.Hash, p.Turns, p.OkTurns, p.MedianMs, p.NegativeTurns, p.RatedTurns)).ToArray(),
         stats.Activity.Select(a => new AdminDailyTurnsDto(a.Date, a.Turns)).ToArray(),
         new AdminAssistantRuntimeDto(
             ollama.Value.Model, ollama.Value.NumCtx, agent.Value.MaxIterations,
-            assistant.Value.ActionsEnabled)));
+            assistant.Value.ActionsEnabled),
+        stats.RatedTurns, stats.PositiveTurns, stats.NegativeTurns, stats.SatisfactionPercent,
+        // The store reports the raw stored id; the handle a reviewer can actually open one by is minted
+        // here, where the review surface's addressing lives.
+        stats.FeedbackNotes
+            .Select(n => new AdminFeedbackNoteDto(
+                ReviewConversationId.Encode(n.ConversationId), n.TurnId, n.Note, n.Prompt, n.At))
+            .ToArray()));
 });
 
 // One user's conversations. The user id comes from the list above, so it names an EXISTING namespace;

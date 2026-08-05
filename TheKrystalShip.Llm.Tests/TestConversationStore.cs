@@ -111,18 +111,38 @@ internal sealed class TestConversationStore : IConversationStore
         return messages;
     }
 
-    public void AppendTurn(ConversationTurnRecord turn)
+    public long AppendTurn(ConversationTurnRecord turn)
     {
         Turns.Add(turn);
-        var entry = ConversationEntry.ForTurn(turn);
+        // Ids ascend across the whole log, like the real store's rowid — enough for a caller to tell one
+        // turn from another, which is all the agent tests observe.
+        var entry = ConversationEntry.ForTurn(turn) with { Id = ++_nextId };
         _entries.Add(entry);
         Track(turn.ConversationId, entry);
+        return entry.Id;
+    }
+
+    private long _nextId;
+
+    /// <summary>The verdict standing on each rated turn, keyed by turn id (latest-wins, like the store).</summary>
+    public Dictionary<long, TurnFeedback?> Feedback { get; } = new();
+
+    public bool SetTurnFeedback(string conversationId, long turnId, TurnFeedbackRating? rating, string? note)
+    {
+        // Mirror the real store's ownership check: an id that is not a turn of THIS conversation is
+        // refused, so a test can assert the guard without reaching for SQLite.
+        var owned = _byConversation.TryGetValue(conversationId, out var entries)
+            && entries.Any(e => e.Kind == ConversationEntryKind.Turn && e.Id == turnId);
+        if (!owned) return false;
+
+        Feedback[turnId] = rating is null ? null : new TurnFeedback(rating.Value, note, DateTimeOffset.UtcNow);
+        return true;
     }
 
     public void AddCheckpoint(string conversationId, string summary)
     {
         Checkpoints.Add(summary);
-        var entry = ConversationEntry.ForCheckpoint(summary, DateTimeOffset.UtcNow);
+        var entry = ConversationEntry.ForCheckpoint(summary, DateTimeOffset.UtcNow) with { Id = ++_nextId };
         _entries.Add(entry);
         Track(conversationId, entry);
     }

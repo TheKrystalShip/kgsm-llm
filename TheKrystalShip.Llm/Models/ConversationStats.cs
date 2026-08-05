@@ -48,6 +48,41 @@ public sealed record PromptVersionStat
 
     /// <summary>Median answer time for this version, in milliseconds; <c>null</c> when no turn of it was timed.</summary>
     public long? MedianMs { get; init; }
+
+    /// <summary>
+    /// Of <see cref="Turns"/>, how many their owner marked unhelpful. The reason a prompt edit can be
+    /// judged rather than guessed at: change the prompt, and the next bucket's rate is comparable.
+    /// </summary>
+    public required int NegativeTurns { get; init; }
+
+    /// <summary>Of <see cref="Turns"/>, how many carry any verdict at all — the denominator for <see cref="NegativeTurns"/>.</summary>
+    public required int RatedTurns { get; init; }
+}
+
+/// <summary>
+/// One thumbs-down and what its author said about it. The rating alone says a turn was bad; this is the
+/// only record of <i>why</i>, written by the person the answer failed — which makes it the highest-value
+/// row in the corpus and the thing a tuning pass reads first.
+/// <para>
+/// <see cref="ConversationId"/> is the raw stored id: turning it into whatever handle a review surface
+/// addresses conversations by is that surface's job, not this library's.
+/// </para>
+/// </summary>
+public sealed record FeedbackNote
+{
+    public required string ConversationId { get; init; }
+
+    /// <summary>The entry id of the turn being judged.</summary>
+    public required long TurnId { get; init; }
+
+    /// <summary>What the person wrote. Present by definition — an unexplained thumbs-down is not a note.</summary>
+    public required string Note { get; init; }
+
+    /// <summary>The prompt that turn was answering, single-lined and capped — the context the note needs.</summary>
+    public string? Prompt { get; init; }
+
+    /// <summary>When the verdict that carries this note was recorded.</summary>
+    public required DateTimeOffset At { get; init; }
 }
 
 /// <summary>Turns recorded on one calendar day (UTC), for the activity strip.</summary>
@@ -149,4 +184,28 @@ public sealed record ConversationStats
 
     /// <summary>Turns per day (UTC), oldest first.</summary>
     public required IReadOnlyList<DailyTurnCount> Activity { get; init; }
+
+    /// <summary>
+    /// Turns carrying a verdict from the person who received them. A count, so zero is a true zero —
+    /// and it is the <b>coverage</b> figure a reader has to see next to <see cref="SatisfactionPercent"/>:
+    /// two thumbs-down out of two votes on a corpus of hundreds is not a failing assistant, and a rate
+    /// shown alone reads exactly as though it were.
+    /// </summary>
+    public required int RatedTurns { get; init; }
+
+    /// <summary>Of <see cref="RatedTurns"/>, how many were marked helpful.</summary>
+    public required int PositiveTurns { get; init; }
+
+    /// <summary>Of <see cref="RatedTurns"/>, how many were marked unhelpful.</summary>
+    public required int NegativeTurns { get; init; }
+
+    /// <summary>
+    /// <see cref="PositiveTurns"/> as a percentage of <see cref="RatedTurns"/>; <c>null</c> when nothing
+    /// has been rated. Null rather than zero, for the same reason the durations are: an unrated corpus
+    /// has no satisfaction rate, and 0% would assert that every answer failed.
+    /// </summary>
+    public double? SatisfactionPercent { get; init; }
+
+    /// <summary>What people wrote when they marked an answer unhelpful, newest first.</summary>
+    public required IReadOnlyList<FeedbackNote> FeedbackNotes { get; init; }
 }

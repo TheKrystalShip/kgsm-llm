@@ -97,6 +97,21 @@ public sealed class SqliteConversationStore : IConversationStore
     // The longest a derived title is kept (first prompt, single-lined). Slack over the ~40 the SPA shows.
     private const int TitleMaxLength = 80;
 
+    // The actor namespace of a conversation id: everything up to its SECOND ':' — {surface}:{user} —
+    // or the whole id when it carries no chat segment (the bare per-user conversation). Derived from
+    // the ids themselves because the store holds no user table, and inventing one would create a
+    // second source of truth for who exists. Expects a $surface parameter; instr() returns 0 when the
+    // remainder has no ':', which is the no-chat-segment case.
+    private const string ActorSql =
+        """
+        $surface || ':' || (
+            CASE WHEN instr(substr(conversation_id, length($surface) + 2), ':') = 0
+                 THEN substr(conversation_id, length($surface) + 2)
+                 ELSE substr(conversation_id, length($surface) + 2,
+                             instr(substr(conversation_id, length($surface) + 2), ':') - 1)
+            END)
+        """;
+
     public IReadOnlyList<ConversationSummary> ListConversations(string scopeKey, bool includeDeleted = false)
     {
         // Match the scope key itself (the bare per-user conversation) OR its ":"-children (per-chat ids).
@@ -221,24 +236,13 @@ public sealed class SqliteConversationStore : IConversationStore
 
         using var connection = Open();
         using var cmd = connection.CreateCommand();
-        // actor = surface || ':' || <segment after the surface, up to the next ':' if there is one>.
-        // instr() returns 0 when the remainder has no ':' (no chat segment) → take the whole remainder.
-        const string ActorExpr =
-            """
-            $surface || ':' || (
-                CASE WHEN instr(substr(conversation_id, length($surface) + 2), ':') = 0
-                     THEN substr(conversation_id, length($surface) + 2)
-                     ELSE substr(conversation_id, length($surface) + 2,
-                                 instr(substr(conversation_id, length($surface) + 2), ':') - 1)
-                END)
-            """;
         // Per conversation first (deleted-ness is a per-conversation property — the newest tombstone
         // out-idding every content entry), then rolled up per actor. Doing it in one pass would count
         // a tombstone as if it were the conversation's state rather than the id's.
         cmd.CommandText =
             $"""
             WITH per_conversation AS (
-                SELECT {ActorExpr} AS actor,
+                SELECT {ActorSql} AS actor,
                        conversation_id,
                        MIN(created_at) AS created,
                        MAX(created_at) AS last,
@@ -292,6 +296,243 @@ public sealed class SqliteConversationStore : IConversationStore
         }
 
         return actors;
+    }
+
+    public ConversationStats GetStats(string surfacePrefix)
+    {
+        var surface = surfacePrefix.TrimEnd(':');
+        var pattern = surface + ":%";
+
+        using var connection = Open();
+
+        // ── Conversation-level shape: how many, how many hidden, how many distinct actors. Same
+        // per-conversation-then-roll-up split as ListActors, and for the same reason: deleted-ness is a
+        // property of the id's newest entry, so collapsing both levels into one pass would count a
+        // tombstone as though it were the conversation's own state.
+        int conversations = 0, deleted = 0, actors = 0;
+        using (var shape = connection.CreateCommand())
+        {
+            shape.CommandText =
+                $"""
+                WITH per_conversation AS (
+                    SELECT conversation_id,
+                           {ActorSql} AS actor,
+                           MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
+                               > MAX(CASE WHEN kind <> $deleted THEN id ELSE 0 END) AS is_deleted
+                    FROM conversation_entries
+                    WHERE conversation_id = $surface OR conversation_id LIKE $pattern
+                    GROUP BY conversation_id
+                )
+                SELECT COUNT(*), SUM(is_deleted), COUNT(DISTINCT actor) FROM per_conversation;
+                """;
+            shape.Parameters.AddWithValue("$deleted", KindDeleted);
+            shape.Parameters.AddWithValue("$surface", surface);
+            shape.Parameters.AddWithValue("$pattern", pattern);
+            using var reader = shape.ExecuteReader();
+            if (reader.Read())
+            {
+                conversations = reader.GetInt32(0);
+                deleted = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+                actors = reader.GetInt32(2);
+            }
+        }
+
+        // ── One row per turn, with the scalars the roll-up needs pulled straight out of the payload.
+        // Durations and percentiles are finished in memory: SQLite has no percentile aggregate, and the
+        // ordered lists are needed anyway. Bounded by the corpus, which is the same bound ListActors
+        // already accepts — when it stops holding, the fix is a cursor here, not a schema change.
+        var durations = new List<long>();
+        var iterations = new List<int>();
+        var contextPercents = new List<double>();
+        var windows = new HashSet<int>();
+        int turns = 0, ok = 0, error = 0, capHit = 0, cancelled = 0, unrecorded = 0, thinking = 0, toolless = 0;
+        var byPrompt = new Dictionary<string, (int Turns, int Ok, List<long> Durations)>(StringComparer.Ordinal);
+        var byDay = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        // A prompt hash is nullable, and a dictionary cannot key on null — this stands in for "no hash
+        // recorded" and is mapped back to null on the way out.
+        const string NoHash = " none";
+
+        using (var perTurn = connection.CreateCommand())
+        {
+            perTurn.CommandText =
+                $"""
+                SELECT json_extract(payload, '$.outcome'),
+                       json_extract(payload, '$.iterations'),
+                       json_extract(payload, '$.think'),
+                       json_extract(payload, '$.systemPromptHash'),
+                       json_extract(payload, '$.startedAt'),
+                       json_extract(payload, '$.completedAt'),
+                       json_extract(payload, '$.usage.usedTokens'),
+                       json_extract(payload, '$.usage.contextWindow'),
+                       json_array_length(payload, '$.tools')
+                FROM conversation_entries
+                WHERE kind = $turn AND (conversation_id = $surface OR conversation_id LIKE $pattern);
+                """;
+            perTurn.Parameters.AddWithValue("$turn", KindTurn);
+            perTurn.Parameters.AddWithValue("$surface", surface);
+            perTurn.Parameters.AddWithValue("$pattern", pattern);
+            using var reader = perTurn.ExecuteReader();
+            while (reader.Read())
+            {
+                turns++;
+
+                var outcome = reader.IsDBNull(0) ? null : reader.GetString(0);
+                switch (outcome)
+                {
+                    case "ok": ok++; break;
+                    case "error": error++; break;
+                    case "capHit": capHit++; break;
+                    case "cancelled": cancelled++; break;
+                    // Recorded before the field existed. Counted on its own rather than assumed to be a
+                    // success — assuming would inflate the clean rate this whole view is judged on.
+                    default: unrecorded++; break;
+                }
+
+                if (!reader.IsDBNull(1)) iterations.Add(reader.GetInt32(1));
+                if (!reader.IsDBNull(2) && reader.GetInt64(2) != 0) thinking++;
+
+                var hash = reader.IsDBNull(3) ? NoHash : reader.GetString(3);
+
+                long? durationMs = null;
+                if (!reader.IsDBNull(4) && !reader.IsDBNull(5)
+                    && DateTimeOffset.TryParse(reader.GetString(4), out var started)
+                    && DateTimeOffset.TryParse(reader.GetString(5), out var completed)
+                    && completed >= started)
+                {
+                    durationMs = (long)(completed - started).TotalMilliseconds;
+                    durations.Add(durationMs.Value);
+                }
+
+                if (!reader.IsDBNull(4) && DateTimeOffset.TryParse(reader.GetString(4), out var day))
+                {
+                    var key = day.UtcDateTime.ToString("yyyy-MM-dd");
+                    byDay[key] = byDay.TryGetValue(key, out var n) ? n + 1 : 1;
+                }
+
+                if (!reader.IsDBNull(6) && !reader.IsDBNull(7))
+                {
+                    var window = reader.GetInt32(7);
+                    if (window > 0)
+                    {
+                        contextPercents.Add(reader.GetInt32(6) * 100.0 / window);
+                        windows.Add(window);
+                    }
+                }
+
+                if (reader.IsDBNull(8) || reader.GetInt32(8) == 0) toolless++;
+
+                if (!byPrompt.TryGetValue(hash, out var bucket))
+                    bucket = (0, 0, new List<long>());
+                if (durationMs.HasValue) bucket.Durations.Add(durationMs.Value);
+                byPrompt[hash] = (bucket.Turns + 1, bucket.Ok + (outcome == "ok" ? 1 : 0), bucket.Durations);
+            }
+        }
+
+        // ── Tools, exploded out of each turn's trajectory array with json_each. One row per CALL, so a
+        // turn that used the same tool twice contributes two — which is what "how often is it reached
+        // for" means.
+        var toolCalls = new Dictionary<string, (int Calls, List<long> Durations, int Failed)>(StringComparer.Ordinal);
+        using (var tools = connection.CreateCommand())
+        {
+            tools.CommandText =
+                """
+                SELECT json_extract(t.value, '$.name.name'),
+                       json_extract(t.value, '$.durationMs'),
+                       json_extract(t.value, '$.summary')
+                FROM conversation_entries e, json_each(e.payload, '$.tools') t
+                WHERE e.kind = $turn AND (e.conversation_id = $surface OR e.conversation_id LIKE $pattern);
+                """;
+            tools.Parameters.AddWithValue("$turn", KindTurn);
+            tools.Parameters.AddWithValue("$surface", surface);
+            tools.Parameters.AddWithValue("$pattern", pattern);
+            using var reader = tools.ExecuteReader();
+            while (reader.Read())
+            {
+                if (reader.IsDBNull(0)) continue;
+                var name = reader.GetString(0);
+                if (!toolCalls.TryGetValue(name, out var bucket))
+                    bucket = (0, new List<long>(), 0);
+                // Every exploded row is a call. The duration list is separate because a refused call
+                // never reached the dispatcher and carries none — counting only timed calls would drop
+                // exactly the ones a review most wants to see.
+                if (!reader.IsDBNull(1)) bucket.Durations.Add(reader.GetInt64(1));
+                // The dispatcher contract: a failed call's model-facing output is an "Error: …" string
+                // (ToolOutput). Reading the recorded output is a measurement; nothing else in the log
+                // says whether a call worked.
+                var failed = !reader.IsDBNull(2)
+                    && reader.GetString(2).StartsWith("Error:", StringComparison.Ordinal);
+                toolCalls[name] = (bucket.Calls + 1, bucket.Durations, bucket.Failed + (failed ? 1 : 0));
+            }
+        }
+
+        var toolStats = toolCalls
+            .Select(kv => new ToolStat
+            {
+                Name = kv.Key,
+                Calls = kv.Value.Calls,
+                MedianMs = Percentile(kv.Value.Durations, 50) ?? 0,
+                MaxMs = kv.Value.Durations.Count > 0 ? kv.Value.Durations.Max() : 0,
+                FailedCalls = kv.Value.Failed,
+            })
+            .OrderByDescending(t => t.Calls)
+            .ThenBy(t => t.Name, StringComparer.Ordinal)
+            .ToList();
+
+        return new ConversationStats
+        {
+            Conversations = conversations,
+            DeletedConversations = deleted,
+            Actors = actors,
+            Turns = turns,
+            OkTurns = ok,
+            ErrorTurns = error,
+            CapHitTurns = capHit,
+            CancelledTurns = cancelled,
+            UnrecordedOutcomeTurns = unrecorded,
+            MedianTurnMs = Percentile(durations, 50),
+            P95TurnMs = Percentile(durations, 95),
+            MaxTurnMs = durations.Count > 0 ? durations.Max() : null,
+            MedianIterations = iterations.Count > 0 ? (int)Percentile(iterations.Select(i => (long)i).ToList(), 50)!.Value : null,
+            MaxIterations = iterations.Count > 0 ? iterations.Max() : null,
+            MedianContextPercent = PercentileOf(contextPercents, 50),
+            MaxContextPercent = contextPercents.Count > 0 ? Math.Round(contextPercents.Max(), 1) : null,
+            // One window across every reported turn, or nothing: two windows mean two denominators,
+            // and a single number over them would describe neither.
+            ContextWindow = windows.Count == 1 ? windows.Single() : null,
+            ThinkingTurns = thinking,
+            TurnsWithoutTool = toolless,
+            ToolCalls = toolCalls.Sum(kv => kv.Value.Calls),
+            Tools = toolStats,
+            PromptVersions = byPrompt
+                .Select(kv => new PromptVersionStat
+                {
+                    Hash = kv.Key == NoHash ? null : kv.Key,
+                    Turns = kv.Value.Turns,
+                    OkTurns = kv.Value.Ok,
+                    MedianMs = Percentile(kv.Value.Durations, 50),
+                })
+                .OrderByDescending(p => p.Turns)
+                .ThenBy(p => p.Hash, StringComparer.Ordinal)
+                .ToList(),
+            Activity = byDay.Select(kv => new DailyTurnCount { Date = kv.Key, Turns = kv.Value }).ToList(),
+        };
+    }
+
+    /// <summary>Nearest-rank percentile over a list of measurements; null when nothing was measured.</summary>
+    private static long? Percentile(List<long> values, int percentile)
+    {
+        if (values.Count == 0) return null;
+        var sorted = values.OrderBy(v => v).ToList();
+        var rank = (int)Math.Ceiling(percentile / 100.0 * sorted.Count);
+        return sorted[Math.Clamp(rank - 1, 0, sorted.Count - 1)];
+    }
+
+    private static double? PercentileOf(List<double> values, int percentile)
+    {
+        if (values.Count == 0) return null;
+        var sorted = values.OrderBy(v => v).ToList();
+        var rank = (int)Math.Ceiling(percentile / 100.0 * sorted.Count);
+        return Math.Round(sorted[Math.Clamp(rank - 1, 0, sorted.Count - 1)], 1);
     }
 
     // A conversation's display title: its first prompt, collapsed to a single line and length-capped.

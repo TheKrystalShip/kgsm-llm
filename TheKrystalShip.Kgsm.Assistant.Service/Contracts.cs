@@ -195,6 +195,81 @@ public sealed record AdminConversationHistoryDto(
 public sealed record AdminConversationUserRefDto(string UserId, string? DisplayName);
 
 /// <summary>
+/// One tool's behaviour across the corpus, for <c>GET /admin/conversations/stats</c>.
+/// <see cref="Known"/> is the assistant's own answer to "does this tool exist": the recorded name is
+/// checked against the shipped catalog here, in the surface that owns one, because the store that
+/// derives the numbers is deliberately domain-blind. <c>false</c> means the model called a tool that
+/// has never existed — the sharpest tuning signal the corpus carries, and the reason the name is
+/// reported rather than dropped.
+/// </summary>
+public sealed record AdminToolStatDto(
+    string Name,
+    bool Known,
+    int Calls,
+    long MedianMs,
+    long MaxMs,
+    int FailedCalls);
+
+/// <summary>
+/// One system-prompt version's slice, for <c>GET /admin/conversations/stats</c>. Bucketing by the hash
+/// is what makes "did that prompt edit help?" answerable from the log alone. <see cref="Hash"/> is
+/// <c>null</c> for turns recorded without one; <see cref="MedianMs"/> is <c>null</c> when none of the
+/// version's turns was timed.
+/// </summary>
+public sealed record AdminPromptVersionDto(string? Hash, int Turns, int OkTurns, long? MedianMs);
+
+/// <summary>Turns started on one UTC day (<c>yyyy-MM-dd</c>), for the activity strip.</summary>
+public sealed record AdminDailyTurnsDto(string Date, int Turns);
+
+/// <summary>
+/// <c>GET /admin/conversations/stats</c>: the whole-corpus roll-up behind the operator overview,
+/// derived from the same append-only log the transcripts come from.
+/// <para>
+/// Counts are counts and read <c>0</c> when the thing did not happen. Every distribution figure is
+/// <b>nullable and null when nothing was measured</b> — a corpus with no timed turn reports a null
+/// median rather than a zero, because a zero here would read as "instant" and that would be a
+/// fabricated measurement.
+/// </para>
+/// </summary>
+public sealed record AdminConversationStatsDto(
+    int Conversations,
+    int DeletedConversations,
+    int Actors,
+    int Turns,
+    int OkTurns,
+    int ErrorTurns,
+    int CapHitTurns,
+    int CancelledTurns,
+    int UnrecordedOutcomeTurns,
+    long? MedianTurnMs,
+    long? P95TurnMs,
+    long? MaxTurnMs,
+    int? MedianIterations,
+    int? MaxIterations,
+    double? MedianContextPercent,
+    double? MaxContextPercent,
+    int? ContextWindow,
+    int ThinkingTurns,
+    int TurnsWithoutTool,
+    int ToolCalls,
+    IReadOnlyList<AdminToolStatDto> Tools,
+    IReadOnlyList<AdminPromptVersionDto> PromptVersions,
+    IReadOnlyList<AdminDailyTurnsDto> Activity,
+    AdminAssistantRuntimeDto Runtime);
+
+/// <summary>
+/// What the assistant is currently configured to be, alongside the numbers describing what it did.
+/// The pairing is the point: "median 2 tool steps" only means something next to "the cap is 16", and
+/// "9.5% of the window" only means something next to which window. Read from the live options, so it
+/// describes the process answering right now — not whatever produced the older turns in the corpus.
+/// </summary>
+public sealed record AdminAssistantRuntimeDto(
+    string Model,
+    int ContextWindow,
+    int MaxIterations,
+    bool ActionsEnabled);
+
+/// <summary>
 /// One history entry. <see cref="Kind"/> is <c>turn</c> (then <see cref="Turn"/> is set) or
 /// <c>checkpoint</c> (then <see cref="CheckpointSummary"/> is set — a compaction recap the client shows
 /// as a divider).

@@ -1079,6 +1079,135 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // ── GET /admin/conversations/stats — the corpus roll-up behind the operator overview. ──────────
+
+    [Fact]
+    public async Task Review_Stats_WithoutTheAdminHeader_IsForbidden()
+    {
+        // The roll-up describes other people's conversations in aggregate, so it sits behind the same
+        // fail-closed admin gate as the transcripts themselves.
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: new RecordingConversationStore());
+
+        var response = await RelayGetAsync(
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Review_Stats_IsScopedToTheWebSurface_AndCarriesTheLiveRuntime()
+    {
+        // The runtime block is what makes the numbers legible: "median 2 steps" only means something
+        // beside "the cap is 16", and a context percentage only means something beside its window.
+        var store = new RecordingConversationStore
+        {
+            Stats = RecordingConversationStore.EmptyStats with
+            {
+                Conversations = 76, DeletedConversations = 46, Actors = 13, Turns = 159,
+                OkTurns = 153, CancelledTurns = 3, UnrecordedOutcomeTurns = 3,
+                MedianTurnMs = 5563, P95TurnMs = 37744, MaxTurnMs = 63613,
+                MedianIterations = 2, MaxIterations = 6,
+                MedianContextPercent = 9.5, MaxContextPercent = 21.2, ContextWindow = 32768,
+                ThinkingTurns = 6, TurnsWithoutTool = 55, ToolCalls = 140,
+            },
+        };
+        var factory = Factory(
+            configure: b =>
+            {
+                b.UseSetting("Assistant:Relay:Secret", "relay-secret");
+                b.UseSetting("Ollama:Model", "gemma4:12b");
+                b.UseSetting("Ollama:NumCtx", "32768");
+                b.UseSetting("LlmAgent:MaxIterations", "16");
+            },
+            withStore: store);
+
+        var response = await RelayGetAsync(
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        store.StatsSurface.Should().Be("web");
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"conversations\":76");
+        body.Should().Contain("\"turns\":159");
+        body.Should().Contain("\"medianTurnMs\":5563");
+        body.Should().Contain("\"contextWindow\":32768");
+        body.Should().Contain("\"model\":\"gemma4:12b\"");
+        body.Should().Contain("\"maxIterations\":16");
+    }
+
+    [Fact]
+    public async Task Review_Stats_ReportsAnUnmeasuredDistributionAsNull_NeverZero()
+    {
+        // A corpus with nothing timed must say so. A zero median would render as "instant", which is a
+        // fabricated measurement — the one thing this ecosystem never does.
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: new RecordingConversationStore());
+
+        var response = await RelayGetAsync(
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"medianTurnMs\":null");
+        body.Should().Contain("\"p95TurnMs\":null");
+        body.Should().Contain("\"medianContextPercent\":null");
+        body.Should().Contain("\"contextWindow\":null");
+        body.Should().Contain("\"turns\":0", "a count of something that did not happen IS zero");
+    }
+
+    [Fact]
+    public async Task Review_Stats_MarksAToolTheCatalogDoesNotDefineAsUnknown()
+    {
+        // The model inventing a tool is the sharpest tuning signal in the corpus. The store reports the
+        // name it recorded; deciding whether it exists happens here, where the catalog lives.
+        var store = new RecordingConversationStore
+        {
+            Stats = RecordingConversationStore.EmptyStats with
+            {
+                Tools = new[]
+                {
+                    new Llm.Models.ToolStat { Name = "get_status", Calls = 20, MedianMs = 222, MaxMs = 1041, FailedCalls = 1 },
+                    new Llm.Models.ToolStat { Name = "google_search", Calls = 1, MedianMs = 0, MaxMs = 0, FailedCalls = 1 },
+                },
+            },
+        };
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayGetAsync(
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"name\":\"get_status\",\"known\":true");
+        body.Should().Contain("\"name\":\"google_search\",\"known\":false");
+    }
+
+    [Fact]
+    public async Task Review_Stats_CountsAConditionallyOfferedToolAsKnown()
+    {
+        // revise_blueprint is deliberately kept OUT of the ordinary-turn offer and appended only when a
+        // draft is open. It is still a real tool, and checking against the offer set instead of the full
+        // catalog reported it as invented — sending a reviewer after a bug that does not exist.
+        var store = new RecordingConversationStore
+        {
+            Stats = RecordingConversationStore.EmptyStats with
+            {
+                Tools = new[]
+                {
+                    new Llm.Models.ToolStat { Name = "revise_blueprint", Calls = 5, MedianMs = 0, MaxMs = 8, FailedCalls = 0 },
+                },
+            },
+        };
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store);
+
+        var response = await RelayGetAsync(
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+
+        (await response.Content.ReadAsStringAsync())
+            .Should().Contain("\"name\":\"revise_blueprint\",\"known\":true");
+    }
+
     /// <summary>GETs a secured path over the trusted-relay path (secret + forwarded identity, no bearer).</summary>
     private static Task<HttpResponseMessage> RelayGetAsync(
         HttpClient client, string path, string secret, string userId, bool? admin = null) =>
@@ -1138,6 +1267,26 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
     public void AppendTurn(Llm.Models.ConversationTurnRecord turn) { }
     public void AddCheckpoint(string conversationId, string summary) { }
     public void SoftDelete(string conversationId) => DeletedKey = conversationId;
+
+    /// <summary>What <c>GetStats</c> hands back, and the surface it was asked for.</summary>
+    public Llm.Models.ConversationStats Stats { get; set; } = EmptyStats;
+    public string? StatsSurface { get; private set; }
+
+    public Llm.Models.ConversationStats GetStats(string surfacePrefix)
+    {
+        StatsSurface = surfacePrefix;
+        return Stats;
+    }
+
+    internal static Llm.Models.ConversationStats EmptyStats => new()
+    {
+        Conversations = 0, DeletedConversations = 0, Actors = 0, Turns = 0,
+        OkTurns = 0, ErrorTurns = 0, CapHitTurns = 0, CancelledTurns = 0, UnrecordedOutcomeTurns = 0,
+        ThinkingTurns = 0, TurnsWithoutTool = 0, ToolCalls = 0,
+        Tools = Array.Empty<Llm.Models.ToolStat>(),
+        PromptVersions = Array.Empty<Llm.Models.PromptVersionStat>(),
+        Activity = Array.Empty<Llm.Models.DailyTurnCount>(),
+    };
 }
 
 /// <summary>

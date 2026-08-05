@@ -41,6 +41,16 @@ public interface IConversationStore
     IReadOnlyList<ConversationActor> ListActors(string surfacePrefix);
 
     /// <summary>
+    /// The whole-corpus roll-up for one surface — outcome mix, answer-time distribution, per-tool
+    /// behaviour, prompt-version buckets and daily volume — derived on demand from the same
+    /// append-only log the transcripts come from, so a figure here can never disagree with the turns
+    /// behind it. Soft-deleted conversations are <b>included</b>: their turns are part of what the
+    /// assistant actually did, and excluding them would understate the corpus a review is judging.
+    /// Distribution figures are null when nothing was measured (see <see cref="ConversationStats"/>).
+    /// </summary>
+    ConversationStats GetStats(string surfacePrefix);
+
+    /// <summary>
     /// The full conversation history (turns and checkpoints), oldest first — for display and analysis.
     /// Empty when the conversation is unknown.
     /// </summary>

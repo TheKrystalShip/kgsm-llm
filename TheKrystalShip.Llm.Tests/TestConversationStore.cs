@@ -129,6 +129,14 @@ internal sealed class TestConversationStore : IConversationStore
 
     public void SoftDelete(string conversationId) => _deleted.Add(conversationId);
 
+    /// <summary>
+    /// The roll-up is a SQL derivation over the real log; this double exists to observe what the agent
+    /// loop writes, so re-deriving it here would test the double rather than the store. Callers that
+    /// need real numbers use <c>SqliteConversationStore</c> against a temp file.
+    /// </summary>
+    public ConversationStats GetStats(string surfacePrefix) => throw new NotSupportedException(
+        "TestConversationStore does not derive statistics; use SqliteConversationStore.");
+
     private void Track(string conversationId, ConversationEntry entry)
     {
         _deleted.Remove(conversationId);   // new content supersedes a prior soft-delete (a resume)

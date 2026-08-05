@@ -17,8 +17,10 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingWrites;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
+using TheKrystalShip.Llm.Models;
 using TheKrystalShip.Llm.Ollama;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -354,6 +356,45 @@ review.MapGet("/conversations/users", (IConversationStore store) =>
             a.FirstActivityAt, a.LastActivityAt))
         .ToArray();
     return Results.Ok(users);
+});
+
+// The whole-corpus roll-up: outcome mix, answer times, per-tool behaviour, prompt-version buckets and
+// daily volume, alongside what the assistant is configured to be right now. Derived from the same log
+// the transcripts come from, so a figure here can never disagree with the turns behind it.
+review.MapGet("/conversations/stats", (
+    IConversationStore store,
+    IOptions<OllamaOptions> ollama,
+    IOptions<LlmAgentOptions> agent,
+    IOptions<AssistantServiceOptions> assistant) =>
+{
+    var stats = store.GetStats(WebSurface);
+
+    // Whether a recorded tool name is one this assistant actually ships is a question only the
+    // catalog can answer, and the catalog lives here — the store that counted the calls is
+    // domain-blind by design and reports the name it found either way. Checked against EveryToolName,
+    // not the ordinary-turn offer: a conditionally-offered tool (revise_blueprint) is real, and
+    // reporting it as invented would send a reviewer chasing a bug that isn't there.
+    var tools = stats.Tools
+        .Select(t => new AdminToolStatDto(
+            t.Name, LlmTools.EveryToolName.Contains(new Tool(t.Name)),
+            t.Calls, t.MedianMs, t.MaxMs, t.FailedCalls))
+        .ToArray();
+
+    return Results.Ok(new AdminConversationStatsDto(
+        stats.Conversations, stats.DeletedConversations, stats.Actors, stats.Turns,
+        stats.OkTurns, stats.ErrorTurns, stats.CapHitTurns, stats.CancelledTurns,
+        stats.UnrecordedOutcomeTurns,
+        stats.MedianTurnMs, stats.P95TurnMs, stats.MaxTurnMs,
+        stats.MedianIterations, stats.MaxIterations,
+        stats.MedianContextPercent, stats.MaxContextPercent, stats.ContextWindow,
+        stats.ThinkingTurns, stats.TurnsWithoutTool, stats.ToolCalls,
+        tools,
+        stats.PromptVersions
+            .Select(p => new AdminPromptVersionDto(p.Hash, p.Turns, p.OkTurns, p.MedianMs)).ToArray(),
+        stats.Activity.Select(a => new AdminDailyTurnsDto(a.Date, a.Turns)).ToArray(),
+        new AdminAssistantRuntimeDto(
+            ollama.Value.Model, ollama.Value.NumCtx, agent.Value.MaxIterations,
+            assistant.Value.ActionsEnabled)));
 });
 
 // One user's conversations. The user id comes from the list above, so it names an EXISTING namespace;

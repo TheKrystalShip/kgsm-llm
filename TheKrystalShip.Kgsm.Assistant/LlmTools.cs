@@ -487,6 +487,16 @@ public static class LlmTools
     /// <summary>All valid tool names, for validating client requests against the server catalog.</summary>
     public static IReadOnlySet<Tool> AllToolNames => All.Select(t => t.Tool).ToHashSet();
 
+    /// <summary>
+    /// Every tool this assistant can EVER dispatch, including the ones offered only in context —
+    /// today just <see cref="ReviseBlueprint"/>, appended by <c>ServerAssistant.SelectTools</c> on a
+    /// turn that carries an open draft. Distinct from <see cref="AllToolNames"/>, which is the
+    /// ordinary-turn OFFER: asking "did this tool ever exist?" of the offer set would report a
+    /// conditionally-offered tool as one the model invented.
+    /// </summary>
+    public static IReadOnlySet<Tool> EveryToolName =>
+        All.Select(t => t.Tool).Append(ReviseBlueprint).ToHashSet();
+
     public static bool IsStagedCommand(Tool tool) => StagedCommandTools.Contains(tool);
 
     public static bool IsAuthorizedRead(Tool tool) => AuthorizedReadTools.Contains(tool);

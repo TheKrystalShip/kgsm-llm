@@ -364,4 +364,217 @@ public sealed class SqliteConversationStoreTests : IDisposable
         Create().GetHistory("web:u1:c").Should().ContainSingle()
             .Which.Turn!.UserDisplay.Should().Be("Ana Example");
     }
+
+    // ── GetStats — the whole-corpus roll-up behind the operator overview. ─────────────────────────
+
+    private static ConversationTurnRecord StatTurn(
+        string convId, TurnOutcome outcome, int iterations = 1, bool think = false,
+        string? promptHash = "h1", int durationMs = 1000,
+        IReadOnlyList<RecordedToolCall>? tools = null, LlmUsage? usage = null,
+        DateTimeOffset? startedAt = null)
+    {
+        var started = startedAt ?? DateTimeOffset.UtcNow;
+        return new ConversationTurnRecord
+        {
+            ConversationId = convId,
+            StartedAt = started,
+            CompletedAt = started.AddMilliseconds(durationMs),
+            UserPrompt = "p",
+            SystemPromptHash = promptHash!,
+            Tools = tools ?? Array.Empty<RecordedToolCall>(),
+            Iterations = iterations,
+            Outcome = outcome,
+            Think = think,
+            Final = "r",
+            Usage = usage,
+        };
+    }
+
+    [Fact]
+    public void GetStats_OnAnEmptyCorpus_CountsZeroAndMeasuresNothing()
+    {
+        // The load-bearing distinction: a count is 0 because it genuinely did not happen, while an
+        // unmeasured distribution is null. A zero median would read as "instant", which is a lie.
+        var stats = Create().GetStats("web");
+
+        stats.Turns.Should().Be(0);
+        stats.Conversations.Should().Be(0);
+        stats.MedianTurnMs.Should().BeNull();
+        stats.P95TurnMs.Should().BeNull();
+        stats.MedianIterations.Should().BeNull();
+        stats.MedianContextPercent.Should().BeNull();
+        stats.ContextWindow.Should().BeNull();
+        stats.Tools.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GetStats_TalliesEveryOutcomeSeparately()
+    {
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        store.AppendTurn(StatTurn("web:u:b", TurnOutcome.Error));
+        store.AppendTurn(StatTurn("web:u:b", TurnOutcome.CapHit));
+        store.AppendTurn(StatTurn("web:u:c", TurnOutcome.Cancelled));
+
+        var stats = Create().GetStats("web");
+
+        stats.Turns.Should().Be(5);
+        stats.OkTurns.Should().Be(2);
+        stats.ErrorTurns.Should().Be(1);
+        stats.CapHitTurns.Should().Be(1);
+        stats.CancelledTurns.Should().Be(1);
+        stats.UnrecordedOutcomeTurns.Should().Be(0);
+        stats.Conversations.Should().Be(3);
+        stats.Actors.Should().Be(1);
+    }
+
+    [Fact]
+    public void GetStats_CountsSoftDeletedConversationsAndTheirTurns()
+    {
+        // A deleted conversation's turns are part of what the assistant actually did. Dropping them
+        // would understate the very corpus the review is judging.
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:keep", TurnOutcome.Ok));
+        store.AppendTurn(StatTurn("web:u:gone", TurnOutcome.Error));
+        store.SoftDelete("web:u:gone");
+
+        var stats = Create().GetStats("web");
+
+        stats.Conversations.Should().Be(2);
+        stats.DeletedConversations.Should().Be(1);
+        stats.Turns.Should().Be(2);
+        stats.ErrorTurns.Should().Be(1, "a hidden conversation's failure still happened");
+    }
+
+    [Fact]
+    public void GetStats_ReportsNearestRankPercentilesOverAnswerTimes()
+    {
+        var store = Create();
+        foreach (var ms in new[] { 100, 200, 300, 400, 5000 })
+            store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, durationMs: ms));
+
+        var stats = Create().GetStats("web");
+
+        stats.MedianTurnMs.Should().Be(300);
+        stats.P95TurnMs.Should().Be(5000);
+        stats.MaxTurnMs.Should().Be(5000);
+    }
+
+    [Fact]
+    public void GetStats_ExplodesToolCallsAndCountsErrorOutputsAsFailures()
+    {
+        // "Failed" is read off the recorded output's "Error: …" convention — a measurement of what the
+        // dispatcher wrote, not an inference.
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, tools: new[]
+        {
+            new RecordedToolCall(new Tool("get_status"), new Dictionary<string, string?>(), "fine", 100),
+            new RecordedToolCall(new Tool("get_status"), new Dictionary<string, string?>(), "fine", 300),
+            new RecordedToolCall(new Tool("open_ports"), new Dictionary<string, string?>(), "Error: nope", 0),
+        }));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+
+        var stats = Create().GetStats("web");
+
+        stats.ToolCalls.Should().Be(3);
+        stats.TurnsWithoutTool.Should().Be(1);
+        var status = stats.Tools.Single(t => t.Name == "get_status");
+        status.Calls.Should().Be(2);
+        status.MaxMs.Should().Be(300);
+        status.FailedCalls.Should().Be(0);
+        var ports = stats.Tools.Single(t => t.Name == "open_ports");
+        ports.Calls.Should().Be(1);
+        ports.FailedCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public void GetStats_KeepsAToolNameNoCatalogDefines()
+    {
+        // A model that invents a tool is the single most useful signal in the set; the store reports
+        // the name it recorded and leaves "is this in the catalog" to the surface that owns one.
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, tools: new[]
+        {
+            new RecordedToolCall(new Tool("google_search"), new Dictionary<string, string?>(),
+                "Error: 'google_search' is not a known tool.", 0),
+        }));
+
+        var stats = Create().GetStats("web");
+
+        stats.Tools.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo(new { Name = "google_search", Calls = 1, FailedCalls = 1 });
+    }
+
+    [Fact]
+    public void GetStats_BucketsTurnsByTheSystemPromptTheyRanUnder()
+    {
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, promptHash: "old"));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Error, promptHash: "old"));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, promptHash: "new"));
+
+        var stats = Create().GetStats("web");
+
+        stats.PromptVersions.Should().HaveCount(2);
+        var old = stats.PromptVersions.Single(p => p.Hash == "old");
+        old.Turns.Should().Be(2);
+        old.OkTurns.Should().Be(1);
+        stats.PromptVersions.Single(p => p.Hash == "new").OkTurns.Should().Be(1);
+    }
+
+    [Fact]
+    public void GetStats_ReportsTheContextWindowOnlyWhenEveryTurnAgrees()
+    {
+        // Two windows are two denominators; one number over them would describe neither.
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok,
+            usage: new LlmUsage(90, 10, 1000)));
+        var single = Create().GetStats("web");
+        single.ContextWindow.Should().Be(1000);
+        single.MedianContextPercent.Should().Be(10);
+
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok,
+            usage: new LlmUsage(90, 10, 2000)));
+
+        Create().GetStats("web").ContextWindow.Should().BeNull();
+    }
+
+    [Fact]
+    public void GetStats_GroupsActivityByUtcDay()
+    {
+        var store = Create();
+        var day = new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.Zero);
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, startedAt: day));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, startedAt: day.AddHours(2)));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, startedAt: day.AddDays(1)));
+
+        var stats = Create().GetStats("web");
+
+        stats.Activity.Should().HaveCount(2);
+        stats.Activity[0].Should().BeEquivalentTo(new { Date = "2026-08-01", Turns = 2 });
+        stats.Activity[1].Should().BeEquivalentTo(new { Date = "2026-08-02", Turns = 1 });
+    }
+
+    [Fact]
+    public void GetStats_IsScopedToItsSurface()
+    {
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+        store.AppendTurn(StatTurn("cli:u:a", TurnOutcome.Error));
+
+        var web = Create().GetStats("web");
+        web.Turns.Should().Be(1);
+        web.ErrorTurns.Should().Be(0);
+    }
+
+    [Fact]
+    public void GetStats_CountsThinkingTurns()
+    {
+        var store = Create();
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok, think: true));
+        store.AppendTurn(StatTurn("web:u:a", TurnOutcome.Ok));
+
+        Create().GetStats("web").ThinkingTurns.Should().Be(1);
+    }
 }

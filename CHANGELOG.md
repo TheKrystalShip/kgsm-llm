@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the corpus roll-up behind the assistant's operator overview
+
+`GET /admin/conversations/stats` (admin-gated, like the rest of the review surface) answers "how is
+this assistant doing" from the same append-only log the transcripts come from, so a figure can never
+disagree with the turns behind it: the outcome mix, the answer-time distribution, per-tool call
+counts / durations / failures, system-prompt-version buckets, context occupancy, and turns per day.
+
+- **`IConversationStore.GetStats(surface)`** derives all of it on demand — conversation shape and
+  per-turn scalars via `json_extract`, the tool trajectory exploded with `json_each`, percentiles
+  finished in memory (SQLite has no percentile aggregate, and the ordered lists are needed anyway).
+  Soft-deleted conversations are **included**: their turns are part of what the assistant did, and
+  dropping them would understate the corpus a review is judging.
+- **A count is zero; an unmeasured distribution is null.** A corpus with nothing timed reports a null
+  median rather than a `0` that would render as "instant" — a fabricated measurement.
+  `ContextWindow` is likewise null when the corpus spans more than one window, because one percentage
+  over two denominators describes neither.
+- **A tool the catalog does not define is reported, not dropped.** The store is domain-blind and
+  hands back the name it recorded; the Service marks it `known: false`. A model calling a tool that
+  has never existed is the sharpest tuning signal the corpus carries. The check is against the new
+  `LlmTools.EveryToolName` — the full catalog including tools offered only in context
+  (`revise_blueprint`, appended when a draft is open) — rather than the ordinary-turn offer, which
+  would report a real conditional tool as invented.
+- The response carries the **live runtime** (model, context window, iteration cap, actions on/off)
+  beside the numbers: "median 2 tool steps" only means something next to "the cap is 16".
+
 ### Added — an administrator can read other users' conversations, to tune the assistant
 
 The conversation log already holds everything a review needs — the prompt, the reply, the thinking,

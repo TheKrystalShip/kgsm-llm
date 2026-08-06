@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the service serves its own web client
+
+`UseDefaultFiles` + `UseStaticFiles` over `wwwroot/` under the content root
+(`/opt/kgsm-assistant/service/wwwroot`), published by kgsm-web's `deploy/deploy-assistant.sh`. A
+host that installs no client has an empty directory and this is a no-op.
+
+It shadows no endpoint: static middleware serves only files that exist, so `/turn`, `/confirm`,
+`/auth/…` and `/conversations` fall straight through — none of them names a file — and there is
+**no SPA fallback**, which is what would otherwise turn every unmatched path into a `200` with an
+HTML body. The client is hash-routed, so serving `index.html` at `/` is all it needs. A test pins
+this rather than leaving it to be reasoned about.
+
+⚠ `deploy/setup.sh` now creates `wwwroot` up front, because ASP.NET resolves the web root **once at
+startup**: a directory that appears later is invisible until the service restarts.
+
 ### Added — the callback carries Discord's own refusal back
 
 `/auth/discord/callback` collapsed every code-less callback into `bad_request`, which is also what a

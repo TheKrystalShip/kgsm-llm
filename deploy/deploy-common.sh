@@ -77,7 +77,11 @@ STATE_DIR="/var/lib/kgsm-assistant"
 CLI_LINK="/usr/local/bin/kgsm-assistant-cli"
 setup_project_extras() {
     local d
-    for d in "$PREFIX/service" "$PREFIX/cli" "$PREFIX/indexer" "$PREFIX/docs" "$STATE_DIR"; do
+    # wwwroot is created even on a host that serves no web client, because ASP.NET resolves the web
+    # root ONCE at startup: a directory that appears later is invisible until the service restarts.
+    # Creating it here means kgsm-web's deploy-assistant.sh can publish into a running service and
+    # have the page live immediately, the same way every other deploy in the ecosystem behaves.
+    for d in "$PREFIX/service" "$PREFIX/service/wwwroot" "$PREFIX/cli" "$PREFIX/indexer" "$PREFIX/docs" "$STATE_DIR"; do
         if [[ ! -d "$d" ]]; then
             log "creating ${d} (owned by ${DEPLOY_USER})"
             $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" "$d"

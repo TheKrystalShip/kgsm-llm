@@ -167,6 +167,18 @@ var app = builder.Build();
 
 app.UseCors();
 
+// The assistant's own web client, when one is installed: wwwroot/ under the content root
+// (/opt/kgsm-assistant/service/wwwroot on a deployed host), published by kgsm-web's
+// deploy/deploy-assistant.sh. Absent on a host that serves no UI, and this is then a no-op.
+//
+// It is registered BEFORE the endpoints and shadows none of them: static middleware serves only
+// files that exist on disk, so /turn, /confirm, /auth/… and /conversations fall straight through —
+// none of them names a file. The client is hash-routed, so serving index.html at / is the whole of
+// what it needs; there is no SPA fallback to add and therefore no rule that could swallow an
+// unmatched API path and turn a typo into a 200.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Warn loudly if actions are switched on but can't actually be authorized — the service
 // then stays read-only (CanPerformActionsAsync requires all of these), the safe default.
 {

@@ -524,6 +524,26 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         return Factory(discord: discord, configure: b => b.UseSetting("Auth:AllowedOrigins:0", origin));
     }
 
+    [Fact]
+    public async Task StaticFiles_DoNotShadowTheApiRoutes()
+    {
+        // The web client is served from the ROOT, where every endpoint also lives. Static middleware
+        // serves only files that exist, so an API path falls through — but that is a property of the
+        // pipeline's shape (no SPA fallback), and a fallback added later would silently turn every
+        // unmatched path into a 200 with an HTML body. Pinned so it cannot be added by accident.
+        HttpClient client = Factory().CreateClient();
+
+        (await client.GetAsync("/health")).StatusCode.Should().Be(HttpStatusCode.OK);
+        // Unauthenticated, but ROUTED — a 401 proves the endpoint answered rather than a file.
+        (await client.PostAsJsonAsync("/turn", new { prompt = "hi" })).StatusCode
+            .Should().Be(HttpStatusCode.Unauthorized);
+        (await client.PostAsJsonAsync("/confirm", new { token = "t" })).StatusCode
+            .Should().Be(HttpStatusCode.Unauthorized);
+        // A path that is neither an endpoint nor a file is still a 404, not an index.html.
+        (await client.GetAsync("/definitely-not-a-route")).StatusCode
+            .Should().Be(HttpStatusCode.NotFound);
+    }
+
     [Theory]
     [InlineData("consent_required")]     // prompt=none, but this app has not been authorized yet
     [InlineData("login_required")]       // prompt=none, but nobody is signed in at Discord

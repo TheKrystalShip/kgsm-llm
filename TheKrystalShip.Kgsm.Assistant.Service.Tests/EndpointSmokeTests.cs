@@ -483,21 +483,156 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// handshake cookie back to the callback — and returns the callback's response.
     /// </summary>
     private static async Task<HttpResponseMessage> SignInAsync(
-        WebApplicationFactory<Program> factory, string code = "the-code", string? forgedState = null)
+        WebApplicationFactory<Program> factory, string code = "the-code", string? forgedState = null,
+        string? returnTo = null)
     {
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        var start = await client.GetAsync("/auth/discord/start");
+        var startUrl = returnTo is null
+            ? "/auth/discord/start"
+            : $"/auth/discord/start?return_to={Uri.EscapeDataString(returnTo)}";
+        var start = await client.GetAsync(startUrl);
         start.StatusCode.Should().Be(HttpStatusCode.Redirect);
 
-        string cookie = start.Headers.GetValues("Set-Cookie")
-            .First(c => c.StartsWith("kgsm_oauth_state=", StringComparison.Ordinal))
-            .Split(';')[0];
+        // Carry back every cookie the start leg set — the handshake, and (in browser mode) the return
+        // address, exactly as a browser would.
+        string cookies = string.Join("; ", start.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
         string state = forgedState ?? QueryValue(start.Headers.Location!.ToString(), "state");
 
         var callback = new HttpRequestMessage(HttpMethod.Get, $"/auth/discord/callback?code={code}&state={state}");
-        callback.Headers.Add("Cookie", cookie);
+        callback.Headers.Add("Cookie", cookies);
         return await client.SendAsync(callback);
+    }
+
+    // --- the browser return leg (a client asking to be sent back with the session) ----------------
+
+    /// <summary>A factory whose allowlist contains <paramref name="origin"/>, with a fake Discord.</summary>
+    private WebApplicationFactory<Program> ReturnLegFactory(string origin, KgsmTier tier = KgsmTier.Operator)
+    {
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
+        discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ResolvedPrincipal(
+                new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]), tier));
+
+        return Factory(discord: discord, configure: b => b.UseSetting("Auth:AllowedOrigins:0", origin));
+    }
+
+    [Fact]
+    public async Task SignIn_WithReturnTo_RedirectsBackWithTheSessionInTheFragment()
+    {
+        // The session rides the FRAGMENT, not the query: a fragment is never sent to a server, kept in
+        // a Referer header, or written to an access log.
+        const string origin = "https://panel.example.com";
+        var response = await SignInAsync(ReturnLegFactory(origin), returnTo: origin + "/chat");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Redirect);
+        var location = response.Headers.Location!.ToString();
+        location.Should().StartWith(origin + "/chat#");
+        location.Should().NotContain("?access=");
+
+        var frag = ParseFragment(location);
+        frag.Should().ContainKey("access");
+        frag.Should().ContainKey("refresh");
+        frag["tier"].Should().Be("operator");
+        frag["access"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task SignIn_WithReturnTo_WhenDenied_RedirectsWithAnErrorFragment()
+    {
+        // A denial must come back the same way a success would; a browser that asked to be returned
+        // must never be dead-ended on a JSON body it cannot act on.
+        const string origin = "https://panel.example.com";
+        var response = await SignInAsync(ReturnLegFactory(origin, KgsmTier.None), returnTo: origin);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Redirect);
+        ParseFragment(response.Headers.Location!.ToString())["error"].Should().Be("denied");
+    }
+
+    [Fact]
+    public async Task SignIn_WithReturnTo_ForgedState_RedirectsWithAnErrorFragment_AndNeverExchanges()
+    {
+        const string origin = "https://panel.example.com";
+        var factory = ReturnLegFactory(origin);
+        var response = await SignInAsync(factory, forgedState: "not-the-issued-state", returnTo: origin);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Redirect);
+        ParseFragment(response.Headers.Location!.ToString())["error"].Should().Be("invalid_state");
+    }
+
+    [Fact]
+    public async Task Start_WithAnUnlistedReturnTo_Is400_AndNeverBouncesToDiscord()
+    {
+        // Refused at the START, not the callback: bouncing to Discord for a login that cannot be
+        // completed spends the user's consent on a dead end.
+        var client = ReturnLegFactory("https://panel.example.com")
+            .CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var response = await client.GetAsync(
+            "/auth/discord/start?return_to=" + Uri.EscapeDataString("https://evil.example.com/steal"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.Headers.Location.Should().BeNull();
+        response.Headers.TryGetValues("Set-Cookie", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Callback_WithAHandCraftedReturnCookie_IsNotRedirectedToIt()
+    {
+        // The cookie is client-held and carries no integrity of its own, so the allowlist is checked
+        // again here. Without this second check, setting one cookie by hand turns the callback into an
+        // open redirect that hands over a real session.
+        const string origin = "https://panel.example.com";
+        var factory = ReturnLegFactory(origin);
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var start = await client.GetAsync("/auth/discord/start");
+        string handshake = start.Headers.GetValues("Set-Cookie")
+            .First(c => c.StartsWith("kgsm_oauth_state=", StringComparison.Ordinal)).Split(';')[0];
+        string state = QueryValue(start.Headers.Location!.ToString(), "state");
+
+        var callback = new HttpRequestMessage(HttpMethod.Get, $"/auth/discord/callback?code=the-code&state={state}");
+        callback.Headers.Add("Cookie", $"{handshake}; kgsm_oauth_return=https://evil.example.com/steal");
+        var response = await client.SendAsync(callback);
+
+        // Falls back to the JSON contract — the session is minted, but it is handed to the caller, not
+        // flung at an origin nobody allowed.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Headers.Location.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Cors_Preflight_AllowsDelete()
+    {
+        // A client owns its conversations, and removing one is a DELETE. Without it a cross-origin
+        // client can accumulate a history it has no way to clear.
+        const string origin = "https://example.github.io";
+        var client = Factory(configure: b => b.UseSetting("Auth:AllowedOrigins:0", origin)).CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Options, "/conversations/abc");
+        request.Headers.Add("Origin", origin);
+        request.Headers.Add("Access-Control-Request-Method", "DELETE");
+        request.Headers.Add("Access-Control-Request-Headers", "authorization");
+
+        var response = await client.SendAsync(request);
+
+        response.Headers.GetValues("Access-Control-Allow-Origin").Should().Contain(origin);
+        response.Headers.GetValues("Access-Control-Allow-Methods")
+            .SelectMany(v => v.Split(',', StringSplitOptions.TrimEntries))
+            .Should().Contain("DELETE");
+    }
+
+    /// <summary>Splits a URL's <c>#a=1&amp;b=2</c> fragment into a map, percent-decoding values.</summary>
+    private static Dictionary<string, string> ParseFragment(string url)
+    {
+        var hash = url.IndexOf('#');
+        if (hash < 0) return [];
+        return url[(hash + 1)..]
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Split('=', 2))
+            .ToDictionary(p => p[0], p => p.Length > 1 ? Uri.UnescapeDataString(p[1]) : "");
     }
 
     [Fact]

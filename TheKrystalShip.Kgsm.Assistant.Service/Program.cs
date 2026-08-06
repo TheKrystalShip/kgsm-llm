@@ -151,12 +151,16 @@ builder.Services.AddScoped<DiscordAuthService>();
 builder.Services.AddScoped<BearerAuthFilter>();
 builder.Services.AddScoped<AdminOnlyFilter>();
 
-// CORS: allow the configured SPA origin to call with an Authorization header. NO
+// CORS: allow the configured SPA origins to call with an Authorization header. NO
 // AllowCredentials (bearer, not cookies). UseCors is ordered before the secured group so
 // cross-origin preflight (OPTIONS) is answered by the CORS middleware, pre-auth.
+//
+// DELETE is here because a client owns its conversations and deleting one is a DELETE; without it a
+// cross-origin client can hold a whole chat history it has no way to remove. The list is the verbs
+// this service actually answers on — not a wildcard.
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(authOptions.AllowedOrigins)
-    .WithMethods("GET", "POST")
+    .WithMethods("GET", "POST", "DELETE")
     .WithHeaders("Authorization", "Content-Type")));
 
 var app = builder.Build();
@@ -213,6 +217,12 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 // Discord, which breaks every login.
 const string StateCookie = "kgsm_oauth_state";
 
+// Where a completed sign-in sends the browser back to, when one was asked for. It rides its own
+// cookie because Discord echoes back only `state` — there is nowhere else for it to travel, and the
+// handshake cookie stays exactly the two secrets it is named for. Same discipline as that cookie:
+// HttpOnly, this origin's, one-time, and short-lived.
+const string ReturnCookie = "kgsm_oauth_return";
+
 CookieOptions StateCookieOptions() => new()
 {
     HttpOnly = true,
@@ -224,8 +234,26 @@ CookieOptions StateCookieOptions() => new()
 
 // Begin the OAuth bounce — 302 to Discord (this service owns the client id, redirect and scopes).
 // `prompt=none` is silent SSO; a client retries with `consent` when Discord answers login_required.
-app.MapGet("/auth/discord/start", (HttpContext http, DiscordAuthService auth, [FromQuery] string? prompt) =>
+//
+// `return_to` is a browser client asking to be sent back to itself with the session, instead of
+// receiving the JSON a programmatic caller gets. It is checked HERE against Auth:AllowedOrigins and
+// refused outright — bouncing to Discord for a login that cannot be completed wastes the user's
+// consent and turns a config mistake into a confusing dead end at the callback.
+app.MapGet("/auth/discord/start", (
+    HttpContext http, DiscordAuthService auth, [FromQuery] string? prompt, [FromQuery(Name = "return_to")] string? returnTo) =>
 {
+    if (!string.IsNullOrWhiteSpace(returnTo))
+    {
+        if (!authOptions.TryResolveReturnUrl(returnTo, out string resolvedReturn))
+            return Results.BadRequest(new
+            {
+                error = "invalid_return_to",
+                message = "that return address is not an allowed origin on this host",
+            });
+
+        http.Response.Cookies.Append(ReturnCookie, resolvedReturn, StateCookieOptions());
+    }
+
     var handshake = OAuthHandshake.Create();
     http.Response.Cookies.Append(StateCookie, handshake.ToCookieValue(), StateCookieOptions());
     // Only the challenge travels — the verifier stays in the cookie, never in a URL.
@@ -246,6 +274,26 @@ app.MapGet("/auth/discord/callback", async (
 {
     var logger = loggerFactory.CreateLogger("DiscordCallback");
 
+    // The return address this login asked for, if any — read and cleared alongside the state cookie so
+    // an error is delivered the same way a success would have been, rather than dead-ending a browser
+    // on a JSON body. Re-validated here and not merely trusted from the cookie: a cookie is client-held
+    // and carries no integrity of its own, so the allowlist is checked at both ends of the round trip.
+    string? returnCookie = http.Request.Cookies[ReturnCookie];
+    if (returnCookie is not null)
+        http.Response.Cookies.Delete(ReturnCookie, StateCookieOptions());
+    string? returnUrl = authOptions.TryResolveReturnUrl(returnCookie, out string checkedReturn) ? checkedReturn : null;
+
+    // One exit for every outcome: a browser that asked to be returned gets a 302 carrying the result in
+    // the URL fragment (never the query — a fragment is not sent to the server, kept in Referer, or
+    // written to an access log), and a programmatic caller gets the JSON it always got.
+    IResult Finish(string fragment, Func<IResult> json) =>
+        returnUrl is null ? json() : Results.Redirect($"{returnUrl}#{fragment}");
+
+    static string Frag(params (string Key, string? Value)[] parts) =>
+        string.Join("&", parts
+            .Where(p => !string.IsNullOrEmpty(p.Value))
+            .Select(p => $"{p.Key}={Uri.EscapeDataString(p.Value!)}"));
+
     // CSRF gate, before any exchange: the state Discord echoed back must equal the one issued to THIS
     // browser. The cookie is one-time — cleared whatever the outcome, so a callback cannot be replayed.
     // A missing cookie (expired, or a login that never started here), a malformed one, or a mismatch
@@ -254,10 +302,12 @@ app.MapGet("/auth/discord/callback", async (
     if (cookie is not null)
         http.Response.Cookies.Delete(StateCookie, StateCookieOptions());
     if (!OAuthHandshake.TryParse(cookie, out OAuthHandshake handshake) || !handshake.MatchesState(state))
-        return Results.BadRequest(new { error = "invalid_state", message = "the sign-in did not validate — start again." });
+        return Finish(Frag(("error", "invalid_state")), () => Results.BadRequest(
+            new { error = "invalid_state", message = "the sign-in did not validate — start again." }));
 
     if (string.IsNullOrWhiteSpace(code))
-        return Results.BadRequest(new { error = "bad_request", message = "missing authorization code" });
+        return Finish(Frag(("error", "bad_request")), () => Results.BadRequest(
+            new { error = "bad_request", message = "missing authorization code" }));
 
     ResolvedPrincipal? resolved;
     try
@@ -268,31 +318,37 @@ app.MapGet("/auth/discord/callback", async (
     {
         // Could not reach or parse Discord — an honest upstream failure, NEVER a default grant.
         logger.LogWarning(ex, "Discord auth exchange failed.");
-        return Results.Json(
+        return Finish(Frag(("error", "auth_provider_error")), () => Results.Json(
             new { error = "auth_provider_error", message = "Could not complete authentication with Discord." },
-            statusCode: StatusCodes.Status502BadGateway);
+            statusCode: StatusCodes.Status502BadGateway));
     }
 
     if (resolved is null)
-        return Results.Json(
+        return Finish(Frag(("error", "login_required")), () => Results.Json(
             new { error = "login_required", message = "The authorization code was invalid or expired." },
-            statusCode: StatusCodes.Status401Unauthorized);
+            statusCode: StatusCodes.Status401Unauthorized));
 
     // Identity verified, but no access on this host. Terminal: no tokens are minted, and a client
     // must not treat it as something a retry could fix.
     if (resolved.Tier == KgsmTier.None)
-        return Results.Json(
+        return Finish(Frag(("error", "denied")), () => Results.Json(
             new AuthSessionResponse("denied", null, null, null, null, null,
                 resolved.Identity.UserId, resolved.Identity.Display),
-            statusCode: StatusCodes.Status403Forbidden);
+            statusCode: StatusCodes.Status403Forbidden));
 
     string? userAgent = http.Request.Headers.UserAgent.ToString();
     if (string.IsNullOrWhiteSpace(userAgent)) userAgent = null;
 
     AuthSessionResult session = await auth.CreateSessionAsync(resolved, userAgent, ct);
-    return Results.Ok(new AuthSessionResponse(
-        "ok", KgsmTiers.ToWire(session.Tier), session.AccessToken, session.RefreshToken,
-        session.AccessExpires, session.RefreshExpires, session.UserId, session.DisplayName));
+    // `access` and `refresh` are the key names kgsm-api already hands back, so a client that reads one
+    // node's return leg reads this one with the same code. `tier` is additive — it saves the client a
+    // round trip it would otherwise make immediately.
+    return Finish(
+        Frag(("access", session.AccessToken), ("refresh", session.RefreshToken),
+             ("tier", KgsmTiers.ToWire(session.Tier))),
+        () => Results.Ok(new AuthSessionResponse(
+            "ok", KgsmTiers.ToWire(session.Tier), session.AccessToken, session.RefreshToken,
+            session.AccessExpires, session.RefreshExpires, session.UserId, session.DisplayName)));
 });
 
 // Trade a refresh token for a fresh pair. Unauthenticated by bearer on purpose — the whole point is

@@ -189,8 +189,40 @@ public sealed class AuthOptions
     [LeafField("stateTtlSec", "Sign-in window", Group = "session", Min = 30, Unit = "s")]
     public int StateTtlSeconds { get; set; } = 300;
 
-    /// <summary>Exact SPA origins (scheme + host, no trailing slash) allowed by CORS.</summary>
+    /// <summary>
+    /// Exact SPA origins (scheme + host, no trailing slash) allowed by CORS, and the same list a
+    /// sign-in may return a browser to. One list rather than two: a client trusted to call this
+    /// service with a bearer is exactly a client trusted to be handed one, and two lists would drift.
+    /// </summary>
     public string[] AllowedOrigins { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Resolves the URL a completed sign-in may send the browser back to, or refuses it. A redirect
+    /// target that came in on a request is an open-redirect surface unless it is checked against a
+    /// list the operator wrote, so this admits only an absolute http(s) URL whose <em>origin</em> is
+    /// in <see cref="AllowedOrigins"/> — the path and query are the client's own business.
+    /// <para>
+    /// Any fragment on the candidate is dropped: the fragment is what carries the session back, so a
+    /// caller-supplied one would be overwritten anyway, and silently keeping half of it is worse than
+    /// dropping it outright.
+    /// </para>
+    /// </summary>
+    public bool TryResolveReturnUrl(string? candidate, out string resolved)
+    {
+        resolved = string.Empty;
+        if (string.IsNullOrWhiteSpace(candidate)) return false;
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
+
+        string origin = uri.GetLeftPart(UriPartial.Authority);
+        bool listed = AllowedOrigins.Any(o =>
+            !string.IsNullOrWhiteSpace(o) &&
+            string.Equals(o.TrimEnd('/'), origin, StringComparison.OrdinalIgnoreCase));
+        if (!listed) return false;
+
+        resolved = uri.GetLeftPart(UriPartial.Query);
+        return true;
+    }
 
     /// <summary>The token lifetimes and signing material, as the shared session package wants them.</summary>
     /// <remarks>

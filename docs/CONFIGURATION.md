@@ -291,7 +291,20 @@ Any verified guild member floors at `viewer` and can read, so there is no viewer
 | `SessionTtlSeconds` | `2592000` | `Auth__SessionTtlSeconds` | Absolute sign-in cap (30d). Each refresh slides it forward |
 | `RoleCacheTtlSeconds` | `60` | `Auth__RoleCacheTtlSeconds` | Per-user authority cache; also the staleness bound on a revoked role |
 | `StateTtlSeconds` | `300` | `Auth__StateTtlSeconds` | How long an in-flight sign-in's handshake cookie lives |
-| `AllowedOrigins` | `[]` | `Auth__AllowedOrigins__0…` | CORS origins (scheme+host, no trailing slash); empty ⇒ SPA blocked |
+| `AllowedOrigins` | `[]` | `Auth__AllowedOrigins__0…` | Origins (scheme+host, no trailing slash) a browser client may call from **and** be returned to after a sign-in; empty ⇒ SPA blocked |
+
+`AllowedOrigins` is one list doing both jobs on purpose: a client trusted to call this service with a
+bearer is exactly a client trusted to be handed one, and two lists would drift apart. It gates CORS,
+and it gates the `return_to` on `/auth/discord/start` — a browser client asking to be sent back to
+itself with the session instead of receiving the JSON a programmatic caller gets. An unlisted
+`return_to` is refused at `/start`, before the bounce to Discord, and the address is checked again at
+the callback: the cookie carrying it between the two is client-held and carries no integrity of its
+own, so one hand-set cookie would otherwise be an open redirect that hands over a real session.
+
+On a completed browser sign-in the callback `302`s to that address with the result in the URL
+**fragment** — `#access=…&refresh=…&tier=…`, or `#error=<code>` — never the query, because a
+fragment is not sent to a server, kept in a `Referer`, or written to an access log. The key names
+match the ones kgsm-api hands back, so one client reads either.
 
 Sessions are rows in the same SQLite file as the conversation history (`Conversation:DatabasePath`),
 so they survive a restart and a revocation outlives the process that performed it.

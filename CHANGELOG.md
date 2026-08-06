@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a browser client can be signed in and returned to itself
+
+The callback answered JSON: `{status, tier, accessToken, refreshToken, …}`. Correct for a
+programmatic caller and useless for a browser, which lands on a page of raw JSON — so a client on
+another origin had no way to complete a sign-in against this service at all.
+
+`/auth/discord/start` now takes `return_to`, and a login that carries one comes back as a `302` to
+that address with the outcome in the URL **fragment** — `#access=…&refresh=…&tier=…`, or
+`#error=<code>`. The fragment rather than the query because a fragment is never sent to a server,
+kept in a `Referer`, or written to an access log. The key names are the ones kgsm-api already hands
+back, so a client reads either with the same code. Without `return_to` the JSON contract is
+unchanged. Errors take the same route as successes: a browser that asked to be returned is never
+dead-ended on a body it cannot act on.
+
+**A redirect target that arrives on a request is an open-redirect surface, and this one hands over a
+real session**, so it is checked against `Auth:AllowedOrigins` at both ends. At `/start`, because
+bouncing to Discord for a login that cannot complete spends the user's consent on a dead end. At the
+callback, because the cookie carrying the address between the two is client-held and carries no
+integrity of its own — without the second check, setting one cookie by hand is enough.
+
+`AllowedOrigins` does both jobs deliberately: a client trusted to call with a bearer is exactly a
+client trusted to be handed one, and two lists would drift.
+
+`DELETE` joins the CORS methods. A client owns its conversations and removing one is a `DELETE`;
+without it a cross-origin client accumulates a history it has no way to clear.
+
 ### Changed — every confirmation streams, not just a blueprint finalize
 
 Streaming existed only for a blueprint finalize, because that was the one confirmation known to run

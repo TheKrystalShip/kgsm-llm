@@ -501,8 +501,10 @@ public class ServerAssistant : IServerAssistant
 
         _logger.LogInformation("Confirmed {Verb} of {Instance}", ConfirmationKinds.Verb(kind), match);
 
+        // _progress is the ambient sink: on a streamed confirm the settle step narrates the wait, and
+        // on a buffered one Report is a silent no-op.
         var outcome = await CommandSettlement.RunAndSettleAsync(
-            _operations, kind, match, op, _settlement, cancellationToken);
+            _operations, kind, match, op, _settlement, _progress, cancellationToken);
 
         if (outcome.Verdict is ConfirmVerdict.NotSettled or ConfirmVerdict.Unknown)
             _logger.LogWarning(

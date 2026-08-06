@@ -149,6 +149,7 @@ public static class CommandSettlement
         string instance,
         Func<string, CancellationToken, Task<Result>> operation,
         SettlementTiming? timing = null,
+        ITurnProgress? progress = null,
         CancellationToken cancellationToken = default)
     {
         var verb = ConfirmationKinds.Verb(kind);
@@ -165,7 +166,8 @@ public static class CommandSettlement
                 $"'{instance}' has been {ConfirmationKinds.PastTense(kind)}.", verb, instance);
 
         return await SettleAsync(
-            operations, kind, instance, expected.Value, timing ?? SettlementTiming.Default, cancellationToken);
+            operations, kind, instance, expected.Value,
+            timing ?? SettlementTiming.Default, progress, cancellationToken);
     }
 
     /// <summary>
@@ -179,6 +181,7 @@ public static class CommandSettlement
         string instance,
         bool expectedRunning,
         SettlementTiming timing,
+        ITurnProgress? progress = null,
         CancellationToken cancellationToken = default)
     {
         var verb = ConfirmationKinds.Verb(kind);
@@ -186,6 +189,7 @@ public static class CommandSettlement
 
         ServerRunState lastState = ServerRunState.Unknown;
         string? lastReason = null;
+        var narrated = false;
 
         while (true)
         {
@@ -204,6 +208,18 @@ public static class CommandSettlement
             var remaining = deadline - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
                 break;
+
+            // Narrate only once we are actually waiting. The common case settles on the first read, and a
+            // step announcing a wait that never happened would be narration of nothing.
+            if (!narrated)
+            {
+                narrated = true;
+                progress?.Report(
+                    LlmTools.ServerCommand, "settling",
+                    expectedRunning
+                        ? $"Waiting for {instance} to come up…"
+                        : $"Waiting for {instance} to shut down…");
+            }
 
             var wait = remaining < timing.PollInterval ? remaining : timing.PollInterval;
             await Task.Delay(wait, cancellationToken);

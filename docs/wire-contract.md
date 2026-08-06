@@ -152,7 +152,7 @@ emits are:
 | Code | Channel |
 |---|---|
 | `assistant_failed` | turn stream |
-| `finalize_failed` | confirm channel |
+| `confirm_failed` | confirm channel |
 
 A code is never narrowed to something that overstates what is known. A client that meets an
 unrecognised code renders `message`.
@@ -221,21 +221,29 @@ come to disagree, and `text` is the one field here that is free to be reworded.
 
 ### Streamed form
 
-A blueprint finalize runs a test-install → boot → verify → bounded-repair pipeline: minutes of
-work with long silent stretches. Streamed, it emits:
+**Every confirmation kind streams**, because any of them can be slow and silent: a blueprint
+finalize runs a minutes-long test-install → boot → verify → bounded-repair pipeline, an install
+downloads a game, and a lifecycle command is watched until it reaches its run state. Buffered into
+one response, that silence is what an idle-connection reaper on a remote path drops, leaving the
+caller's card spinning with no terminal result.
 
 | Frame | Meaning |
 |---|---|
-| `progress` | the pipeline's own steps, same shape as the turn stream's |
+| `progress` | a step of the work, same shape as the turn stream's |
 | `: keepalive` | a comment every 15s, so no idle reaper drops the socket |
 | `result` | terminal — carries the whole buffered response object |
 | `error` | terminal failure after the status committed |
 
 `result` is the confirm channel's terminal frame and is distinct from the turn stream's `done`: a
-finalize's outcome is a card, not assembled text.
+confirm's outcome is a verdict or a card, not assembled text.
 
-The other confirmation kinds answer buffered. A caller that asks for a stream on one of them
-receives the buffered JSON response.
+Which steps appear depends on the work. A blueprint finalize narrates its pipeline. A lifecycle
+command narrates `settling` — *"Waiting for factorio to come up…"* — and only once it is actually
+waiting, since the ordinary case reaches its run state on the first read and has no wait to report.
+A kind that reports no steps still gets heartbeats and a terminal frame.
+
+Token, authority and the staged payload are all resolved **before** the stream opens, so a stale
+token is a plain JSON 4xx and never a 200 whose only failure signal is buried in a frame.
 
 ---
 

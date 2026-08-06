@@ -765,41 +765,13 @@ secured.MapPost("/confirm", async (
     // The confirming user is the authority for the action they just approved (origin=assistant).
     using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
 
-    // Blueprint finalize: the user reviewed/edited the draft in the chat. The edited YAML rides the
-    // request body (re-validated downstream); a save without edits falls back to the staged draft (the
-    // token's ConfigValue is its opaque pending-write id). The result is a rich card, not a text line —
-    // and on a DraftReady outcome (repair exhausted / invalid edit) a FRESH Blueprint token is minted so
-    // the user can edit and save again (the re-edit loop).
-    if (confirmation.Kind == ConfirmationKind.Blueprint)
+    // A blueprint finalize produces a rich card and, when its repair loop exhausts, a fresh token for the
+    // re-edit loop; every other kind produces the outcome verdict. Both shapes are built ONCE here and
+    // used by the buffered and streamed paths alike — the two used to build the blueprint response
+    // separately, which is two things to keep in step.
+    async Task<ConfirmResponse> FinalizeBlueprintAsync(string game, string editedYaml, CancellationToken c)
     {
-        var game = confirmation.InstanceName ?? confirmation.Target;
-        var editedYaml = request.EditedContent;
-        if (string.IsNullOrWhiteSpace(editedYaml))
-        {
-            if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var stagedDraft))
-                return Results.BadRequest(new { error = "This draft has expired — ask the assistant to draft it again." });
-            editedYaml = stagedDraft;
-        }
-
-        // A finalize is minutes of test-install → verify → repair with long silent stretches. Buffered into
-        // one response, that silence lets an idle-connection reaper on a remote path drop the socket, leaving
-        // the chat card spinning with no terminal result. A caller that opts into `Accept: text/event-stream`
-        // (the SPA, via the api relay) gets it STREAMED instead: progress steps + keep-alive heartbeats keep
-        // the socket warm, and a terminal `result` frame carries the same ConfirmResponse. Everyone else
-        // (CLI, a plain JSON caller) keeps the buffered contract below. Token/authority/draft were all resolved
-        // above, so the SSE path only ever commits 200 after a clean validation.
-        var wantsStream = http.Request.Headers.Accept
-            .Any(v => v is not null && v.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase));
-        if (wantsStream)
-        {
-            await SseConfirmWriter.WriteAsync(
-                http, assistant, http.RequestServices.GetRequiredService<ITurnProgress>(),
-                tokens, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds,
-                principal, game, editedYaml!, canPerform);
-            return Results.Empty;
-        }
-
-        var outcome = await assistant.FinalizeBlueprintAsync(game, editedYaml!, canPerform, ct);
+        var outcome = await assistant.FinalizeBlueprintAsync(game, editedYaml, canPerform, c);
         var data = outcome.Data;
 
         // On DraftReady, re-stage the returned draft so the user can edit + save again. Mint a fresh token
@@ -821,26 +793,69 @@ secured.MapPost("/confirm", async (
 
         var card = JsonSerializer.SerializeToElement(ToolResultCard.From(outcome), SseTurnWriter.Json);
         var verified = data?.Outcome == BlueprintAuthoringOutcome.Verified;
-        return Results.Ok(new ConfirmResponse(outcome.Summary, verified, card, reEdit));
+        return new ConfirmResponse(outcome.Summary, verified, card, reEdit);
     }
 
-    // write_file: the token's ConfigValue is the opaque pending-write id (never the real content —
-    // see PendingWriteTokenSwap), so rehydrate the real content here, single-use. An expired/already-
-    // used id is an honest failure — never silently treated as an empty write.
-    if (confirmation.Kind == ConfirmationKind.WriteFile)
+    async Task<ConfirmResponse> ExecuteAsync(PendingConfirmation staged, CancellationToken c)
     {
-        if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var realContent))
-            return Results.BadRequest(new { error = "This file write has expired or was already confirmed — ask the assistant to propose it again." });
-
-        confirmation = confirmation with { ConfigValue = realContent };
+        var confirmed = await assistant.ConfirmAsync(staged, canPerform, c);
+        // Success is the outcome's own — an accepted-but-never-settled lifecycle command is reported as
+        // what it is, so a client never has to infer the difference from the text.
+        return new ConfirmResponse(
+            confirmed.Summary, confirmed.Ok, Outcome: ConfirmOutcomeDto.From(confirmed));
     }
 
-    var confirmed = await assistant.ConfirmAsync(confirmation, canPerform, ct);
+    // Resolve the staged payload before anything runs, so a stale one is still a clean pre-stream 4xx.
+    Func<CancellationToken, Task<ConfirmResponse>> work;
+    if (confirmation.Kind == ConfirmationKind.Blueprint)
+    {
+        // The user reviewed/edited the draft in the chat. The edited YAML rides the request body
+        // (re-validated downstream); a save without edits falls back to the staged draft (the token's
+        // ConfigValue is its opaque pending-write id).
+        var game = confirmation.InstanceName ?? confirmation.Target;
+        var editedYaml = request.EditedContent;
+        if (string.IsNullOrWhiteSpace(editedYaml))
+        {
+            if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var stagedDraft))
+                return Results.BadRequest(new { error = "This draft has expired — ask the assistant to draft it again." });
+            editedYaml = stagedDraft;
+        }
+        work = c => FinalizeBlueprintAsync(game, editedYaml!, c);
+    }
+    else
+    {
+        // write_file: the token's ConfigValue is the opaque pending-write id (never the real content —
+        // see PendingWriteTokenSwap), so rehydrate the real content here, single-use. An expired/already-
+        // used id is an honest failure — never silently treated as an empty write.
+        if (confirmation.Kind == ConfirmationKind.WriteFile)
+        {
+            if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var realContent))
+                return Results.BadRequest(new { error = "This file write has expired or was already confirmed — ask the assistant to propose it again." });
 
-    // Success is the outcome's own — an accepted-but-never-settled lifecycle command is reported as
-    // what it is, so a client never has to infer the difference from the text.
-    return Results.Ok(new ConfirmResponse(
-        confirmed.Summary, confirmed.Ok, Outcome: ConfirmOutcomeDto.From(confirmed)));
+            confirmation = confirmation with { ConfigValue = realContent };
+        }
+        var staged = confirmation;
+        work = c => ExecuteAsync(staged, c);
+    }
+
+    // Any confirmation can be slow and silent: a finalize runs a minutes-long pipeline, an install
+    // downloads a game, and a lifecycle command is watched until it reaches its run state. Buffered into
+    // one response that silence lets an idle-connection reaper on a remote path drop the socket, leaving
+    // the caller's card spinning with no terminal result. A caller that opts into
+    // `Accept: text/event-stream` gets progress steps + keep-alive heartbeats + a terminal `result` frame
+    // carrying the same ConfirmResponse; everyone else (CLI, a plain JSON caller) keeps the buffered
+    // contract. Token, authority and payload were all resolved above, so the SSE path only ever commits
+    // 200 after a clean validation.
+    var wantsStream = http.Request.Headers.Accept
+        .Any(v => v is not null && v.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase));
+    if (wantsStream)
+    {
+        await SseConfirmWriter.WriteAsync(
+            http, http.RequestServices.GetRequiredService<ITurnProgress>(), work);
+        return Results.Empty;
+    }
+
+    return Results.Ok(await work(ct));
 });
 
 app.Run();

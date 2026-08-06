@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — every confirmation streams, not just a blueprint finalize
+
+Streaming existed only for a blueprint finalize, because that was the one confirmation known to run
+for minutes. The others are not fast: an install downloads a game, and a lifecycle command is now
+watched until it reaches its run state. Buffered into one response, each is a long silence on one
+socket — the thing an idle-connection reaper on a remote path drops, leaving the caller's card
+spinning with no terminal result. `Accept: text/event-stream` now streams **any** kind: progress
+steps, a keep-alive comment every 15s, and a terminal `result` frame carrying the same
+`ConfirmResponse` a buffered caller gets. Without the header the buffered contract is unchanged.
+
+`SseConfirmWriter` no longer knows what it is running — it takes the work as a function and owns
+only the streaming mechanics, so every kind reaches the wire through one path. That also collapsed
+the blueprint response, which was built once for the buffered path and again inside the writer: two
+copies of the re-edit token and card logic, with nothing keeping them in step.
+
+A settling lifecycle command narrates `settling` — *"Waiting for factorio to come up…"* — reported
+only once the wait is real, since the ordinary case reaches its run state on the first read and has
+no wait to report.
+
+The confirm channel's in-band error code is `confirm_failed`; it was named for the finalize that
+used to be the only thing streaming.
+
 ### Changed — a confirmed command reports what was observed, not what was accepted
 
 A confirmed lifecycle command answered from the engine's exit code: *"'factorio' has been started."*

@@ -1048,6 +1048,108 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         response.Content.Headers.ContentType?.MediaType.Should().NotBe("text/event-stream");
     }
 
+    // --- streamed /confirm (every kind, not just a blueprint finalize) ----------------------------
+
+    [Fact]
+    public async Task Confirm_StreamAccept_LifecycleCommand_StreamsTerminalResultFrame()
+    {
+        // A lifecycle confirm is now watched until it reaches its run state, so it can be a long silence
+        // on one socket. Streaming carries the SAME ConfirmResponse a buffered caller gets, on a terminal
+        // `result` frame, so the caller's card always reaches a terminal state.
+        var (factory, token) = await StartConfirmFixtureAsync(running: true);
+
+        var response = await StreamConfirmAsync(await AuthedAsync(factory), token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("event: result");
+        body.Should().Contain("\"type\":\"result\"");
+        // The verdict travels on the streamed frame exactly as it does on the buffered response.
+        body.Should().Contain("\"verdict\":\"settled\"");
+        body.Should().Contain("\"observedState\":\"running\"");
+        body.Should().Contain("\"success\":true");
+    }
+
+    [Fact]
+    public async Task Confirm_StreamAccept_SlowSettle_NarratesTheWait()
+    {
+        // A settle that has to wait says so, rather than leaving the client with nothing but heartbeats.
+        // The step is reported only once the wait is real — a server already up settles on the first read
+        // and narrates nothing.
+        var (factory, token) = await StartConfirmFixtureAsync(running: false);
+
+        var response = await StreamConfirmAsync(await AuthedAsync(factory), token);
+        var body = await response.Content.ReadAsStringAsync();
+
+        body.Should().Contain("event: progress");
+        body.Should().Contain("\"key\":\"settling\"");
+        body.Should().Contain("Waiting for inst to come up");
+        // …and it still reaches a terminal frame, carrying the honest non-success verdict.
+        body.Should().Contain("event: result");
+        body.Should().Contain("\"verdict\":\"notSettled\"");
+        body.Should().Contain("\"success\":false");
+    }
+
+    [Fact]
+    public async Task Confirm_StreamAccept_StaleToken_Returns400Json_NotSse()
+    {
+        // Token and payload are resolved BEFORE the stream opens, so a bad one is still a clean JSON 400
+        // and never a 200 whose only failure signal is buried in an in-band frame.
+        var factory = Factory();
+        var response = await StreamConfirmAsync(await AuthedAsync(factory), "not-a-valid-token");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.Content.Headers.ContentType?.MediaType.Should().NotBe("text/event-stream");
+    }
+
+    /// <summary>
+    /// A factory whose engine has one instance that will report <paramref name="running"/> after a start,
+    /// plus a confirmation token for starting it.
+    /// </summary>
+    private async Task<(WebApplicationFactory<Program> Factory, string Token)> StartConfirmFixtureAsync(bool running)
+    {
+        var instances = Substitute.For<IInstanceService>();
+        instances.GetAll().Returns(new Dictionary<string, Instance>
+        {
+            ["inst"] = new Instance { Name = "inst", BlueprintFile = "factorio" },
+        });
+        instances.Start("inst", Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0));
+        instances.GetAllStatuses(Arg.Any<bool>()).Returns(new Dictionary<string, Reading<InstanceRuntimeStatus>>
+        {
+            ["inst"] = Reading<InstanceRuntimeStatus>.Measured(
+                new InstanceRuntimeStatus { InstanceName = "inst", Status = running }),
+        });
+
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(["role-123"]);
+
+        var factory = Factory(discord: discord, configure: b =>
+        {
+            b.UseSetting("Assistant:ActionsEnabled", "true");
+            b.UseSetting("Assistant:Confirmation:Key", "test-key");
+            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
+            b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
+        });
+
+        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
+        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+        return await Task.FromResult((factory, token));
+    }
+
+    /// <summary>POSTs /confirm with an <c>Accept: text/event-stream</c> header.</summary>
+    private static async Task<HttpResponseMessage> StreamConfirmAsync(HttpClient client, string token)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/confirm")
+        {
+            Content = JsonContent.Create(new { token }),
+        };
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        return await client.SendAsync(request);
+    }
+
     /// <summary>POSTs /turn with an <c>Accept: text/event-stream</c> header and the given prompt.</summary>
     private static async Task<HttpResponseMessage> StreamTurnAsync(HttpClient client, string prompt)
     {

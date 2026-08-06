@@ -627,7 +627,7 @@ public class ToolDispatcher : IToolDispatcher
         _logger.LogInformation("Auto-executing {Verb} of {Instance}", ConfirmationKinds.Verb(kind), instance);
 
         var outcome = await CommandSettlement.RunAndSettleAsync(
-            _operations, kind, instance, op, _settlement, cancellationToken);
+            _operations, kind, instance, op, _settlement, cancellationToken: cancellationToken);
 
         return outcome.Verdict switch
         {

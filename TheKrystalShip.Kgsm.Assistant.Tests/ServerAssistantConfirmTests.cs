@@ -611,6 +611,39 @@ public class ServerAssistantConfirmTests
         reads.Should().BeGreaterThan(1);
     }
 
+    [Fact]
+    public async Task Command_SettlingImmediately_NarratesNothing()
+    {
+        // The common case settles on the first read. A step announcing a wait that never happened would
+        // be narration of nothing, so the sink must stay untouched.
+        Instances("minecraft");
+        StubOp(ConfirmationKind.Start, "minecraft", Result.Success());
+        Fleet("minecraft", running: true);
+        var progress = Substitute.For<ITurnProgress>();
+
+        await CommandSettlement.RunAndSettleAsync(
+            _operations, ConfirmationKind.Start, "minecraft", OpFor(ConfirmationKind.Start), FastTiming, progress);
+
+        progress.DidNotReceive().Report(Arg.Any<Tool>(), Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Command_ThatHasToWait_NarratesTheWaitOnce()
+    {
+        // A real wait is narrated, so a streamed confirm shows movement instead of only heartbeats — and
+        // exactly once, however many times it polls.
+        Instances("minecraft");
+        StubOp(ConfirmationKind.Start, "minecraft", Result.Success());
+        Fleet("minecraft", running: false);
+        var progress = Substitute.For<ITurnProgress>();
+
+        await CommandSettlement.RunAndSettleAsync(
+            _operations, ConfirmationKind.Start, "minecraft", OpFor(ConfirmationKind.Start), FastTiming, progress);
+
+        progress.Received(1).Report(
+            Arg.Any<Tool>(), "settling", Arg.Is<string>(s => s.Contains("come up")));
+    }
+
     /// <summary>A window short enough that an unsettled case closes in milliseconds, not 90 seconds.</summary>
     private static readonly SettlementTiming FastTiming =
         new(TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(10));

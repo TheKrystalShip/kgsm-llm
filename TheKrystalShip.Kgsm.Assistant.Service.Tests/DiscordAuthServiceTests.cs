@@ -92,6 +92,41 @@ public class DiscordAuthServiceTests : IDisposable
             NullLogger<DiscordAuthService>.Instance);
     }
 
+    private DiscordAuthService BuildWithBlankHostId(
+        IDiscordDirectory directory, out ISessionRegistry registry, out ISessionTokenService tokens)
+    {
+        var authOptions = Options.Create(new AuthOptions
+        {
+            SigningKey = "a-stable-test-secret",
+            HostId = string.Empty,   // the shipped default: a settings file cannot name its host
+            AccessTtlSeconds = 900,
+            SessionTtlSeconds = 3600,
+            RoleCacheTtlSeconds = 60,
+        });
+
+        Directory.CreateDirectory(_dbDir);
+        registry = new SqliteSessionRegistry(Options.Create(new ConversationOptions
+        {
+            DatabasePath = Path.Combine(_dbDir, "conversations.db"),
+        }));
+        tokens = new SessionTokenService(
+            authOptions.Value.ToSessionTokenOptions(), NullLogger<SessionTokenService>.Instance);
+
+        var assistantOptions = Options.Create(new AssistantServiceOptions
+        {
+            ActionsEnabled = true,
+            Confirmation = new ConfirmationOptions { Key = "signing-key" },
+        });
+
+        return new DiscordAuthService(
+            directory, tokens, registry,
+            new SessionValidator(registry, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromSeconds(5)),
+            new DiscordTierCache(TimeSpan.FromSeconds(60)),
+            new ConfirmationTokenService(assistantOptions),
+            new KgsmAuthOptions { RoleAdminIds = AdminRole, RoleOperatorIds = OperatorRole }.ToRoleMap(),
+            authOptions, assistantOptions, NullLogger<DiscordAuthService>.Instance);
+    }
+
     private static AuthPrincipal Principal(string userId = "u1", string sessionId = "sid_x") =>
         new(userId, "Alice", sessionId);
 
@@ -128,6 +163,26 @@ public class DiscordAuthServiceTests : IDisposable
         // refuses a sid the registry does not know.
         string sessionId = await SessionIdOf(service, session.RefreshToken);
         (await registry.IsAliveAsync(sessionId)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TheSessionRowIsScopedToTheSameHostTheTokensAreMintedUnder()
+    {
+        // One host identity, one spelling. The audience comes from the resolved host (blank config
+        // means this machine's name); a row written from the raw setting would say "" instead, and
+        // the two would disagree about which host the session belongs to.
+        var directory = Substitute.For<IDiscordDirectory>();
+        DiscordAuthService service = BuildWithBlankHostId(directory, out ISessionRegistry registry, out ISessionTokenService tokens);
+
+        AuthSessionResult session = await service.CreateSessionAsync(
+            new ResolvedPrincipal(Alice, KgsmTier.Operator), null, CancellationToken.None);
+
+        // A token minted for this machine validates; the row must claim the same host.
+        RefreshClaims? claims = await tokens.ReadRefreshAsync(session.RefreshToken);
+        claims.Should().NotBeNull();
+
+        var registryRow = (SqliteSessionRegistry)registry;
+        registryRow.HostOf(claims!.SessionId).Should().Be(Environment.MachineName);
     }
 
     [Fact]

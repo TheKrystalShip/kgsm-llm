@@ -184,6 +184,20 @@ internal sealed class SqliteSessionRegistry : ISessionRegistry
         }
     }
 
+    /// <summary>
+    /// The host a session was recorded against, or null. It mirrors the audience its tokens were
+    /// minted under, so the two are checkable against each other rather than merely believed equal.
+    /// </summary>
+    public string? HostOf(string sessionId)
+    {
+        using SqliteConnection connection = Open();
+        using SqliteCommand cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT host_id FROM sessions WHERE session_id = $sid;";
+        cmd.Parameters.AddWithValue("$sid", sessionId);
+
+        return cmd.ExecuteScalar() as string;
+    }
+
     /// <summary>The user a live session belongs to, or null. Used to scope a self-revoke.</summary>
     public string? UserOf(string sessionId)
     {

@@ -99,7 +99,11 @@ internal sealed class DiscordAuthService(
 
         await sessions.CreateAsync(
             new SessionRegistration(
-                sessionId, resolved.Identity.UserId, _auth.HostId,
+                // The RESOLVED host, the same value the tokens are minted under. Reading the raw
+                // setting here would write a row claiming the session belongs to host "" while its
+                // tokens say otherwise — one host identity with two spellings, which is how a later
+                // reconciliation quietly matches nothing.
+                sessionId, resolved.Identity.UserId, _auth.ResolveHostId(),
                 Created: now, Expires: refresh.ExpiresAt,
                 UserAgent: userAgent, CurrentJti: refresh.Jti),
             ct);

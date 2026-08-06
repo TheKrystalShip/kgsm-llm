@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A session row recorded the **raw** `Auth:HostId` while its tokens were minted under the **resolved**
+  one, so with the shipped blank default the row claimed host `""` and the token said `hotrod` — one
+  host identity with two spellings. Nothing read the column yet, which is why it took a real login to
+  surface it. Both now come from `ResolveHostId()`.
+
 ### Added — the assistant is reachable on its own hostname
 
 `deploy/nginx/kgsm-assistant.conf` is this leaf's own nginx server block, installed into

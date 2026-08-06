@@ -348,9 +348,9 @@ confirmed proposal depends on whether the API exposes that verb. The SPA routes 
 where it can; the assistant's `/confirm` (carried by the retained `token`) covers the rest and
 the non-API surfaces.
 
-> **Auto-accept (2026-06-26) — the one exception to "propose-only".** A turn the API marks
-> `X-Relay-Auto-Act: true` (verified **admin** tier ∧ the SPA's per-turn "Auto-run" toggle —
-> strictly stronger than `X-Relay-Can-Act`, which is now operator+ and toggle-independent) lets the
+> **Auto-accept — the one exception to "propose-only".** A turn the API marks
+> `X-Relay-Auto-Act: true` (verified **admin** tier ∧ the SPA's per-turn "Auto-run" toggle — strictly
+> stronger than the forwarded `X-Relay-Tier`, which grants proposing at operator+) lets the
 > assistant **run the lifecycle verbs immediately** (`start`/`stop`/`restart`/`update`/`backup`)
 > instead of staging them. Such a verb emits **no `command.proposed`** — it runs in the dispatcher
 > via `IServerOperations` and surfaces as the ordinary `tool.start`/`tool.result` pair (the

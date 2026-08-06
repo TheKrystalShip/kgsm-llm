@@ -645,22 +645,23 @@ secured.MapPost("/turn", async (
 
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
 
-    // Whether THIS turn may perform actions = the user's per-turn toggle (INTENT) ∧ their AUTHORITY.
-    //  - trusted relay (kgsm-api): authority is the api's verified tier decision (operator+), already
-    //    folded with the toggle into X-Relay-Can-Act, which BearerAuthFilter stashed. We add only our
-    //    local preconditions (ActionsEnabled + a Confirmation signing key to mint the proposal token).
-    //  - direct session bearer: authority is the caller's Discord action role, ANDed with the toggle.
-    // The conversation key is principal-scoped so one user can't read or poison another's memory.
-    // autoExecute = auto-accept: on a trusted-relay turn the api ALSO forwards an admin-tier ∧ toggle
-    // decision (X-Relay-Auto-Act). When set, the dispatcher RUNS lifecycle commands immediately
-    // instead of staging them. It is gated to canPerform so the propose-gate (BuildGate) always
-    // allows what auto-execute then runs; the direct-bearer path never auto-executes (propose-only).
+    // Whether THIS turn may propose actions.
+    //  - trusted relay (kgsm-api): the caller's verified tier, forwarded as X-Relay-Tier and stashed by
+    //    BearerAuthFilter. Proposing is an operator capability and needs no toggle — the user still
+    //    confirms each proposal. A relay host may have no Discord config of its own, so the forwarded
+    //    tier is the only correct source; this service adds only its local preconditions (actions
+    //    enabled + a Confirmation signing key to mint the proposal token).
+    //  - direct session bearer: the caller's own Discord tier, ANDed with their per-turn toggle.
+    // autoExecute = auto-accept: on a relayed turn the api ALSO forwards its admin-tier ∧ toggle
+    // decision (X-Relay-Auto-Act). When set, the dispatcher RUNS lifecycle commands immediately instead
+    // of staging them. It is gated to canPerform so the propose-gate (BuildGate) always allows what
+    // auto-execute then runs; the direct-bearer path never auto-executes (propose-only).
     bool canPerform;
     bool autoExecute = false;
-    if (http.Items.TryGetValue(BearerAuthFilter.RelayCanActKey, out var relayObj) && relayObj is bool relayCanAct)
+    if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
     {
         var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
-        canPerform = relayCanAct && asstOpts.ActionsEnabled && tokens.IsConfigured;
+        canPerform = relayTier >= KgsmTier.Operator && asstOpts.ActionsEnabled && tokens.IsConfigured;
         var relayAutoAct = http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
             && autoObj is bool b && b;
         autoExecute = canPerform && relayAutoAct;
@@ -751,14 +752,14 @@ secured.MapPost("/confirm", async (
         !string.Equals(stagedBy, principal.UserId, StringComparison.Ordinal))
         return Results.BadRequest(new { error = "Invalid or expired confirmation." });
 
-    // Re-derive authority FRESH at confirm time — never trust it from the token. Mirror the /turn
-    // path exactly (the confirm executes a mutation, so it must read authority the SAME way the propose
-    // did): on the trusted-relay path the api's verified operator-tier decision arrives as X-Relay-Can-Act
-    // (BearerAuthFilter stashed it) — a Discord-less relay host has no bot to re-derive from, so honoring
-    // the header is the only correct source; a direct session bearer falls back to the Discord action role.
+    // Re-derive authority FRESH at confirm time — never trust it from the token. Mirror the /turn path
+    // exactly (the confirm EXECUTES a mutation, so it must read authority the SAME way the propose did):
+    // on the trusted-relay path the caller's verified tier arrives as X-Relay-Tier, which is the only
+    // correct source for a relay host with no Discord config of its own; a direct session bearer falls
+    // back to its own Discord lookup.
     bool canPerform;
-    if (http.Items.TryGetValue(BearerAuthFilter.RelayCanActKey, out var relayObj) && relayObj is bool relayCanAct)
-        canPerform = relayCanAct && assistantOptions.Value.ActionsEnabled && tokens.IsConfigured;
+    if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
+        canPerform = relayTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled && tokens.IsConfigured;
     else
         canPerform = await auth.CanPerformActionsAsync(principal, ct);
     // The confirming user is the authority for the action they just approved (origin=assistant).

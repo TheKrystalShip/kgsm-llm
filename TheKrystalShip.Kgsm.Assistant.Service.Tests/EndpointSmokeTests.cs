@@ -232,7 +232,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Confirm_Relay_BlueprintFinalize_CanActHeaderGrantsAuthority()
     {
         // The blueprint-review Save arrives on the trusted-relay path (kgsm-api). Authority MUST come from
-        // X-Relay-Can-Act exactly as the propose side does — a relay host with no Discord config has no bot
+        // X-Relay-Tier exactly as the propose side does — a relay host with no Discord config has no bot
         // to re-derive from, so ignoring the header would deny every finalize. The api's /confirm is
         // operator-gated, so it forwards can-act=true; here we prove the assistant honors it.
         var assistant = Substitute.For<IServerAssistant>();
@@ -252,17 +252,20 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var token = tokenSvc.Create(
             new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"), "relayuser");
 
-        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", canAct: true);
+        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", "operator");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         await assistant.Received(1).FinalizeBlueprintAsync("Satisfactory", "edited-yaml", true, Arg.Any<CancellationToken>());
     }
 
-    [Fact]
-    public async Task Confirm_Relay_BlueprintFinalize_WithoutCanAct_IsDenied()
+    [Theory]
+    [InlineData("viewer")]   // authenticated, but below operator
+    [InlineData(null)]       // a relay that does not speak the header at all
+    public async Task Confirm_Relay_BelowOperator_IsDenied(string? tier)
     {
-        // Fail-closed: a relay confirm that does NOT speak X-Relay-Can-Act (absent) must reach the finalize
-        // with canPerform=false, never silently authorized.
+        // Fail-closed, both ways round: a tier under operator and an ABSENT tier must both reach the
+        // finalize with canPerform=false. Omission is the one that matters — a relay that says nothing
+        // must never be read as saying yes.
         var assistant = Substitute.For<IServerAssistant>();
         assistant.FinalizeBlueprintAsync("Satisfactory", "edited-yaml", false, Arg.Any<CancellationToken>())
             .Returns(new ToolResult<BlueprintAuthoringData>(
@@ -280,16 +283,33 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var token = tokenSvc.Create(
             new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"), "relayuser");
 
-        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", canAct: false);
+        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", tier);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         await assistant.Received(1).FinalizeBlueprintAsync("Satisfactory", "edited-yaml", false, Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("operator")]      // authenticated, but review is admin's
+    [InlineData("not-a-tier")]    // a spelling this service does not know
+    [InlineData("")]              // present and empty
+    public async Task Review_Relay_WithoutAdminTier_IsForbidden(string tier)
+    {
+        // The parse is fail-closed, so an unrecognised or empty spelling denies exactly as a real
+        // lower tier does. A relay cannot open the review surface by sending something unexpected.
+        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: new RecordingConversationStore());
+
+        var response = await RelayGetAsync(
+            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", tier);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     /// <summary>POSTs /confirm over the trusted-relay path with the relay secret + forwarded identity and,
-    /// optionally, the <c>X-Relay-Can-Act</c> authority header.</summary>
+    /// optionally, the <c>X-Relay-Tier</c> authority header. <paramref name="tier"/> null omits it.</summary>
     private static async Task<HttpResponseMessage> RelayConfirmAsync(
-        HttpClient client, string token, string editedContent, string secret, string userId, bool? canAct)
+        HttpClient client, string token, string editedContent, string secret, string userId, string? tier)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/confirm")
         {
@@ -297,7 +317,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         };
         request.Headers.Add("X-Relay-Secret", secret);
         request.Headers.Add("X-Relay-User", userId);
-        if (canAct is not null) request.Headers.Add("X-Relay-Can-Act", canAct.Value ? "true" : "false");
+        if (tier is not null) request.Headers.Add("X-Relay-Tier", tier);
         return await client.SendAsync(request);
     }
 
@@ -1204,10 +1224,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         };
 
     [Fact]
-    public async Task Review_Relay_WithoutTheAdminHeader_IsForbidden()
+    public async Task Review_Relay_WithNoTierHeaderAtAll_IsForbidden()
     {
-        // An api that doesn't speak X-Relay-Admin must never open the surface by omission — the same
-        // fail-closed rule as X-Relay-Can-Act. The caller IS authenticated here (401 would be wrong).
+        // A relay that doesn't speak X-Relay-Tier must never open the surface by omission. The caller IS
+        // authenticated here (401 would be wrong) — it is the authority that is absent, not the identity.
         var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
             withStore: new RecordingConversationStore());
 
@@ -1224,7 +1244,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: new RecordingConversationStore());
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", admin: false);
+            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", "operator");
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -1263,7 +1283,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: store);
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", "admin");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.ActorSurface.Should().Be("web");
@@ -1295,7 +1315,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: store);
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", "admin");
 
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"displayName\":null");
@@ -1313,7 +1333,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: store);
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations?user=u1", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations?user=u1", "relay-secret", "relayuser", "admin");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.ListScope.Should().Be("web:u1");             // the asked-for user, composed server-side
@@ -1348,7 +1368,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: store);
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", "relay-secret", "relayuser", "admin");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.HistoryKey.Should().Be("web:u1:chatA");   // the handle decoded back to the stored key
@@ -1371,7 +1391,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: new RecordingConversationStore());
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), $"/admin/conversations/{outside}", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), $"/admin/conversations/{outside}", "relay-secret", "relayuser", "admin");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -1385,7 +1405,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: new RecordingConversationStore());   // no summaries → nothing to resolve
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", "relay-secret", "relayuser", "admin");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -1397,7 +1417,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: new RecordingConversationStore());
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/!!!not-base64!!!", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations/!!!not-base64!!!", "relay-secret", "relayuser", "admin");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -1446,7 +1466,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: store);
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.StatsSurface.Should().Be("web");
@@ -1468,7 +1488,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: new RecordingConversationStore());
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
 
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"medianTurnMs\":null");
@@ -1498,7 +1518,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: store);
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
 
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"name\":\"get_status\",\"known\":true");
@@ -1525,7 +1545,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             withStore: store);
 
         var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", admin: true);
+            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
 
         (await response.Content.ReadAsStringAsync())
             .Should().Contain("\"name\":\"revise_blueprint\",\"known\":true");
@@ -1533,8 +1553,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
     /// <summary>GETs a secured path over the trusted-relay path (secret + forwarded identity, no bearer).</summary>
     private static Task<HttpResponseMessage> RelayGetAsync(
-        HttpClient client, string path, string secret, string userId, bool? admin = null) =>
-        RelaySendAsync(client, HttpMethod.Get, path, secret, userId, admin);
+        HttpClient client, string path, string secret, string userId, string? tier = null) =>
+        RelaySendAsync(client, HttpMethod.Get, path, secret, userId, tier);
 
     /// <summary>Sends any method to a secured path over the trusted-relay path (secret + forwarded id).</summary>
     private static async Task<HttpResponseMessage> RelayJsonAsync(
@@ -1550,15 +1570,15 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     private static async Task<HttpResponseMessage> RelaySendAsync(
-        HttpClient client, HttpMethod method, string path, string secret, string userId, bool? admin = null)
+        HttpClient client, HttpMethod method, string path, string secret, string userId, string? tier = null)
     {
         var request = new HttpRequestMessage(method, path);
         request.Headers.Add("X-Relay-Secret", secret);
         request.Headers.Add("X-Relay-User", userId);
-        // Omitted entirely when null — that IS the case a review test needs to cover (an older api
-        // that doesn't speak the header must not be granted the surface).
-        if (admin is not null)
-            request.Headers.Add("X-Relay-Admin", admin.Value ? "true" : "false");
+        // Omitted entirely when null — that IS the case a review test needs to cover (a relay that does
+        // not speak the header must not be granted the surface by omission).
+        if (tier is not null)
+            request.Headers.Add("X-Relay-Tier", tier);
         return await client.SendAsync(request);
     }
 }

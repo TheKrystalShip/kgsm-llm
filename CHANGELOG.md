@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the relay forwards one tier instead of two booleans
+
+- **`X-Relay-Tier` replaces `X-Relay-Can-Act` and `X-Relay-Admin`.** A relayed caller's authority is
+  whatever the api verified — this service does no Discord lookup for one, since a relay host may have
+  no Discord configuration of its own — so it is now one value answering every authority question
+  instead of two booleans that could disagree.
+- **The parse is fail-closed:** an unrecognised spelling, an empty header, or no header at all is
+  `None`. A relay that says nothing is never read as saying yes, on either the action or the review
+  surface.
+- `X-Relay-Auto-Act` is unchanged — admin tier **∧** the user's per-turn toggle is a preference riding
+  a permission, not a permission.
+
 ### Changed — the whole sign-in runs on the shared auth pipeline
 
 The service now uses `TheKrystalShip.KGSM.Auth.Discord` and `.Auth.Sessions` for everything it used

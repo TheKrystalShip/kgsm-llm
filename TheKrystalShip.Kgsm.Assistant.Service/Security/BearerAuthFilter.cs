@@ -20,9 +20,9 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// minted, resolved to an <see cref="AuthPrincipal"/> (the browser/SPA-direct path).</item>
 /// <item><b>Trusted relay</b> — a co-located kgsm-api forwarding a verified end-user. A request
 /// carrying a matching <c>X-Relay-Secret</c> is authenticated as the forwarded Discord identity
-/// (<c>X-Relay-User</c> + optional <c>X-Relay-User-Name</c>) with NO session login. The relay
-/// forwards identity only; authority is still derived from the bot by user id downstream. Enabled
-/// only when <see cref="RelayOptions.Secret"/> is configured.</item>
+/// (<c>X-Relay-User</c> + optional <c>X-Relay-User-Name</c>) with NO session login, carrying that
+/// caller's already-verified tier in <c>X-Relay-Tier</c>. Enabled only when
+/// <see cref="RelayOptions.Secret"/> is configured.</item>
 /// </list>
 /// Either way the resolved principal is stashed on <see cref="HttpContext.Items"/> for the handler;
 /// a missing/unresolvable credential short-circuits with a clean 401 (never calling the handler).
@@ -39,31 +39,29 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     public const string PrincipalKey = "principal";
 
     /// <summary>
-    /// Key under which the trusted relay's action-authority decision is stored (a <c>bool</c>), set
-    /// ONLY on the authenticated relay path. The api forwards its verified tier decision (operator+,
-    /// the authority to PROPOSE) as <c>X-Relay-Can-Act</c>; the /turn handler trusts it instead
-    /// of a Discord role lookup. Absent ⇒ the session-bearer path (authority comes from Discord).
+    /// Key under which the trusted relay's forwarded authority is stored (a <see cref="KgsmTier"/>), set
+    /// ONLY on the authenticated relay path from <c>X-Relay-Tier</c>. It is the caller's tier as the api
+    /// verified it, and it is the whole authority on this path — the assistant does no Discord lookup for
+    /// a relayed caller, because a relay host may have no Discord configuration of its own. Trusted only
+    /// because the relay secret already matched.
+    /// <para>
+    /// Absent from <see cref="HttpContext.Items"/> ⇒ the session-bearer path, where authority comes from
+    /// Discord instead. Present but unparseable, or an empty header, ⇒ <see cref="KgsmTier.None"/>: a
+    /// relay that does not speak this header can never grant anything by omission.
+    /// </para>
     /// </summary>
-    public const string RelayCanActKey = "relayCanAct";
+    public const string RelayTierKey = "relayTier";
 
     /// <summary>
     /// Key under which the trusted relay's AUTO-ACCEPT decision is stored (a <c>bool</c>), set ONLY on
     /// the authenticated relay path. The api forwards its verified <em>admin</em>-tier ∧ per-turn
     /// toggle decision as <c>X-Relay-Auto-Act</c>; when true the /turn handler lets the dispatcher run
-    /// lifecycle commands immediately instead of staging them. Strictly stronger than
-    /// <see cref="RelayCanActKey"/>. Absent/non-"true" ⇒ false (propose-only), so a relay that doesn't
-    /// speak this header can never silently auto-execute.
+    /// lifecycle commands immediately instead of staging them. Strictly stronger than the tier alone,
+    /// and its own header because it is a preference riding a permission rather than a permission.
+    /// Absent/non-"true" ⇒ false (propose-only), so a relay that doesn't speak this header can never
+    /// silently auto-execute.
     /// </summary>
     public const string RelayAutoActKey = "relayAutoAct";
-
-    /// <summary>
-    /// Key under which the trusted relay's ADMIN decision is stored (a <c>bool</c>), set ONLY on the
-    /// authenticated relay path from <c>X-Relay-Admin</c>. The api forwards its verified admin-tier
-    /// decision; the review endpoints trust it instead of a Discord role lookup, exactly as
-    /// <see cref="RelayCanActKey"/> works for actions. Absent/non-"true" ⇒ false, so a relay that
-    /// doesn't speak this header can never open the review surface.
-    /// </summary>
-    public const string RelayAdminKey = "relayAdmin";
 
     /// <summary>
     /// Key under which the trusted relay's per-CHAT conversation id is stored (a <c>string</c>), set
@@ -79,9 +77,8 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     private const string RelaySecretHeader = "X-Relay-Secret";
     private const string RelayUserHeader = "X-Relay-User";
     private const string RelayUserNameHeader = "X-Relay-User-Name";
-    private const string RelayCanActHeader = "X-Relay-Can-Act";
+    private const string RelayTierHeader = "X-Relay-Tier";
     private const string RelayAutoActHeader = "X-Relay-Auto-Act";
-    private const string RelayAdminHeader = "X-Relay-Admin";
     private const string RelayConversationIdHeader = "X-Relay-Conversation-Id";
 
     private static readonly JsonWebTokenHandler Handler = new();
@@ -123,19 +120,15 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             // so the session id is empty and a logout on this path has nothing to revoke.
             context.HttpContext.Items[PrincipalKey] = new AuthPrincipal(
                 userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, string.Empty);
-            // The relay's action-authority decision (the api's verified tier ∧ the user's toggle).
-            // Trusted only because the relay secret already matched. Absent/anything-but-"true" ⇒ false,
-            // so a relay that doesn't speak this header can never silently grant actions.
-            context.HttpContext.Items[RelayCanActKey] =
-                string.Equals(request.Headers[RelayCanActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            // The caller's tier as the api verified it — one value answering every authority question
+            // this service asks of a relayed caller. Parsed fail-closed: an unrecognised, empty or absent
+            // spelling is None, so a relay that does not speak this header grants nothing by omission.
+            context.HttpContext.Items[RelayTierKey] =
+                KgsmTiers.Parse(request.Headers[RelayTierHeader].ToString());
             // The api's auto-accept decision (its verified admin-tier ∧ toggle). Same trust basis (the
             // secret already matched) and same fail-closed default — anything but "true" ⇒ propose-only.
             context.HttpContext.Items[RelayAutoActKey] =
                 string.Equals(request.Headers[RelayAutoActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
-            // The api's admin decision, for the review surface. Same trust basis (the secret matched)
-            // and same fail-closed default — anything but "true" leaves the surface shut.
-            context.HttpContext.Items[RelayAdminKey] =
-                string.Equals(request.Headers[RelayAdminHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
             // The per-chat conversation id — a SUB-scope of THIS user's memory (the handler keys
             // web:{userId}[:{id}]). Stored raw; the handler sanitises + caps it. Never cross-user: the
             // user id is the authoritative prefix. Absent ⇒ unset ⇒ the handler uses the bare per-user

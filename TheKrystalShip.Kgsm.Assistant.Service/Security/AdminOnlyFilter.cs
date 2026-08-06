@@ -1,3 +1,5 @@
+using TheKrystalShip.KGSM.Auth;
+
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
 /// <summary>
@@ -5,9 +7,8 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// Runs after <see cref="BearerAuthFilter"/> (which has already established WHO the caller is) and
 /// answers only WHETHER they may review, from whichever path authenticated them:
 /// <list type="bullet">
-/// <item><b>Trusted relay:</b> the api's verified admin decision, forwarded as <c>X-Relay-Admin</c>
-/// and stashed as <see cref="BearerAuthFilter.RelayAdminKey"/>. Trusted because the relay secret
-/// already matched.</item>
+/// <item><b>Trusted relay:</b> the caller's verified tier, forwarded as <c>X-Relay-Tier</c> and stashed
+/// as <see cref="BearerAuthFilter.RelayTierKey"/>. Trusted because the relay secret already matched.</item>
 /// <item><b>Session bearer:</b> the caller's own Discord review role
 /// (<see cref="DiscordAuthService.IsAdminAsync"/>), so the leaf's review surface works standalone,
 /// with no api in front of it. No configured review role ⇒ nobody.</item>
@@ -30,10 +31,11 @@ internal sealed class AdminOnlyFilter : IEndpointFilter
     {
         var http = context.HttpContext;
 
-        // Relay path: the decision was made upstream by a caller we trust, so it is the whole answer —
-        // a relayed request never falls through to a Discord lookup for an identity it forwarded.
-        if (http.Items.TryGetValue(BearerAuthFilter.RelayAdminKey, out var relay))
-            return relay is true ? await next(context) : Forbidden;
+        // Relay path: the tier was resolved upstream by a caller we trust, so it is the whole answer —
+        // a relayed request never falls through to a Discord lookup for an identity it forwarded, since
+        // a relay host may have no Discord configuration of its own.
+        if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relay))
+            return relay is KgsmTier tier && tier >= KgsmTier.Admin ? await next(context) : Forbidden;
 
         var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
         return await _auth.IsAdminAsync(principal, http.RequestAborted)

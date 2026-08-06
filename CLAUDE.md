@@ -153,7 +153,7 @@ Things that bite if you don't know them:
 | `docs/ARCHITECTURE.md` | The mental model: layers, agent turn, ports/adapters, RAG split, ecosystem boundary |
 | `docs/DEPLOYMENT.md` | Cold-start runbook (prereqs → build → publish → run → verify), incl. Ollama/VRAM tuning |
 | `docs/CONFIGURATION.md` | Every config section/key/default, env-var form (`Section__Key`), the secrets list |
-| `docs/m7-sse-5a-spec.md` | The Service `/turn` SSE event contract (SPA integration) |
+| `docs/wire-contract.md` | The versioned public wire contract: the `/turn` stream, the `/confirm` channel, and what a client may rely on |
 | Per-project `README.md` | Surface-specific usage (`.Cli`, `.Service`, `.Llm`, `.Rag.Indexer`) |
 | `*.Eval/CLAUDE.md` | The benchmark's design integrity — read before changing how scoring works |
 | `kgsm-llm.md` | **Historical** handoff (2026-06-08). Trust it only for GPU/VRAM tuning + the `gemma4:12b` bake-off + the live-list-injection finding; its status sections are stale |

@@ -129,7 +129,7 @@ The 64 KB cap + truncation note already exist. Add:
 
 **Docs / eval corpus (don't leave stale tool names that the eval will grade against):**
 - `…Eval/mcq/corpus/gemma-assistant-eval.md`, `…/assistant-toolbox-plan.md`,
-  `…Eval/README.md`, `docs/m7-sse-5a-spec.md`, `kgsm-llm.md` — update
+  `…Eval/README.md`, `docs/wire-contract.md`, `kgsm-llm.md` — update
   `view_config_file` references to `read_file`/`list_files`.
 
 ## Non-goals / out of scope

@@ -375,16 +375,18 @@ public sealed record CompactionResultDto(
     int MessagesCompacted,
     string Summary);
 
-// --- Server-Sent Events payloads (§5·a) -------------------------------------------------------
-// A client that sends `Accept: text/event-stream` to /turn gets these as the `data:` of the
-// canonical §5·a typed events (architecture.html §5·a / toolbox-plan §5·a / keystone O1) instead
-// of one buffered TurnResponse: `text.delta` / `tool.start` / `tool.result` / `command.proposed` /
-// `done` / `error`, plus the opt-in additive `thinking.delta`. Each frame is emitted with BOTH the
-// SSE `event:` name AND an in-band `type` discriminator (injected by SseTurnWriter from the same
-// constant) so a client can key on either. (`command.verified` is NOT a turn-stream event — it
-// rides the API's M3 command path; the SPA composes it client-side. See kgsm-llm/docs/m7-sse-5a-spec.md.)
+// --- Server-Sent Events payloads ---------------------------------------------------------------
+// A client that sends `Accept: text/event-stream` to /turn gets these as the `data:` of typed
+// events instead of one buffered TurnResponse: `text.delta` / `tool.start` / `tool.result` /
+// `progress` / `command.proposed` / `done` / `error`, plus the opt-in `thinking.delta`. Each frame
+// carries BOTH the SSE `event:` name AND an in-band `type` discriminator (injected by SseTurnWriter
+// from the same constant) so a client can key on either. `command.verified` is emitted by no
+// backend stream: a client composes its own verification block from the outcome it received.
+//
+// These shapes are the public compatibility boundary — two SPAs consume them on independent deploy
+// cadences. What is additive and what is breaking: docs/wire-contract.md.
 
-/// <summary>The canonical §5·a turn-stream event names — the SSE `event:` line AND the in-band `type`.</summary>
+/// <summary>The turn-stream event names — the SSE `event:` line AND the in-band `type`.</summary>
 public static class TurnStream
 {
     public const string TextDelta = "text.delta";

@@ -55,7 +55,7 @@ For the HTTP service, the RAG indexer, systemd, secrets, and reverse-proxy/TLS, 
 | **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** | Every config section/key/default, the env-var form, the secrets list |
 | **[deploy/](deploy/)** | Ready-to-copy systemd units + an env-file template |
 | Per-project `README.md` / `CLAUDE.md` | Surface-specific usage and design notes |
-| [docs/m7-sse-5a-spec.md](docs/m7-sse-5a-spec.md) | The Service `/turn` SSE event contract (for SPA integration) |
+| [docs/wire-contract.md](docs/wire-contract.md) | The versioned public wire contract: the `/turn` stream, the `/confirm` channel, and what a client may rely on |
 
 ## Where this sits in the ecosystem
 

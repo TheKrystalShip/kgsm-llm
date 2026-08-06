@@ -7,7 +7,7 @@ Discord-OAuth auth, and streams turns over Server-Sent Events.
 - Stand it up: [`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) §6
 - Every config key: [`../docs/CONFIGURATION.md`](../docs/CONFIGURATION.md)
 - systemd unit + env template: [`../deploy/`](../deploy/)
-- The SSE event contract in detail: [`../docs/m7-sse-5a-spec.md`](../docs/m7-sse-5a-spec.md)
+- The public wire contract in detail: [`../docs/wire-contract.md`](../docs/wire-contract.md)
 
 ## At a glance
 
@@ -50,9 +50,11 @@ and the refresh token in its body is the credential.
 `POST /turn` with `Accept: text/event-stream` streams typed events; without it, you get a buffered
 `{text, confirmations[], usage}` JSON response. The streamed event types (each an SSE `event:` line
 with a matching in-band `type`): `text.delta`, `thinking.delta` (opt-in), `tool.start`,
-`tool.result`, `command.proposed`, `done`, `error`. The full field-by-field mapping is in
-[`../docs/m7-sse-5a-spec.md`](../docs/m7-sse-5a-spec.md). A proposed mutating action arrives as
-`command.proposed` carrying a confirmation token the client later posts to `/confirm`.
+`tool.result`, `progress`, `command.proposed`, `done`, `error`. A proposed mutating action arrives
+as `command.proposed` carrying a confirmation token the client later posts to `/confirm`, which
+answers buffered — or, for a blueprint finalize, streams `progress` and heartbeats to a terminal
+`result`. The field-by-field contract, and the rules a client may rely on, are in
+[`../docs/wire-contract.md`](../docs/wire-contract.md).
 
 ## Authentication & authority
 

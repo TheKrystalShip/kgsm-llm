@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a versioned public wire contract
+
+`docs/wire-contract.md` is the compatibility boundary between this leaf and the browser clients
+that consume it. It covers both channels an interaction runs over — the `/turn` stream and the
+`/confirm` channel — their frames, the confirmation envelope, the terminal-result shape, the error
+envelope, and the rules a client may rely on: absent optional fields are omitted rather than
+`null`, unknown frames and fields are ignored, `token` is opaque, and a correlation `id` means
+nothing outside its own turn. It names what is additive and what is breaking, so a leaf deploy can
+land ahead of either client.
+
+It replaces a spec written as a migration checklist against another repo's milestone, which had
+gone stale: it still described one tool carrying a structured result card, where fourteen call
+sites now do. The contract states the rule instead — a card appears when the tool has a structured
+source, a client keys on `result.tool` and falls back to `summary` for a tool it does not know —
+so lighting a card on a new tool needs no client change and no doc edit.
+
 ### Fixed
 - A session row recorded the **raw** `Auth:HostId` while its tokens were minted under the **resolved**
   one, so with the shipped blank default the row claimed host `""` and the token said `hotrod` — one

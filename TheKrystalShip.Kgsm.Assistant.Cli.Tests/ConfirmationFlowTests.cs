@@ -3,7 +3,7 @@ using FluentAssertions;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
-using TheKrystalShip.Llm.Models;
+using TheKrystalShip.Kgsm.Assistant.Status;
 
 namespace TheKrystalShip.Kgsm.Assistant.Cli.Tests;
 
@@ -47,7 +47,7 @@ public class ConfirmationFlowTests
     public async Task Interactive_Yes_Executes_AndInvalidatesInventory()
     {
         _assistant.ConfirmAsync(Arg.Any<PendingConfirmation>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(Result.Success<string>("terraria has been uninstalled")));
+            .Returns(Task.FromResult(ConfirmOutcome.Accepted("terraria has been uninstalled", "uninstall", "terraria")));
 
         var (ok, err) = await Drain(new[] { Uninstall() }, interactiveStdin: true, stdin: "y\n");
 
@@ -84,7 +84,7 @@ public class ConfirmationFlowTests
     public async Task Interactive_Yes_FailedAction_ReturnsFalse()
     {
         _assistant.ConfirmAsync(Arg.Any<PendingConfirmation>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(Result.Failure<string>("instance no longer exists")));
+            .Returns(Task.FromResult(ConfirmOutcome.Refused("instance no longer exists")));
 
         var (ok, err) = await Drain(new[] { Uninstall() }, interactiveStdin: true, stdin: "y\n");
 

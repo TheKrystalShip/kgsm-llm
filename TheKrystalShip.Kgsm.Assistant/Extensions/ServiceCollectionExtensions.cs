@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Interfaces;
 
 namespace TheKrystalShip.Kgsm.Assistant.Extensions;
@@ -30,6 +31,10 @@ public static class ServiceCollectionExtensions
         // BlueprintAuthoringAggregator), without Infrastructure needing anything beyond the reference
         // it already has to this project.
         services.AddSingleton<ITurnProgress, TurnProgress>();
+        // How long a confirmed lifecycle command is watched for its run-state postcondition before the
+        // outcome is reported as unsettled. TryAdd, so a host (or a test) can substitute a shorter
+        // window without waiting out the real one.
+        services.TryAddSingleton(SettlementTiming.Default);
         services.AddSingleton<IToolDispatcher, ToolDispatcher>();
         // The hot-editable prompt/tool-description layer (off unless Prompts:Directory is set). Used
         // by the prompt builder (segments) and the assistant (tool-description overlay).

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a confirmed command reports what was observed, not what was accepted
+
+A confirmed lifecycle command answered from the engine's exit code: *"'factorio' has been started."*
+That exit code carries whatever the spawn path checked and nothing further, and the confirm path
+restated it as a claim about the server. The watchdog does reject a spawn that fails outright — a
+start whose binary cannot exec comes back as a real failure, measured — so the gap is not every
+failed start. It is every way a start can be accepted and still not arrive: a process that survives
+the spawn and dies later, an instance that hangs part-way up, a container whose run state is a
+different source, a stop the game outlives while it saves.
+
+A confirmed `start` / `stop` / `restart` is now **watched** until the run state reaches its
+postcondition, and the answer says which of those happened: `settled` (observed), `accepted` (the
+engine reported success and the verb has no run-state postcondition — an update, a backup, a config
+write), `notSettled` (ran, never got there), `unknown` (ran, the state could not be read), `failed`,
+or `refused`. `notSettled` and `unknown` are **not** successes, and the two are kept apart: "we
+looked and it wasn't running" and "we could not look" are different facts, and neither may collapse
+into the other.
+
+The observation source is the same measured-or-unavailable fleet read the status card is built from,
+so the confirm path and the status card cannot disagree about what a server is doing. A per-instance
+liveness check was available and rejected: it answers with a bare boolean, which cannot tell "not
+running" from "could not read" — exactly the distinction being preserved. What is observed is the
+engine's run state, the process being up, not the game inside it being ready for players.
+
+The window is 90 seconds at 1-second reads, and it is a ceiling rather than an expectation — the
+common case settles on the first read, with no delay. It is a registered `SettlementTiming`, so a
+host can substitute one.
+
+`IServerAssistant.ConfirmAsync` returns a `ConfirmOutcome` instead of a `Result<string>`; `/confirm`
+carries it as an additive `outcome` object, and `success` is now true only for an observed or
+accepted outcome. The CLI grew a third rendering — an unsettled confirmation is neither a tick nor a
+cross.
+
+**The auto-run path had the identical defect and is fixed with it**, where it mattered more: that
+string is what the model reads, and a model told *"Done — it has been started"* tells the user the
+server is up. It now reports the verdict, so an unsettled or unreadable auto-run is described as
+such.
+
 ### Added — a versioned public wire contract
 
 `docs/wire-contract.md` is the compatibility boundary between this leaf and the browser clients

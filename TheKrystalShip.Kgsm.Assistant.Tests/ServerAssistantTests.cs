@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -47,7 +48,7 @@ public class ServerAssistantTests
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
             Options.Create(fetch ?? new FetchOptions { Available = true }),
             Options.Create(blueprint ?? new BlueprintAuthoringFlags { Available = true }),
-            NullLogger<ServerAssistant>.Instance);
+            SettlementTiming.Default, NullLogger<ServerAssistant>.Instance);
     }
 
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>

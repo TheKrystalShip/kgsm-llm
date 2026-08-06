@@ -10,6 +10,7 @@ using NSubstitute;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -41,7 +42,7 @@ public class ServerAssistantStreamTests
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), Substitute.For<IBlueprintAuthoring>(),
             Options.Create(new SearchOptions { WebEnabled = true }), Options.Create(new FetchOptions { Available = true }),
             Options.Create(new BlueprintAuthoringFlags { Available = true }),
-            NullLogger<ServerAssistant>.Instance);
+            SettlementTiming.Default, NullLogger<ServerAssistant>.Instance);
     }
 
     private static async Task<List<AssistantStreamEvent>> DrainAsync(IAsyncEnumerable<AssistantStreamEvent> events)

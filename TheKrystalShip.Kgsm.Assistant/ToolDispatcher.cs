@@ -46,6 +46,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly INetworkInfo _network;
     private readonly IUpnpInfo _upnp;
     private readonly IBlueprintAuthoring _blueprintAuthoring;
+    private readonly SettlementTiming _settlement;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
@@ -59,6 +60,7 @@ public class ToolDispatcher : IToolDispatcher
         INetworkInfo network,
         IUpnpInfo upnp,
         IBlueprintAuthoring blueprintAuthoring,
+        SettlementTiming settlement,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
@@ -71,6 +73,7 @@ public class ToolDispatcher : IToolDispatcher
         _network = network;
         _upnp = upnp;
         _blueprintAuthoring = blueprintAuthoring;
+        _settlement = settlement;
         _logger = logger;
     }
 
@@ -595,6 +598,12 @@ public class ToolDispatcher : IToolDispatcher
     /// Mirrors <see cref="ServerAssistant.ConfirmAsync"/>'s execute step (the post-confirm path) — the
     /// authority decision was already made upstream (api admin-tier ∧ toggle → AutoExecute), so there
     /// is no second gate here; the model's tool result IS the outcome.
+    /// <para>
+    /// It settles against the observed run state for the same reason the confirm path does, and it
+    /// matters more here: this string is what the model reads, and a model told "done, it has been
+    /// started" will tell the user the server is up. An unsettled or unreadable outcome is
+    /// therefore spelled out as such, so the model reports what is actually known.
+    /// </para>
     /// </summary>
     private async Task<string> ExecuteCommandNowAsync(
         ConfirmationKind kind, string instance, CancellationToken cancellationToken)
@@ -617,10 +626,14 @@ public class ToolDispatcher : IToolDispatcher
 
         _logger.LogInformation("Auto-executing {Verb} of {Instance}", ConfirmationKinds.Verb(kind), instance);
 
-        var result = await op(instance, cancellationToken);
-        return result.IsSuccess
-            ? $"Done — '{instance}' has been {ConfirmationKinds.PastTense(kind)}."
-            : $"Could not {ConfirmationKinds.Verb(kind)} '{instance}': {result.Error ?? "unknown error"}.";
+        var outcome = await CommandSettlement.RunAndSettleAsync(
+            _operations, kind, instance, op, _settlement, cancellationToken);
+
+        return outcome.Verdict switch
+        {
+            ConfirmVerdict.Settled or ConfirmVerdict.Accepted => $"Done — {outcome.Summary}",
+            _ => outcome.Summary,
+        };
     }
 
     /// <summary>

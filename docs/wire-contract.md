@@ -177,14 +177,47 @@ not an oracle for which case occurred.
 
 ### Buffered form
 
-Every confirmation kind answers `{ text, success, card?, confirmations? }`.
+Every confirmation kind answers `{ text, success, card?, confirmations?, outcome? }`.
 
 - `text` — the outcome, human-readable.
-- `success` — whether the operation succeeded.
+- `success` — whether the operation may be presented as having succeeded. True only when the
+  postcondition was **observed**, or when the engine reported success for a verb that has none.
 - `card` — the rich outcome card, on the kinds that have one.
 - `confirmations` — a fresh confirmation token when the outcome leaves something to confirm
   again. A blueprint finalize whose repair loop exhausts returns its draft this way, which is the
   re-edit loop.
+- `outcome` — what is actually known, below.
+
+### The outcome, and why `success` is not enough
+
+`kgsm lifecycle start` returns as soon as the spawn is accepted. That answers "was the request
+taken", which is a different question from "is the server running", and reporting the first as the
+second is how a client comes to tell someone their server is up when it is not. A confirmed
+lifecycle command is therefore **watched** until it reaches its run-state postcondition, and the
+answer says which of those happened:
+
+```json
+{ "verdict": "settled", "verb": "start", "instance": "factorio", "observedState": "running" }
+```
+
+| `verdict` | Meaning | `success` |
+|---|---|---|
+| `settled` | Ran, and the run-state postcondition was observed | `true` |
+| `accepted` | Ran, the engine reported success, and the verb has no run-state postcondition (an update, a backup, a config write) | `true` |
+| `notSettled` | Ran, but the end state was not reached before the window closed. `observedState` says what was actually seen | `false` |
+| `unknown` | Ran, and the end state could not be read. Never reported as "stopped" | `false` |
+| `failed` | The operation itself reported failure | `false` |
+| `refused` | Nothing ran — not authorized, target gone, or the staged payload was unusable | `false` |
+
+`observedState` is `running`, `stopped`, or `unknown`, and is present only for the verbs that have
+a run-state postcondition (`start`, `stop`, `restart`). `unknown` means the read failed; it is
+never a stand-in for "not running". `reason` carries why a read failed or an operation failed.
+
+What is observed is the **engine's run state** — the process is up — not that the game inside it is
+ready for players. `settled` claims the former and nothing more.
+
+A client renders the verdict. Parsing `text` to work out which case occurred is how two surfaces
+come to disagree, and `text` is the one field here that is free to be reworded.
 
 ### Streamed form
 

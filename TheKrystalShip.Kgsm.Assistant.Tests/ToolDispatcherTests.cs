@@ -61,9 +61,16 @@ public class ToolDispatcherTests
             .Returns(new UpnpReading(UpnpState.DaemonUnavailable, Array.Empty<UpnpForward>()));
     }
 
+    /// <summary>
+    /// A settlement window short enough that an unsettled auto-run closes in milliseconds. The real
+    /// window is 90 seconds, which is right in production and useless in a suite.
+    /// </summary>
+    private readonly SettlementTiming _settlement =
+        new(TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(10));
+
     private ToolDispatcher Create() =>
         new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp,
-            _blueprintAuthoring, NullLogger<ToolDispatcher>.Instance);
+            _blueprintAuthoring, _settlement, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -1114,6 +1121,7 @@ public class ToolDispatcherTests
         // Auto-accept turn (admin + toggle, decided by the api): the lifecycle verb RUNS now via the
         // matching IServerOperations op and reports the outcome — nothing is staged for confirmation.
         StubOp(kind, "minecraft", Result.Success());
+        StubFleet("minecraft", CommandSettlement.ExpectedRunning(kind) ?? true);
 
         string result;
         using (_confirmations.BeginTurn(autoExecute: true))
@@ -1124,6 +1132,39 @@ public class ToolDispatcherTests
 
         result.Should().Contain("Done").And.NotContain("awaiting");
         await ReceivedOp(kind, "minecraft");
+    }
+
+    [Fact]
+    public async Task ServerCommand_AutoExecute_NeverReachesRunning_TellsTheModelItDidNot()
+    {
+        // The model reads this string and repeats it to the user. A start the engine accepted but that
+        // never came up must not read as "Done" — that is how a user is told a server is running when
+        // it is not.
+        StubOp(ConfirmationKind.Start, "minecraft", Result.Success());
+        StubFleet("minecraft", running: false);
+
+        string result;
+        using (_confirmations.BeginTurn(autoExecute: true))
+            result = await Summary(ServerCommandCall("start", "minecraft"));
+
+        result.Should().NotContain("Done");
+        result.Should().Contain("still stopped");
+    }
+
+    [Fact]
+    public async Task ServerCommand_AutoExecute_StateUnreadable_TellsTheModelItIsUnknown()
+    {
+        StubOp(ConfirmationKind.Start, "minecraft", Result.Success());
+        _operations.GetFleetStatusAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Success<IReadOnlyList<FleetStatusEntry>>(
+                [new FleetStatusEntry("minecraft", FleetStatusAvailability.Unavailable, null, "the status source is offline")])));
+
+        string result;
+        using (_confirmations.BeginTurn(autoExecute: true))
+            result = await Summary(ServerCommandCall("start", "minecraft"));
+
+        result.Should().NotContain("Done");
+        result.Should().Contain("unknown");
     }
 
     [Fact]
@@ -1161,6 +1202,15 @@ public class ToolDispatcherTests
         result.Should().Contain("Staged").And.Contain("confirm");
         await _operations.DidNotReceive().UninstallAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
+
+    /// <summary>
+    /// Stubs the run-state read the auto-run path settles against. An auto-run reports to the MODEL,
+    /// so an unobserved outcome would become the model telling the user the server is up.
+    /// </summary>
+    private void StubFleet(string instance, bool running) =>
+        _operations.GetFleetStatusAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Result.Success<IReadOnlyList<FleetStatusEntry>>(
+                [new FleetStatusEntry(instance, FleetStatusAvailability.Read, running, null)])));
 
     private void StubOp(ConfirmationKind kind, string instance, Result result)
     {

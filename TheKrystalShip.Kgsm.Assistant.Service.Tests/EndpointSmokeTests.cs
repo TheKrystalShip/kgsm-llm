@@ -23,6 +23,7 @@ using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 
@@ -63,6 +64,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             configure?.Invoke(builder);
             builder.ConfigureTestServices(services =>
             {
+                // A confirmed lifecycle command watches the run state for its postcondition; the real
+                // window is 90 seconds. A test whose spied engine never reports the server running would
+                // otherwise wait out that whole window, so the suite uses a millisecond one.
+                services.RemoveAll<SettlementTiming>();
+                services.AddSingleton(new SettlementTiming(
+                    TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(10)));
                 if (assistant is not null) services.AddSingleton(assistant);
                 if (discord is not null) services.AddSingleton(discord);
                 // Override the real SQLite store with a fake for the reverse-path endpoint tests (last
@@ -202,6 +209,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             ["inst"] = new Instance { Name = "inst", BlueprintFile = "factorio" },
         });
         instances.Start("inst", Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0));
+        // The confirm settles against the observed run state, so the engine has to report the server
+        // actually up — an accepted start alone is no longer an outcome.
+        instances.GetAllStatuses(Arg.Any<bool>()).Returns(new Dictionary<string, Reading<InstanceRuntimeStatus>>
+        {
+            ["inst"] = Reading<InstanceRuntimeStatus>.Measured(
+                new InstanceRuntimeStatus { InstanceName = "inst", Status = true }),
+        });
 
         // canPerformActions is re-derived live from the principal's guild role at confirm time.
         var discord = Substitute.For<IDiscordDirectory>();
@@ -226,6 +240,100 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // The engine call was attributed to the confirming Discord user, via the assistant surface —
         // NOT the bare OS-user fallback (which would be null, null → unattributed audit row).
         instances.Received(1).Start("inst", "discord:User One", "assistant");
+
+        // The wire carries the verdict, not just a sentence: the postcondition was observed, so this
+        // is `settled` and the observed state travels with it.
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("success").GetBoolean().Should().BeTrue();
+        var outcome = body.GetProperty("outcome");
+        outcome.GetProperty("verdict").GetString().Should().Be("settled");
+        outcome.GetProperty("observedState").GetString().Should().Be("running");
+        outcome.GetProperty("instance").GetString().Should().Be("inst");
+    }
+
+    [Fact]
+    public async Task Confirm_Start_EngineAcceptsButServerNeverComesUp_IsNotASuccess()
+    {
+        // The defect this closes: kgsm's `lifecycle start` returns as soon as the watchdog accepts the
+        // spawn, so a zero exit code said "started" for a server that never came up. The confirm now
+        // reports what it observed, and a client that renders `success` gets the truth.
+        var instances = Substitute.For<IInstanceService>();
+        instances.GetAll().Returns(new Dictionary<string, Instance>
+        {
+            ["inst"] = new Instance { Name = "inst", BlueprintFile = "factorio" },
+        });
+        instances.Start("inst", Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0));
+        instances.GetAllStatuses(Arg.Any<bool>()).Returns(new Dictionary<string, Reading<InstanceRuntimeStatus>>
+        {
+            ["inst"] = Reading<InstanceRuntimeStatus>.Measured(
+                new InstanceRuntimeStatus { InstanceName = "inst", Status = false }),
+        });
+
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(["role-123"]);
+
+        var factory = Factory(discord: discord, configure: b =>
+        {
+            b.UseSetting("Assistant:ActionsEnabled", "true");
+            b.UseSetting("Assistant:Confirmation:Key", "test-key");
+            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
+            b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
+        });
+
+        var client = await AuthedAsync(factory);
+        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
+        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+
+        var response = await client.PostAsJsonAsync("/confirm", new { token });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        instances.Received(1).Start("inst", "discord:User One", "assistant");
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("success").GetBoolean().Should().BeFalse();
+        body.GetProperty("outcome").GetProperty("verdict").GetString().Should().Be("notSettled");
+        body.GetProperty("outcome").GetProperty("observedState").GetString().Should().Be("stopped");
+    }
+
+    [Fact]
+    public async Task Confirm_Start_RunStateUnreadable_IsUnknown_NotStopped()
+    {
+        // "We could not look" must never render as "it is not running" — the two are different facts and
+        // the second one is a fabrication.
+        var instances = Substitute.For<IInstanceService>();
+        instances.GetAll().Returns(new Dictionary<string, Instance>
+        {
+            ["inst"] = new Instance { Name = "inst", BlueprintFile = "factorio" },
+        });
+        instances.Start("inst", Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0));
+        instances.GetAllStatuses(Arg.Any<bool>()).Returns(new Dictionary<string, Reading<InstanceRuntimeStatus>>
+        {
+            ["inst"] = Reading<InstanceRuntimeStatus>.Unavailable("the status source is offline", ReadingCode.MonitorOffline),
+        });
+
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(["role-123"]);
+
+        var factory = Factory(discord: discord, configure: b =>
+        {
+            b.UseSetting("Assistant:ActionsEnabled", "true");
+            b.UseSetting("Assistant:Confirmation:Key", "test-key");
+            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
+            b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
+        });
+
+        var client = await AuthedAsync(factory);
+        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
+        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+
+        var response = await client.PostAsJsonAsync("/confirm", new { token });
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("success").GetBoolean().Should().BeFalse();
+        body.GetProperty("outcome").GetProperty("verdict").GetString().Should().Be("unknown");
+        body.GetProperty("outcome").GetProperty("observedState").GetString().Should().Be("unknown");
     }
 
     [Fact]

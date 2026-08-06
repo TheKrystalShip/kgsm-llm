@@ -835,10 +835,12 @@ secured.MapPost("/confirm", async (
         confirmation = confirmation with { ConfigValue = realContent };
     }
 
-    var result = await assistant.ConfirmAsync(confirmation, canPerform, ct);
+    var confirmed = await assistant.ConfirmAsync(confirmation, canPerform, ct);
 
+    // Success is the outcome's own — an accepted-but-never-settled lifecycle command is reported as
+    // what it is, so a client never has to infer the difference from the text.
     return Results.Ok(new ConfirmResponse(
-        result.IsSuccess ? result.Value! : result.Error!, result.IsSuccess));
+        confirmed.Summary, confirmed.Ok, Outcome: ConfirmOutcomeDto.From(confirmed)));
 });
 
 app.Run();

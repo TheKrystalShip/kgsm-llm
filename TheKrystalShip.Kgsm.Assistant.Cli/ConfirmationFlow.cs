@@ -3,6 +3,7 @@ using System.Diagnostics;
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Status;
 
 namespace TheKrystalShip.Kgsm.Assistant.Cli;
 
@@ -89,20 +90,30 @@ internal static class ConfirmationFlow
                 continue;
             }
 
-            var result = await assistant.ConfirmAsync(confirmation, canPerformActions, cancellationToken);
+            var outcome = await assistant.ConfirmAsync(confirmation, canPerformActions, cancellationToken);
 
             // A confirmed action may have changed inventory whether it reported success or not;
             // invalidate so the next inventory read re-fetches from kgsm (L6).
             inventory.Invalidate();
 
-            if (result.IsSuccess)
+            // Three renderings, not two: an operation that ran but whose end state was not reached
+            // (or could not be read) is neither a tick nor a cross, and marking it either way is the
+            // exact overclaim the verdict exists to prevent.
+            switch (outcome.Verdict)
             {
-                err.WriteLine(Ansi.Paint($"  ✓ {result.Value}", Ansi.Dim, color));
-            }
-            else
-            {
-                err.WriteLine(Ansi.Paint($"  ✗ {result.Error}", Ansi.Red, color));
-                ok = false;
+                case ConfirmVerdict.Settled:
+                case ConfirmVerdict.Accepted:
+                    err.WriteLine(Ansi.Paint($"  ✓ {outcome.Summary}", Ansi.Dim, color));
+                    break;
+                case ConfirmVerdict.NotSettled:
+                case ConfirmVerdict.Unknown:
+                    err.WriteLine(Ansi.Paint($"  ? {outcome.Summary}", Ansi.Yellow, color));
+                    ok = false;
+                    break;
+                default:
+                    err.WriteLine(Ansi.Paint($"  ✗ {outcome.Summary}", Ansi.Red, color));
+                    ok = false;
+                    break;
             }
         }
 

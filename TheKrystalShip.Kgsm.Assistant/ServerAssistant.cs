@@ -8,6 +8,7 @@ using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -71,6 +72,7 @@ public class ServerAssistant : IServerAssistant
     private readonly SearchOptions _searchOptions;
     private readonly FetchOptions _fetchOptions;
     private readonly BlueprintAuthoringFlags _blueprintAuthoringFlags;
+    private readonly SettlementTiming _settlement;
     private readonly ILogger<ServerAssistant> _logger;
 
     public ServerAssistant(
@@ -88,6 +90,7 @@ public class ServerAssistant : IServerAssistant
         IOptions<SearchOptions> searchOptions,
         IOptions<FetchOptions> fetchOptions,
         IOptions<BlueprintAuthoringFlags> blueprintAuthoringFlags,
+        SettlementTiming settlement,
         ILogger<ServerAssistant> logger)
     {
         _agent = agent;
@@ -104,6 +107,7 @@ public class ServerAssistant : IServerAssistant
         _searchOptions = searchOptions.Value;
         _fetchOptions = fetchOptions.Value;
         _blueprintAuthoringFlags = blueprintAuthoringFlags.Value;
+        _settlement = settlement;
         _logger = logger;
     }
 
@@ -394,7 +398,7 @@ public class ServerAssistant : IServerAssistant
         }
     }
 
-    public async Task<Result<string>> ConfirmAsync(
+    public async Task<ConfirmOutcome> ConfirmAsync(
         PendingConfirmation confirmation,
         bool canPerformActions,
         CancellationToken cancellationToken = default)
@@ -402,7 +406,7 @@ public class ServerAssistant : IServerAssistant
         // Authority is checked fresh here — never trusted from the staged operation or
         // any token that carried it. Defense in depth alongside the host's own check.
         if (!canPerformActions)
-            return Result.Failure<string>("You don't have permission to perform server actions.");
+            return ConfirmOutcome.Refused("You don't have permission to perform server actions.");
 
         return confirmation.Kind switch
         {
@@ -415,17 +419,33 @@ public class ServerAssistant : IServerAssistant
                 confirmation.Target, confirmation.ConfigValue, confirmation.ConfigKey, cancellationToken),
             ConfirmationKind.WriteFile => await ConfirmWriteFileAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
-            // The text path (CLI, and any surface that only reads ConfirmResponse.Text): finalize returns a
+            // The text path (CLI, and any surface that only reads the outcome line): finalize returns a
             // rich card, but here we surface only its summary line. A card surface (the Service) calls
             // FinalizeBlueprintAsync directly to render the DraftReady/Verified card + any re-edit token.
-            ConfirmationKind.Blueprint => Result.Success((await FinalizeBlueprintAsync(
+            // A finalize has no run-state postcondition, so its verdict is the pipeline's own.
+            ConfirmationKind.Blueprint => BlueprintOutcome(await FinalizeBlueprintAsync(
                 confirmation.InstanceName ?? confirmation.Target, confirmation.ConfigValue ?? string.Empty,
-                canPerformActions, cancellationToken)).Summary),
+                canPerformActions, cancellationToken), confirmation),
             ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
                 or ConfirmationKind.Update or ConfirmationKind.Backup
                 => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
-            _ => Result.Failure<string>("Unknown action; nothing was done."),
+            _ => ConfirmOutcome.Refused("Unknown action; nothing was done."),
         };
+    }
+
+    /// <summary>
+    /// Projects a blueprint finalize onto the confirm verdict. A finalize verifies by
+    /// test-installing and booting, so a <see cref="BlueprintAuthoringOutcome.Verified"/> result is
+    /// its own observation; anything else is a failure the user is asked to act on.
+    /// </summary>
+    private static ConfirmOutcome BlueprintOutcome(
+        ToolResult<BlueprintAuthoringData> result, PendingConfirmation confirmation)
+    {
+        var verb = ConfirmationKinds.Verb(ConfirmationKind.Blueprint);
+        var target = confirmation.InstanceName ?? confirmation.Target;
+        return result.Data?.Outcome == BlueprintAuthoringOutcome.Verified
+            ? ConfirmOutcome.Accepted(result.Summary, verb, target)
+            : ConfirmOutcome.Failed(result.Summary, verb, target);
     }
 
     /// <summary>
@@ -455,16 +475,18 @@ public class ServerAssistant : IServerAssistant
     /// Executes a confirmed single-instance command (start/stop/restart/update/backup).
     /// Re-validates the target still exists (it was resolved at staging time, which may
     /// have been a while ago, and a stateless token is replayable within its lifetime),
-    /// then runs the matching <see cref="IServerOperations"/> op.
+    /// then runs the matching <see cref="IServerOperations"/> op and settles the result against
+    /// the observed run state — the engine's exit code says the request was accepted, which for
+    /// start/stop/restart is a different claim from the server actually having got there.
     /// </summary>
-    private async Task<Result<string>> ConfirmCommandAsync(
+    private async Task<ConfirmOutcome> ConfirmCommandAsync(
         ConfirmationKind kind, string target, CancellationToken cancellationToken)
     {
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
         var match = instances.Keys.FirstOrDefault(
             k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
         if (match is null)
-            return Result.Failure<string>(
+            return ConfirmOutcome.Refused(
                 $"'{target}' no longer exists — nothing to {ConfirmationKinds.Verb(kind)}.");
 
         Func<string, CancellationToken, Task<Result>> op = kind switch
@@ -479,11 +501,15 @@ public class ServerAssistant : IServerAssistant
 
         _logger.LogInformation("Confirmed {Verb} of {Instance}", ConfirmationKinds.Verb(kind), match);
 
-        var result = await op(match, cancellationToken);
-        return result.IsSuccess
-            ? Result.Success($"{match} has been {ConfirmationKinds.PastTense(kind)}.")
-            : Result.Failure<string>(
-                $"Could not {ConfirmationKinds.Verb(kind)} '{match}': {result.Error ?? "unknown error"}.");
+        var outcome = await CommandSettlement.RunAndSettleAsync(
+            _operations, kind, match, op, _settlement, cancellationToken);
+
+        if (outcome.Verdict is ConfirmVerdict.NotSettled or ConfirmVerdict.Unknown)
+            _logger.LogWarning(
+                "{Verb} of {Instance} did not settle: {Verdict} (observed {State})",
+                ConfirmationKinds.Verb(kind), match, outcome.Verdict, outcome.ObservedState);
+
+        return outcome;
     }
 
     /// <summary>
@@ -491,40 +517,43 @@ public class ServerAssistant : IServerAssistant
     /// have been a while ago, and a stateless token is replayable within its lifetime),
     /// then uninstalls it.
     /// </summary>
-    private async Task<Result<string>> ConfirmUninstallAsync(string target, CancellationToken cancellationToken)
+    private async Task<ConfirmOutcome> ConfirmUninstallAsync(string target, CancellationToken cancellationToken)
     {
+        var verb = ConfirmationKinds.Verb(ConfirmationKind.Uninstall);
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
         var match = instances.Keys.FirstOrDefault(
             k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
         if (match is null)
-            return Result.Failure<string>($"'{target}' no longer exists — nothing to uninstall.");
+            return ConfirmOutcome.Refused($"'{target}' no longer exists — nothing to uninstall.");
 
         _logger.LogInformation("Confirmed uninstall of {Instance}", match);
 
         var result = await _operations.UninstallAsync(match, cancellationToken);
         return result.IsSuccess
-            ? Result.Success($"Uninstalled '{match}'.")
-            : Result.Failure<string>($"Could not uninstall '{match}': {result.Error ?? "unknown error"}.");
+            ? ConfirmOutcome.Accepted($"Uninstalled '{match}'.", verb, match)
+            : ConfirmOutcome.Failed(
+                $"Could not uninstall '{match}': {result.Error ?? "unknown error"}.", verb, match, result.Error);
     }
 
     /// <summary>
     /// Re-validates the blueprint still exists and the requested name doesn't now
     /// collide (replay/race-safe), then installs.
     /// </summary>
-    private async Task<Result<string>> ConfirmInstallAsync(
+    private async Task<ConfirmOutcome> ConfirmInstallAsync(
         string blueprint, string? instanceName, CancellationToken cancellationToken)
     {
+        var verb = ConfirmationKinds.Verb(ConfirmationKind.Install);
         var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
         var match = blueprints.FirstOrDefault(
             k => string.Equals(k, blueprint, StringComparison.OrdinalIgnoreCase));
         if (match is null)
-            return Result.Failure<string>($"Blueprint '{blueprint}' is no longer available.");
+            return ConfirmOutcome.Refused($"Blueprint '{blueprint}' is no longer available.");
 
         if (!string.IsNullOrWhiteSpace(instanceName))
         {
             var instances = await _inventory.GetInstancesAsync(cancellationToken);
             if (instances.Keys.Any(k => string.Equals(k, instanceName, StringComparison.OrdinalIgnoreCase)))
-                return Result.Failure<string>(
+                return ConfirmOutcome.Refused(
                     $"An instance named '{instanceName}' already exists — pick another name.");
         }
         else
@@ -537,8 +566,9 @@ public class ServerAssistant : IServerAssistant
         var result = await _operations.InstallAsync(match, instanceName, cancellationToken);
         var named = instanceName is null ? "" : $" (named '{instanceName}')";
         return result.IsSuccess
-            ? Result.Success($"Installed a new '{match}' server{named}.")
-            : Result.Failure<string>($"Could not install '{match}': {result.Error ?? "unknown error"}.");
+            ? ConfirmOutcome.Accepted($"Installed a new '{match}' server{named}.", verb, instanceName ?? match)
+            : ConfirmOutcome.Failed(
+                $"Could not install '{match}': {result.Error ?? "unknown error"}.", verb, match, result.Error);
     }
 
     /// <summary>
@@ -547,17 +577,18 @@ public class ServerAssistant : IServerAssistant
     /// kgsm owns the key-safety policy, so a refused (denylisted/invalid) key surfaces
     /// here as a failed <see cref="Result"/> reported to the user, never an exception.
     /// </summary>
-    private async Task<Result<string>> ConfirmSetConfigAsync(
+    private async Task<ConfirmOutcome> ConfirmSetConfigAsync(
         string target, string? key, string? value, CancellationToken cancellationToken)
     {
+        var verb = ConfirmationKinds.Verb(ConfirmationKind.SetConfig);
         if (string.IsNullOrWhiteSpace(key))
-            return Result.Failure<string>("No configuration key was given — nothing to set.");
+            return ConfirmOutcome.Refused("No configuration key was given — nothing to set.");
 
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
         var match = instances.Keys.FirstOrDefault(
             k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
         if (match is null)
-            return Result.Failure<string>($"'{target}' no longer exists — nothing to configure.");
+            return ConfirmOutcome.Refused($"'{target}' no longer exists — nothing to configure.");
 
         // The value may legitimately be the empty string (clearing the setting).
         var newValue = value ?? string.Empty;
@@ -567,8 +598,9 @@ public class ServerAssistant : IServerAssistant
         var result = await _operations.SetInstanceConfigValueAsync(match, key, newValue, cancellationToken);
         var shown = newValue.Length == 0 ? "(empty)" : newValue;
         return result.IsSuccess
-            ? Result.Success($"Set {key} = {shown} on '{match}'.")
-            : Result.Failure<string>($"Could not set {key} on '{match}': {result.Error ?? "unknown error"}.");
+            ? ConfirmOutcome.Accepted($"Set {key} = {shown} on '{match}'.", verb, match)
+            : ConfirmOutcome.Failed(
+                $"Could not set {key} on '{match}': {result.Error ?? "unknown error"}.", verb, match, result.Error);
     }
 
     /// <summary>
@@ -580,26 +612,29 @@ public class ServerAssistant : IServerAssistant
     /// store-agnostic. A jail violation, size-cap refusal, or I/O failure surfaces as a failed
     /// <see cref="Result"/>, never an exception.
     /// </summary>
-    private async Task<Result<string>> ConfirmWriteFileAsync(
+    private async Task<ConfirmOutcome> ConfirmWriteFileAsync(
         string target, string? key, string? value, CancellationToken cancellationToken)
     {
+        var verb = ConfirmationKinds.Verb(ConfirmationKind.WriteFile);
         if (string.IsNullOrWhiteSpace(key))
-            return Result.Failure<string>("No file path was given — nothing was written.");
+            return ConfirmOutcome.Refused("No file path was given — nothing was written.");
         if (string.IsNullOrEmpty(value))
-            return Result.Failure<string>("No content was given — nothing was written.");
+            return ConfirmOutcome.Refused("No content was given — nothing was written.");
 
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
         var match = instances.Keys.FirstOrDefault(
             k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
         if (match is null)
-            return Result.Failure<string>($"'{target}' no longer exists — nothing to write.");
+            return ConfirmOutcome.Refused($"'{target}' no longer exists — nothing to write.");
 
         _logger.LogInformation("Confirmed write-file of {Instance} ({Path})", match, key);
 
         var result = await _operations.WriteInstanceFileAsync(match, key, value, cancellationToken);
         return result.IsSuccess
-            ? Result.Success($"Wrote '{key}' on '{match}'. A running server picks up the change on its next restart.")
-            : Result.Failure<string>($"Could not write '{key}' on '{match}': {result.Error ?? "unknown error"}.");
+            ? ConfirmOutcome.Accepted(
+                $"Wrote '{key}' on '{match}'. A running server picks up the change on its next restart.", verb, match)
+            : ConfirmOutcome.Failed(
+                $"Could not write '{key}' on '{match}': {result.Error ?? "unknown error"}.", verb, match, result.Error);
     }
 
     /// <summary>
@@ -617,17 +652,18 @@ public class ServerAssistant : IServerAssistant
     /// The firewall outcome still determines success/failure; the router clause is additive context.
     /// </para>
     /// </summary>
-    private async Task<Result<string>> ConfirmOpenPortsAsync(
+    private async Task<ConfirmOutcome> ConfirmOpenPortsAsync(
         string target, string? portSpec, string? scope, CancellationToken cancellationToken)
     {
+        var verb = ConfirmationKinds.Verb(ConfirmationKind.OpenPorts);
         if (!PortSpecParser.TryParse(portSpec, out var ports, out var parseError))
-            return Result.Failure<string>($"The staged ports were invalid ({parseError}) — nothing was opened.");
+            return ConfirmOutcome.Refused($"The staged ports were invalid ({parseError}) — nothing was opened.");
 
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
         var match = instances.Keys.FirstOrDefault(
             k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
         if (match is null)
-            return Result.Failure<string>($"'{target}' no longer exists — nothing to open ports on.");
+            return ConfirmOutcome.Refused($"'{target}' no longer exists — nothing to open ports on.");
 
         bool includeRouter = string.Equals(scope, "router", StringComparison.Ordinal);
         _logger.LogInformation("Confirmed open-ports of {Instance} ({Ports}, router={Router})",
@@ -637,40 +673,43 @@ public class ServerAssistant : IServerAssistant
         var shown = PortSpecParser.ToDisplay(ports);
         var backend = string.IsNullOrWhiteSpace(result.Backend) ? "the firewall" : result.Backend;
 
-        var firewall = result.State switch
+        var (firewallOk, firewallText) = result.State switch
         {
             NetworkActionState.Applied =>
-                Result.Success($"Opened host-firewall port(s) {shown} for '{match}' ({backend})."),
+                (true, $"Opened host-firewall port(s) {shown} for '{match}' ({backend})."),
             NetworkActionState.AppliedInactive =>
-                Result.Success($"Wrote host-firewall rules for port(s) {shown} on '{match}', but {backend} isn't " +
-                               "enforcing yet — they'll take effect when it's enabled (the ports are reachable meanwhile)."),
+                (true, $"Wrote host-firewall rules for port(s) {shown} on '{match}', but {backend} isn't " +
+                       "enforcing yet — they'll take effect when it's enabled (the ports are reachable meanwhile)."),
             NetworkActionState.NoOp =>
-                Result.Success($"Host-firewall port(s) {shown} were already open for '{match}' — nothing to change."),
+                (true, $"Host-firewall port(s) {shown} were already open for '{match}' — nothing to change."),
             NetworkActionState.Unsupported =>
-                Result.Failure<string>($"This host has no firewall backend that can open ports, so nothing was changed for '{match}'."),
+                (false, $"This host has no firewall backend that can open ports, so nothing was changed for '{match}'."),
             NetworkActionState.FirewallUnavailable =>
-                Result.Failure<string>($"The firewall service isn't reachable, so the port(s) for '{match}' couldn't be opened. Nothing was changed."),
+                (false, $"The firewall service isn't reachable, so the port(s) for '{match}' couldn't be opened. Nothing was changed."),
             _ =>
-                Result.Failure<string>($"Could not open host-firewall port(s) {shown} for '{match}': {result.Detail ?? "the firewall rejected the change"}."),
+                (false, $"Could not open host-firewall port(s) {shown} for '{match}': {result.Detail ?? "the firewall rejected the change"}."),
         };
 
-        if (!includeRouter)
-            return firewall;
+        var summary = firewallText;
 
-        // The router leg — a separate authority (the watchdog). Its outcome is appended honestly and never
-        // upgrades a firewall failure to success (the firewall Result carries success/failure).
-        var upnp = await _upnp.OpenForwardsAsync(match, ports, cancellationToken);
-        string routerClause = upnp.State switch
+        if (includeRouter)
         {
-            UpnpActionState.Applied => $"Also opened the router/UPnP forward for {shown}.",
-            UpnpActionState.Skipped => "The router/UPnP forward was skipped — this server has port-forwarding disabled, so nothing was forwarded on the router.",
-            UpnpActionState.Unavailable => "The router/UPnP forward couldn't be set — the watchdog isn't reachable.",
-            _ => $"The router/UPnP forward failed{(string.IsNullOrWhiteSpace(upnp.Detail) ? "" : $" ({upnp.Detail})")} — the host firewall change above still stands.",
-        };
+            // The router leg — a separate authority (the watchdog). Its outcome is appended honestly and
+            // never upgrades a firewall failure to success (the firewall axis carries the verdict).
+            var upnp = await _upnp.OpenForwardsAsync(match, ports, cancellationToken);
+            string routerClause = upnp.State switch
+            {
+                UpnpActionState.Applied => $"Also opened the router/UPnP forward for {shown}.",
+                UpnpActionState.Skipped => "The router/UPnP forward was skipped — this server has port-forwarding disabled, so nothing was forwarded on the router.",
+                UpnpActionState.Unavailable => "The router/UPnP forward couldn't be set — the watchdog isn't reachable.",
+                _ => $"The router/UPnP forward failed{(string.IsNullOrWhiteSpace(upnp.Detail) ? "" : $" ({upnp.Detail})")} — the host firewall change above still stands.",
+            };
+            summary = $"{firewallText} {routerClause}";
+        }
 
-        string combined = $"{firewall.Value ?? firewall.Error} {routerClause}";
-        // Preserve the firewall axis's success/failure; append the router context either way.
-        return firewall.IsSuccess ? Result.Success(combined) : Result.Failure<string>(combined);
+        return firewallOk
+            ? ConfirmOutcome.Accepted(summary, verb, match)
+            : ConfirmOutcome.Failed(summary, verb, match, result.Detail);
     }
 
     /// <summary>

@@ -205,10 +205,14 @@ public interface IServerAssistant
     /// </param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     /// <returns>
-    /// A success result whose value is the human-readable outcome, or a failure whose
-    /// error explains why it was refused or could not complete.
+    /// What is known about the operation: its <see cref="Status.ConfirmVerdict"/>, a
+    /// human-readable line, and — for a verb with a run-state postcondition — the state actually
+    /// observed afterwards. A start that the engine accepted but that never reached running comes
+    /// back <see cref="Status.ConfirmVerdict.NotSettled"/>, and one whose state could not be read
+    /// comes back <see cref="Status.ConfirmVerdict.Unknown"/>; neither is a success. A surface
+    /// renders the verdict rather than inferring one from an outcome string.
     /// </returns>
-    Task<Result<string>> ConfirmAsync(
+    Task<Status.ConfirmOutcome> ConfirmAsync(
         PendingConfirmation confirmation,
         bool canPerformActions,
         CancellationToken cancellationToken = default);

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service;
@@ -92,11 +93,51 @@ public sealed record ConfirmRequest(string? Token, string? EditedContent = null)
 /// <summary>The outcome of executing a confirmed operation. For a blueprint finalize, <see cref="Card"/>
 /// carries the rich outcome card (a Verified card, or a fresh DraftReady card when the repair loop
 /// exhausts / the edit was invalid) and <see cref="Confirmations"/> carries a fresh Blueprint token for the
-/// re-edit loop; both are null for every other kind, whose outcome is just <see cref="Text"/>.</summary>
+/// re-edit loop; both are null for every other kind, whose outcome is just <see cref="Text"/>.
+/// <para>
+/// <see cref="Success"/> is true only when the operation's postcondition was observed, or when the engine
+/// reported success for a verb that has none — never for a lifecycle command that was accepted but never
+/// reached its end state. <see cref="Outcome"/> carries which of those it was.
+/// </para></summary>
 public sealed record ConfirmResponse(
     string Text, bool Success,
     JsonElement? Card = null,
-    IReadOnlyList<ConfirmationDto>? Confirmations = null);
+    IReadOnlyList<ConfirmationDto>? Confirmations = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ConfirmOutcomeDto? Outcome = null);
+
+/// <summary>
+/// What is known about a confirmed operation, beyond the pass/fail of <see cref="ConfirmResponse.Success"/>.
+/// <see cref="Verdict"/> distinguishes an observed end state (<c>settled</c>) from an engine-reported success
+/// with nothing to observe (<c>accepted</c>), from one that ran without reaching its end state
+/// (<c>notSettled</c>), from one whose end state could not be read (<c>unknown</c>). A client renders the
+/// verdict rather than parsing <see cref="ConfirmResponse.Text"/> to guess which happened.
+/// </summary>
+/// <param name="Verdict">The outcome class, camelCase.</param>
+/// <param name="Verb">The imperative verb, when the outcome came from a known operation.</param>
+/// <param name="Instance">The instance targeted, when there was one.</param>
+/// <param name="ObservedState">
+/// The run state measured afterwards (<c>running</c> / <c>stopped</c> / <c>unknown</c>) for the verbs that
+/// have a run-state postcondition; omitted for the rest. <c>unknown</c> means the read failed — it is never
+/// a stand-in for "not running".
+/// </param>
+/// <param name="Reason">Why the state could not be read, or why the operation failed.</param>
+public sealed record ConfirmOutcomeDto(
+    string Verdict,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Verb = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Instance = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ObservedState = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null)
+{
+    /// <summary>Projects the domain outcome onto the wire shape (enum names camelCased by the writer's options).</summary>
+    public static ConfirmOutcomeDto From(ConfirmOutcome outcome) => new(
+        Camel(outcome.Verdict.ToString()),
+        outcome.Verb,
+        outcome.Instance,
+        outcome.ObservedState is { } s ? Camel(s.ToString()) : null,
+        outcome.Reason);
+
+    private static string Camel(string name) => char.ToLowerInvariant(name[0]) + name[1..];
+}
 
 /// <summary>
 /// A minted session: the bearer to send on subsequent calls, the refresh token that buys the next

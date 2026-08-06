@@ -1285,6 +1285,126 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         return await client.SendAsync(request);
     }
 
+    // ---- a caller's capability follows their AUTHORITY, not the transport ----------------------
+    // Proposing an action is an operator capability, and the user confirms every proposal — so it must
+    // not hang off the auto-run toggle. Gating it there is the difference between "the assistant offers
+    // to start your server and waits" and "the assistant says it cannot start your server", for a user
+    // who holds admin on the host.
+
+    [Theory]
+    [InlineData(null)]    // the field omitted entirely
+    [InlineData(false)]   // auto-run explicitly off — the default in the panel
+    public async Task Turn_Direct_MayProposeWithoutTheAutoRunToggle(bool? actions)
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(),
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
+
+        WebApplicationFactory<Program> factory = OperatorTurnFactory(assistant, out _);
+        HttpClient client = await AuthedAsync(factory, ActionUser, KgsmTier.Admin);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt = "start factorio", actions }),
+        };
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        HttpResponseMessage response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await response.Content.ReadAsStringAsync();   // drain the stream so the turn completes
+
+        // canPerform TRUE (the caller is an operator), autoExecute FALSE (they did not ask for it).
+        assistant.Received(1).RunStreamAsync(
+            Arg.Any<string>(), "start factorio", true, Arg.Any<bool>(), false,
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task Turn_Direct_AutoRunNeedsBothTheToggleAndAdmin()
+    {
+        // The toggle is intent; admin is authority. An operator who asks for auto-run still gets the
+        // confirm-first path — the request can only ever narrow what the tier already allows.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(),
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
+
+        WebApplicationFactory<Program> factory = OperatorTurnFactory(assistant, out IDiscordDirectory directory);
+        HttpClient client = await AuthedAsync(factory, ActionUser, KgsmTier.Admin);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt = "start factorio", actions = true }),
+        };
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        HttpResponseMessage response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await response.Content.ReadAsStringAsync();   // drain the stream so the turn completes
+
+        assistant.Received(1).RunStreamAsync(
+            Arg.Any<string>(), "start factorio", true, Arg.Any<bool>(), false,
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+        // The tier that mattered was re-derived from Discord, never read off the caller's token.
+        await directory.Received().GetGuildRolesAsync(ActionUser, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Turn_Direct_BelowOperator_MayNotPropose()
+    {
+        // Fail-closed on the axis that actually carries authority: no operator role, no proposals,
+        // whatever the toggle says.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(),
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
+
+        var directory = Substitute.For<IDiscordDirectory>();
+        directory.GetGuildRolesAsync(ActionUser, Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>([]);   // in the guild, holding neither role
+        WebApplicationFactory<Program> factory = Factory(assistant, directory, configure: ConfigureActionRoles);
+        HttpClient client = await AuthedAsync(factory, ActionUser, KgsmTier.Admin);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt = "start factorio", actions = true }),
+        };
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        HttpResponseMessage response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await response.Content.ReadAsStringAsync();   // drain the stream so the turn completes
+
+        assistant.Received(1).RunStreamAsync(
+            Arg.Any<string>(), "start factorio", false, Arg.Any<bool>(), false,
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
+    private const string ActionUser = "action-user";
+    private const string ActionOperatorRole = "role-op";
+    private const string ActionAdminRole = "role-admin";
+
+    private static void ConfigureActionRoles(IWebHostBuilder b)
+    {
+        b.UseSetting("Assistant:ActionsEnabled", "true");
+        b.UseSetting("Assistant:Confirmation:Key", "test-key");
+        b.UseSetting("KgsmAuth:RoleOperatorIds", ActionOperatorRole);
+        b.UseSetting("KgsmAuth:RoleAdminIds", ActionAdminRole);
+    }
+
+    /// <summary>A host where actions are enabled and <see cref="ActionUser"/> holds the OPERATOR role
+    /// in the guild — enough to propose, not enough to auto-run.</summary>
+    private WebApplicationFactory<Program> OperatorTurnFactory(
+        IServerAssistant assistant, out IDiscordDirectory directory)
+    {
+        var stub = Substitute.For<IDiscordDirectory>();
+        stub.GetGuildRolesAsync(ActionUser, Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>([ActionOperatorRole]);
+        directory = stub;
+        return Factory(assistant, stub, configure: ConfigureActionRoles);
+    }
+
     /// <summary>POSTs /turn with an <c>Accept: text/event-stream</c> header and the given prompt.</summary>
     private static async Task<HttpResponseMessage> StreamTurnAsync(HttpClient client, string prompt)
     {

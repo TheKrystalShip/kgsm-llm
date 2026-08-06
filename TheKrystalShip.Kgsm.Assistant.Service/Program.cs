@@ -701,19 +701,22 @@ secured.MapPost("/turn", async (
 
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
 
-    // Whether THIS turn may propose actions.
-    //  - trusted relay (kgsm-api): the caller's verified tier, forwarded as X-Relay-Tier and stashed by
-    //    BearerAuthFilter. Proposing is an operator capability and needs no toggle — the user still
-    //    confirms each proposal. A relay host may have no Discord config of its own, so the forwarded
-    //    tier is the only correct source; this service adds only its local preconditions (actions
-    //    enabled + a Confirmation signing key to mint the proposal token).
-    //  - direct session bearer: the caller's own Discord tier, ANDed with their per-turn toggle.
-    // autoExecute = auto-accept: on a relayed turn the api ALSO forwards its admin-tier ∧ toggle
-    // decision (X-Relay-Auto-Act). When set, the dispatcher RUNS lifecycle commands immediately instead
-    // of staging them. It is gated to canPerform so the propose-gate (BuildGate) always allows what
-    // auto-execute then runs; the direct-bearer path never auto-executes (propose-only).
+    // Two separate permissions, and conflating them is how a client ends up unable to propose a start
+    // because auto-run happens to be off.
+    //
+    //  canPerform  — may this turn PROPOSE actions? An operator capability, and no toggle: the user
+    //                still confirms every proposal, so gating it on one only hides the button.
+    //  autoExecute — may the dispatcher RUN a lifecycle command with no confirmation? Admin only, AND
+    //                the caller asked for it. Gated to canPerform so the propose-gate always allows
+    //                what auto-execute then runs.
+    //
+    // Both transports resolve them the same way, from the same ladder. The relay reads the caller's
+    // verified tier off X-Relay-Tier and their auto-accept intent off X-Relay-Auto-Act (a relay host
+    // may have no Discord config of its own, so the forwarded tier is the only correct source); a
+    // direct session bearer re-derives its own tier from Discord and reads the intent off the body.
+    // A caller's capability follows their authority, never the transport that carried the turn.
     bool canPerform;
-    bool autoExecute = false;
+    bool autoExecute;
     if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
     {
         var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
@@ -724,7 +727,8 @@ secured.MapPost("/turn", async (
     }
     else
     {
-        canPerform = (request.Actions ?? false) && await auth.CanPerformActionsAsync(principal, ct);
+        canPerform = await auth.CanPerformActionsAsync(principal, ct);
+        autoExecute = canPerform && (request.Actions ?? false) && await auth.IsAdminAsync(principal, ct);
     }
     var think = request.Think
         ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a direct caller may propose actions without the auto-run toggle
+
+Proposing an action and auto-running one are separate permissions, and the direct session-bearer
+path had collapsed them into the request's `actions` flag. An admin talking to the assistant from
+the Control Panel was told it could not start their server unless auto-run happened to be on — while
+the same person, same authority, reaching the same assistant through the relay could.
+
+- `canPerform` (may propose) now follows the caller's own operator tier alone. The user confirms
+  every proposal, so gating that on a toggle only hides the button.
+- `actions` means what the panel's switch has always said it means: **auto-run**, ANDed with the
+  caller's admin tier so it can only ever narrow.
+- Both transports resolve the two from the same ladder. A caller's capability follows their
+  authority, never the transport that carried the turn.
+
 ### Added — a browser client can be signed in and returned to itself
 
 The callback answered JSON: `{status, tier, accessToken, refreshToken, …}`. Correct for a

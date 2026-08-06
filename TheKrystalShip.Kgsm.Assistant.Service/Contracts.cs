@@ -16,10 +16,12 @@ public sealed record TurnRequest(
     string? Prompt,
     bool? Think = null,
     IReadOnlyList<string>? Tools = null,
-    // The per-turn "let the assistant act" toggle (the SPA's chat switch). It is INTENT, not authority.
-    // On the DIRECT session path it is ANDed with the caller's Discord tier, so an action needs both.
-    // On the trusted-relay path it is not read at all: proposing is an operator capability the api
-    // already forwarded as X-Relay-Tier, and the toggle's effect there rides X-Relay-Auto-Act instead.
+    // The per-turn AUTO-RUN toggle (the SPA's chat switch). It is INTENT, not authority: it asks for
+    // lifecycle commands to run with no confirmation step, and is ANDed with the caller's admin tier,
+    // so it can only ever narrow. It does NOT gate whether the assistant may PROPOSE an action —
+    // proposing is an operator capability and the user confirms each one, so gating that on a toggle
+    // only hides the button. On the trusted-relay path the api forwards this intent as
+    // X-Relay-Auto-Act instead and this field is not read.
     bool? Actions = null,
     // The per-CHAT conversation id (the SPA's "new chat" identity). It does NOT carry identity — memory
     // is always keyed web:{serverUserId}[:{ConversationId}], the user id resolved server-side — so it only

@@ -50,7 +50,7 @@ Request body:
 | `prompt` | required |
 | `think` | opt into `thinking.delta` frames |
 | `tools` | restrict the offered tool set |
-| `actions` | the per-turn "let the assistant act" toggle — **intent, not authority**. It is ANDed with the caller's tier; it can only ever narrow |
+| `actions` | the per-turn **auto-run** toggle — **intent, not authority**. It asks for lifecycle commands to run with no confirmation step, and is ANDed with the caller's admin tier, so it can only ever narrow. It does **not** gate whether an action may be *proposed*: that follows the caller's operator tier alone, because the user confirms every proposal |
 | `conversationId` | partitions this user's own history into separate context windows. It carries no identity — memory is always keyed by the server-resolved user id |
 
 ### Frames

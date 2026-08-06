@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the callback carries Discord's own refusal back
+
+`/auth/discord/callback` collapsed every code-less callback into `bad_request`, which is also what a
+malformed one returns. It now reads Discord's `error` parameter and carries it through verbatim
+(`consent_required`, `login_required`, …), so a client can tell "this sign-in needs a human" from
+"something broke" and retry visibly instead of guessing. Reported only after the state check — an
+error response carries `state` too, and a forged one must not be echoed back.
+
+This is what lets a browser attempt a **silent** sign-in: every surface on a host is the same
+Discord application, so a browser that authorized the app for the Control Panel has already
+authorized it here, and `prompt=none` completes with nothing rendered.
+
 ### Fixed — a direct caller may propose actions without the auto-run toggle
 
 Proposing an action and auto-running one are separate permissions, and the direct session-bearer

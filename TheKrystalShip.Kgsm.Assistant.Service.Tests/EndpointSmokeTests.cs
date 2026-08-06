@@ -484,7 +484,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// </summary>
     private static async Task<HttpResponseMessage> SignInAsync(
         WebApplicationFactory<Program> factory, string code = "the-code", string? forgedState = null,
-        string? returnTo = null)
+        string? returnTo = null, string? discordError = null)
     {
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
@@ -499,7 +499,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         string cookies = string.Join("; ", start.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
         string state = forgedState ?? QueryValue(start.Headers.Location!.ToString(), "state");
 
-        var callback = new HttpRequestMessage(HttpMethod.Get, $"/auth/discord/callback?code={code}&state={state}");
+        // Discord returns EITHER a code or an error, never both — model that rather than sending a
+        // callback shaped like nothing Discord would ever produce.
+        string query = discordError is null
+            ? $"code={code}&state={state}"
+            : $"error={Uri.EscapeDataString(discordError)}&state={state}";
+        var callback = new HttpRequestMessage(HttpMethod.Get, $"/auth/discord/callback?{query}");
         callback.Headers.Add("Cookie", cookies);
         return await client.SendAsync(callback);
     }
@@ -517,6 +522,36 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]), tier));
 
         return Factory(discord: discord, configure: b => b.UseSetting("Auth:AllowedOrigins:0", origin));
+    }
+
+    [Theory]
+    [InlineData("consent_required")]     // prompt=none, but this app has not been authorized yet
+    [InlineData("login_required")]       // prompt=none, but nobody is signed in at Discord
+    public async Task Callback_DiscordDeclined_CarriesItsOwnReasonBack(string reason)
+    {
+        // A silent sign-in that needs a human is a DIFFERENT outcome from a broken callback, and a
+        // client that cannot tell them apart has to guess between retrying visibly and giving up.
+        const string origin = "https://panel.example.com";
+        var response = await SignInAsync(ReturnLegFactory(origin), returnTo: origin, discordError: reason);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Redirect);
+        string location = response.Headers.Location!.ToString();
+        location.Should().StartWith(origin);
+        ParseFragment(location)["error"].Should().Be(reason);
+    }
+
+    [Fact]
+    public async Task Callback_DiscordDeclined_WithAForgedState_IsStillRefusedAsForged()
+    {
+        // An error response carries `state` too. Echoing its reason back before checking the state
+        // would let anyone drive this endpoint's answer without ever having started a sign-in here.
+        const string origin = "https://panel.example.com";
+        var response = await SignInAsync(
+            ReturnLegFactory(origin), forgedState: "not-the-issued-state", returnTo: origin,
+            discordError: "consent_required");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Redirect);
+        ParseFragment(response.Headers.Location!.ToString())["error"].Should().Be("invalid_state");
     }
 
     [Fact]

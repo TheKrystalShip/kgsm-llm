@@ -270,6 +270,9 @@ app.MapGet("/auth/discord/callback", async (
     ILoggerFactory loggerFactory,
     [FromQuery] string? code,
     [FromQuery] string? state,
+    // Discord's own refusal, when it declines to authorize instead of returning a code. A silent
+    // sign-in (prompt=none) that needs a human answers `consent_required`/`login_required` here.
+    [FromQuery] string? error,
     CancellationToken ct) =>
 {
     var logger = loggerFactory.CreateLogger("DiscordCallback");
@@ -304,6 +307,19 @@ app.MapGet("/auth/discord/callback", async (
     if (!OAuthHandshake.TryParse(cookie, out OAuthHandshake handshake) || !handshake.MatchesState(state))
         return Finish(Frag(("error", "invalid_state")), () => Results.BadRequest(
             new { error = "invalid_state", message = "the sign-in did not validate — start again." }));
+
+    // Discord declined rather than issuing a code. Its own reason is carried through verbatim: a
+    // silent sign-in that needs a human says `consent_required`, and a client that cannot tell that
+    // apart from a malformed callback has to guess between retrying visibly and giving up. Reported
+    // only after the state check, because an error response carries `state` too and a forged one
+    // must not be echoed back to a caller as though this service had spoken to Discord about it.
+    if (!string.IsNullOrWhiteSpace(error))
+    {
+        logger.LogInformation("Discord declined the authorization: {Error}", error);
+        return Finish(Frag(("error", error)), () => Results.Json(
+            new { error, message = "Discord declined the authorization." },
+            statusCode: StatusCodes.Status401Unauthorized));
+    }
 
     if (string.IsNullOrWhiteSpace(code))
         return Finish(Frag(("error", "bad_request")), () => Results.BadRequest(

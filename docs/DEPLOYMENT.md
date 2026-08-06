@@ -339,27 +339,23 @@ curl -fsS http://127.0.0.1:5180/health                  # acceptance
 
 ## 7 · Reverse proxy / TLS
 
-The Service speaks plain HTTP on loopback by design. Terminate TLS at nginx (or Caddy) and
-proxy to it. The one non-obvious requirement is **disabling response buffering for the SSE
-stream** (`/turn` with `Accept: text/event-stream`) — the app already sends
-`X-Accel-Buffering: no`, which nginx honors:
+The Service speaks plain HTTP on loopback by design; nginx terminates TLS and proxies to it.
 
-```nginx
-location / {
-    proxy_pass         http://127.0.0.1:5180;
-    proxy_http_version 1.1;
-    proxy_set_header   Host $host;
-    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+**The vhost ships with this repo** — `deploy/nginx/kgsm-assistant.conf`, installed into
+`/etc/nginx/conf.d/` by `deploy/setup.sh` when the host runs nginx, and skipped cleanly when it does
+not. Each leaf owns its own server block and appears or disappears independently; the `:80` ACME
+challenge block and the certificate lifecycle are **host-level** and belong to no leaf. Edit the
+fragment in the repo, re-run `setup.sh`, never hand-edit `/etc/nginx/conf.d/`.
 
-    # SSE: stream tokens through immediately, don't buffer or time out mid-turn.
-    proxy_buffering     off;
-    proxy_read_timeout  3600s;
-    proxy_set_header    Connection '';
-}
-```
+Two settings in it are load-bearing rather than boilerplate. `proxy_buffering off` keeps SSE frames
+flowing as they are produced (the app also sends `X-Accel-Buffering: no`, which nginx honours — the
+directive states it rather than depending on that header staying in place). `proxy_read_timeout 3600s`
+is what lets a blueprint finalize run: it streams for **minutes** behind heartbeats, and the 60s
+default would cut it mid-run and surface as a mysteriously failed save.
 
-Make sure the TLS hostname here matches `DiscordOAuth__RedirectUri` and is listed in
-`Auth__AllowedOrigins`.
+Make sure the TLS hostname matches `DiscordOAuth__RedirectUri` — that URI points at **this service's
+own** `/auth/discord/callback` and must be registered on the Discord application exactly.
+`Auth__AllowedOrigins` is needed only for a client served from a *different* origin.
 
 ---
 

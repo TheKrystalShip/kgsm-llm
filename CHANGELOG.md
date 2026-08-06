@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the assistant is reachable on its own hostname
+
+`deploy/nginx/kgsm-assistant.conf` is this leaf's own nginx server block, installed into
+`/etc/nginx/conf.d/` by `deploy/setup.sh` when the host runs nginx and skipped cleanly when it does
+not. The service still binds loopback only; nginx terminates TLS and routes by hostname.
+
+This is what makes the leaf's Discord login mean something: it can now authenticate a browser with
+no Control Panel API in front of it, which is the standalone property that login was built for.
+`DiscordOAuth__RedirectUri` points at **this service's own** `/auth/discord/callback`.
+
+`proxy_read_timeout 3600s` is load-bearing — a blueprint finalize streams for minutes behind
+heartbeats, and nginx's 60s default would cut it mid-run.
+
 ### Changed — the relay forwards one tier instead of two booleans
 
 - **`X-Relay-Tier` replaces `X-Relay-Can-Act` and `X-Relay-Admin`.** A relayed caller's authority is

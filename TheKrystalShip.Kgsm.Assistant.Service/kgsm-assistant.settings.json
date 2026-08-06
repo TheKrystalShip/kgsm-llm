@@ -91,7 +91,14 @@
     "Scopes": "identify"
   },
   "Auth": {
-    "SessionTtlSeconds": 3600,
+    // The HMAC secret session tokens are signed with. Environment-only, like every other secret;
+    // unset means an ephemeral per-process key and everyone signed out on restart.
+    "SigningKey": "",
+    // The token audience. Empty means this machine's name — a settings file cannot know the host
+    // it will be installed on.
+    "HostId": "",
+    "AccessTtlSeconds": 900,
+    "SessionTtlSeconds": 2592000,
     "RoleCacheTtlSeconds": 60,
     "StateTtlSeconds": 300,
     "AllowedOrigins": []

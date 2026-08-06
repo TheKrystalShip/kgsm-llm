@@ -24,6 +24,8 @@
   <ItemGroup>
     <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.2.0" PrivateAssets="all" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="1.0.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth.Discord" Version="1.0.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth.Sessions" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,7 +44,7 @@
   <ItemGroup>
     <!-- Let the test project reach the internal adapters / security helpers. -->
     <InternalsVisibleTo Include="TheKrystalShip.Kgsm.Assistant.Service.Tests" />
-    <!-- Let NSubstitute (Castle DynamicProxy) mock the internal IDiscordOAuthClient. -->
+    <!-- Let NSubstitute (Castle DynamicProxy) mock the internal security types. -->
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 

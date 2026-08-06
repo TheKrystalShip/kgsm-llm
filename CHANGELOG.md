@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the whole sign-in runs on the shared auth pipeline
+
+The service now uses `TheKrystalShip.KGSM.Auth.Discord` and `.Auth.Sessions` for everything it used
+to hand-roll: one chokepoint to `discord.com`, and session tokens minted and validated by the same
+code the Control Panel API runs.
+
+- **The login handshake is bound to the browser that started it.** The CSRF `state` and the PKCE
+  verifier ride together in one HttpOnly cookie instead of a server-wide dictionary. Checking a
+  returned state against a set of issued states proves only that *some* login started on this host —
+  which is true of an attacker's own login too, so it admitted exactly the request it was meant to
+  refuse. Single-use consumption stops replay, not CSRF.
+- **Sessions are JWTs backed by a SQLite registry**, in the same file as the conversation history.
+  A restart no longer signs everyone out, `POST /auth/logout` kills a session within the validator's
+  5-second cache rather than leaving the bearer valid until it expires, and a refresh token is
+  single-use with reuse detection.
+- **New sign-in endpoints:** `GET /auth/discord/start` (302 to Discord) and
+  `GET /auth/discord/callback` replace `GET /auth/login` + `POST /auth/callback`, and
+  `POST /auth/session/refresh` trades a refresh token for a fresh pair.
+- **`Auth:SigningKey` must be set on a real host.** Unset generates a per-process key, so every
+  restart invalidates every issued token. `Auth:AccessTtlSeconds` (15 min) and `Auth:SessionTtlSeconds`
+  (30 days, sliding) replace the single one-hour session lifetime.
+- `GET /auth/me` reports the caller's live `tier` alongside `canPerformActions`.
+- **A Discord outage denies an authority check without being cached as a denial.** "We could not ask"
+  is not "the answer is no"; caching it would turn a brief outage into a full role-cache-TTL lockout
+  for someone who really is an operator.
+
 ### Changed — authority is the ecosystem's tier
 
 - **The Discord app, guild, role-lookup token and role map move to the shared `KgsmAuth` section**

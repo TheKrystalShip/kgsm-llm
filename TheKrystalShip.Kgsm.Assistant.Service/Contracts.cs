@@ -98,17 +98,34 @@ public sealed record ConfirmResponse(
     JsonElement? Card = null,
     IReadOnlyList<ConfirmationDto>? Confirmations = null);
 
-/// <summary>The Discord authorize URL the SPA should navigate the browser to.</summary>
-public sealed record LoginUrlResponse(string Url);
+/// <summary>
+/// A minted session: the bearer to send on subsequent calls, the refresh token that buys the next
+/// one, and when each dies.
+/// </summary>
+/// <remarks>
+/// Both expiry instants travel so a client can refresh <em>before</em> a call fails rather than
+/// discovering the lapse as a 401 mid-turn. They are the mint-time values, not a re-derivation — a
+/// client is not asked to decode a token it has no business parsing.
+/// </remarks>
+public sealed record AuthSessionResponse(
+    string Verdict,
+    string? Tier,
+    string? Token,
+    string? Refresh,
+    DateTimeOffset? ExpiresAt,
+    DateTimeOffset? RefreshExpiresAt,
+    string UserId,
+    string DisplayName);
 
-/// <summary>The OAuth callback payload the SPA POSTs back after Discord redirects to it.</summary>
-public sealed record AuthCallbackRequest(string? Code, string? State);
+/// <summary>What a client presents to trade a refresh token for a fresh pair.</summary>
+public sealed record RefreshRequest(string? Refresh);
 
-/// <summary>A minted web session: the bearer token to send on subsequent calls + the display name.</summary>
-public sealed record AuthSessionResponse(string Token, string DisplayName);
-
-/// <summary>Who the caller is, and whether they may perform actions right now (for the SPA's UI).</summary>
-public sealed record MeResponse(string UserId, string DisplayName, bool CanPerformActions);
+/// <summary>
+/// Who the caller is and what they may do right now. <see cref="Tier"/> is re-derived from Discord,
+/// not read off the bearer, so it reflects a role change without a new sign-in.
+/// </summary>
+public sealed record MeResponse(
+    string UserId, string DisplayName, string Tier, bool CanPerformActions);
 
 // --- Conversation history read-back (the reverse path) ----------------------------------------
 // The write path keys per-user, per-chat memory web:{userId}[:{chatId}] from the verified identity.

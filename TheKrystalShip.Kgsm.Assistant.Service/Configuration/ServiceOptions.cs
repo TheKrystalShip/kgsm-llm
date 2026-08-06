@@ -1,3 +1,4 @@
+using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.LeafConfig;
 
 // NOTE: KgsmConnectionOptions, InventoryCacheOptions, and WebSearchOptions moved to
@@ -80,14 +81,13 @@ public sealed class WebhookOptions
 }
 
 /// <summary>
-/// Discord OAuth2 settings for the web auth flow. Bound from the "DiscordOAuth" section.
-/// The service runs the authorization-code exchange server-side (the SPA is a public
-/// static host and can't hold a secret) and verifies guild membership + the action role
-/// against the SAME role the Discord bot enforces.
+/// This service's own Discord OAuth2 endpoints. Bound from the "DiscordOAuth" section; the guild,
+/// application credentials and role ids are the ecosystem's shared <c>KgsmAuth</c> block, so what is
+/// left here is only what belongs to this surface.
 /// <para>
-/// Snowflakes (<see cref="GuildId"/>, <see cref="ActionRoleId"/>) are kept as STRINGS:
-/// Discord's member <c>roles</c> array is a list of string snowflakes, so we compare as
-/// strings and never risk a parse.
+/// The authorization-code exchange runs server-side, holding the client secret — a confidential
+/// client — and the caller's token is discarded after one identity read. Roles come from the bot
+/// token, so a user's grant never has to carry them.
 /// </para>
 /// </summary>
 [LeafSection(Section)]
@@ -95,9 +95,12 @@ public sealed class DiscordOAuthOptions
 {
     public const string Section = "DiscordOAuth";
 
-    /// <summary>Where Discord redirects after authorize — the SPA's callback URL (HTTPS).</summary>
-    /// <panel>Where Discord sends someone back to after they approve. It has to match the redirect
-    /// registered on the Discord application exactly.</panel>
+    /// <summary>
+    /// Where Discord returns the browser: this service's own <c>/auth/discord/callback</c>, reachable
+    /// over HTTPS. It must match a redirect registered on the Discord application exactly.
+    /// </summary>
+    /// <panel>Where Discord sends someone back to after they approve — this service's own sign-in
+    /// callback. It has to match the redirect registered on the Discord application exactly.</panel>
     [LeafField("discordRedirectUri", "Sign-in redirect", Group = "discord", Risk = LeafRisk.Wiring,
         NoDefault = true)]
     public string RedirectUri { get; set; } = string.Empty;
@@ -113,31 +116,91 @@ public sealed class DiscordOAuthOptions
 }
 
 /// <summary>
-/// Web session / authority-caching policy. Bound from the "Auth" section. Authority is
-/// never baked into a session — it is a role lookup cached for <see cref="RoleCacheTtlSeconds"/>
-/// and re-read at confirm time.
+/// Web session policy. Bound from the "Auth" section.
 /// </summary>
+/// <remarks>
+/// A sign-in yields a short-lived <em>access</em> bearer plus a <em>refresh</em> token that buys new
+/// ones without going back to Discord, up to <see cref="SessionTtlSeconds"/>. Authority is never baked
+/// into a session — it is a role lookup cached for <see cref="RoleCacheTtlSeconds"/> and re-read at
+/// confirm time, so a revoked role takes effect within that TTL rather than at the next sign-in.
+/// </remarks>
 [LeafSection(Section)]
 public sealed class AuthOptions
 {
     public const string Section = "Auth";
 
-    /// <summary>How long a minted session bearer stays valid. Keep ≤ the Discord token lifetime.</summary>
-    /// <panel>How long a sign-in lasts before the user has to sign in again.</panel>
-    [LeafField("sessionTtlSec", "Session lifetime", Group = "session", Min = 60, Unit = "s")]
-    public int SessionTtlSeconds { get; set; } = 3600;
+    /// <summary>
+    /// The HMAC secret session tokens are signed with. Unset generates an ephemeral per-process key,
+    /// which is fine for a test run and means every restart signs everyone out on a real host.
+    /// </summary>
+    /// <panel>Secret this service signs sign-in tokens with. Generate one and keep it stable: change it,
+    /// or leave it unset, and everyone is signed out the next time the service restarts.</panel>
+    [LeafField("authSigningKey", "Session signing key", Group = "session", Type = LeafType.Secret,
+        Risk = LeafRisk.Wiring, NoDefault = true)]
+    public string SigningKey { get; set; } = string.Empty;
 
-    /// <summary>How long a per-user action-role decision is cached, to throttle Discord calls.</summary>
+    /// <summary>
+    /// The token audience — a bearer minted here is scoped to this host and is refused by any other.
+    /// Blank means the machine name, which is why the shipped default is empty rather than a literal:
+    /// a settings file cannot name the host it will be installed on.
+    /// </summary>
+    /// <panel>The name this host's sign-in tokens are issued for. A token minted here will not be
+    /// accepted anywhere else. Leave it empty to use the machine's own name.</panel>
+    [LeafField("authHostId", "Host identity", Group = "session")]
+    public string HostId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The audience tokens are actually minted under: <see cref="HostId"/>, or the machine name.
+    /// </summary>
+    /// <remarks>
+    /// A method rather than a property so the descriptor generator does not read it as one more
+    /// bindable key — it is derived from <see cref="HostId"/>, and a second way to set the same thing
+    /// is how two halves of one setting drift apart.
+    /// </remarks>
+    public string ResolveHostId() =>
+        string.IsNullOrWhiteSpace(HostId) ? Environment.MachineName : HostId;
+
+    /// <summary>
+    /// How long an access bearer lives. Short on purpose: it is what bounds privilege between
+    /// re-checks, and the refresh token is what keeps the user signed in.
+    /// </summary>
+    /// <panel>How long a sign-in token is good for before the client silently swaps it for a fresh one.
+    /// Shorter is safer; the user notices nothing either way.</panel>
+    [LeafField("accessTtlSec", "Access token lifetime", Group = "session", Min = 60, Unit = "s")]
+    public int AccessTtlSeconds { get; set; } = 900;
+
+    /// <summary>
+    /// The absolute cap on a sign-in: how long someone stays signed in, refreshing, before a fresh
+    /// Discord login. Each successful refresh slides it forward.
+    /// </summary>
+    /// <panel>How long a sign-in lasts before the user has to sign in through Discord again. Every
+    /// refresh slides the window forward, so someone who keeps using it stays signed in.</panel>
+    [LeafField("sessionTtlSec", "Session lifetime", Group = "session", Min = 60, Unit = "s")]
+    public int SessionTtlSeconds { get; set; } = 30 * 24 * 60 * 60;
+
+    /// <summary>How long a per-user tier decision is cached, to throttle Discord calls.</summary>
     /// <panel>How long a user's role decision is reused before Discord is asked again. Longer means fewer
     /// calls to Discord and a longer wait before a revoked role takes effect.</panel>
     [LeafField("roleCacheTtlSec", "Role cache lifetime", Group = "session", Min = 0, Unit = "s")]
     public int RoleCacheTtlSeconds { get; set; } = 60;
 
-    /// <summary>How long an in-flight authorize→callback <c>state</c> stays valid (single-use anyway).</summary>
+    /// <summary>How long an in-flight authorize→callback handshake cookie stays valid.</summary>
     /// <panel>How long someone has to finish a sign-in once it starts before they have to begin again.</panel>
     [LeafField("stateTtlSec", "Sign-in window", Group = "session", Min = 30, Unit = "s")]
     public int StateTtlSeconds { get; set; } = 300;
 
     /// <summary>Exact SPA origins (scheme + host, no trailing slash) allowed by CORS.</summary>
     public string[] AllowedOrigins { get; set; } = Array.Empty<string>();
+
+    /// <summary>The token lifetimes and signing material, as the shared session package wants them.</summary>
+    /// <remarks>
+    /// <c>Issuer</c> is this surface's own and is passed explicitly rather than defaulted: it is
+    /// validated on every token, so the value a host has already minted under is the value it must keep.
+    /// </remarks>
+    public SessionTokenOptions ToSessionTokenOptions() => new(
+        ResolveHostId(),
+        SigningKey,
+        TimeSpan.FromSeconds(AccessTtlSeconds > 0 ? AccessTtlSeconds : 900),
+        TimeSpan.FromSeconds(SessionTtlSeconds > 0 ? SessionTtlSeconds : 30 * 24 * 60 * 60),
+        Issuer: "kgsm-assistant");
 }

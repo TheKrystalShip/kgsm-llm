@@ -1,155 +1,166 @@
-using System.Security.Cryptography;
-using System.Text;
-
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
-using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Auth.Discord;
+using TheKrystalShip.KGSM.Auth.Sessions;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
-/// <summary>A resolved, logged-in caller. <see cref="SessionToken"/> is the bearer — server-side only.</summary>
-internal sealed record AuthPrincipal(string UserId, string DisplayName, string SessionToken);
+/// <summary>
+/// A resolved, authenticated caller.
+/// </summary>
+/// <param name="UserId">The verified Discord user id — the identity every memory key is scoped by.</param>
+/// <param name="DisplayName">For display only. Never authority.</param>
+/// <param name="SessionId">
+/// The session this caller's token belongs to, or empty on the trusted-relay path, which has no
+/// session of its own (the relay authenticated the user upstream). It is what a logout revokes and
+/// what the registry can kill.
+/// </param>
+/// <param name="TokenTier">
+/// The tier recorded when this session was created. A snapshot for display, <b>never</b> the authority
+/// check — <see cref="DiscordAuthService.ResolveTierAsync"/> re-derives that from Discord, so a role
+/// taken away stops working within the cache TTL instead of surviving until the token expires.
+/// </param>
+internal sealed record AuthPrincipal(
+    string UserId,
+    string DisplayName,
+    string SessionId,
+    KgsmTier TokenTier = KgsmTier.None);
 
-/// <summary>The outcome of a successful login: the session bearer to hand the SPA + the display name.</summary>
-internal sealed record AuthSessionResult(string SessionToken, string DisplayName);
+/// <summary>The tokens a completed login (or a refresh) hands back.</summary>
+internal sealed record AuthSessionResult(
+    string AccessToken,
+    DateTimeOffset AccessExpires,
+    string RefreshToken,
+    DateTimeOffset RefreshExpires,
+    KgsmTier Tier,
+    string UserId,
+    string DisplayName);
 
 /// <summary>
-/// Orchestrates the Discord OAuth login and computes authority. Scoped: it depends on the
-/// transient typed <see cref="IDiscordOAuthClient"/>, so it must never be captured by a
-/// singleton (the stores it uses ARE singletons and are injected, not owned).
-/// <para>
-/// Authority is the ecosystem's ordered tier, resolved from the shared role map, so a person gets
-/// the same authority here as through the Control Panel and the Discord bot. It is re-derived fresh
-/// (cached briefly) rather than stored on the session, so a revoked role takes effect within the
-/// cache TTL.
-/// </para>
+/// Runs the Discord login and answers what a caller may do. Scoped: it depends on the transient typed
+/// <see cref="IDiscordDirectory"/>, so it must never be captured by a singleton (the caches and the
+/// registry it uses ARE singletons and are injected, not owned).
 /// </summary>
-internal sealed class DiscordAuthService
+/// <remarks>
+/// <para>
+/// Authority is the ecosystem's ordered tier resolved from the shared role map, so a person gets the
+/// same authority here as through the Control Panel and the Discord bot. It is re-derived fresh
+/// (cached briefly) rather than read off the token, which is what makes a revoked role take effect
+/// without waiting for a re-login.
+/// </para>
+/// <para>
+/// This surface runs standalone: it holds its own Discord application credentials and its own session
+/// registry, and needs no kgsm-api in front of it to authenticate anyone.
+/// </para>
+/// </remarks>
+internal sealed class DiscordAuthService(
+    IDiscordDirectory directory,
+    ISessionTokenService tokens,
+    ISessionRegistry sessions,
+    ISessionValidator validator,
+    DiscordTierCache tierCache,
+    ConfirmationTokenService confirmations,
+    KgsmRoleMap roleMap,
+    IOptions<AuthOptions> authOptions,
+    IOptions<AssistantServiceOptions> assistantOptions,
+    ILogger<DiscordAuthService> logger)
 {
-    private readonly IDiscordOAuthClient _oauth;
-    private readonly SessionStore _sessions;
-    private readonly OAuthStateStore _states;
-    private readonly RoleCache _roleCache;
-    private readonly ConfirmationTokenService _tokens;
-    private readonly DiscordOAuthOptions _discord;
-    private readonly KgsmAuthOptions _sharedAuth;
-    private readonly KgsmRoleMap _roleMap;
-    private readonly AuthOptions _auth;
-    private readonly AssistantServiceOptions _assistant;
-    private readonly ILogger<DiscordAuthService> _logger;
+    private readonly AuthOptions _auth = authOptions.Value;
+    private readonly AssistantServiceOptions _assistant = assistantOptions.Value;
 
-    public DiscordAuthService(
-        IDiscordOAuthClient oauth,
-        SessionStore sessions,
-        OAuthStateStore states,
-        RoleCache roleCache,
-        ConfirmationTokenService tokens,
-        IOptions<DiscordOAuthOptions> discord,
-        IOptions<KgsmAuthOptions> sharedAuth,
-        KgsmRoleMap roleMap,
-        IOptions<AuthOptions> auth,
-        IOptions<AssistantServiceOptions> assistant,
-        ILogger<DiscordAuthService> logger)
+    /// <summary>The Discord authorize URL for this handshake.</summary>
+    public string BuildAuthorizeUrl(OAuthHandshake handshake, string? prompt) =>
+        directory.BuildAuthorizeUrl(handshake.State, handshake.CodeChallenge, prompt ?? "none");
+
+    /// <summary>
+    /// Exchange an authorization code for a verified identity and the tier this host grants it.
+    /// <see langword="null"/> means the code itself was bad; a <see cref="DiscordAuthException"/> means
+    /// Discord could not be asked, which the caller reports as an upstream failure and never as a
+    /// denial. A returned <see cref="KgsmTier.None"/> is the denial: identity verified, no access here.
+    /// </summary>
+    public Task<ResolvedPrincipal?> ResolveAsync(string code, string codeVerifier, CancellationToken ct) =>
+        directory.ResolveAsync(code, codeVerifier, ct);
+
+    /// <summary>
+    /// Record a login and mint its tokens. The refresh token's <c>jti</c> is stored as the session's
+    /// current one — the value a later refresh must present, which is how a rotated-away token is told
+    /// apart from the live one.
+    /// </summary>
+    public async Task<AuthSessionResult> CreateSessionAsync(
+        ResolvedPrincipal resolved, string? userAgent, CancellationToken ct)
     {
-        _oauth = oauth;
-        _sessions = sessions;
-        _states = states;
-        _roleCache = roleCache;
-        _tokens = tokens;
-        _discord = discord.Value;
-        _sharedAuth = sharedAuth.Value;
-        _roleMap = roleMap;
-        _auth = auth.Value;
-        _assistant = assistant.Value;
-        _logger = logger;
-    }
+        string sessionId = "sid_" + Guid.NewGuid().ToString("N");
+        DateTimeOffset now = DateTimeOffset.UtcNow;
 
-    /// <summary>Builds the Discord authorize URL (with a fresh single-use state + PKCE challenge).</summary>
-    public string BuildLoginUrl()
-    {
-        var verifier = Base64Url.Encode(RandomNumberGenerator.GetBytes(32));
-        var challenge = Base64Url.Encode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
-        var state = _states.Create(verifier);
+        MintedToken access = tokens.MintAccess(resolved.Identity, resolved.Tier, sessionId);
+        MintedToken refresh = tokens.MintRefresh(resolved.Identity, resolved.Tier, sessionId);
 
-        var query = string.Join('&', new[]
-        {
-            "response_type=code",
-            $"client_id={Uri.EscapeDataString(_sharedAuth.ClientId)}",
-            $"scope={Uri.EscapeDataString(_discord.Scopes)}",
-            $"redirect_uri={Uri.EscapeDataString(_discord.RedirectUri)}",
-            $"state={Uri.EscapeDataString(state)}",
-            $"code_challenge={Uri.EscapeDataString(challenge)}",
-            "code_challenge_method=S256",
-        });
-        return $"https://discord.com/api/oauth2/authorize?{query}";
+        await sessions.CreateAsync(
+            new SessionRegistration(
+                sessionId, resolved.Identity.UserId, _auth.HostId,
+                Created: now, Expires: refresh.ExpiresAt,
+                UserAgent: userAgent, CurrentJti: refresh.Jti),
+            ct);
+
+        // Seed the tier cache from the resolution just made — the first request after login would
+        // otherwise ask Discord the question it was already asked.
+        tierCache.Set(resolved.Identity.UserId, resolved.Tier);
+
+        logger.LogInformation(
+            "Discord login: {Display} ({UserId}) → {Tier}, session {SessionId}",
+            resolved.Identity.Display, resolved.Identity.UserId, KgsmTiers.ToWire(resolved.Tier), sessionId);
+
+        return new AuthSessionResult(
+            access.Token, access.ExpiresAt, refresh.Token, refresh.ExpiresAt,
+            resolved.Tier, resolved.Identity.UserId, resolved.Identity.Display);
     }
 
     /// <summary>
-    /// Completes login: validates the single-use state, exchanges the code, verifies identity
-    /// (<c>/users/@me</c>, the caller's token then discarded), requires guild membership, and
-    /// mints a session. Returns the session bearer token, or null on any failure (bad state,
-    /// exchange failure, or not a guild member).
+    /// Trade a refresh token for a fresh pair, sliding the session's cap forward.
+    /// <see langword="null"/> when the token is invalid, expired, not a refresh token, or presents a
+    /// <c>jti</c> the session no longer holds.
     /// </summary>
-    public async Task<AuthSessionResult?> CompleteLoginAsync(string code, string state, CancellationToken ct = default)
+    /// <remarks>
+    /// A mismatched <c>jti</c> means the presented token has already been rotated away — either a stale
+    /// client or a stolen token, and there is no way to tell which from here. The refusal is the same
+    /// either way: no new tokens, and the legitimate holder signs in again.
+    /// </remarks>
+    public async Task<AuthSessionResult?> RefreshAsync(string refreshToken, CancellationToken ct)
     {
-        if (!_states.TryConsume(state, out var verifier))
+        RefreshClaims? claims = await tokens.ReadRefreshAsync(refreshToken);
+        if (claims is null)
+            return null;
+
+        MintedToken access = tokens.MintAccess(claims.Identity, claims.Tier, claims.SessionId);
+        MintedToken refresh = tokens.MintRefresh(claims.Identity, claims.Tier, claims.SessionId);
+
+        if (!await sessions.RotateAsync(claims.SessionId, claims.Jti, refresh.Jti, refresh.ExpiresAt, ct))
         {
-            _logger.LogWarning("OAuth callback rejected: unknown/expired/replayed state");
+            logger.LogWarning(
+                "Refresh refused for session {SessionId}: the presented token is not the current one "
+                + "(rotated away, revoked, or past its cap)", claims.SessionId);
             return null;
         }
 
-        var token = await _oauth.ExchangeCodeAsync(code, verifier, ct);
-        if (token is null || string.IsNullOrEmpty(token.AccessToken))
-            return null;
-
-        // Verify identity once with the caller's token, then discard it — nothing downstream
-        // ever needs it again (roles come from the bot, by user id).
-        var user = await _oauth.GetCurrentUserAsync(token.AccessToken, ct);
-        if (user is null || string.IsNullOrEmpty(user.Id))
-            return null;
-
-        // Authority is the bot's to resolve: fetch the caller's member object by user id. A
-        // null result (404) means they are not in the configured guild → access denied.
-        var member = await _oauth.GetGuildMemberAsync(user.Id, ct);
-        if (member is null)
-            return null;
-
-        var session = new Session(
-            user.Id,
-            user.DisplayName,
-            DateTimeOffset.UtcNow.AddSeconds(_auth.SessionTtlSeconds > 0 ? _auth.SessionTtlSeconds : 3600));
-
-        var sessionToken = _sessions.Create(session);
-
-        // Seed the tier cache from the member we already have — saves the first re-fetch. One
-        // resolution answers every authority question, so nothing else needs looking up here.
-        _roleCache.Set(user.Id, _roleMap.Resolve(member.Roles));
-
-        return new AuthSessionResult(sessionToken, user.DisplayName);
-    }
-
-    /// <summary>Resolves a bearer token to a principal, or false if the session is unknown/expired.</summary>
-    public bool TryResolvePrincipal(string? sessionToken, out AuthPrincipal principal)
-    {
-        principal = null!;
-        if (!_sessions.TryGet(sessionToken, out var session))
-            return false;
-
-        principal = new AuthPrincipal(session.DiscordUserId, session.DisplayName, sessionToken!);
-        return true;
+        // The tier travels forward from the token rather than being re-resolved: a refresh must not
+        // depend on Discord being reachable. It is a display value anyway — every authority check
+        // re-derives.
+        return new AuthSessionResult(
+            access.Token, access.ExpiresAt, refresh.Token, refresh.ExpiresAt,
+            claims.Tier, claims.Identity.UserId, claims.Identity.Display);
     }
 
     /// <summary>
-    /// Whether this principal may perform mutating/destructive actions RIGHT NOW. The master
-    /// kill-switch (ActionsEnabled + a signing key + a configured operator role) is checked live;
-    /// the per-user tier is served from a short-TTL cache, else re-fetched from Discord with the BOT
-    /// token (by user id). No caller token is involved, so a re-check never forces a re-login.
+    /// Whether this principal may perform mutating/destructive actions right now. The master
+    /// kill-switch (actions enabled + a confirmation signing key + a configured operator role) is
+    /// checked live; the per-user tier comes from the short-TTL cache, else from Discord with the BOT
+    /// token. No caller token is involved, so a re-check never forces a re-login.
     /// </summary>
     public async Task<bool> CanPerformActionsAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (!_assistant.ActionsEnabled || !_tokens.IsConfigured || _roleMap.IsEmpty)
+        if (!_assistant.ActionsEnabled || !confirmations.IsConfigured || roleMap.IsEmpty)
             return false;
 
         return await ResolveTierAsync(principal, ct) >= KgsmTier.Operator;
@@ -164,34 +175,56 @@ internal sealed class DiscordAuthService
     /// </summary>
     public async Task<bool> IsAdminAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (_roleMap.AdminRoleIds.Count == 0)
+        if (roleMap.AdminRoleIds.Count == 0)
             return false;
 
         return await ResolveTierAsync(principal, ct) >= KgsmTier.Admin;
     }
 
     /// <summary>
-    /// The tier this principal holds, cached for the role-cache TTL. A null member — they left the
-    /// guild, or Discord denied the lookup transiently — resolves to <see cref="KgsmTier.None"/> and
-    /// is cached like any other answer, so a denial does not retry on every call. The session itself
-    /// stays valid until its own expiry; there is no caller token to expire and force a re-login.
+    /// The tier this principal holds, cached for the role-cache TTL. Not being a member of the guild
+    /// resolves to <see cref="KgsmTier.None"/> and is cached like any other answer, so a denial does not
+    /// reach Discord on every call.
     /// </summary>
-    private async Task<KgsmTier> ResolveTierAsync(AuthPrincipal principal, CancellationToken ct)
+    /// <remarks>
+    /// A failure to reach Discord denies this one check and is <b>not</b> cached. "We could not ask" is
+    /// a different fact from "the answer is no", and storing the first as the second would turn a
+    /// thirty-second Discord outage into a full-TTL lockout for someone who is genuinely an operator.
+    /// The session itself stays valid throughout — there is no caller token to expire.
+    /// </remarks>
+    public async Task<KgsmTier> ResolveTierAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (_roleCache.TryGet(principal.UserId, out KgsmTier cached))
+        if (tierCache.TryGet(principal.UserId, out KgsmTier cached))
             return cached;
 
-        DiscordGuildMember? member = await _oauth.GetGuildMemberAsync(principal.UserId, ct);
-        KgsmTier tier = _roleMap.Resolve(member?.Roles);
-        _roleCache.Set(principal.UserId, tier);
+        IReadOnlyList<string>? roles;
+        try
+        {
+            roles = await directory.GetGuildRolesAsync(principal.UserId, ct);
+        }
+        catch (DiscordAuthException ex)
+        {
+            logger.LogWarning(ex, "Could not resolve authority for {UserId} — denying this check.", principal.UserId);
+            return KgsmTier.None;
+        }
+
+        KgsmTier tier = roleMap.Resolve(roles);
+        tierCache.Set(principal.UserId, tier);
         return tier;
     }
 
-    public void Logout(AuthPrincipal principal)
+    /// <summary>
+    /// End a session: revoke the row, drop the validator's cached answer so the kill is immediate
+    /// rather than TTL-bounded, and forget the cached tier.
+    /// </summary>
+    public async Task LogoutAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        _sessions.Remove(principal.SessionToken);
-        _roleCache.Remove(principal.UserId);
+        if (principal.SessionId.Length > 0)
+        {
+            await sessions.RevokeAsync(principal.SessionId, ct);
+            validator.Evict(principal.SessionId);
+        }
+
+        tierCache.Remove(principal.UserId);
     }
-
-
 }

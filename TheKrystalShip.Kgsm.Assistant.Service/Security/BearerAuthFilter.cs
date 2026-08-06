@@ -1,17 +1,23 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Auth.Discord;
+using TheKrystalShip.KGSM.Auth.Sessions;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
 /// <summary>
 /// Endpoint filter that authenticates a caller to the secured surface, two ways:
 /// <list type="number">
-/// <item><b>Session bearer</b> — <c>Authorization: Bearer &lt;token&gt;</c> resolved to an
-/// <see cref="AuthPrincipal"/> (the browser/SPA-direct path).</item>
+/// <item><b>Session bearer</b> — <c>Authorization: Bearer &lt;token&gt;</c>, a session JWT this service
+/// minted, resolved to an <see cref="AuthPrincipal"/> (the browser/SPA-direct path).</item>
 /// <item><b>Trusted relay</b> — a co-located kgsm-api forwarding a verified end-user. A request
 /// carrying a matching <c>X-Relay-Secret</c> is authenticated as the forwarded Discord identity
 /// (<c>X-Relay-User</c> + optional <c>X-Relay-User-Name</c>) with NO session login. The relay
@@ -54,9 +60,8 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     /// Key under which the trusted relay's ADMIN decision is stored (a <c>bool</c>), set ONLY on the
     /// authenticated relay path from <c>X-Relay-Admin</c>. The api forwards its verified admin-tier
     /// decision; the review endpoints trust it instead of a Discord role lookup, exactly as
-    /// <see cref="RelayCanActKey"/> works for actions. Orthogonal to acting: reading other people's
-    /// conversations is its own power. Absent/non-"true" ⇒ false, so a relay that doesn't speak this
-    /// header can never open the review surface.
+    /// <see cref="RelayCanActKey"/> works for actions. Absent/non-"true" ⇒ false, so a relay that
+    /// doesn't speak this header can never open the review surface.
     /// </summary>
     public const string RelayAdminKey = "relayAdmin";
 
@@ -79,12 +84,19 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     private const string RelayAdminHeader = "X-Relay-Admin";
     private const string RelayConversationIdHeader = "X-Relay-Conversation-Id";
 
-    private readonly DiscordAuthService _auth;
+    private static readonly JsonWebTokenHandler Handler = new();
+
+    private readonly ISessionTokenService _tokens;
+    private readonly ISessionValidator _sessions;
     private readonly AssistantServiceOptions _options;
 
-    public BearerAuthFilter(DiscordAuthService auth, IOptions<AssistantServiceOptions> options)
+    public BearerAuthFilter(
+        ISessionTokenService tokens,
+        ISessionValidator sessions,
+        IOptions<AssistantServiceOptions> options)
     {
-        _auth = auth;
+        _tokens = tokens;
+        _sessions = sessions;
         _options = options.Value;
     }
 
@@ -107,9 +119,10 @@ internal sealed class BearerAuthFilter : IEndpointFilter
                 return Results.Unauthorized(); // the relay MUST forward an identity to act as
 
             var displayName = request.Headers[RelayUserNameHeader].ToString();
-            // SessionToken is a synthetic marker — the relay path has no session (logout is a no-op).
+            // The relay path holds no session of its own — the api authenticated the user upstream —
+            // so the session id is empty and a logout on this path has nothing to revoke.
             context.HttpContext.Items[PrincipalKey] = new AuthPrincipal(
-                userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, "relay");
+                userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, string.Empty);
             // The relay's action-authority decision (the api's verified tier ∧ the user's toggle).
             // Trusted only because the relay secret already matched. Absent/anything-but-"true" ⇒ false,
             // so a relay that doesn't speak this header can never silently grant actions.
@@ -133,18 +146,56 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             return await next(context);
         }
 
-        // Session-bearer path (the SPA-direct / browser caller).
+        // Session-bearer path (the browser caller).
         var header = request.Headers.Authorization.ToString();
 
         string? token = header.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase)
             ? header[BearerPrefix.Length..].Trim()
             : null;
 
-        if (string.IsNullOrEmpty(token) || !_auth.TryResolvePrincipal(token, out var principal))
+        if (string.IsNullOrEmpty(token))
+            return Results.Unauthorized();
+
+        AuthPrincipal? principal = await ResolveAsync(token, context.HttpContext.RequestAborted);
+        if (principal is null)
             return Results.Unauthorized();
 
         context.HttpContext.Items[PrincipalKey] = principal;
         return await next(context);
+    }
+
+    /// <summary>
+    /// Validates an access token and confirms its session is still alive.
+    /// </summary>
+    /// <remarks>
+    /// Signature, issuer, audience and lifetime come from the same
+    /// <see cref="ISessionTokenService.ValidationParameters"/> the mint used, so the check can never
+    /// drift from the issue. Three things beyond that are refused outright: a <em>refresh</em> token
+    /// presented as a bearer (it lives far longer, and accepting one here would erase the short access
+    /// lifetime that bounds privilege), a token carrying no <c>sid</c> (nothing a revoke could kill),
+    /// and a <c>sid</c> whose session is revoked or past its cap — the last is what makes signing out
+    /// mean something, since a signed token stays cryptographically valid until it expires.
+    /// </remarks>
+    private async Task<AuthPrincipal?> ResolveAsync(string token, CancellationToken ct)
+    {
+        TokenValidationResult result = await Handler.ValidateTokenAsync(token, _tokens.ValidationParameters);
+        if (!result.IsValid || result.ClaimsIdentity is null)
+            return null;
+
+        ClaimsIdentity ci = result.ClaimsIdentity;
+
+        if (ci.FindFirst(KgsmAuthClaims.TokenKind)?.Value != KgsmTokenKind.Access)
+            return null;
+
+        DiscordIdentity? identity = SessionClaims.ReadIdentity(ci);
+        string? sessionId = SessionClaims.ReadSessionId(ci);
+        if (identity is null || sessionId is null)
+            return null;
+
+        if (!await _sessions.IsValidAsync(sessionId, ct))
+            return null;
+
+        return new AuthPrincipal(identity.UserId, identity.Display, sessionId, SessionClaims.ReadTier(ci));
     }
 
     private static bool FixedTimeEquals(string a, string b) =>

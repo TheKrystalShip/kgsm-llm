@@ -134,11 +134,13 @@ Ollama clients (chat = JIT, embed = AOT) is intentional, justified duplication.
 
 - **CLI:** the shell user is the trust boundary. Read-only by default; `--read-only` opts down.
   No accounts.
-- **Service:** Discord **OAuth** → bearer session tokens (the SPA is a separate origin). Whether a
-  user may run *actions* is derived from a guild **role**, looked up via the bot token and cached
-  briefly. Read-only operations are available to any guild member. A trusted-relay header path
+- **Service:** Discord **OAuth**, run end to end by this service, → session JWTs it mints and can
+  revoke. Authority is the ecosystem's ordered tier (`admin ⊇ operator ⊇ viewer`) resolved from the
+  shared role map via the bot token and cached briefly, so the same person holds the same authority
+  here, in the Control Panel and in the Discord bot. Acting needs `operator`; reviewing someone
+  else's conversations needs `admin`; every guild member can read. A trusted-relay header path
   exists for a co-located aggregator (e.g. kgsm-api) but cannot escalate authority. Sessions are
-  in-memory (restart ⇒ re-login).
+  rows in SQLite, so they survive a restart and can be killed before their tokens expire.
 
 ## Deployment shapes (and why they differ)
 

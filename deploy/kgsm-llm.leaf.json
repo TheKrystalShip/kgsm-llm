@@ -377,7 +377,7 @@
       "key": "discordRedirectUri",
       "env": "DiscordOAuth__RedirectUri",
       "label": "Sign-in redirect",
-      "description": "Where Discord sends someone back to after they approve. It has to match the redirect registered on the Discord application exactly.",
+      "description": "Where Discord sends someone back to after they approve — this service's own sign-in callback. It has to match the redirect registered on the Discord application exactly.",
       "group": "discord",
       "type": "string",
       "risk": "wiring"
@@ -393,13 +393,44 @@
       "risk": "wiring"
     },
     {
+      "key": "authSigningKey",
+      "env": "Auth__SigningKey",
+      "label": "Session signing key",
+      "description": "Secret this service signs sign-in tokens with. Generate one and keep it stable: change it, or leave it unset, and everyone is signed out the next time the service restarts.",
+      "group": "session",
+      "type": "secret",
+      "risk": "wiring"
+    },
+    {
+      "key": "authHostId",
+      "env": "Auth__HostId",
+      "label": "Host identity",
+      "description": "The name this host's sign-in tokens are issued for. A token minted here will not be accepted anywhere else. Leave it empty to use the machine's own name.",
+      "group": "session",
+      "type": "string",
+      "default": "",
+      "risk": "safe"
+    },
+    {
+      "key": "accessTtlSec",
+      "env": "Auth__AccessTtlSeconds",
+      "label": "Access token lifetime",
+      "description": "How long a sign-in token is good for before the client silently swaps it for a fresh one. Shorter is safer; the user notices nothing either way.",
+      "group": "session",
+      "type": "int",
+      "default": "900",
+      "min": 60,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
       "key": "sessionTtlSec",
       "env": "Auth__SessionTtlSeconds",
       "label": "Session lifetime",
-      "description": "How long a sign-in lasts before the user has to sign in again.",
+      "description": "How long a sign-in lasts before the user has to sign in through Discord again. Every refresh slides the window forward, so someone who keeps using it stays signed in.",
       "group": "session",
       "type": "int",
-      "default": "3600",
+      "default": "2592000",
       "min": 60,
       "unit": "s",
       "risk": "safe"

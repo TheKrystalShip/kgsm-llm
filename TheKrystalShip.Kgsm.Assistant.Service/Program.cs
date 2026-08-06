@@ -1,5 +1,7 @@
 using System.Text.Json;
 
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.FileProviders;
 
@@ -14,10 +16,11 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
-using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingWrites;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Auth.Discord;
+using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
@@ -101,15 +104,49 @@ builder.Services.AddSingleton<ConfirmationTokenService>();
 builder.Services.AddSingleton<IPendingWriteStore, SqlitePendingWriteStore>();
 
 // --- Web auth (Discord OAuth) ------------------------------------------------
-// The SPA is a separate origin (GitHub Pages), so auth is a bearer session token the
-// service mints — not a cookie. The three in-memory stores are SINGLETONS; the typed
-// HttpClient is transient (factory-managed); the orchestration service + bearer filter
-// are SCOPED — so no singleton ever captures the transient client.
-builder.Services.AddSingleton<SessionStore>();
-builder.Services.AddSingleton<OAuthStateStore>();
-builder.Services.AddSingleton<RoleCache>();
-builder.Services.AddHttpClient<IDiscordOAuthClient, DiscordOAuthClient>(
-    c => c.BaseAddress = new Uri("https://discord.com/"));
+// A sign-in yields a short-lived access bearer plus a refresh token, both signed by this service
+// and both carrying the session id the registry can revoke. The in-flight login handshake needs no
+// server-side store at all: its state and PKCE verifier ride in one HttpOnly cookie on the browser
+// doing the login.
+//
+// Lifetimes: the registry, the caches and the token service are SINGLETONS; the Discord directory is
+// transient (its HttpClient is factory-managed); the orchestration service and the filters are
+// SCOPED — so no singleton ever captures the transient client.
+var authOptions = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>() ?? new AuthOptions();
+
+builder.Services.AddSingleton<ISessionTokenService>(sp => new SessionTokenService(
+    sp.GetRequiredService<IOptions<AuthOptions>>().Value.ToSessionTokenOptions(),
+    sp.GetRequiredService<ILogger<SessionTokenService>>()));
+builder.Services.AddSingleton<ISessionRegistry, SqliteSessionRegistry>();
+builder.Services.AddMemoryCache();
+// The cache TTL is the revocation lag for anything that cannot evict — a logout evicts, so in
+// practice a kill is immediate and this is only the backstop.
+builder.Services.AddSingleton<ISessionValidator>(sp => new SessionValidator(
+    sp.GetRequiredService<ISessionRegistry>(),
+    sp.GetRequiredService<IMemoryCache>(),
+    TimeSpan.FromSeconds(5)));
+builder.Services.AddHostedService(sp => new SessionCleanupWorker(
+    sp.GetRequiredService<ISessionRegistry>(),
+    TimeSpan.FromHours(1),
+    sp.GetRequiredService<ILogger<SessionCleanupWorker>>()));
+builder.Services.AddSingleton(new DiscordTierCache(
+    TimeSpan.FromSeconds(authOptions.RoleCacheTtlSeconds > 0 ? authOptions.RoleCacheTtlSeconds : 60)));
+
+// This surface's own OAuth endpoints; the application credentials, guild and role ids are the
+// shared KgsmAuth block. The scopes are passed explicitly rather than left to the package default:
+// what sign-in asks for shows up on the session, so it is this surface's to state.
+builder.Services.AddSingleton(sp =>
+{
+    var discord = sp.GetRequiredService<IOptions<DiscordOAuthOptions>>().Value;
+    return new DiscordOAuthEndpoints(discord.RedirectUri, discord.Scopes);
+});
+// DiscordDirectory takes the options class itself, so the bound value is registered bare as well as
+// behind IOptions — without it the real directory cannot be constructed at all, and every test that
+// substitutes the seam would still pass.
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<KgsmAuthOptions>>().Value);
+builder.Services.AddHttpClient<IDiscordDirectory, DiscordDirectory>(
+    c => c.Timeout = TimeSpan.FromSeconds(10));
+
 builder.Services.AddScoped<DiscordAuthService>();
 builder.Services.AddScoped<BearerAuthFilter>();
 builder.Services.AddScoped<AdminOnlyFilter>();
@@ -117,7 +154,6 @@ builder.Services.AddScoped<AdminOnlyFilter>();
 // CORS: allow the configured SPA origin to call with an Authorization header. NO
 // AllowCredentials (bearer, not cookies). UseCors is ordered before the secured group so
 // cross-origin preflight (OPTIONS) is answered by the CORS middleware, pre-auth.
-var authOptions = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>() ?? new AuthOptions();
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(authOptions.AllowedOrigins)
     .WithMethods("GET", "POST")
@@ -165,25 +201,114 @@ app.UseCors();
 const string WebSurface = "web";
 
 // --- Public endpoints --------------------------------------------------------
-// Open: a liveness probe, and the two auth-bootstrap endpoints (a caller has no session yet).
+// Open: a liveness probe, the two auth-bootstrap endpoints (a caller has no session yet) and the
+// refresh, which is authenticated by the refresh token in its own body rather than by a bearer.
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
-// Returns the Discord authorize URL (with a fresh single-use state + PKCE challenge) for the
-// SPA to navigate the browser to. JSON, not a 302 — the SPA owns navigation.
-app.MapGet("/auth/login", (DiscordAuthService auth) =>
-    Results.Ok(new LoginUrlResponse(auth.BuildLoginUrl())));
+// The in-flight login cookie — written at /start, consumed at /callback. It carries BOTH halves of
+// the handshake: the CSRF `state` Discord echoes back, and the PKCE `code_verifier` presented at the
+// exchange. HttpOnly and this origin's, so only the browser that began the login can satisfy it —
+// that binding IS the CSRF property, and a set of issued states held server-side would not have it.
+// SameSite=Lax, never Strict: Strict suppresses the cookie on the top-level redirect back from
+// Discord, which breaks every login.
+const string StateCookie = "kgsm_oauth_state";
 
-// The SPA POSTs the code + state Discord handed back. The service exchanges it server-side,
-// requires guild membership, and returns a session bearer token. 401 if anything fails.
-app.MapPost("/auth/callback", async (AuthCallbackRequest request, DiscordAuthService auth, CancellationToken ct) =>
+CookieOptions StateCookieOptions() => new()
 {
-    if (string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.State))
-        return Results.BadRequest(new { error = "code and state are required." });
+    HttpOnly = true,
+    Secure = !app.Environment.IsDevelopment(),
+    SameSite = SameSiteMode.Lax,
+    Path = "/auth",
+    MaxAge = TimeSpan.FromSeconds(authOptions.StateTtlSeconds > 0 ? authOptions.StateTtlSeconds : 300),
+};
 
-    var session = await auth.CompleteLoginAsync(request.Code, request.State, ct);
+// Begin the OAuth bounce — 302 to Discord (this service owns the client id, redirect and scopes).
+// `prompt=none` is silent SSO; a client retries with `consent` when Discord answers login_required.
+app.MapGet("/auth/discord/start", (HttpContext http, DiscordAuthService auth, [FromQuery] string? prompt) =>
+{
+    var handshake = OAuthHandshake.Create();
+    http.Response.Cookies.Append(StateCookie, handshake.ToCookieValue(), StateCookieOptions());
+    // Only the challenge travels — the verifier stays in the cookie, never in a URL.
+    return Results.Redirect(auth.BuildAuthorizeUrl(handshake, prompt));
+});
+
+// The OAuth landing — verify the state, exchange the code, resolve the tier, mint the session.
+//   200 { verdict:"ok", tier, token, refresh, … }   authorized
+//   403 { verdict:"denied", … }                     identity verified, no role on this host (terminal)
+//   400 forged/stale state or a missing code · 401 bad or expired code · 502 Discord unreachable
+app.MapGet("/auth/discord/callback", async (
+    HttpContext http,
+    DiscordAuthService auth,
+    ILoggerFactory loggerFactory,
+    [FromQuery] string? code,
+    [FromQuery] string? state,
+    CancellationToken ct) =>
+{
+    var logger = loggerFactory.CreateLogger("DiscordCallback");
+
+    // CSRF gate, before any exchange: the state Discord echoed back must equal the one issued to THIS
+    // browser. The cookie is one-time — cleared whatever the outcome, so a callback cannot be replayed.
+    // A missing cookie (expired, or a login that never started here), a malformed one, or a mismatch
+    // is a forged or stale login, and the answer is 400 rather than any kind of grant.
+    string? cookie = http.Request.Cookies[StateCookie];
+    if (cookie is not null)
+        http.Response.Cookies.Delete(StateCookie, StateCookieOptions());
+    if (!OAuthHandshake.TryParse(cookie, out OAuthHandshake handshake) || !handshake.MatchesState(state))
+        return Results.BadRequest(new { error = "invalid_state", message = "the sign-in did not validate — start again." });
+
+    if (string.IsNullOrWhiteSpace(code))
+        return Results.BadRequest(new { error = "bad_request", message = "missing authorization code" });
+
+    ResolvedPrincipal? resolved;
+    try
+    {
+        resolved = await auth.ResolveAsync(code, handshake.CodeVerifier, ct);
+    }
+    catch (DiscordAuthException ex)
+    {
+        // Could not reach or parse Discord — an honest upstream failure, NEVER a default grant.
+        logger.LogWarning(ex, "Discord auth exchange failed.");
+        return Results.Json(
+            new { error = "auth_provider_error", message = "Could not complete authentication with Discord." },
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+
+    if (resolved is null)
+        return Results.Json(
+            new { error = "login_required", message = "The authorization code was invalid or expired." },
+            statusCode: StatusCodes.Status401Unauthorized);
+
+    // Identity verified, but no access on this host. Terminal: no tokens are minted, and a client
+    // must not treat it as something a retry could fix.
+    if (resolved.Tier == KgsmTier.None)
+        return Results.Json(
+            new AuthSessionResponse("denied", null, null, null, null, null,
+                resolved.Identity.UserId, resolved.Identity.Display),
+            statusCode: StatusCodes.Status403Forbidden);
+
+    string? userAgent = http.Request.Headers.UserAgent.ToString();
+    if (string.IsNullOrWhiteSpace(userAgent)) userAgent = null;
+
+    AuthSessionResult session = await auth.CreateSessionAsync(resolved, userAgent, ct);
+    return Results.Ok(new AuthSessionResponse(
+        "ok", KgsmTiers.ToWire(session.Tier), session.AccessToken, session.RefreshToken,
+        session.AccessExpires, session.RefreshExpires, session.UserId, session.DisplayName));
+});
+
+// Trade a refresh token for a fresh pair. Unauthenticated by bearer on purpose — the whole point is
+// to be callable once the access token has lapsed; the refresh token is the credential. A rotated-away
+// or revoked token is refused rather than renewed.
+app.MapPost("/auth/session/refresh", async (RefreshRequest request, DiscordAuthService auth, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Refresh))
+        return Results.BadRequest(new { error = "bad_request", message = "a refresh token is required." });
+
+    AuthSessionResult? session = await auth.RefreshAsync(request.Refresh, ct);
     return session is null
         ? Results.Unauthorized()
-        : Results.Ok(new AuthSessionResponse(session.SessionToken, session.DisplayName));
+        : Results.Ok(new AuthSessionResponse(
+            "ok", KgsmTiers.ToWire(session.Tier), session.AccessToken, session.RefreshToken,
+            session.AccessExpires, session.RefreshExpires, session.UserId, session.DisplayName));
 });
 
 app.MapPost("/events", async (
@@ -253,8 +378,13 @@ var secured = app.MapGroup("").AddEndpointFilter<BearerAuthFilter>();
 secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    // The tier is re-derived, not read off the bearer: a role granted or taken away since sign-in is
+    // already in effect for every action, so reporting the token's snapshot here would tell a client
+    // something the next request would contradict.
+    var tier = await auth.ResolveTierAsync(principal, ct);
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
-    return Results.Ok(new MeResponse(principal.UserId, principal.DisplayName, canPerform));
+    return Results.Ok(new MeResponse(
+        principal.UserId, principal.DisplayName, KgsmTiers.ToWire(tier), canPerform));
 });
 
 // The tools the caller is authorized to use, with names/descriptions/parameters.
@@ -490,10 +620,12 @@ review.MapGet("/conversations/{id}", (string id, IConversationStore store) =>
         entries));
 });
 
-secured.MapPost("/auth/logout", (HttpContext http, DiscordAuthService auth) =>
+// Sign out: revoke the session so the bearer stops working at once, rather than staying
+// cryptographically valid until it expires.
+secured.MapPost("/auth/logout", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    auth.Logout(principal);
+    await auth.LogoutAsync(principal, ct);
     return Results.NoContent();
 });
 

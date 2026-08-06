@@ -42,8 +42,9 @@ any committed settings file — which declares each of them blank so the Control
 
 | Secret | Used by |
 |--------|---------|
-| `DiscordOAuth__ClientSecret` | Service |
-| `DiscordOAuth__BotToken` | Service |
+| `KgsmAuth__ClientSecret` | Service (shared, `/etc/kgsm/discord-auth.env`) |
+| `KgsmAuth__BotToken` | Service (shared, `/etc/kgsm/discord-auth.env`) |
+| `Auth__SigningKey` | Service (keep **stable** across restarts) |
 | `Assistant__Confirmation__Key` | Service (keep **stable** across restarts) |
 | `Assistant__Webhook__Secret` | Service |
 | `Assistant__Relay__Secret` | Service (optional) |
@@ -73,7 +74,8 @@ any committed settings file — which declares each of them blank so the Control
 | `Rag` (embedder + build) | ✅ (`index` verb) | reads only | ✅ | Embedding model + chunking |
 | `Prompts` | ✅ | (built-in) | — | Editable persona/tool prompts |
 | `Assistant` | — | ✅ | — | Action policy, confirm/webhook/relay |
-| `DiscordOAuth` | — | ✅ | — | Web auth |
+| `KgsmAuth` | — | ✅ | — | The host's Discord identity + role→tier map (shared) |
+| `DiscordOAuth` | — | ✅ | — | This surface's sign-in callback |
 | `Auth` | — | ✅ | — | Sessions + CORS |
 | `Urls` / `Logging` | (Logging) | ✅ | (Logging) | Bind address / log levels |
 
@@ -253,26 +255,46 @@ Bind address. Default `http://localhost:5180` (loopback). Override with the stan
 | `Webhook:Secret` | _(empty)_ | `Assistant__Webhook__Secret` | **Secret.** HMAC for `POST /events`; empty ⇒ unverified (dev) |
 | `Relay:Secret` | _(empty)_ | `Assistant__Relay__Secret` | **Secret.** Trusted-relay auth (e.g. kgsm-api); empty ⇒ relay path off |
 
-### `DiscordOAuth` — web auth (`DiscordOAuthOptions`)
+### `KgsmAuth` — the host's Discord identity + role map (shared)
+
+The **ecosystem's** block, identical across this service, the Control Panel API and the Discord bot,
+so a person holds the same authority whichever door they knock on. It lives once per host in
+`/etc/kgsm/discord-auth.env`, which every leaf's unit loads before its own env file. Setting one of
+these keys in *this* leaf's env overrides the shared value for this leaf alone — which is exactly how
+a host ends up with two surfaces disagreeing about who may stop a server.
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `ClientId` | _(empty)_ | `DiscordOAuth__ClientId` | OAuth app id |
-| `ClientSecret` | _(empty)_ | `DiscordOAuth__ClientSecret` | **Secret.** code→token exchange |
-| `BotToken` | _(empty)_ | `DiscordOAuth__BotToken` | **Secret.** Reads roles; unset ⇒ **all logins denied** |
-| `GuildId` | _(empty)_ | `DiscordOAuth__GuildId` | Server users must belong to |
-| `ActionRoleId` | _(empty)_ | `DiscordOAuth__ActionRoleId` | Role required for mutating actions |
-| `RedirectUri` | _(empty)_ | `DiscordOAuth__RedirectUri` | Must match the Developer Portal exactly |
+| `ClientId` | _(empty)_ | `KgsmAuth__ClientId` | OAuth app id |
+| `ClientSecret` | _(empty)_ | `KgsmAuth__ClientSecret` | **Secret.** code→token exchange |
+| `BotToken` | _(empty)_ | `KgsmAuth__BotToken` | **Secret.** Reads roles; unset ⇒ **all logins denied** |
+| `GuildId` | _(empty)_ | `KgsmAuth__GuildId` | Server users must belong to |
+| `RoleOperatorIds` | _(empty)_ | `KgsmAuth__RoleOperatorIds` | Comma-separated; grants `operator` (may act) |
+| `RoleAdminIds` | _(empty)_ | `KgsmAuth__RoleAdminIds` | Comma-separated; grants `admin` (may review others' chats) |
+
+Any verified guild member floors at `viewer` and can read, so there is no viewer role to configure.
+
+### `DiscordOAuth` — this surface's own sign-in (`DiscordOAuthOptions`)
+
+| Key | Default | Env | Notes |
+|-----|---------|-----|-------|
+| `RedirectUri` | _(empty)_ | `DiscordOAuth__RedirectUri` | This service's `/auth/discord/callback`; must match the Developer Portal exactly |
 | `Scopes` | `identify` | `DiscordOAuth__Scopes` | Roles are read via the bot, not the caller token |
 
 ### `Auth` — sessions & CORS (`AuthOptions`)
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `SessionTtlSeconds` | `3600` | `Auth__SessionTtlSeconds` | Bearer-token lifetime (in-memory; lost on restart) |
-| `RoleCacheTtlSeconds` | `60` | `Auth__RoleCacheTtlSeconds` | Per-user authority cache |
-| `StateTtlSeconds` | `300` | `Auth__StateTtlSeconds` | OAuth `state` lifetime |
+| `SigningKey` | _(empty)_ | `Auth__SigningKey` | **Secret.** Signs session tokens; unset ⇒ a per-process key, so every restart signs everyone out |
+| `HostId` | _(empty)_ | `Auth__HostId` | Token audience; empty ⇒ the machine name. A bearer minted here is refused by any other host |
+| `AccessTtlSeconds` | `900` | `Auth__AccessTtlSeconds` | Access-bearer lifetime — short, because it is what bounds privilege between re-checks |
+| `SessionTtlSeconds` | `2592000` | `Auth__SessionTtlSeconds` | Absolute sign-in cap (30d). Each refresh slides it forward |
+| `RoleCacheTtlSeconds` | `60` | `Auth__RoleCacheTtlSeconds` | Per-user authority cache; also the staleness bound on a revoked role |
+| `StateTtlSeconds` | `300` | `Auth__StateTtlSeconds` | How long an in-flight sign-in's handshake cookie lives |
 | `AllowedOrigins` | `[]` | `Auth__AllowedOrigins__0…` | CORS origins (scheme+host, no trailing slash); empty ⇒ SPA blocked |
+
+Sessions are rows in the same SQLite file as the conversation history (`Conversation:DatabasePath`),
+so they survive a restart and a revocation outlives the process that performed it.
 
 ---
 

@@ -33,8 +33,10 @@ from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead 
 | Set this | Required? | Notes |
 |----------|-----------|-------|
 | `KGSM__Path` | **yes** | Absolute path to **this host's** `kgsm.sh`. Without it the assistant has no engine to read or act on. |
-| `DiscordOAuth__ClientId` · `ClientSecret` · `BotToken` · `GuildId` · `RedirectUri` | **yes** for web login | From the Discord Developer Portal. `ClientSecret` + `BotToken` are **secrets**; with `BotToken` empty **all logins are denied**. (The CLI needs none of these.) |
-| `DiscordOAuth__ActionRoleId` | for actions | Guild role permitted to run mutating actions; everyone else is read-only. |
+| `KgsmAuth__ClientId` · `ClientSecret` · `BotToken` · `GuildId` | **yes** for web login | The host's shared Discord block, seeded by `setup.sh` in `/etc/kgsm/discord-auth.env` and loaded before this file. `ClientSecret` + `BotToken` are **secrets**; with `BotToken` empty **all logins are denied**. (The CLI needs none of these.) |
+| `KgsmAuth__RoleOperatorIds` · `RoleAdminIds` | for actions / review | Shared with the Control Panel API and the bot. Operator may act; admin may also read other people's conversations; every guild member can read. |
+| `DiscordOAuth__RedirectUri` | **yes** for web login | This service's own `/auth/discord/callback`, registered on the Discord application exactly. |
+| `Auth__SigningKey` | **yes** for web login | Signs session tokens. `openssl rand -base64 48`, once. Unset ⇒ a per-process key, so every restart signs everyone out. **Secret.** |
 | `Auth__AllowedOrigins__0` | **yes** for the SPA | Your panel origin (scheme + host, no trailing slash). Empty ⇒ browser calls are CORS-blocked. |
 | `Assistant__ActionsEnabled` + `Assistant__Confirmation__Key` | for actions | Set `true` + a **stable** `openssl rand -base64 48`. If the key changes or empties, pending confirmations break and actions fall back to read-only. |
 | `Assistant__Relay__Secret` | if fronted by kgsm-api | Shared secret for the trusted-relay hop (kgsm-api → assistant). Empty ⇒ that path is off. **Secret.** |
@@ -288,19 +290,21 @@ priority prefixes (the app uses `AddSystemdConsole()`).
 
 ### 6.2 Discord OAuth secrets
 
-The Service authenticates web users with Discord OAuth and decides *who may run actions* from
-a guild role. In the Discord Developer Portal: create an app, add a bot, invite it to your
-guild, and register your SPA's callback as a redirect URI. Then supply (env-only — never in
-appsettings):
+The Service authenticates web users with Discord OAuth itself — no Control Panel API needed — and
+decides *who may run actions* from the host's shared role→tier map. In the Discord Developer Portal:
+create an app, add a bot, invite it to your guild, and register **this service's**
+`/auth/discord/callback` as a redirect URI. Then supply (env-only — never in appsettings):
 
 | Env var | Purpose | If unset |
 |---------|---------|----------|
-| `DiscordOAuth__ClientId` | OAuth app id | login can't start |
-| `DiscordOAuth__ClientSecret` | code→token exchange (**secret**) | login denied |
-| `DiscordOAuth__BotToken` | reads guild membership + roles (**secret**) | **all logins denied** |
-| `DiscordOAuth__GuildId` | the server users must belong to | — |
-| `DiscordOAuth__ActionRoleId` | role required for mutating actions | everyone read-only |
+| `KgsmAuth__ClientId` | OAuth app id | login can't start |
+| `KgsmAuth__ClientSecret` | code→token exchange (**secret**) | login denied |
+| `KgsmAuth__BotToken` | reads guild membership + roles (**secret**) | **all logins denied** |
+| `KgsmAuth__GuildId` | the server users must belong to | — |
+| `KgsmAuth__RoleOperatorIds` | roles permitted to run mutating actions | everyone read-only |
+| `KgsmAuth__RoleAdminIds` | roles permitted to review others' conversations | nobody reviews |
 | `DiscordOAuth__RedirectUri` | must match the portal exactly | callback rejected |
+| `Auth__SigningKey` | signs session tokens — **keep stable** (**secret**) | everyone signed out on restart |
 | `Auth__AllowedOrigins__0` | your SPA origin (CORS) | browser calls blocked |
 | `Assistant__ActionsEnabled` | master switch for actions | actions off |
 | `Assistant__Confirmation__Key` | HMAC signing for confirm tokens — **keep stable** | actions read-only |
@@ -327,8 +331,9 @@ curl -fsS http://127.0.0.1:5180/health                  # acceptance
 
 > **Run the unit as the user that owns the kgsm registry** (the `User=` in the unit). The
 > service shells out to kgsm.sh through kgsm-lib; a different user sees zero instances.
-> **Sessions are in-memory** — a restart forces every web user to re-login (confirmation
-> tokens survive iff the signing key is stable).
+> **Sessions live in SQLite**, beside the conversation history, so a restart signs nobody out —
+> provided `Auth__SigningKey` is stable. Leave it unset and each start signs tokens with a fresh
+> key, which invalidates every one already issued.
 
 ---
 
@@ -443,7 +448,7 @@ Full indexer reference: [`../TheKrystalShip.Rag.Indexer/README.md`](../TheKrysta
 | **CLI exits `2` immediately** | `KGSM:Path` missing/wrong. Set `KGSM__Path` or the config key to a real `kgsm.sh`. |
 | **Index is stale after a reboot; `journalctl -u kgsm-rag-indexer` shows an embed failure at boot** | **Known gap:** if Ollama is down when the indexer starts, the initial build fails and there is **no periodic retry** — it only rebuilds on the next doc change. Fix: the unit's `After=ollama.service` ordering (already set). If Ollama isn't a systemd unit, fix the ordering or `--once` it manually after Ollama is up. |
 | **Service logs "index … model mismatch" / RAG returns nothing** | The `.krag` was built with a different `EmbeddingModel` than `Rag:EmbeddingModel`. Re-index with the configured model (or align the config). |
-| **Every web user re-logged-in after a deploy** | Expected — sessions are in-memory. Only confirmation tokens persist, and only if `Assistant__Confirmation__Key` is stable across restarts. |
+| **Every web user re-logged-in after a deploy** | `Auth__SigningKey` is unset, so each start signs with a fresh per-process key and every issued token becomes unverifiable. Generate one (`openssl rand -base64 48`) and keep it. Same rule for `Assistant__Confirmation__Key` and pending confirmations. |
 | **Turns 502 / "couldn't reach the model"** | Ollama down or the model not pulled. `ollama ps` should show the chat model `100% GPU`. |
 | **SSE replies arrive all-at-once at the end** | The reverse proxy is buffering. Set `proxy_buffering off` ([§7](#7--reverse-proxy--tls)). |
 | **`search` tool never offered** | Both sources are off: `Rag:Enabled=false` *and* no `WebSearch:ApiKey`. Enable at least one. |

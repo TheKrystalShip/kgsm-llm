@@ -19,7 +19,9 @@ using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
-using TheKrystalShip.Kgsm.Assistant.Service.Discord;
+using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Auth.Discord;
+using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
@@ -42,7 +44,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
     private WebApplicationFactory<Program> Factory(
         IServerAssistant? assistant = null,
-        IDiscordOAuthClient? discord = null,
+        IDiscordDirectory? discord = null,
         Action<IWebHostBuilder>? configure = null,
         Llm.Interfaces.IConversationStore? withStore = null,
         Llm.Interfaces.IConversationCompactor? withCompactor = null) =>
@@ -52,6 +54,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             // whether the test host discovers the service's appsettings.json.
             builder.UseSetting("KGSM:Path", "/opt/kgsm/kgsm.sh");
             builder.UseSetting("KGSM:SocketPath", "/opt/kgsm/kgsm.sock");
+            // A stable signing key, so a bearer minted for a test survives into the request that
+            // presents it (a blank key is per-process ephemeral, which is fine but noisier to reason
+            // about), and durable state confined to this run.
+            builder.UseSetting("Auth:SigningKey", "endpoint-smoke-signing-key");
+            builder.UseSetting("Auth:HostId", "test-host");
+            builder.UseSetting("Conversation:DatabasePath", DatabasePath);
             configure?.Invoke(builder);
             builder.ConfigureTestServices(services =>
             {
@@ -72,13 +80,30 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             });
         });
 
-    /// <summary>Creates a client with a seeded session bearer for <paramref name="userId"/>.</summary>
-    private static HttpClient Authed(WebApplicationFactory<Program> factory, string userId = "user1")
+    /// <summary>This run's durable state, so sessions from one test run never reach the next.</summary>
+    private static readonly string DatabasePath = Path.Combine(
+        Path.GetTempPath(), "kgsm-endpoint-smoke-" + Guid.NewGuid().ToString("N"), "conversations.db");
+
+    /// <summary>
+    /// A client carrying a real session bearer for <paramref name="userId"/> — minted by the app's own
+    /// token service and backed by a real session row, so the request travels the same validation path
+    /// a browser's would rather than a shortcut only tests can take.
+    /// </summary>
+    private static async Task<HttpClient> AuthedAsync(
+        WebApplicationFactory<Program> factory, string userId = "user1", KgsmTier tier = KgsmTier.Viewer)
     {
+        var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
+        var registry = factory.Services.GetRequiredService<ISessionRegistry>();
+
+        var identity = new DiscordIdentity(userId, userId, "User One", null, ["identify"]);
+        string sessionId = "sid_" + Guid.NewGuid().ToString("N");
+        MintedToken access = tokens.MintAccess(identity, tier, sessionId);
+        await registry.CreateAsync(new SessionRegistration(
+            sessionId, userId, "test-host",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(1), "tests", "jti_seed"));
+
         var client = factory.CreateClient();
-        var store = factory.Services.GetRequiredService<SessionStore>();
-        var token = store.Create(new Session(userId, "User One", DateTimeOffset.UtcNow.AddHours(1)));
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", access.Token);
         return client;
     }
 
@@ -110,7 +135,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Turn_EmptyPrompt_Returns400()
     {
-        var client = Authed(Factory(Substitute.For<IServerAssistant>()));
+        var client = await AuthedAsync(Factory(Substitute.For<IServerAssistant>()));
 
         var response = await client.PostAsJsonAsync("/turn", new { prompt = "" });
 
@@ -125,7 +150,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         assistant.RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(Task.FromResult(AssistantResult.Ok("hello from assistant", Array.Empty<PendingConfirmation>())));
 
-        var client = Authed(Factory(assistant));
+        var client = await AuthedAsync(Factory(assistant));
         var response = await client.PostAsJsonAsync("/turn", new { prompt = "hi" });
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -138,7 +163,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Confirm_GarbageToken_Returns400()
     {
-        var client = Authed(Factory(Substitute.For<IServerAssistant>()));
+        var client = await AuthedAsync(Factory(Substitute.For<IServerAssistant>()));
 
         var response = await client.PostAsJsonAsync("/confirm", new { token = "not-a-valid-token" });
 
@@ -151,7 +176,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // A confirmation token bound to "alice" must not be confirmable by "bob".
         var factory = Factory(Substitute.For<IServerAssistant>(),
             configure: b => b.UseSetting("Assistant:Confirmation:Key", "test-key"));
-        var bob = Authed(factory, "bob");
+        var bob = await AuthedAsync(factory, "bob");
 
         var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
         var aliceToken = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Uninstall, "terraria"), "alice");
@@ -179,9 +204,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         instances.Start("inst", Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0));
 
         // canPerformActions is re-derived live from the principal's guild role at confirm time.
-        var discord = Substitute.For<IDiscordOAuthClient>();
-        discord.GetGuildMemberAsync("user1", Arg.Any<CancellationToken>())
-            .Returns(new DiscordGuildMember { Roles = new[] { "role-123" } });
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
         {
@@ -191,7 +216,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
-        var client = Authed(factory); // userId=user1, DisplayName="User One"
+        var client = await AuthedAsync(factory); // userId=user1, DisplayName="User One"
         var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
         var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
 
@@ -325,44 +350,239 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         inventory.Received(1).Invalidate();
     }
 
-    [Fact]
-    public async Task AuthCallback_WithMockedDiscord_MintsSession()
+    /// <summary>
+    /// Walks a full sign-in the way a browser does — follow the 302 to the (fake) Discord, carry the
+    /// handshake cookie back to the callback — and returns the callback's response.
+    /// </summary>
+    private static async Task<HttpResponseMessage> SignInAsync(
+        WebApplicationFactory<Program> factory, string code = "the-code", string? forgedState = null)
     {
-        var discord = Substitute.For<IDiscordOAuthClient>();
-        discord.ExchangeCodeAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(new DiscordTokenResponse { AccessToken = "tok" });
-        discord.GetCurrentUserAsync("tok", Arg.Any<CancellationToken>())
-            .Returns(new DiscordUser { Id = "u1", Username = "Alice" });
-        discord.GetGuildMemberAsync("u1", Arg.Any<CancellationToken>())
-            .Returns(new DiscordGuildMember { Roles = Array.Empty<string>() });
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        var client = Factory(discord: discord).CreateClient();
+        var start = await client.GetAsync("/auth/discord/start");
+        start.StatusCode.Should().Be(HttpStatusCode.Redirect);
 
-        // Hit /auth/login to mint a real single-use state, then complete the callback.
-        var login = await client.GetFromJsonAsync<LoginUrlResponse>("/auth/login");
-        var state = QueryValue(login!.Url, "state");
+        string cookie = start.Headers.GetValues("Set-Cookie")
+            .First(c => c.StartsWith("kgsm_oauth_state=", StringComparison.Ordinal))
+            .Split(';')[0];
+        string state = forgedState ?? QueryValue(start.Headers.Location!.ToString(), "state");
 
-        var response = await client.PostAsJsonAsync("/auth/callback", new { code = "the-code", state });
+        var callback = new HttpRequestMessage(HttpMethod.Get, $"/auth/discord/callback?code={code}&state={state}");
+        callback.Headers.Add("Cookie", cookie);
+        return await client.SendAsync(callback);
+    }
+
+    [Fact]
+    public async Task SignIn_WithAGuildMember_MintsAPair()
+    {
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
+        discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ResolvedPrincipal(
+                new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
+
+        var response = await SignInAsync(Factory(discord: discord));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var session = await response.Content.ReadFromJsonAsync<AuthSessionResponse>();
-        session!.Token.Should().NotBeNullOrEmpty();
+        session!.Verdict.Should().Be("ok");
+        session.Token.Should().NotBeNullOrEmpty();
+        session.Refresh.Should().NotBeNullOrEmpty();
+        session.Tier.Should().Be("viewer");
         session.DisplayName.Should().Be("Alice");
     }
 
     [Fact]
-    public async Task AuthCallback_MissingFields_Returns400()
+    public async Task SignIn_WithAForgedState_IsRefusedBeforeAnyExchange()
     {
-        var response = await Factory().CreateClient().PostAsJsonAsync("/auth/callback", new { code = "", state = "" });
+        // The CSRF gate. Without it an attacker sends the victim a callback link carrying the
+        // ATTACKER'S code, and the victim's browser is handed a session for the attacker's identity.
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns("https://discord.test/authorize");
+
+        var response = await SignInAsync(Factory(discord: discord), forgedState: "not-the-issued-state");
+
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        await discord.DidNotReceive().ResolveAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SignIn_WithoutTheHandshakeCookie_IsRefused()
+    {
+        // A callback arriving with no cookie is a login that did not start in this browser — the exact
+        // request the state check exists to reject, and the reason the state lives in a cookie at all.
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns("https://discord.test/authorize?state=abc");
+
+        var client = Factory(discord: discord).CreateClient();
+        var response = await client.GetAsync("/auth/discord/callback?code=the-code&state=abc");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        await discord.DidNotReceive().ResolveAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SignIn_WhenNotAGuildMember_IsATerminalDenialWithNoTokens()
+    {
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
+        discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ResolvedPrincipal(
+                new DiscordIdentity("u9", "stranger", "Stranger", null, ["identify"]), KgsmTier.None));
+
+        var response = await SignInAsync(Factory(discord: discord));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var session = await response.Content.ReadFromJsonAsync<AuthSessionResponse>();
+        session!.Verdict.Should().Be("denied");
+        session.Token.Should().BeNull();
+        session.Refresh.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SignIn_WhenDiscordIsUnreachable_Is502NotADenial()
+    {
+        // "We could not ask" must never be reported as an answer — collapsing the two either locks out
+        // a real admin during an outage or, far worse, admits someone during one.
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
+        discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns<ResolvedPrincipal?>(_ => throw new DiscordAuthException("unreachable"));
+
+        var response = await SignInAsync(Factory(discord: discord));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+    }
+
+    [Fact]
+    public async Task SignIn_WithABadCode_Is401()
+    {
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
+        discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((ResolvedPrincipal?)null);
+
+        var response = await SignInAsync(Factory(discord: discord));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task ARefreshTokenBuysAWorkingBearer()
+    {
+        // The whole point of the refresh lane: a lapsed access token is replaced without sending the
+        // user back through Discord.
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
+        discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new ResolvedPrincipal(
+                new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
+        discord.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>([]);
+
+        var factory = Factory(discord: discord);
+        var signIn = await (await SignInAsync(factory)).Content.ReadFromJsonAsync<AuthSessionResponse>();
+
+        var client = factory.CreateClient();
+        var refreshed = await client.PostAsJsonAsync("/auth/session/refresh", new { refresh = signIn!.Refresh });
+        refreshed.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var next = await refreshed.Content.ReadFromJsonAsync<AuthSessionResponse>();
+        next!.Token.Should().NotBe(signIn.Token);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", next.Token);
+        var me = await client.GetFromJsonAsync<MeResponse>("/auth/me");
+        me!.UserId.Should().Be("u1");
+    }
+
+    [Fact]
+    public async Task Refresh_WithoutAToken_Is400()
+    {
+        var response = await Factory().CreateClient().PostAsJsonAsync("/auth/session/refresh", new { refresh = "" });
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Refresh_WithGarbage_Is401()
+    {
+        var response = await Factory().CreateClient()
+            .PostAsJsonAsync("/auth/session/refresh", new { refresh = "not-a-token" });
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task LoggingOutStopsTheBearerWorking()
+    {
+        // A signed token stays cryptographically valid until it expires, so signing out only means
+        // something because the session behind it is checked on every request.
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>([]);
+
+        var factory = Factory(discord: discord);
+        var client = await AuthedAsync(factory);
+
+        (await client.GetAsync("/auth/me")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await client.PostAsync("/auth/logout", null)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        (await client.GetAsync("/auth/me")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task ABearerForAnUnknownSessionIsRefused()
+    {
+        // A validly-signed token whose session row is gone — a wiped database, or a token minted by a
+        // host that no longer has it. Nothing can revoke a session it cannot find, so it does not pass.
+        var factory = Factory();
+        var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
+        MintedToken orphan = tokens.MintAccess(
+            new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]),
+            KgsmTier.Admin, "sid_never_recorded");
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", orphan.Token);
+
+        (await client.GetAsync("/auth/me")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task ARefreshTokenIsNotAcceptedAsABearer()
+    {
+        // It lives far longer than an access token; accepting one here would erase the short lifetime
+        // that bounds privilege.
+        var factory = Factory();
+        var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
+        var registry = factory.Services.GetRequiredService<ISessionRegistry>();
+
+        var identity = new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]);
+        const string sessionId = "sid_refresh_as_bearer";
+        MintedToken refresh = tokens.MintRefresh(identity, KgsmTier.Admin, sessionId);
+        await registry.CreateAsync(new SessionRegistration(
+            sessionId, "u1", "test-host",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(1), null, refresh.Jti));
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", refresh.Token);
+
+        (await client.GetAsync("/auth/me")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
     public async Task Me_ReflectsLiveRoleLookup()
     {
-        var discord = Substitute.For<IDiscordOAuthClient>();
-        discord.GetGuildMemberAsync("user1", Arg.Any<CancellationToken>())
-            .Returns(new DiscordGuildMember { Roles = new[] { "role-123" } });
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
         {
@@ -370,12 +590,31 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             b.UseSetting("Assistant:Confirmation:Key", "test-key");
             b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
         });
-        var client = Authed(factory);
+        var client = await AuthedAsync(factory);
 
         var me = await client.GetFromJsonAsync<MeResponse>("/auth/me");
 
         me!.UserId.Should().Be("user1");
+        me.Tier.Should().Be("operator");
         me.CanPerformActions.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Me_ReportsTheLiveTierNotTheOneTheTokenWasMintedWith()
+    {
+        // Authority is re-derived rather than read off the bearer, so a role granted since sign-in is
+        // already in effect — reporting the token's stale snapshot would contradict the next request.
+        var discord = Substitute.For<IDiscordDirectory>();
+        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(["role-123"]);
+
+        var factory = Factory(discord: discord, configure: b =>
+            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123"));
+        var client = await AuthedAsync(factory, tier: KgsmTier.Viewer);
+
+        var me = await client.GetFromJsonAsync<MeResponse>("/auth/me");
+
+        me!.Tier.Should().Be("operator");
     }
 
     [Fact]
@@ -405,7 +644,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.Token("lo"),
                 AssistantStreamEvent.Final("Hello")));
 
-        var response = await StreamTurnAsync(Authed(Factory(assistant)), "hi");
+        var response = await StreamTurnAsync(await AuthedAsync(Factory(assistant)), "hi");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
@@ -429,7 +668,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.Token("Stopped."),
                 AssistantStreamEvent.Final("Stopped.")));
 
-        var response = await StreamTurnAsync(Authed(Factory(assistant)), "status?");
+        var response = await StreamTurnAsync(await AuthedAsync(Factory(assistant)), "status?");
         var body = await response.Content.ReadAsStringAsync();
 
         body.Should().Contain("event: tool.start");
@@ -472,7 +711,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                     LlmTools.RunHealthCheck, "factorio: passed with warnings.", "tc_0", card),
                 AssistantStreamEvent.Final("factorio has an update available.")));
 
-        var response = await StreamTurnAsync(Authed(Factory(assistant)), "health?");
+        var response = await StreamTurnAsync(await AuthedAsync(Factory(assistant)), "health?");
         var body = await response.Content.ReadAsStringAsync();
 
         body.Should().Contain("event: tool.result");
@@ -507,7 +746,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.ToolResult(LlmTools.CreateBlueprint, "Rust is now in the catalog.", "tc_0"),
                 AssistantStreamEvent.Final("Rust is now in the catalog. Want me to make you a server?")));
 
-        var response = await StreamTurnAsync(Authed(Factory(assistant)), "make me a rust server");
+        var response = await StreamTurnAsync(await AuthedAsync(Factory(assistant)), "make me a rust server");
         var body = await response.Content.ReadAsStringAsync();
 
         // Two `progress` frames, each carrying `type`+tool+key+label+status, land before `tool.result`.
@@ -541,7 +780,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.Final("Staged.")));
 
         var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Confirmation:Key", "test-key"));
-        var response = await StreamTurnAsync(Authed(factory), "remove terraria");
+        var response = await StreamTurnAsync(await AuthedAsync(factory), "remove terraria");
         var body = await response.Content.ReadAsStringAsync();
 
         body.Should().Contain("event: command.proposed");
@@ -569,7 +808,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.Final("Proposed.")));
 
         var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Confirmation:Key", "test-key"));
-        var response = await StreamTurnAsync(Authed(factory), "start factorio");
+        var response = await StreamTurnAsync(await AuthedAsync(factory), "start factorio");
         var body = await response.Content.ReadAsStringAsync();
 
         body.Should().Contain("event: command.proposed");
@@ -596,7 +835,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.Token("…"),
                 AssistantStreamEvent.Error("boom")));
 
-        var response = await StreamTurnAsync(Authed(Factory(assistant)), "do it");
+        var response = await StreamTurnAsync(await AuthedAsync(Factory(assistant)), "do it");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadAsStringAsync();
 
@@ -675,7 +914,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Turn_StreamAccept_EmptyPrompt_Returns400Json_NotSse()
     {
         // Pre-stream validation rejects before any SSE byte: a JSON 400, not a text/event-stream 200.
-        var response = await StreamTurnAsync(Authed(Factory(Substitute.For<IServerAssistant>())), "");
+        var response = await StreamTurnAsync(await AuthedAsync(Factory(Substitute.For<IServerAssistant>())), "");
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         response.Content.Headers.ContentType?.MediaType.Should().NotBe("text/event-stream");

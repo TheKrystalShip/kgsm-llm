@@ -11,6 +11,7 @@ using NSubstitute;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.KGSM.Auth;
 
 using Xunit;
 
@@ -35,12 +36,16 @@ public class DiscordAuthServiceTests
 
         var discordOpts = Options.Create(new DiscordOAuthOptions
         {
-            ClientId = "client-id",
-            BotToken = "bot-token",
             RedirectUri = "https://spa.example/callback",
             Scopes = "identify",
+        });
+        // The app, guild and role map are the ecosystem's shared block.
+        var sharedAuth = Options.Create(new KgsmAuthOptions
+        {
+            ClientId = "client-id",
+            BotToken = "bot-token",
             GuildId = "guild-1",
-            ActionRoleId = actionRoleId,
+            RoleOperatorIds = actionRoleId,
         });
         var assistantOpts = Options.Create(new AssistantServiceOptions
         {
@@ -51,7 +56,8 @@ public class DiscordAuthServiceTests
 
         return new DiscordAuthService(
             discord, sessions, states, roleCache, tokens,
-            discordOpts, auth, assistantOpts, NullLogger<DiscordAuthService>.Instance);
+            discordOpts, sharedAuth, sharedAuth.Value.ToRoleMap(), auth, assistantOpts,
+            NullLogger<DiscordAuthService>.Instance);
     }
 
     private static string QueryValue(string url, string key)

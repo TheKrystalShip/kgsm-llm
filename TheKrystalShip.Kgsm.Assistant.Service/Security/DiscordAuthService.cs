@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
+using TheKrystalShip.KGSM.Auth;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
@@ -19,9 +20,10 @@ internal sealed record AuthSessionResult(string SessionToken, string DisplayName
 /// transient typed <see cref="IDiscordOAuthClient"/>, so it must never be captured by a
 /// singleton (the stores it uses ARE singletons and are injected, not owned).
 /// <para>
-/// Authority mirrors the bot exactly — a caller may act iff they hold the configured
-/// <c>ActionRoleId</c> in the guild — and is re-derived fresh (cached briefly) rather than
-/// stored on the session, so a revoked role takes effect within the cache TTL.
+/// Authority is the ecosystem's ordered tier, resolved from the shared role map, so a person gets
+/// the same authority here as through the Control Panel and the Discord bot. It is re-derived fresh
+/// (cached briefly) rather than stored on the session, so a revoked role takes effect within the
+/// cache TTL.
 /// </para>
 /// </summary>
 internal sealed class DiscordAuthService
@@ -32,6 +34,8 @@ internal sealed class DiscordAuthService
     private readonly RoleCache _roleCache;
     private readonly ConfirmationTokenService _tokens;
     private readonly DiscordOAuthOptions _discord;
+    private readonly KgsmAuthOptions _sharedAuth;
+    private readonly KgsmRoleMap _roleMap;
     private readonly AuthOptions _auth;
     private readonly AssistantServiceOptions _assistant;
     private readonly ILogger<DiscordAuthService> _logger;
@@ -43,6 +47,8 @@ internal sealed class DiscordAuthService
         RoleCache roleCache,
         ConfirmationTokenService tokens,
         IOptions<DiscordOAuthOptions> discord,
+        IOptions<KgsmAuthOptions> sharedAuth,
+        KgsmRoleMap roleMap,
         IOptions<AuthOptions> auth,
         IOptions<AssistantServiceOptions> assistant,
         ILogger<DiscordAuthService> logger)
@@ -53,6 +59,8 @@ internal sealed class DiscordAuthService
         _roleCache = roleCache;
         _tokens = tokens;
         _discord = discord.Value;
+        _sharedAuth = sharedAuth.Value;
+        _roleMap = roleMap;
         _auth = auth.Value;
         _assistant = assistant.Value;
         _logger = logger;
@@ -68,7 +76,7 @@ internal sealed class DiscordAuthService
         var query = string.Join('&', new[]
         {
             "response_type=code",
-            $"client_id={Uri.EscapeDataString(_discord.ClientId)}",
+            $"client_id={Uri.EscapeDataString(_sharedAuth.ClientId)}",
             $"scope={Uri.EscapeDataString(_discord.Scopes)}",
             $"redirect_uri={Uri.EscapeDataString(_discord.RedirectUri)}",
             $"state={Uri.EscapeDataString(state)}",
@@ -115,11 +123,9 @@ internal sealed class DiscordAuthService
 
         var sessionToken = _sessions.Create(session);
 
-        // Seed the role cache from the member we already have — saves the first re-fetch. Both roles
-        // come off the same member object, so the review decision costs nothing extra here.
-        _roleCache.Set(_discord.ActionRoleId, user.Id, HasActionRole(member.Roles));
-        if (AdminRoleConfigured)
-            _roleCache.Set(_discord.AdminRoleId, user.Id, member.Roles.Contains(_discord.AdminRoleId, StringComparer.Ordinal));
+        // Seed the tier cache from the member we already have — saves the first re-fetch. One
+        // resolution answers every authority question, so nothing else needs looking up here.
+        _roleCache.Set(user.Id, _roleMap.Resolve(member.Roles));
 
         return new AuthSessionResult(sessionToken, user.DisplayName);
     }
@@ -137,47 +143,48 @@ internal sealed class DiscordAuthService
 
     /// <summary>
     /// Whether this principal may perform mutating/destructive actions RIGHT NOW. The master
-    /// kill-switch (ActionsEnabled + a signing key + a configured action role) is checked live;
-    /// the per-user role decision is served from a short-TTL cache, else re-fetched from Discord
-    /// with the BOT token (by user id). No caller token is involved, so a role re-check never
-    /// forces a re-login.
+    /// kill-switch (ActionsEnabled + a signing key + a configured operator role) is checked live;
+    /// the per-user tier is served from a short-TTL cache, else re-fetched from Discord with the BOT
+    /// token (by user id). No caller token is involved, so a re-check never forces a re-login.
     /// </summary>
     public async Task<bool> CanPerformActionsAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (!_assistant.ActionsEnabled || !_tokens.IsConfigured || !ActionRoleConfigured)
+        if (!_assistant.ActionsEnabled || !_tokens.IsConfigured || _roleMap.IsEmpty)
             return false;
 
-        if (_roleCache.TryGet(_discord.ActionRoleId, principal.UserId, out var cached))
-            return cached;
-
-        // Re-derive authority from the bot by user id. A null member (left the guild, or a
-        // transient denial) simply denies for this cache TTL — the session itself stays valid
-        // until its own expiry; there is no caller token to expire and force a re-login.
-        var member = await _oauth.GetGuildMemberAsync(principal.UserId, ct);
-        var hasRole = member is not null && HasActionRole(member.Roles);
-        _roleCache.Set(_discord.ActionRoleId, principal.UserId, hasRole);
-        return hasRole;
+        return await ResolveTierAsync(principal, ct) >= KgsmTier.Operator;
     }
 
     /// <summary>
-    /// Whether this principal may read OTHER users' conversations (the review surface). Same live
-    /// derivation as <see cref="CanPerformActionsAsync"/> — the bot, by user id, behind the same
-    /// short-TTL cache — against its OWN role: acting on a server and reading someone's chat are
-    /// different powers. No configured review role ⇒ nobody, so a host that never set one cannot have
-    /// the surface opened by a session bearer.
+    /// Whether this principal may read OTHER users' conversations (the review surface). Reading
+    /// someone's chat is an administrator's power, the same tier that configures the host from the
+    /// Control Panel — one ladder, so a person cannot hold a power on one surface that they lack on
+    /// another. No configured admin role ⇒ nobody, so a host that never set one cannot have the
+    /// surface opened by a session bearer.
     /// </summary>
     public async Task<bool> IsAdminAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (!AdminRoleConfigured)
+        if (_roleMap.AdminRoleIds.Count == 0)
             return false;
 
-        if (_roleCache.TryGet(_discord.AdminRoleId, principal.UserId, out var cached))
+        return await ResolveTierAsync(principal, ct) >= KgsmTier.Admin;
+    }
+
+    /// <summary>
+    /// The tier this principal holds, cached for the role-cache TTL. A null member — they left the
+    /// guild, or Discord denied the lookup transiently — resolves to <see cref="KgsmTier.None"/> and
+    /// is cached like any other answer, so a denial does not retry on every call. The session itself
+    /// stays valid until its own expiry; there is no caller token to expire and force a re-login.
+    /// </summary>
+    private async Task<KgsmTier> ResolveTierAsync(AuthPrincipal principal, CancellationToken ct)
+    {
+        if (_roleCache.TryGet(principal.UserId, out KgsmTier cached))
             return cached;
 
-        var member = await _oauth.GetGuildMemberAsync(principal.UserId, ct);
-        var hasRole = member is not null && member.Roles.Contains(_discord.AdminRoleId, StringComparer.Ordinal);
-        _roleCache.Set(_discord.AdminRoleId, principal.UserId, hasRole);
-        return hasRole;
+        DiscordGuildMember? member = await _oauth.GetGuildMemberAsync(principal.UserId, ct);
+        KgsmTier tier = _roleMap.Resolve(member?.Roles);
+        _roleCache.Set(principal.UserId, tier);
+        return tier;
     }
 
     public void Logout(AuthPrincipal principal)
@@ -186,12 +193,5 @@ internal sealed class DiscordAuthService
         _roleCache.Remove(principal.UserId);
     }
 
-    private bool ActionRoleConfigured =>
-        !string.IsNullOrEmpty(_discord.ActionRoleId) && _discord.ActionRoleId != "0";
 
-    private bool AdminRoleConfigured =>
-        !string.IsNullOrEmpty(_discord.AdminRoleId) && _discord.AdminRoleId != "0";
-
-    private bool HasActionRole(string[] roles) =>
-        ActionRoleConfigured && roles.Contains(_discord.ActionRoleId, StringComparer.Ordinal);
 }

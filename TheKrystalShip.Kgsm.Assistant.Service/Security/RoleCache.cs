@@ -3,25 +3,31 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.KGSM.Auth;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
 /// <summary>
-/// Short-TTL per-user cache of a "holds this role?" decision, so resolving authority on every
-/// <c>/turn</c> (and re-checking at <c>/confirm</c>, and on an admin review read) doesn't hammer
-/// Discord's rate-limited member endpoint. A miss falls through to a live lookup; a brief per-user
-/// stampede on expiry is acceptable for a small home service, so there's no locking.
+/// Short-TTL per-user cache of the tier a caller holds, so resolving authority on every <c>/turn</c>
+/// (and re-checking at <c>/confirm</c>, and on a review read) doesn't hammer Discord's rate-limited
+/// member endpoint. A miss falls through to a live lookup; a brief per-user stampede on expiry is
+/// acceptable for a small home service, so there's no locking.
 /// <para>
-/// Entries are keyed by <em>role AND user</em>: the service asks about more than one role (the action
-/// role, the review role), and a single per-user slot would let one role's answer be served for
-/// another's question.
+/// One entry per user, because authority is one ordered tier: a single lookup of the member's roles
+/// answers every question this service asks — may they act, may they review — so there is nothing
+/// left for a per-role key to keep apart.
 /// </para>
 /// </summary>
+/// <remarks>
+/// The TTL is the staleness bound on a revoked role: someone whose role is taken away keeps the tier
+/// they held until their entry expires. Authority is deliberately never stored on the session, so
+/// this is the only place a stale answer can survive, and the TTL is the whole knob.
+/// </remarks>
 internal sealed class RoleCache
 {
-    private sealed record Entry(bool HasRole, DateTimeOffset FetchedUtc);
+    private sealed record Entry(KgsmTier Tier, DateTimeOffset FetchedUtc);
 
-    private readonly ConcurrentDictionary<(string RoleId, string UserId), Entry> _entries = new();
+    private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private readonly int _ttlSeconds;
 
     public RoleCache(IOptions<AuthOptions> options)
@@ -29,30 +35,26 @@ internal sealed class RoleCache
         _ttlSeconds = options.Value.RoleCacheTtlSeconds > 0 ? options.Value.RoleCacheTtlSeconds : 60;
     }
 
-    /// <summary>Returns a cached decision for this (role, user) if it's still within the TTL.</summary>
-    public bool TryGet(string roleId, string userId, out bool hasRole)
+    /// <summary>Returns this user's cached tier if it is still within the TTL.</summary>
+    public bool TryGet(string userId, out KgsmTier tier)
     {
-        hasRole = false;
-        if (!_entries.TryGetValue((roleId, userId), out var entry))
+        tier = KgsmTier.None;
+        if (!_entries.TryGetValue(userId, out Entry? entry))
             return false;
 
         if (DateTimeOffset.UtcNow - entry.FetchedUtc > TimeSpan.FromSeconds(_ttlSeconds))
         {
-            _entries.TryRemove((roleId, userId), out _);
+            _entries.TryRemove(userId, out _);
             return false;
         }
 
-        hasRole = entry.HasRole;
+        tier = entry.Tier;
         return true;
     }
 
-    public void Set(string roleId, string userId, bool hasRole) =>
-        _entries[(roleId, userId)] = new Entry(hasRole, DateTimeOffset.UtcNow);
+    public void Set(string userId, KgsmTier tier) =>
+        _entries[userId] = new Entry(tier, DateTimeOffset.UtcNow);
 
-    /// <summary>Drops every cached role decision for a user (e.g. on logout / session eviction).</summary>
-    public void Remove(string userId)
-    {
-        foreach (var key in _entries.Keys.Where(k => k.UserId == userId))
-            _entries.TryRemove(key, out _);
-    }
+    /// <summary>Drops a user's cached tier (e.g. on logout / session eviction).</summary>
+    public void Remove(string userId) => _entries.TryRemove(userId, out _);
 }

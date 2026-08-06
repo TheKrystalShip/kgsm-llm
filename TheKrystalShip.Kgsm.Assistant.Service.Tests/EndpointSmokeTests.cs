@@ -187,7 +187,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
             b.UseSetting("Assistant:Confirmation:Key", "test-key");
-            b.UseSetting("DiscordOAuth:ActionRoleId", "role-123");
+            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
@@ -368,7 +368,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
             b.UseSetting("Assistant:Confirmation:Key", "test-key");
-            b.UseSetting("DiscordOAuth:ActionRoleId", "role-123");
+            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
         });
         var client = Authed(factory);
 

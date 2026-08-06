@@ -17,6 +17,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.Discord;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingWrites;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
@@ -66,6 +67,12 @@ builder.Services.Configure<DiscordOAuthOptions>(
     builder.Configuration.GetSection(DiscordOAuthOptions.Section));
 builder.Services.Configure<AuthOptions>(
     builder.Configuration.GetSection(AuthOptions.Section));
+// The ecosystem's shared authorization block. Bound once and the resolved map registered, because
+// every caller wants the same answer and the map is immutable.
+builder.Services.Configure<KgsmAuthOptions>(
+    builder.Configuration.GetSection(KgsmAuthOptions.Section));
+builder.Services.AddSingleton(sp =>
+    sp.GetRequiredService<IOptions<KgsmAuthOptions>>().Value.ToRoleMap());
 
 // --- LLM + assistant + kgsm adapters -----------------------------------------
 // The reusable agent loop (Ollama client, conversation store) and the kgsm assistant
@@ -125,25 +132,30 @@ app.UseCors();
 {
     var opts = app.Services.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
     var tokens = app.Services.GetRequiredService<ConfirmationTokenService>();
-    var discord = app.Services.GetRequiredService<IOptions<DiscordOAuthOptions>>().Value;
+    var sharedAuth = app.Services.GetRequiredService<IOptions<KgsmAuthOptions>>().Value;
+    var roleMap = app.Services.GetRequiredService<KgsmRoleMap>();
     if (opts.ActionsEnabled && !tokens.IsConfigured)
         app.Logger.LogWarning(
             "Assistant:ActionsEnabled is true but Assistant:Confirmation:Key is unset — " +
             "the service will run READ-ONLY until a key is configured.");
     if (opts.ActionsEnabled &&
-        (string.IsNullOrEmpty(discord.ClientSecret) || string.IsNullOrEmpty(discord.BotToken) ||
-         string.IsNullOrEmpty(discord.GuildId) || string.IsNullOrEmpty(discord.ActionRoleId)))
+        (string.IsNullOrEmpty(sharedAuth.ClientSecret) || !sharedAuth.CanResolveRoles || roleMap.IsEmpty))
         app.Logger.LogWarning(
-            "Assistant:ActionsEnabled is true but DiscordOAuth is not fully configured " +
-            "(ClientSecret/BotToken/GuildId/ActionRoleId) — direct SESSION-bearer callers can't be " +
+            "Assistant:ActionsEnabled is true but KgsmAuth is not fully configured " +
+            "(ClientSecret/BotToken/GuildId/RoleOperatorIds) — direct SESSION-bearer callers can't be " +
             "authorized for actions. The trusted relay (kgsm-api) path is unaffected: it uses the " +
-            "api's verified tier (X-Relay-Can-Act), not a Discord lookup.");
+            "api's verified tier, not a Discord lookup.");
+    else if (opts.ActionsEnabled)
+        app.Logger.LogInformation(
+            "Authorization: {OperatorCount} operator role(s), {AdminCount} admin role(s); " +
+            "guild members floor at viewer",
+            roleMap.OperatorRoleIds.Count, roleMap.AdminRoleIds.Count);
 
-    // The bot token now resolves guild membership AND roles (the caller's OAuth token is
-    // discarded after /users/@me), so without it no login can succeed at all.
-    if (string.IsNullOrEmpty(discord.BotToken) && !string.IsNullOrEmpty(discord.GuildId))
+    // The bot token resolves guild membership AND roles (the caller's OAuth token is discarded
+    // after /users/@me), so without it no login can succeed at all.
+    if (string.IsNullOrEmpty(sharedAuth.BotToken) && !string.IsNullOrEmpty(sharedAuth.GuildId))
         app.Logger.LogWarning(
-            "DiscordOAuth:BotToken is unset — guild-membership and role lookups use the bot " +
+            "KgsmAuth:BotToken is unset — guild-membership and role lookups use the bot " +
             "token, so every login will be denied until it is configured.");
 }
 

@@ -72,6 +72,11 @@
       "order": 10
     },
     {
+      "id": "authorization",
+      "label": "Who may act",
+      "order": 11
+    },
+    {
       "id": "webfetch",
       "label": "Web fetch",
       "order": 11
@@ -369,60 +374,6 @@
       "pairedApiKey": "Api__AssistantRelaySecret"
     },
     {
-      "key": "discordClientId",
-      "env": "DiscordOAuth__ClientId",
-      "label": "Discord application id",
-      "description": "The Discord application users sign in through. The same application as the bot's.",
-      "group": "discord",
-      "type": "string",
-      "risk": "wiring"
-    },
-    {
-      "key": "discordClientSecret",
-      "env": "DiscordOAuth__ClientSecret",
-      "label": "Discord client secret",
-      "description": "Secret for that application, used to complete a sign-in server-side.",
-      "group": "discord",
-      "type": "secret",
-      "risk": "wiring"
-    },
-    {
-      "key": "discordBotToken",
-      "env": "DiscordOAuth__BotToken",
-      "label": "Discord bot token",
-      "description": "Token for the same application, used to look up whether someone is in the server and holds the action role. Sign-in itself only ever asks Discord for a user's identity, never their roles.",
-      "group": "discord",
-      "type": "secret",
-      "risk": "wiring"
-    },
-    {
-      "key": "discordGuildId",
-      "env": "DiscordOAuth__GuildId",
-      "label": "Discord server id",
-      "description": "The Discord server whose membership decides who may sign in.",
-      "group": "discord",
-      "type": "string",
-      "risk": "wiring"
-    },
-    {
-      "key": "discordActionRoleId",
-      "env": "DiscordOAuth__ActionRoleId",
-      "label": "Action role id",
-      "description": "Role whose holders may perform actions — the same role the Discord bot checks. Empty means no one is authorized.",
-      "group": "discord",
-      "type": "string",
-      "risk": "wiring"
-    },
-    {
-      "key": "discordAdminRoleId",
-      "env": "DiscordOAuth__AdminRoleId",
-      "label": "Review role id",
-      "description": "Role whose holders may read other people's assistant conversations, to review how the assistant is answering. Empty means nobody signing in here can — separate from the action role on purpose.",
-      "group": "discord",
-      "type": "string",
-      "risk": "wiring"
-    },
-    {
       "key": "discordRedirectUri",
       "env": "DiscordOAuth__RedirectUri",
       "label": "Sign-in redirect",
@@ -533,6 +484,60 @@
       "default": "200",
       "min": 0,
       "risk": "safe"
+    },
+    {
+      "key": "authGuildId",
+      "env": "KgsmAuth__GuildId",
+      "label": "Discord server id",
+      "description": "The Discord server whose membership decides who may sign in. Everyone in it can at least ask questions; roles decide who may act.",
+      "group": "authorization",
+      "type": "string",
+      "risk": "wiring"
+    },
+    {
+      "key": "authClientId",
+      "env": "KgsmAuth__ClientId",
+      "label": "Discord application id",
+      "description": "The Discord application users sign in through. The same application as the bot's.",
+      "group": "authorization",
+      "type": "string",
+      "risk": "wiring"
+    },
+    {
+      "key": "authClientSecret",
+      "env": "KgsmAuth__ClientSecret",
+      "label": "Discord client secret",
+      "description": "Secret for that application, used to complete a sign-in server-side.",
+      "group": "authorization",
+      "type": "secret",
+      "risk": "wiring"
+    },
+    {
+      "key": "authBotToken",
+      "env": "KgsmAuth__BotToken",
+      "label": "Discord bot token",
+      "description": "Token for the same application, used to look up whether someone is in the server and which roles they hold. Sign-in itself only ever asks Discord for a user's identity, never their roles, so without this every login is denied.",
+      "group": "authorization",
+      "type": "secret",
+      "risk": "wiring"
+    },
+    {
+      "key": "authRoleAdminIds",
+      "env": "KgsmAuth__RoleAdminIds",
+      "label": "Administrator roles",
+      "description": "Comma-separated role ids granting admin, which here means reading other people's conversations to review how the assistant is answering. Empty means nobody signing in can.",
+      "group": "authorization",
+      "type": "csv",
+      "risk": "destructive"
+    },
+    {
+      "key": "authRoleOperatorIds",
+      "env": "KgsmAuth__RoleOperatorIds",
+      "label": "Operator roles",
+      "description": "Comma-separated role ids granting operator — asking the assistant to start, stop, install or uninstall a server. Empty means it can still answer questions but will refuse every action.",
+      "group": "authorization",
+      "type": "csv",
+      "risk": "destructive"
     },
     {
       "key": "webFetchEnabled",

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — authority is the ecosystem's tier
+
+- **The Discord app, guild, role-lookup token and role map move to the shared `KgsmAuth` section**
+  (`/etc/kgsm/discord-auth.env`, owned by `TheKrystalShip.KGSM.Auth`), so this service, the Control
+  Panel API and the Discord bot resolve the same authority for the same person.
+- **`DiscordOAuth:ActionRoleId` and `DiscordOAuth:AdminRoleId` are replaced by the ordered tier.**
+  Acting needs `operator`; reading another person's conversations needs `admin`. The review power is
+  the administrator's, not a role of its own.
+- **The role cache is keyed by user, not by (role, user).** One tier answers every authority question
+  the service asks, so there is nothing left for a per-role key to keep apart.
+- `DiscordOAuth` keeps only this surface's own `RedirectUri` and `Scopes`.
+
 ### Added
 - Turn feedback: an answer's reader can mark it helpful or unhelpful, with an optional note on a
   thumbs-down. Stored as a `feedback` entry in the same append-only log (latest-wins, so re-rating and

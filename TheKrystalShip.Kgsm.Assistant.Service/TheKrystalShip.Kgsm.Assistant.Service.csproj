@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.2.0" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>

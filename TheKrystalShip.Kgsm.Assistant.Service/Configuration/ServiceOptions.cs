@@ -95,64 +95,6 @@ public sealed class DiscordOAuthOptions
 {
     public const string Section = "DiscordOAuth";
 
-    /// <summary>The OAuth client id — this is the bot's existing Discord application id.</summary>
-    /// <panel>The Discord application users sign in through. The same application as the bot's.</panel>
-    [LeafField("discordClientId", "Discord application id", Group = "discord", Risk = LeafRisk.Wiring,
-        NoDefault = true)]
-    public string ClientId { get; set; } = string.Empty;
-
-    /// <summary>
-    /// OAuth client secret. ENV-ONLY: leave empty in appsettings.json and supply
-    /// <c>DiscordOAuth__ClientSecret</c> via the environment at runtime.
-    /// </summary>
-    /// <panel>Secret for that application, used to complete a sign-in server-side.</panel>
-    [LeafField("discordClientSecret", "Discord client secret", Group = "discord", Type = LeafType.Secret,
-        Risk = LeafRisk.Wiring, NoDefault = true)]
-    public string ClientSecret { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Bot token for the SAME Discord application. Roles are resolved with this
-    /// (<c>GET /guilds/{guild}/members/{user}</c>) — NOT the caller's OAuth token — so the
-    /// login scope stays <c>identify</c>-only and no Discord token is ever retained. Required
-    /// for any login to succeed (the guild-membership check uses it too).
-    /// ENV-ONLY: supply <c>DiscordOAuth__BotToken</c> via the environment at runtime.
-    /// </summary>
-    /// <panel>Token for the same application, used to look up whether someone is in the server and holds
-    /// the action role. Sign-in itself only ever asks Discord for a user's identity, never their
-    /// roles.</panel>
-    [LeafField("discordBotToken", "Discord bot token", Group = "discord", Type = LeafType.Secret,
-        Risk = LeafRisk.Wiring, NoDefault = true)]
-    public string BotToken { get; set; } = string.Empty;
-
-    /// <summary>The guild (Discord server) whose membership + role gate access.</summary>
-    /// <panel>The Discord server whose membership decides who may sign in.</panel>
-    [LeafField("discordGuildId", "Discord server id", Group = "discord", Risk = LeafRisk.Wiring,
-        NoDefault = true)]
-    public string GuildId { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Role whose holders may perform mutating/destructive actions — the SAME role the
-    /// bot's <c>DiscordOptions.ActionRoleId</c> checks. Empty/"0" → no one is authorized.
-    /// </summary>
-    /// <panel>Role whose holders may perform actions — the same role the Discord bot checks. Empty means
-    /// no one is authorized.</panel>
-    [LeafField("discordActionRoleId", "Action role id", Group = "discord", Risk = LeafRisk.Wiring,
-        NoDefault = true)]
-    public string ActionRoleId { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Role whose holders may read OTHER users' conversations through the admin review surface.
-    /// Empty/"0" → no session bearer can, and the surface is reachable only through a trusted relay
-    /// that asserts admin itself. Deliberately its own role, not the action role: acting on a server
-    /// and reading someone's chat are different powers.
-    /// </summary>
-    /// <panel>Role whose holders may read other people's assistant conversations, to review how the
-    /// assistant is answering. Empty means nobody signing in here can — separate from the action role
-    /// on purpose.</panel>
-    [LeafField("discordAdminRoleId", "Review role id", Group = "discord", Risk = LeafRisk.Wiring,
-        NoDefault = true)]
-    public string AdminRoleId { get; set; } = string.Empty;
-
     /// <summary>Where Discord redirects after authorize — the SPA's callback URL (HTTPS).</summary>
     /// <panel>Where Discord sends someone back to after they approve. It has to match the redirect
     /// registered on the Discord application exactly.</panel>

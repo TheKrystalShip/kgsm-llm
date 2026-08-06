@@ -129,6 +129,11 @@ Things that bite if you don't know them:
   world fact (`TheKrystalShip.Kgsm.Assistant.Eval/CLAUDE.md` invariant #1).
 - **This leaf depends only on kgsm-lib + a local Ollama** and runs fully standalone — no other
   ecosystem service. Don't add a dependency on the API or a sibling leaf.
+- **Authority is the ecosystem's ordered tier, not this service's own booleans.** The role→tier map
+  comes from the shared `KgsmAuth` section (`TheKrystalShip.KGSM.Auth`), which lives once per host in
+  `/etc/kgsm/discord-auth.env` and is loaded by every leaf's unit before its own env file. Acting
+  needs `operator`; reading another person's conversations needs `admin`. This surface's own callback
+  URL and scopes stay local, on `DiscordOAuth`.
 - **`Directory.Build.props` carries a scoped NuGet-audit suppression** (one transitive SQLite
   advisory, no fixed version yet). It's deliberate and documented inline — don't widen it to
   `NuGetAudit=off`; delete it when a patched bundle ships.

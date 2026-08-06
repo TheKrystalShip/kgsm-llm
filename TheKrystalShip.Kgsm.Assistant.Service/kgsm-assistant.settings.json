@@ -78,13 +78,15 @@
       "Secret": ""
     }
   },
-  "DiscordOAuth": {
+  "KgsmAuth": {
+    "GuildId": "",
     "ClientId": "",
     "ClientSecret": "",
     "BotToken": "",
-    "GuildId": "",
-    "ActionRoleId": "",
-    "AdminRoleId": "",
+    "RoleAdminIds": "",
+    "RoleOperatorIds": ""
+  },
+  "DiscordOAuth": {
     "RedirectUri": "",
     "Scopes": "identify"
   },

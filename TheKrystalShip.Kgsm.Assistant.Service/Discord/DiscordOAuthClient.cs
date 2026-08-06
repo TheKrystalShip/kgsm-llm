@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
+using TheKrystalShip.KGSM.Auth;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Discord;
 
@@ -64,12 +65,18 @@ internal sealed class DiscordOAuthClient : IDiscordOAuthClient
 {
     private readonly HttpClient _http;
     private readonly DiscordOAuthOptions _options;
+    private readonly KgsmAuthOptions _auth;
     private readonly ILogger<DiscordOAuthClient> _logger;
 
-    public DiscordOAuthClient(HttpClient http, IOptions<DiscordOAuthOptions> options, ILogger<DiscordOAuthClient> logger)
+    public DiscordOAuthClient(
+        HttpClient http,
+        IOptions<DiscordOAuthOptions> options,
+        IOptions<KgsmAuthOptions> auth,
+        ILogger<DiscordOAuthClient> logger)
     {
         _http = http;
         _options = options.Value;
+        _auth = auth.Value;
         _logger = logger;
     }
 
@@ -80,8 +87,8 @@ internal sealed class DiscordOAuthClient : IDiscordOAuthClient
             ["grant_type"] = "authorization_code",
             ["code"] = code,
             ["redirect_uri"] = _options.RedirectUri,
-            ["client_id"] = _options.ClientId,
-            ["client_secret"] = _options.ClientSecret,
+            ["client_id"] = _auth.ClientId,
+            ["client_secret"] = _auth.ClientSecret,
             ["code_verifier"] = codeVerifier,
         });
 
@@ -113,8 +120,8 @@ internal sealed class DiscordOAuthClient : IDiscordOAuthClient
     public async Task<DiscordGuildMember?> GetGuildMemberAsync(string userId, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, $"api/v10/guilds/{_options.GuildId}/members/{userId}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bot", _options.BotToken);
+            HttpMethod.Get, $"api/v10/guilds/{_auth.GuildId}/members/{userId}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bot", _auth.BotToken);
 
         using var response = await _http.SendAsync(request, ct);
         switch (response.StatusCode)
@@ -125,7 +132,7 @@ internal sealed class DiscordOAuthClient : IDiscordOAuthClient
                 return null; // not a member of the guild → deny
             case HttpStatusCode.Unauthorized:
                 // The BOT token is invalid — a server misconfiguration, not the caller's problem.
-                _logger.LogError("Discord member lookup got 401 — DiscordOAuth:BotToken is missing or invalid.");
+                _logger.LogError("Discord member lookup got 401 — KgsmAuth:BotToken is missing or invalid.");
                 return null;
             case HttpStatusCode.TooManyRequests:
                 _logger.LogWarning("Discord member lookup rate-limited (429) — denying this check");

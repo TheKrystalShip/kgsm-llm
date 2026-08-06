@@ -32,6 +32,11 @@ Environment=ASPNETCORE_URLS=http://127.0.0.1:5180
 # reads no events and falls back to the cache TTL.
 Environment=KGSM__JournalDir=/var/lib/kgsm/events
 # Secrets + non-default config live here (chmod 600, root:root or kgsm:kgsm). Template: assistant.env.example
+# Who may do what on this host, shared with every other KGSM surface. Loaded FIRST so the per-leaf
+# file below can still override a value deliberately; setting one there is how a host ends up
+# granting the same person different authority on different surfaces, so prefer the shared file.
+# Seeded by deploy/setup.sh; optional, so a host that never provisioned it still starts.
+EnvironmentFile=-/etc/kgsm/discord-auth.env
 EnvironmentFile=/etc/kgsm-assistant/service.env
 
 # systemd creates this owned by the service user; the event socket above is bound inside it.

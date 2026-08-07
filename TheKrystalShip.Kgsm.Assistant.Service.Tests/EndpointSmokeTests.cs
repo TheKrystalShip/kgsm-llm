@@ -154,7 +154,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var assistant = Substitute.For<IServerAssistant>();
         // conversationId is derived server-side from the principal — NOT from the request.
-        assistant.RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(Task.FromResult(AssistantResult.Ok("hello from assistant", Array.Empty<PendingConfirmation>())));
 
         var client = await AuthedAsync(Factory(assistant));
@@ -164,7 +164,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var body = await response.Content.ReadFromJsonAsync<TurnResponse>();
         body!.Text.Should().Be("hello from assistant");
         body.Confirmations.Should().BeEmpty();
-        await assistant.Received(1).RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+        await assistant.Received(1).RunAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
     [Fact]
@@ -956,7 +956,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var assistant = Substitute.For<IServerAssistant>();
         // conversationId is derived server-side from the principal, exactly like the buffered path.
-        assistant.RunStreamAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:user1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.Token("Hel"),
                 AssistantStreamEvent.Token("lo"),
@@ -979,7 +979,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Turn_StreamAccept_EmitsToolStartAndResult()
     {
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.ToolStart(LlmTools.GetStatus, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
                 AssistantStreamEvent.ToolResult(LlmTools.GetStatus, "factorio: stopped", "tc_0"),
@@ -1021,7 +1021,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 Passed: 1, Total: 2, Skipped: 0));
 
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", "health?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:user1", "health?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.ToolStart(
                     LlmTools.RunHealthCheck, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
@@ -1056,7 +1056,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // executing, ahead of its single terminal tool.result — the exact wire shape a live stepper
         // reads.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", "make me a rust server", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:user1", "make me a rust server", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = "Rust" }, "tc_0"),
                 AssistantStreamEvent.Progress(LlmTools.CreateBlueprint, "research", "Looking it up online…"),
@@ -1091,7 +1091,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Turn_StreamAccept_ConfirmationEventCarriesTokenBoundToCaller()
     {
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.Token("Staging…"),
                 AssistantStreamEvent.Confirmation(new PendingConfirmation(ConfirmationKind.Uninstall, "terraria")),
@@ -1119,7 +1119,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // in the §5·a shape — `verb` (the normalised API token), `subject {resource,id}`, and a human
         // `confirm` prompt. The host-minted `token` is retained (additive) for the /confirm surfaces.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.Token("Proposing…"),
                 AssistantStreamEvent.Confirmation(new PendingConfirmation(ConfirmationKind.Start, "factorio")),
@@ -1148,7 +1148,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // The error frame is a RESHAPE ({error} -> {code,message}), surfaced in-band on the
         // already-committed 200 stream (never a status code once the first frame has flushed).
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.Token("…"),
                 AssistantStreamEvent.Error("boom")));
@@ -1170,7 +1170,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // authenticates with NO session bearer, and the forwarded user drives the principal-scoped
         // conversation key (web:<userId>) — per-user isolation is preserved through the relay.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
         var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
@@ -1180,7 +1180,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         response.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
         (await response.Content.ReadAsStringAsync()).Should().Contain("event: done");
         assistant.Received().RunStreamAsync(
-            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
     [Fact]
@@ -1190,7 +1190,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // window — keyed web:<userId>:<chatId> — so a "new chat" no longer leaks the previous chat's
         // history, while staying strictly inside that user's namespace (the user id is the prefix).
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
         var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
@@ -1199,7 +1199,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         assistant.Received().RunStreamAsync(
-            "web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+            "web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
     [Fact]
@@ -1354,7 +1354,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
 
         WebApplicationFactory<Program> factory = OperatorTurnFactory(assistant, out _);
@@ -1372,7 +1372,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // canPerform TRUE (the caller is an operator), autoExecute FALSE (they did not ask for it).
         assistant.Received(1).RunStreamAsync(
             Arg.Any<string>(), "start factorio", true, Arg.Any<bool>(), false,
-            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
     [Fact]
@@ -1383,7 +1383,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
 
         WebApplicationFactory<Program> factory = OperatorTurnFactory(assistant, out IDiscordDirectory directory);
@@ -1400,7 +1400,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         assistant.Received(1).RunStreamAsync(
             Arg.Any<string>(), "start factorio", true, Arg.Any<bool>(), false,
-            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
         // The tier that mattered was re-derived from Discord, never read off the caller's token.
         await directory.Received().GetGuildRolesAsync(ActionUser, Arg.Any<CancellationToken>());
     }
@@ -1413,7 +1413,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(),
-                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>())
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
 
         var directory = Substitute.For<IDiscordDirectory>();
@@ -1433,7 +1433,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         assistant.Received(1).RunStreamAsync(
             Arg.Any<string>(), "start factorio", false, Arg.Any<bool>(), false,
-            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>());
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
     private const string ActionUser = "action-user";
@@ -1471,11 +1471,89 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         return await client.SendAsync(request);
     }
 
+    [Fact]
+    public async Task Turn_Relay_LeafHeader_SelectsThatLeafsPrompts()
+    {
+        // The calling leaf reaches the turn, which is what makes a surface's own prompt and
+        // tool-description overrides apply to it.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var response = await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "kgsm-bot");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        assistant.Received().RunStreamAsync(
+            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), "kgsm-bot");
+    }
+
+    [Fact]
+    public async Task Turn_Relay_NoLeafHeader_RunsAsTheAssistantsOwn()
+    {
+        // A relay that does not speak the header is unchanged by its existence — this is what keeps
+        // the header additive rather than a coordinated deploy.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        await StreamTurnRelayAsync(factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User");
+
+        assistant.Received().RunStreamAsync(
+            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), null);
+    }
+
+    [Fact]
+    public async Task Turn_Relay_MalformedLeafHeader_IsDropped_NotPassedOn()
+    {
+        // The leaf name becomes a path segment when prompts are resolved, so a name that would have
+        // to be cleaned up to be usable is refused outright and the turn runs as the assistant's own.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "../../etc");
+
+        assistant.Received().RunStreamAsync(
+            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), null);
+    }
+
+    [Fact]
+    public async Task Turn_LeafHeader_OnTheSessionPath_IsIgnored()
+    {
+        // The leaf is a fact the trusted relay asserts, not something a browser may claim: a session
+        // caller sending it must not be able to pick another surface's prompts.
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync(Arg.Any<string>(), "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant);
+        var client = await AuthedAsync(factory);
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt = "hi" }),
+        };
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        request.Headers.Add("X-Relay-Leaf", "kgsm-bot");
+        await client.SendAsync(request);
+
+        assistant.Received().RunStreamAsync(
+            Arg.Any<string>(), "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), null);
+    }
+
     /// <summary>POSTs /turn over the trusted-relay path: an SSE Accept + the relay secret and
     /// forwarded identity headers, no session bearer. A null header value is omitted.</summary>
     private static async Task<HttpResponseMessage> StreamTurnRelayAsync(
         HttpClient client, string prompt, string? secret, string? userId, string? userName = null,
-        string? conversationId = null)
+        string? conversationId = null, string? leaf = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
         {
@@ -1486,6 +1564,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         if (userId is not null) request.Headers.Add("X-Relay-User", userId);
         if (userName is not null) request.Headers.Add("X-Relay-User-Name", userName);
         if (conversationId is not null) request.Headers.Add("X-Relay-Conversation-Id", conversationId);
+        if (leaf is not null) request.Headers.Add("X-Relay-Leaf", leaf);
         return await client.SendAsync(request);
     }
 

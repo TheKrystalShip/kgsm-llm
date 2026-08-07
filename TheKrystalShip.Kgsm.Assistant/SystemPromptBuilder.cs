@@ -29,16 +29,17 @@ public class SystemPromptBuilder : ISystemPromptBuilder
     }
 
     public async Task<BuiltPrompt> BuildAsync(
-        bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default)
+        bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default,
+        string? leaf = null)
     {
         // The editable template: persona + authorization stance. Each segment resolves
         // file (hot, top precedence) > inline Llm:* config > lib-owned constant default.
         // Three stances: denied (read-only) < allowed (propose-only) < auto (lifecycle runs now).
-        var preamble = Effective(PromptSegments.Preamble);
+        var preamble = Effective(PromptSegments.Preamble, leaf);
         var actionsSegment = !canPerformActions ? PromptSegments.ActionsDenied
             : autoExecute ? PromptSegments.ActionsAuto
             : PromptSegments.ActionsAllowed;
-        var actions = Effective(actionsSegment);
+        var actions = Effective(actionsSegment, leaf);
         var template = preamble + actions;
 
         // Hash ONLY the template — not the live lists appended below — so the recorded id moves when
@@ -77,9 +78,10 @@ public class SystemPromptBuilder : ISystemPromptBuilder
         return new BuiltPrompt(builder.ToString(), templateHash);
     }
 
-    /// <summary>Resolves a segment: editable file > inline config > lib-owned constant default.</summary>
-    private string Effective(PromptSegment segment) =>
-        _overrides.ReadText(segment.FileName)
+    /// <summary>Resolves a segment: the calling leaf's file > the host-wide file > inline config >
+    /// lib-owned constant default.</summary>
+    private string Effective(PromptSegment segment, string? leaf) =>
+        _overrides.ReadText(segment.FileName, leaf)
         ?? NullIfBlank(_configuration[segment.ConfigKey])
         ?? segment.Default;
 

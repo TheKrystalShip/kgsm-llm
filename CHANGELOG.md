@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a calling leaf may override the prompts, and records its own audit origin
+
+`X-Relay-Leaf` names the deployed leaf making a relayed call (`kgsm-bot`, `kgsm-api`). Two things
+are derived from it, because they are the same question asked twice — *which surface is this?*
+
+**Prompt overrides gain a per-leaf layer.** A segment now resolves
+`<dir>/<leaf>/preamble.md` → `<dir>/preamble.md` → `Llm:Preamble` → the in-code default, so a
+surface overrides the one segment that differs for it and inherits the rest. `tools.json` follows
+the same lookup, whole-file rather than per-segment: tool prose is where a surface's confirmation
+mechanic gets named, and a merged catalog would be half-worded for a button and half for a card.
+`PromptScaffold.WriteDefaults` seeds a leaf's directory from the same defaults.
+
+**A leaf's actions record under its own origin.** The bot's chat is Discord's, not the assistant's;
+recording it as the assistant would make a Discord action indistinguishable from a browser one while
+the slash command beside it still says `discord`. The mapping is a table, not a copy of the leaf
+name — kgsm-api relays a browser chat, whose origin is the assistant. A leaf cannot name its own
+audit origin.
+
+Both fall back to the assistant's own prompts and origin when the header is absent or unrecognised,
+so a relay that does not speak it is unaffected. The name is **validated, not repaired** — it becomes
+a path segment, and a sanitizer that strips illegal characters would turn `kgsm/bot` into a lookup
+against `kgsmbot`. The header is read only on the trusted-relay path; a session caller cannot claim
+a leaf.
+
 ### Fixed — deploying the leaf no longer deletes its web client
 
 `deploy.sh` synced the publish tree over `$PREFIX/service/` with `--delete`, and the assistant's

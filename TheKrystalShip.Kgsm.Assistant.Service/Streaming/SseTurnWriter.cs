@@ -52,7 +52,9 @@ internal static class SseTurnWriter
         bool think = false,
         bool autoExecute = false,
         IReadOnlyList<string>? requestedTools = null,
-        string? openDraftYaml = null)
+        string? openDraftYaml = null,
+        // The leaf this turn arrives through, selecting its prompt/tool-description overrides.
+        string? leaf = null)
     {
         var response = http.Response;
         response.StatusCode = StatusCodes.Status200OK;
@@ -74,7 +76,7 @@ internal static class SseTurnWriter
         try
         {
             await foreach (var ev in assistant
-                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, autoExecute, requestedTools, ct, openDraftYaml, principal.DisplayName))
+                               .RunStreamAsync(conversationId, prompt, canPerformActions, think, autoExecute, requestedTools, ct, openDraftYaml, principal.DisplayName, leaf))
             {
                 switch (ev.Kind)
                 {

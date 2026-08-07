@@ -162,7 +162,11 @@ public interface IServerAssistant
         // into this turn's context so the model can change it. Last param (after ct) to keep every existing
         // positional caller/mock unshifted.
         string? openDraftYaml = null,
-        string? userDisplay = null);
+        string? userDisplay = null,
+        // The leaf this turn is being run for (kgsm-bot, kgsm-api), selecting that leaf's prompt and
+        // tool-description overrides; null reads the assistant's own text. Last param to keep every
+        // existing positional caller/mock unshifted.
+        string? leaf = null);
 
     /// <summary>
     /// Streaming counterpart to <see cref="RunAsync"/>: same policy (tool offering, gate, blast
@@ -184,7 +188,11 @@ public interface IServerAssistant
         // The current content of an open blueprint draft this turn carries (see RunAsync). Last params to
         // keep existing positional callers unshifted.
         string? openDraftYaml = null,
-        string? userDisplay = null);
+        string? userDisplay = null,
+        // The leaf this turn is being run for (kgsm-bot, kgsm-api), selecting that leaf's prompt and
+        // tool-description overrides; null reads the assistant's own text. Last param to keep every
+        // existing positional caller/mock unshifted.
+        string? leaf = null);
 
     /// <summary>
     /// Executes a previously-staged destructive operation after a human has confirmed

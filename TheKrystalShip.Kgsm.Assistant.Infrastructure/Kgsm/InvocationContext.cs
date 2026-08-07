@@ -18,9 +18,17 @@ public sealed record Invocation(string? Actor, string Origin)
 
     /// <summary>Build an invocation for the signed-in assistant user — <c>actor = discord:&lt;displayName&gt;</c>,
     /// <c>origin = assistant</c>. A blank name yields a null actor (KGSM keeps its OS-user fallback, never a
-    /// fabricated identity).</summary>
-    public static Invocation ForAssistant(string? displayName) =>
-        new(string.IsNullOrWhiteSpace(displayName) ? null : $"discord:{displayName}", AssistantOrigin);
+    /// fabricated identity).
+    /// <para>
+    /// <paramref name="origin"/> names the surface the person was actually using, for a turn arriving
+    /// through a leaf that presents its own — the Discord bot's chat is Discord's, not the assistant's,
+    /// and recording it as the assistant would make it indistinguishable from a browser chat. Omitted
+    /// or blank keeps <see cref="AssistantOrigin"/>, which is what a caller that names no surface is.
+    /// The actor shape does not vary with it: every one of these surfaces authenticates a Discord user.
+    /// </para></summary>
+    public static Invocation ForAssistant(string? displayName, string? origin = null) =>
+        new(string.IsNullOrWhiteSpace(displayName) ? null : $"discord:{displayName}",
+            string.IsNullOrWhiteSpace(origin) ? AssistantOrigin : origin);
 
     /// <summary>Build an invocation for the terminal user — <c>actor = cli:&lt;osUser&gt;</c>,
     /// <c>origin = cli</c>. A blank name yields a null actor (KGSM keeps its OS-user fallback, never a

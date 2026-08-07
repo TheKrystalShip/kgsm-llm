@@ -136,7 +136,8 @@ public class ServerAssistant : IServerAssistant
     /// NOT returned — the error propagates to the caller.
     /// </summary>
     private Result<IReadOnlyList<LlmToolDefinition>> SelectTools(
-        string userPrompt, bool canPerformActions, IReadOnlyList<string>? requestedTools, bool draftOpen = false)
+        string userPrompt, bool canPerformActions, IReadOnlyList<string>? requestedTools, bool draftOpen = false,
+        string? leaf = null)
     {
         var authorized = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
 
@@ -197,7 +198,7 @@ public class ServerAssistant : IServerAssistant
 
         var selected = _toolFilter.GetToolsFor(new ToolSelectionContext(userPrompt, canPerformActions), authorized);
         // Apply hot-editable description overrides last (names stay structural; prose is tunable).
-        return Result.Success(_promptOverrides.OverlayTools(selected));
+        return Result.Success(_promptOverrides.OverlayTools(selected, leaf));
     }
 
     public async Task<AssistantResult> RunAsync(
@@ -209,14 +210,15 @@ public class ServerAssistant : IServerAssistant
         IReadOnlyList<string>? requestedTools = null,
         CancellationToken cancellationToken = default,
         string? openDraftYaml = null,
-        string? userDisplay = null)
+        string? userDisplay = null,
+        string? leaf = null)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
-        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen);
+        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen, leaf);
         if (toolResult.IsFailure)
             return AssistantResult.Fail(toolResult.Error!);
 
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf);
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn
@@ -252,17 +254,18 @@ public class ServerAssistant : IServerAssistant
         IReadOnlyList<string>? requestedTools = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default,
         string? openDraftYaml = null,
-        string? userDisplay = null)
+        string? userDisplay = null,
+        string? leaf = null)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
-        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen);
+        var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen, leaf);
         if (toolResult.IsFailure)
         {
             yield return AssistantStreamEvent.Error(toolResult.Error!);
             yield break;
         }
 
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken);
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf);
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn

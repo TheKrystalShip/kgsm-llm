@@ -73,6 +73,22 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     /// </summary>
     public const string RelayConversationIdKey = "relayConversationId";
 
+    /// <summary>
+    /// Key under which the trusted relay's LEAF NAME is stored (a <c>string</c>), set ONLY on the
+    /// authenticated relay path from <c>X-Relay-Leaf</c>. It names the deployed leaf making the call
+    /// (<c>kgsm-bot</c>, <c>kgsm-api</c>), and two things are derived from it: the prompt overrides
+    /// that leaf's surface reads, and the audit origin its actions record under
+    /// (<see cref="RelayLeaves"/>).
+    /// <para>
+    /// One header for both, because they answer the same question — <em>which surface is this?</em> —
+    /// and two would let a caller claim one identity for its wording and another for the audit trail.
+    /// Validated as a leaf name (<see cref="LeafName"/>) because it becomes a path segment; anything
+    /// malformed is dropped, and a dropped or absent value reads the assistant's own prompts under its
+    /// own origin. A relay that does not speak this header is therefore unchanged by it.
+    /// </para>
+    /// </summary>
+    public const string RelayLeafKey = "relayLeaf";
+
     private const string BearerPrefix = "Bearer ";
     private const string RelaySecretHeader = "X-Relay-Secret";
     private const string RelayUserHeader = "X-Relay-User";
@@ -80,6 +96,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     private const string RelayTierHeader = "X-Relay-Tier";
     private const string RelayAutoActHeader = "X-Relay-Auto-Act";
     private const string RelayConversationIdHeader = "X-Relay-Conversation-Id";
+    private const string RelayLeafHeader = "X-Relay-Leaf";
 
     private static readonly JsonWebTokenHandler Handler = new();
 
@@ -136,6 +153,11 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             var relayConversationId = request.Headers[RelayConversationIdHeader].ToString();
             if (!string.IsNullOrWhiteSpace(relayConversationId))
                 context.HttpContext.Items[RelayConversationIdKey] = relayConversationId;
+            // The calling leaf, which selects its prompt overrides and its audit origin. Validated
+            // rather than repaired: it is used as a path segment, and a name that has to be cleaned up
+            // to be usable is a name this service should not act on.
+            if (LeafName.Validate(request.Headers[RelayLeafHeader].ToString()) is { } relayLeaf)
+                context.HttpContext.Items[RelayLeafKey] = relayLeaf;
             return await next(context);
         }
 

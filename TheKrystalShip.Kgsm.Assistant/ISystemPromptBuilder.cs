@@ -21,5 +21,10 @@ public interface ISystemPromptBuilder
     /// The assembled prompt plus a fingerprint of just its editable template (see
     /// <see cref="BuiltPrompt"/>), so the recorded per-turn hash tracks prompt edits, not inventory.
     /// </returns>
-    Task<BuiltPrompt> BuildAsync(bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default);
+    /// <param name="leaf">The leaf this turn runs for, selecting that leaf's prompt overrides;
+    /// <see langword="null"/> reads the assistant's own. Last parameter to keep existing positional
+    /// callers unshifted.</param>
+    Task<BuiltPrompt> BuildAsync(
+        bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default,
+        string? leaf = null);
 }

@@ -9,6 +9,6 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 /// </summary>
 internal sealed class PassthroughPromptOverrides : IPromptOverrides
 {
-    public string? ReadText(string fileName) => null;
-    public IReadOnlyList<LlmToolDefinition> OverlayTools(IReadOnlyList<LlmToolDefinition> tools) => tools;
+    public string? ReadText(string fileName, string? leaf = null) => null;
+    public IReadOnlyList<LlmToolDefinition> OverlayTools(IReadOnlyList<LlmToolDefinition> tools, string? leaf = null) => tools;
 }

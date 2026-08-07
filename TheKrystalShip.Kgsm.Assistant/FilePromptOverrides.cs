@@ -31,41 +31,65 @@ public sealed class FilePromptOverrides : IPromptOverrides
         _logger = logger;
     }
 
-    public string? ReadText(string fileName)
+    public string? ReadText(string fileName, string? leaf = null)
     {
         if (_directory is null)
             return null;
 
-        var path = Path.Combine(_directory, fileName);
-        try
+        // The calling leaf's own text, then the host-wide text. Falling through rather than
+        // requiring a leaf to restate every segment is what lets a surface override only the one
+        // line that differs for it and inherit the rest.
+        foreach (var path in CandidatePaths(fileName, leaf))
         {
-            if (!File.Exists(path))
-                return null;
+            try
+            {
+                if (!File.Exists(path))
+                    continue;
 
-            var text = File.ReadAllText(path).Trim();
-            // Blank counts as absent — a mid-save truncation falls back to the default for one turn
-            // rather than blanking the prompt.
-            return text.Length == 0 ? null : text;
+                var text = File.ReadAllText(path).Trim();
+                // Blank counts as absent — a mid-save truncation falls back to the default for one turn
+                // rather than blanking the prompt. A blank leaf file falls through to the host-wide one
+                // for the same reason, so a half-saved override never blanks a surface either.
+                if (text.Length > 0)
+                    return text;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not read prompt override {File}; using default", path);
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not read prompt override {File}; using default", path);
-            return null;
-        }
+
+        return null;
     }
 
-    public IReadOnlyList<LlmToolDefinition> OverlayTools(IReadOnlyList<LlmToolDefinition> tools)
+    /// <summary>
+    /// The files that may answer for a segment, most specific first: the leaf's own, then the
+    /// host-wide one. An unusable leaf name yields only the host-wide path — an unrecognised leaf
+    /// reads the assistant's own text rather than nothing at all.
+    /// </summary>
+    private IEnumerable<string> CandidatePaths(string fileName, string? leaf)
+    {
+        if (LeafName.Validate(leaf) is { } validLeaf)
+            yield return Path.Combine(_directory!, validLeaf, fileName);
+
+        yield return Path.Combine(_directory!, fileName);
+    }
+
+    public IReadOnlyList<LlmToolDefinition> OverlayTools(IReadOnlyList<LlmToolDefinition> tools, string? leaf = null)
     {
         if (_directory is null)
             return tools;
 
-        var path = Path.Combine(_directory, ToolsFileName);
+        // Whole-file precedence, unlike the per-segment fall-through above: a leaf that ships a
+        // tools.json owns the tool prose for its surface. Merging the two would produce a catalog
+        // half-worded for a button and half for a card, which is worse than either alone.
+        var path = CandidatePaths(ToolsFileName, leaf).FirstOrDefault(File.Exists);
+        if (path is null)
+            return tools;
+
         Dictionary<Tool, ToolTextOverride?>? overrides;
         try
         {
-            if (!File.Exists(path))
-                return tools;
-
             var json = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(json))
                 return tools;

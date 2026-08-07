@@ -775,9 +775,17 @@ secured.MapPost("/turn", async (
         ? $"{WebSurface}:{principal.UserId}"
         : $"{WebSurface}:{principal.UserId}:{chatScope}";
 
-    // Attribute any server mutation this turn runs to the asking user (origin=assistant); flows down the
-    // awaited turn → tool dispatch → kgsm chokepoint. Covers both the SSE and buffered paths below.
-    using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
+    // The leaf this turn arrives through, when one named itself. It picks the prompt overrides the turn
+    // is built from and the origin its actions are recorded under; absent, both are the assistant's own.
+    var relayLeaf = http.Items.TryGetValue(BearerAuthFilter.RelayLeafKey, out var leafObj) && leafObj is string rl
+        ? rl
+        : null;
+
+    // Attribute any server mutation this turn runs to the asking user, under the surface they were
+    // actually using; flows down the awaited turn → tool dispatch → kgsm chokepoint. Covers both the
+    // SSE and buffered paths below.
+    using var provenance = invocation.Begin(
+        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(relayLeaf)));
 
     // Opt into token streaming with `Accept: text/event-stream`; everyone else gets the buffered
     // JSON contract unchanged. (SSE here is POST, so the SPA reads it via fetch()+ReadableStream —
@@ -789,11 +797,12 @@ secured.MapPost("/turn", async (
     {
         await SseTurnWriter.WriteAsync(
             http, assistant, tokens, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds,
-            principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, request.DraftYaml);
+            principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, request.DraftYaml,
+            relayLeaf);
         return Results.Empty;
     }
 
-    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct, request.DraftYaml, principal.DisplayName);
+    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct, request.DraftYaml, principal.DisplayName, relayLeaf);
 
     if (result.IsFailure)
     {
@@ -850,8 +859,12 @@ secured.MapPost("/confirm", async (
         canPerform = relayTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled && tokens.IsConfigured;
     else
         canPerform = await auth.CanPerformActionsAsync(principal, ct);
-    // The confirming user is the authority for the action they just approved (origin=assistant).
-    using var provenance = invocation.Begin(Invocation.ForAssistant(principal.DisplayName));
+    // The confirming user is the authority for the action they just approved, recorded under the surface
+    // they approved it on — a button clicked in Discord is a Discord action.
+    var confirmLeaf = http.Items.TryGetValue(BearerAuthFilter.RelayLeafKey, out var confirmLeafObj)
+        && confirmLeafObj is string cl ? cl : null;
+    using var provenance = invocation.Begin(
+        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(confirmLeaf)));
 
     // A blueprint finalize produces a rich card and, when its repair loop exhausts, a fresh token for the
     // re-edit loop; every other kind produces the outcome verdict. Both shapes are built ONCE here and

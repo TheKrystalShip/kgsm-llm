@@ -35,8 +35,8 @@ public static class LlmTools
     // "nothing open".
     public static readonly Tool GetNetwork = new("get_network");
 
-    // Engine event history, read straight from the kgsm-monitor's event store (never via kgsm-api —
-    // the assistant is a leaf, plan §9). get_audit_log is the unfiltered "what happened" read;
+    // Engine event history, read straight from the engine's event journal (never via kgsm-api —
+    // the assistant is a leaf). get_audit_log is the unfiltered "what happened" read;
     // get_change_timeline shares the same source but narrows to the state-changing subset and frames
     // it as "what changed" (see Audit.AuditReport.ChangeEventTypes for the exact set).
     public static readonly Tool GetAuditLog = new("get_audit_log");

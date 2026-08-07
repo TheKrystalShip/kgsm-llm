@@ -23,7 +23,7 @@ namespace TheKrystalShip.Kgsm.Assistant.RootCause;
 /// </para>
 /// <para>
 /// **Per-source degradation is independent.** Every rule declares which sources it needs; a source
-/// that could not be read (<see cref="AuditReadState.MonitorUnavailable"/>, a monitor-unavailable
+/// that could not be read (<see cref="AuditReadState.JournalUnavailable"/>, an unreadable-journal
 /// metrics read, or a failed health snapshot) simply makes that rule unevaluatable — it is skipped,
 /// never treated as a negative/zero/"no problem" reading. If the event timeline itself is
 /// unavailable, NO rule can run (every rule needs at least one event) and the result says so
@@ -65,7 +65,7 @@ public static class RootCauseAggregator
     /// </summary>
     /// <param name="instance">The resolved instance name (the result's subject).</param>
     /// <param name="range">The normalized window/range that was queried (e.g. <c>24h</c>).</param>
-    /// <param name="events">The neutral event-timeline read from the monitor.</param>
+    /// <param name="events">The neutral event-timeline read from the engine's journal.</param>
     /// <param name="metrics">The neutral metrics-window read from the monitor.</param>
     /// <param name="health">The neutral health-snapshot inputs, or <see langword="null"/> when the
     /// snapshot could not be read (see <paramref name="healthUnavailableReason"/>).</param>
@@ -84,7 +84,7 @@ public static class RootCauseAggregator
             ? HealthCheckAggregator.Run(health, instance).Data.Checks
             : Array.Empty<HealthCheck>();
 
-        var findings = events.State == AuditReadState.MonitorUnavailable
+        var findings = events.State == AuditReadState.JournalUnavailable
             ? new[] { UnavailableFinding(instance, metricFacts, healthChecks) }
             : EvaluateRules(instance, events.Events, health, healthChecks, metricFacts);
 
@@ -339,8 +339,8 @@ public static class RootCauseAggregator
             RootCauseSignature.None, "Event timeline unavailable",
             Confidence.Possible,
             $"Root-cause analysis for {instance} needs the engine event timeline, which is unavailable " +
-            "right now — the metrics monitor isn't reachable. That isn't evidence nothing happened; the " +
-            "timeline just couldn't be read, so no failure signature could be checked.",
+            "right now — the engine's event journal couldn't be read. That isn't evidence nothing happened; " +
+            "the timeline just couldn't be read, so no failure signature could be checked.",
             Array.Empty<AuditEventRow>(), metricFacts, healthChecks);
 
     // --- Metrics-window evidence (context only — no rule gates on it) ------------------------------

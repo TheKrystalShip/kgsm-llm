@@ -6,7 +6,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Audit;
 /// <summary>
 /// Resolves the model-supplied <c>window</c>/<c>range</c> vocabulary (<c>1h</c>/<c>24h</c>/<c>7d</c>/
 /// <c>30d</c> — the same set <c>get_performance</c> uses) into a <c>since</c> unix-ms bound for the
-/// monitor's <c>GET /events</c>. An unrecognized or omitted value is not an error — it honestly
+/// the engine's event journal. An unrecognized or omitted value is not an error — it honestly
 /// substitutes the caller's default so a confused/older model still gets a sensible read, and the
 /// normalized label (not the raw request) is what the summary and card report.
 /// </summary>
@@ -49,7 +49,7 @@ public static class AuditWindow
 /// Pure and I/O-free (the socket fetch happens in the port impl), so it's unit-testable without mocks
 /// and is the single home for how an event window is worded.
 /// <para>
-/// Honesty rules baked in: a <see cref="AuditReadState.MonitorUnavailable"/> read is an honest
+/// Honesty rules baked in: a <see cref="AuditReadState.JournalUnavailable"/> read is an honest
 /// "couldn't read" — explicitly NOT a claim that nothing happened; an
 /// <see cref="AuditReadState.Available"/> read with zero rows is a real, measured "no events
 /// recorded"; and an event with no <see cref="AuditEventRow.Actor"/> is reported as unknown, never
@@ -112,8 +112,8 @@ public static class AuditReport
             AuditReadState.Available => (Confidence.Confirmed, BuildSummary(instance, window, reading.Events,
                 emptyWording: $"No events recorded for {(instance ?? "any server")} in the last {window}.")),
             _ => (Confidence.Possible,
-                $"Event history for {(instance ?? "this host")} is unavailable right now — the metrics " +
-                "monitor isn't reachable. That isn't a sign nothing happened; the events just couldn't be read."),
+                $"Event history for {(instance ?? "this host")} is unavailable right now — the engine's " +
+                "event journal couldn't be read. That isn't a sign nothing happened; the events just couldn't be read."),
         };
 
         return new ToolResult<AuditData>(
@@ -144,8 +144,8 @@ public static class AuditReport
                 "changes; routine starts/stops and player activity don't).",
                 changeFraming: true)),
             _ => (Confidence.Possible,
-                $"The change timeline for {(instance ?? "this host")} is unavailable right now — the metrics " +
-                "monitor isn't reachable. That isn't a sign nothing changed; the timeline just couldn't be read."),
+                $"The change timeline for {(instance ?? "this host")} is unavailable right now — the engine's " +
+                "event journal couldn't be read. That isn't a sign nothing changed; the timeline just couldn't be read."),
         };
 
         return new ToolResult<AuditData>(

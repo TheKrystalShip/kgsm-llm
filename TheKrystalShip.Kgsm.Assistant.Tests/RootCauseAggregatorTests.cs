@@ -260,11 +260,11 @@ public class RootCauseAggregatorTests
     [Fact]
     public void EventTimelineUnavailable_NoRuleCanRun_HonestUnavailableFinding()
     {
-        var events = new EventHistoryReading(AuditReadState.MonitorUnavailable, Array.Empty<AuditEventRow>());
+        var events = new EventHistoryReading(AuditReadState.JournalUnavailable, Array.Empty<AuditEventRow>());
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
-        r.Data.EventState.Should().Be(AuditReadState.MonitorUnavailable);
+        r.Data.EventState.Should().Be(AuditReadState.JournalUnavailable);
         var only = r.Data.Findings.Should().ContainSingle().Subject;
         only.Signature.Should().Be(RootCauseSignature.None);
         only.Confidence.Should().Be(Confidence.Possible);

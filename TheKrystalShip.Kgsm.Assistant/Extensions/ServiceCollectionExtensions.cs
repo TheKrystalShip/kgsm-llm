@@ -79,9 +79,9 @@ public static class ServiceCollectionExtensions
         // honestly reports the watchdog unavailable — never breaking DI.
         services.TryAddSingleton<IUpnpInfo, UnavailableUpnpInfo>();
         // Engine event history (get_audit_log / get_change_timeline) degrades closed the same way: a
-        // host that wires the kgsm-monitor calls AddKgsmAdapters, which registers a concrete
+        // host that wires an engine calls AddKgsmAdapters, which registers a concrete
         // IEventHistory that wins over this default. Without it, both tools honestly report the
-        // monitor as unavailable rather than breaking DI.
+        // journal as unreadable rather than breaking DI.
         services.TryAddSingleton<IEventHistory, UnavailableEventHistory>();
         // Blueprint field synthesis: the LLM reads the fetched research pages and extracts the native
         // server fields (the capable path the deterministic regex extractor is the fallback from). Needs

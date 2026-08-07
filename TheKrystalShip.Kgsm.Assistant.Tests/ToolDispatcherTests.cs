@@ -944,7 +944,7 @@ public class ToolDispatcherTests
     public async Task GetAuditLog_MonitorUnavailable_StillSurfacesACard_WordedHonestly()
     {
         _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new EventHistoryReading(AuditReadState.MonitorUnavailable, Array.Empty<AuditEventRow>()));
+            .Returns(new EventHistoryReading(AuditReadState.JournalUnavailable, Array.Empty<AuditEventRow>()));
 
         var output = await Create().ExecuteAsync(AuditLogCall("minecraft"));
 

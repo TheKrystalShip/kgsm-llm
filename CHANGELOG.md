@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — audit history reads the engine journal, not kgsm-monitor
+
+`get_audit_log`, `get_change_timeline` and `trace_root_cause` read the engine's event journal
+through kgsm-lib's `IEventJournalHistory`, instead of scraping kgsm-monitor's `GET /events` over its
+unix socket. The journal is the record of what the engine did, so this asks the source rather than
+asking another service what it remembers.
+
+The three tools now answer on a host with **no other leaf installed** — previously they were
+silently capability-gated on a resource-metrics daemon that happened to keep an index of engine
+events. Nothing about audit needed metrics; only the storage location tied them together. The
+metrics tools beside them still depend on the monitor, as they should.
+
+`AuditReadState.MonitorUnavailable` becomes `JournalUnavailable`, and the model-facing text that
+told a user "the metrics monitor isn't reachable" when audit was unavailable now names the journal —
+it would otherwise point at a service that has nothing to do with the failure.
+`PerformanceState.MonitorUnavailable` is unchanged; that one really is the monitor.
+
+The `IEventHistory` port, `AuditReport`, `RootCauseAggregator` and every tool signature are
+untouched — only the adapter behind the port changed, which is what the port was for.
+
 ### Added — the service serves its own web client
 
 `UseDefaultFiles` + `UseStaticFiles` over `wwwroot/` under the content root

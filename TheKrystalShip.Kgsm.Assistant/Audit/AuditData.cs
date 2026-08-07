@@ -1,24 +1,28 @@
 namespace TheKrystalShip.Kgsm.Assistant.Audit;
 
 /// <summary>
-/// Whether an engine-event read actually reached the monitor. Mirrors
-/// <see cref="Metrics.PerformanceState"/>'s honest split: <see cref="Available"/> means the monitor
-/// answered (the event list may still be empty — a real "nothing happened", never an error);
-/// <see cref="MonitorUnavailable"/> means the read failed (unreachable/unparseable monitor) — an
-/// honest "couldn't read", explicitly NOT evidence that nothing happened.
+/// Whether an engine-event read could reach the journal. Mirrors
+/// <see cref="Metrics.PerformanceState"/>'s honest split: <see cref="Available"/> means the journal
+/// was read (the event list may still be empty — a real "nothing happened", never an error);
+/// <see cref="JournalUnavailable"/> means it could not be — an honest "couldn't read", explicitly
+/// NOT evidence that nothing happened.
 /// </summary>
 public enum AuditReadState
 {
-    /// <summary>The monitor answered; <see cref="AuditData.Events"/> is the real (possibly empty) result.</summary>
+    /// <summary>The journal was read; <see cref="AuditData.Events"/> is the real (possibly empty) result.</summary>
     Available,
 
-    /// <summary>The monitor could not be reached or its response could not be read/parsed.</summary>
-    MonitorUnavailable,
+    /// <summary>
+    /// The engine's event journal is absent or unreadable, so history cannot be answered for. Distinct
+    /// from an empty <see cref="Available"/> result: one says "nothing happened", this says "I cannot
+    /// see", and reporting the second as the first would state silence as fact.
+    /// </summary>
+    JournalUnavailable,
 }
 
 /// <summary>
-/// One raw engine event, as the monitor's <c>GET /events</c> serves it (Phase B) — a KGSM lifecycle
-/// event with the enrichment trio, relayed verbatim. <see cref="Instance"/> is <see langword="null"/>
+/// One raw engine event, as the engine's journal holds it — a KGSM lifecycle event with the
+/// enrichment trio, relayed verbatim. <see cref="Instance"/> is <see langword="null"/>
 /// for a host/global event; <see cref="Actor"/>/<see cref="Origin"/> are <see langword="null"/> when
 /// the emitter supplied no enrichment (a bare CLI call) — never fabricated, and never defaulted to a
 /// placeholder like "system". <see cref="Type"/> is the raw kgsm event name (e.g.
@@ -46,7 +50,7 @@ public sealed record AuditEventRow(
 /// <param name="Instance">The instance the read was scoped to; <see langword="null"/> = fleet-wide (every instance).</param>
 /// <param name="Window">The requested window/range, normalized (e.g. <c>24h</c>) — an unrecognized
 /// request is honestly substituted with the tool's default, never rejected.</param>
-/// <param name="State">Whether the monitor could be read at all.</param>
+/// <param name="State">Whether the journal could be read at all.</param>
 /// <param name="Events">The rows, most-recent-first; empty is a real "nothing recorded" result.</param>
 public sealed record AuditData(
     string? Instance,

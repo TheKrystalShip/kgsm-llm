@@ -76,6 +76,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IEventManagementService, EventManagementService>();
         services.AddSingleton<IBlueprintFiles, BlueprintFiles>(); // create_blueprint's write-side authority — no socket dep
         services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
+        // Reading the event journal back, for the audit/timeline/root-cause tools. Unlike the listener
+        // above this starts nothing and holds no position — it opens segments per query — so it belongs
+        // in the shared graph rather than behind the per-host opt-in.
+        services.AddSingleton<IEventJournalHistory, EventJournalHistory>();
         services.AddSingleton<IWatcherService, WatcherService>(); // port-reachability probe for run_health_check
 
         // One singleton inventory, exposed under both the read port and the invalidation seam so
@@ -127,35 +131,12 @@ public static class ServiceCollectionExtensions
             }
         });
 
-        // --- Engine event history (kgsm-monitor GET /events scrape) ----------------------------
-        // Backs get_audit_log / get_change_timeline over the SAME monitor unix socket as the metrics
-        // client above (Phase B/D of the event-history plan) — the assistant reads the monitor
-        // directly, never via kgsm-api (plan §9, leaf independence). Registered AFTER AddKgsmAssistant,
-        // so this concrete IEventHistory wins over the library's fail-closed UnavailableEventHistory
-        // default. Additive: with no monitor reachable (or event history disabled on that host) every
-        // read maps to "monitor unavailable" (the adapter never throws), so the assistant runs standalone.
-        services.AddHttpClient<IEventHistory, KgsmEventHistory>(client =>
-        {
-            client.BaseAddress = new Uri("http://localhost");
-            client.Timeout = TimeSpan.FromSeconds(2);
-        })
-        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-        {
-            ConnectCallback = async (_, ct) =>
-            {
-                var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                try
-                {
-                    await socket.ConnectAsync(new UnixDomainSocketEndPoint(monitorSocketPath), ct).ConfigureAwait(false);
-                    return new NetworkStream(socket, ownsSocket: true);
-                }
-                catch
-                {
-                    socket.Dispose();
-                    throw;
-                }
-            }
-        });
+        // --- Engine event history -------------------------------------------------------------
+        // Backs get_audit_log / get_change_timeline / trace_root_cause by reading the engine's event
+        // journal through kgsm-lib — the record itself, so history needs no other service running and
+        // works on a host with no leaves installed. Registered AFTER AddKgsmAssistant so this concrete
+        // IEventHistory wins over the library's fail-closed UnavailableEventHistory default.
+        services.AddSingleton<IEventHistory, KgsmEventHistory>();
 
         // --- Host firewall (kgsm-firewall authority) -------------------------------------------
         // Backs get_network (read) and open_ports (the confirmed mutation) by reaching the kgsm-firewall

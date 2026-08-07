@@ -60,7 +60,7 @@ public class AuditReportTests
     [Fact]
     public void Build_MonitorUnavailable_IsHonest_NeverImpliesNothingHappened()
     {
-        var reading = new EventHistoryReading(AuditReadState.MonitorUnavailable, Array.Empty<AuditEventRow>());
+        var reading = new EventHistoryReading(AuditReadState.JournalUnavailable, Array.Empty<AuditEventRow>());
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
 
@@ -156,7 +156,7 @@ public class AuditReportTests
     [Fact]
     public void BuildChangeTimeline_MonitorUnavailable_IsHonest()
     {
-        var reading = new EventHistoryReading(AuditReadState.MonitorUnavailable, Array.Empty<AuditEventRow>());
+        var reading = new EventHistoryReading(AuditReadState.JournalUnavailable, Array.Empty<AuditEventRow>());
 
         var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
 

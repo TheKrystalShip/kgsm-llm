@@ -478,7 +478,7 @@ public class ToolDispatcher : IToolDispatcher
     /// <summary>
     /// The unfiltered engine-event read (toolbox-plan §4.1): resolves an OPTIONAL instance (blank →
     /// every server on this host), maps the model's <c>window</c> to a <c>since</c> bound, reads the
-    /// monitor's raw event log via <see cref="IEventHistory"/> directly (never via kgsm-api — plan §9),
+    /// engine's raw event journal via <see cref="IEventHistory"/> directly (never via kgsm-api),
     /// and runs the pure <see cref="AuditReport"/>. Always carries a card: an empty/unavailable result
     /// is still a real, honestly-worded answer worth showing, unlike a not-running metrics snapshot.
     /// </summary>
@@ -923,7 +923,7 @@ public class ToolDispatcher : IToolDispatcher
             : ResolveInstanceAsync(name, cancellationToken);
 
     /// <summary>Server-side cap on rows fetched per <c>get_audit_log</c>/<c>get_change_timeline</c>
-    /// call — generous enough to cover a week of normal activity; the monitor's own cap (1000) is the
+    /// call — generous enough to cover a week of normal activity; the reader's own cap (1000) is the
     /// hard ceiling. Filtering (change-timeline) happens client-side on top of this fetch.</summary>
     private const int EventFetchLimit = 200;
 }

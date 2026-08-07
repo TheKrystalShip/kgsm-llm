@@ -1,162 +1,132 @@
-using System.Net;
-using System.Text;
-
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
-using TheKrystalShip.Kgsm.Assistant.Infrastructure.Monitor;
+using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 
 using Xunit;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 /// <summary>
-/// Unit-tests the monitor event-history adapter's request/response mapping over a stubbed transport
-/// — no real socket. Verifies it parses the monitor's <c>GET /events</c> shape (Phase B), builds the
-/// right query string, and fails closed (never throws) on the unreachable / non-2xx / unparseable paths.
+/// Unit-tests the event-history adapter against a stubbed journal reader — what it asks for, what it
+/// hands back, and that it fails closed rather than throwing, which the port requires of it.
 /// </summary>
 public class KgsmEventHistoryTests
 {
-    /// <summary>A canned <see cref="HttpMessageHandler"/>: returns a fixed response and records the request.</summary>
-    private sealed class StubHandler : HttpMessageHandler
+    /// <summary>A journal reader that records the query it was given and answers with a canned page.</summary>
+    private sealed class StubJournal(Func<EventHistoryQuery, EventHistoryPage> respond) : IEventJournalHistory
     {
-        private readonly HttpStatusCode _status;
-        private readonly string _body;
-        public Uri? LastRequestUri { get; private set; }
+        public EventHistoryQuery? LastQuery { get; private set; }
 
-        public StubHandler(HttpStatusCode status, string body)
+        public Task<EventHistoryPage> QueryAsync(EventHistoryQuery query, CancellationToken cancellationToken = default)
         {
-            _status = status;
-            _body = body;
-        }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            LastRequestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(_status)
-            {
-                Content = new StringContent(_body, Encoding.UTF8, "application/json"),
-            });
+            LastQuery = query;
+            return Task.FromResult(respond(query));
         }
     }
 
-    private static KgsmEventHistory Create(StubHandler handler)
-    {
-        var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
-        return new KgsmEventHistory(http, NullLogger<KgsmEventHistory>.Instance);
-    }
+    private static KgsmEventHistory Create(IEventJournalHistory journal) =>
+        new(journal, NullLogger<KgsmEventHistory>.Instance);
 
-    private const string TwoEventPayload = """
-        {
-          "count": 2,
-          "nextCursorTs": null,
-          "nextCursorId": null,
-          "events": [
-            { "id": "evt_a1b2", "ts": "2026-07-18T10:00:00Z", "type": "instance_started",
-              "instance": "factorio-test", "actor": "discord:tester", "origin": "assistant", "data": {"instanceName":"factorio-test"} },
-            { "id": "evt_c3d4", "ts": "2026-07-18T09:00:00Z", "type": "instance_crashed",
-              "instance": "factorio-test", "actor": null, "origin": null, "data": {"exitCode":"139"} }
-          ]
-        }
-        """;
+    private static EventHistoryEntry Entry(
+        string id, string type = "instance_started", string? instance = "factorio",
+        string? actor = "discord:haru", string? origin = "ui") =>
+        new(id, DateTimeOffset.Parse("2026-08-07T10:00:00Z"), type, instance, null, actor, origin, "hotrod", null);
+
+    private static EventHistoryPage Page(params EventHistoryEntry[] events) =>
+        new(events, null, DateTimeOffset.Parse("2026-07-08T10:00:00Z"), false, true);
 
     [Fact]
-    public async Task GetEventsAsync_MapsMonitorJson_ToAuditEventRows()
+    public async Task GetEventsAsync_MapsJournalEntries_ToAuditEventRows()
     {
-        var handler = new StubHandler(HttpStatusCode.OK, TwoEventPayload);
+        var journal = new StubJournal(_ => Page(
+            Entry("evt_2026-08-07_000000000000"),
+            Entry("evt_2026-08-07_000000000128", type: "instance_stopped")));
 
-        var reading = await Create(handler).GetEventsAsync("factorio-test", sinceMs: null, limit: 200);
+        EventHistoryReading reading = await Create(journal).GetEventsAsync(null, null, 50);
 
         reading.State.Should().Be(AuditReadState.Available);
         reading.Events.Should().HaveCount(2);
-        reading.Events[0].Should().BeEquivalentTo(new
-        {
-            Id = "evt_a1b2",
-            Type = "instance_started",
-            Instance = "factorio-test",
-            Actor = "discord:tester",
-            Origin = "assistant",
-        });
-        // The second row's null actor/origin survive verbatim — never defaulted to a placeholder.
-        reading.Events[1].Actor.Should().BeNull();
-        reading.Events[1].Origin.Should().BeNull();
+        reading.Events[0].Id.Should().Be("evt_2026-08-07_000000000000");
+        reading.Events[0].Type.Should().Be("instance_started");
+        reading.Events[0].Instance.Should().Be("factorio");
+        reading.Events[0].Actor.Should().Be("discord:haru");
+        reading.Events[0].Origin.Should().Be("ui");
     }
 
     [Fact]
-    public async Task GetEventsAsync_BuildsQueryString_WithInstanceAndSince()
+    public async Task GetEventsAsync_PassesTheScopeAndWindowThrough()
     {
-        var handler = new StubHandler(HttpStatusCode.OK, """{"count":0,"nextCursorTs":null,"nextCursorId":null,"events":[]}""");
+        var journal = new StubJournal(_ => Page());
 
-        await Create(handler).GetEventsAsync("minecraft", sinceMs: 1_752_000_000_000, limit: 50);
+        await Create(journal).GetEventsAsync("factorio-test", 1_785_000_000_000, 25);
 
-        handler.LastRequestUri.Should().NotBeNull();
-        var query = handler.LastRequestUri!.Query;
-        query.Should().Contain("instance=minecraft").And.Contain("since=1752000000000").And.Contain("limit=50");
+        journal.LastQuery!.Instance.Should().Be("factorio-test");
+        journal.LastQuery.SinceMs.Should().Be(1_785_000_000_000);
+        journal.LastQuery.Limit.Should().Be(25);
     }
 
-    [Fact]
-    public async Task GetEventsAsync_NoInstance_OmitsTheInstanceParam()
+    /// <summary>
+    /// A blank scope means fleet-wide, and must reach the reader as "no constraint" rather than as a
+    /// filter on the empty string — which would match nothing and read as a quiet host.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GetEventsAsync_BlankInstance_IsNoConstraint(string? instance)
     {
-        var handler = new StubHandler(HttpStatusCode.OK, """{"count":0,"nextCursorTs":null,"nextCursorId":null,"events":[]}""");
+        var journal = new StubJournal(_ => Page());
 
-        await Create(handler).GetEventsAsync(null, sinceMs: null, limit: 200);
+        await Create(journal).GetEventsAsync(instance, null, 50);
 
-        handler.LastRequestUri!.Query.Should().NotContain("instance=");
+        journal.LastQuery!.Instance.Should().BeNull();
     }
 
+    /// <summary>
+    /// Nothing matched is a real answer and must stay distinguishable from "I could not look" — the
+    /// composers narrate the two differently, and conflating them invents a quiet period.
+    /// </summary>
     [Fact]
     public async Task GetEventsAsync_EmptyPage_IsAvailable_NotUnavailable()
     {
-        var handler = new StubHandler(HttpStatusCode.OK, """{"count":0,"nextCursorTs":null,"nextCursorId":null,"events":[]}""");
+        var journal = new StubJournal(_ => Page());
 
-        var reading = await Create(handler).GetEventsAsync("minecraft", null, 200);
+        EventHistoryReading reading = await Create(journal).GetEventsAsync(null, null, 50);
 
         reading.State.Should().Be(AuditReadState.Available);
         reading.Events.Should().BeEmpty();
     }
 
-    [Theory]
-    [InlineData(HttpStatusCode.NotFound)]        // event history disabled on that host
-    [InlineData(HttpStatusCode.ServiceUnavailable)] // monitor's 503-until-first-tick
-    [InlineData(HttpStatusCode.InternalServerError)]
-    public async Task GetEventsAsync_NonSuccessStatus_MapsToMonitorUnavailable_NeverThrows(HttpStatusCode status)
+    [Fact]
+    public async Task GetEventsAsync_UnreadableJournal_IsUnavailable_NeverThrows()
     {
-        var handler = new StubHandler(status, "");
+        var journal = new StubJournal(_ => EventHistoryPage.Unreadable);
 
-        var reading = await Create(handler).GetEventsAsync("minecraft", null, 200);
+        EventHistoryReading reading = await Create(journal).GetEventsAsync(null, null, 50);
 
-        reading.State.Should().Be(AuditReadState.MonitorUnavailable);
+        reading.State.Should().Be(AuditReadState.JournalUnavailable);
         reading.Events.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// The reader promises not to throw for a missing or unreadable journal. The port's promise is
+    /// stricter — it must not throw at all — so the adapter absorbs a broken promise rather than
+    /// letting one bad read take down a turn.
+    /// </summary>
     [Fact]
-    public async Task GetEventsAsync_UnparseableBody_MapsToMonitorUnavailable_NeverThrows()
+    public async Task GetEventsAsync_ReaderThrows_IsUnavailable_NeverThrows()
     {
-        var handler = new StubHandler(HttpStatusCode.OK, "not json");
+        var journal = new StubJournal(_ => throw new IOException("journal exploded"));
 
-        var reading = await Create(handler).GetEventsAsync("minecraft", null, 200);
+        EventHistoryReading reading = await Create(journal).GetEventsAsync(null, null, 50);
 
-        reading.State.Should().Be(AuditReadState.MonitorUnavailable);
-    }
-
-    [Fact]
-    public async Task GetEventsAsync_UnreachableSocket_MapsToMonitorUnavailable_NeverThrows()
-    {
-        var http = new HttpClient(new ThrowingHandler()) { BaseAddress = new Uri("http://localhost") };
-        var adapter = new KgsmEventHistory(http, NullLogger<KgsmEventHistory>.Instance);
-
-        var reading = await adapter.GetEventsAsync("minecraft", null, 200);
-
-        reading.State.Should().Be(AuditReadState.MonitorUnavailable);
-    }
-
-    private sealed class ThrowingHandler : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            throw new HttpRequestException("connection refused");
+        reading.State.Should().Be(AuditReadState.JournalUnavailable);
+        reading.Events.Should().BeEmpty();
     }
 }

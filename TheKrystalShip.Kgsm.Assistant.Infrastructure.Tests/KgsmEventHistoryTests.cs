@@ -39,7 +39,7 @@ public class KgsmEventHistoryTests
         new(id, DateTimeOffset.Parse("2026-08-07T10:00:00Z"), type, instance, null, actor, origin, "hotrod", null);
 
     private static EventHistoryPage Page(params EventHistoryEntry[] events) =>
-        new(events, null, DateTimeOffset.Parse("2026-07-08T10:00:00Z"), false, true);
+        new(events, null, null, DateTimeOffset.Parse("2026-07-08T10:00:00Z"), false, true);
 
     [Fact]
     public async Task GetEventsAsync_MapsJournalEntries_ToAuditEventRows()

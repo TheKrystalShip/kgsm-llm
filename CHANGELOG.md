@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the audit summary names who did it
+
+`get_audit_log` and `get_change_timeline` ground the model with a count-by-type breakdown, and that
+sentence mentioned the actor only when one was **missing**. The events carried the actor the whole
+time — so asked "who did it", the model answered that the log does not record who, about a log that
+did.
+
+The summary now carries a count-by-actor breakdown beside the type one: `By: claude (2), scheduler
+(1).` Same ordering rule as the types (most frequent first, ties alphabetical) so the wording is
+deterministic, capped at six with a `+N others` tail.
+
+A `system:` actor keeps its provider — `watchdog (system)` — because a supervisor acting on its own
+has no human answer to "who did it", and rendering it as a bare name offers one. Every other
+provider renders as the plain name. The "Actor is unknown for N of these" note is unchanged and
+still fires alongside the named ones, so a part-attributed window says both things.
+
 ### Changed — audit history reads the engine journal, not kgsm-monitor
 
 `get_audit_log`, `get_change_timeline` and `trace_root_cause` read the engine's event journal

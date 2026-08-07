@@ -95,6 +95,93 @@ public class AuditReportTests
         result.Summary.Should().NotContain("system");
     }
 
+    /// <summary>
+    /// The events carry the actor, so the summary must say who — a model handed only a count of
+    /// events answers "the log does not record who" about a log that does.
+    /// </summary>
+    [Fact]
+    public void Build_NamesTheActorsItHas()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            Row("instance_started", actor: "discord:claude"),
+            Row("instance_stopped", actor: "discord:claude"),
+            Row("instance_backup_created", actor: "scheduler"),
+        });
+
+        var result = AuditReport.Build(reading, "factorio-test", "24h");
+
+        result.Summary.Should().Contain("By: claude (2)");
+        result.Summary.Should().Contain("scheduler (1)");
+    }
+
+    /// <summary>
+    /// A supervisor acting on its own has no human answer to "who did it", so the provider stays.
+    /// Rendering <c>system:watchdog</c> as a bare name would offer one.
+    /// </summary>
+    [Fact]
+    public void Build_SystemActor_KeepsTheProvider_SoItIsNotReadAsAPerson()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            Row("instance_started", actor: "system:watchdog"),
+        });
+
+        var result = AuditReport.Build(reading, "factorio-test", "24h");
+
+        result.Summary.Should().Contain("watchdog (system) (1)");
+    }
+
+    /// <summary>
+    /// Naming the known actors must not soften the unknown ones — a window that is part-attributed
+    /// says both things.
+    /// </summary>
+    [Fact]
+    public void Build_MixedAttribution_NamesTheKnown_AndStillFlagsTheUnknown()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            Row("instance_started", actor: "discord:claude"),
+            Row("instance_stopped", actor: null),
+        });
+
+        var result = AuditReport.Build(reading, "factorio-test", "24h");
+
+        result.Summary.Should().Contain("By: claude (1)");
+        result.Summary.Should().Contain("Actor is unknown for 1 of these");
+    }
+
+    /// <summary>Deterministic wording: most events first, ties alphabetical.</summary>
+    [Fact]
+    public void Build_ActorOrder_IsCountThenAlphabetical()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            Row("instance_started", actor: "discord:zoe"),
+            Row("instance_stopped", actor: "discord:adam"),
+            Row("instance_started", actor: "discord:mia"),
+            Row("instance_stopped", actor: "discord:mia"),
+        });
+
+        var result = AuditReport.Build(reading, "factorio-test", "24h");
+
+        result.Summary.Should().Contain("By: mia (2), adam (1), zoe (1)");
+    }
+
+    /// <summary>The change timeline grounds "who changed it" the same way.</summary>
+    [Fact]
+    public void BuildChangeTimeline_AlsoNamesActors()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            Row("instance_updated", actor: "discord:claude"),
+        });
+
+        var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
+
+        result.Summary.Should().Contain("By: claude (1)");
+    }
+
     [Fact]
     public void Build_UnknownEventType_FallsBackToRawTypeString_NeverGuessedGrammar()
     {

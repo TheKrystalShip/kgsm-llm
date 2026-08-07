@@ -52,7 +52,8 @@ public static class AuditWindow
 /// Honesty rules baked in: a <see cref="AuditReadState.JournalUnavailable"/> read is an honest
 /// "couldn't read" — explicitly NOT a claim that nothing happened; an
 /// <see cref="AuditReadState.Available"/> read with zero rows is a real, measured "no events
-/// recorded"; and an event with no <see cref="AuditEventRow.Actor"/> is reported as unknown, never
+/// recorded"; the actors that ARE recorded are named in the summary so the model can answer "who
+/// did it"; and an event with no <see cref="AuditEventRow.Actor"/> is reported as unknown, never
 /// defaulted to a placeholder like "system" (the never-fabricate rule).
 /// </para>
 /// </summary>
@@ -157,11 +158,18 @@ public static class AuditReport
     }
 
     /// <summary>
-    /// Authors the grounding sentence: a count-by-type breakdown (most frequent first, ties broken
-    /// alphabetically for a stable/deterministic order), plus an honest note when some rows carry no
-    /// actor. Capped at the 8 most common types so a diverse window doesn't produce a wall of text —
-    /// the full list is always in the card's <see cref="AuditData.Events"/>, never lost.
+    /// Authors the grounding sentence: a count-by-type breakdown, then a count-by-actor breakdown,
+    /// then an honest note when some rows carry no actor. Both breakdowns are most-frequent-first
+    /// with ties broken alphabetically, so the wording is deterministic for a given window. Each is
+    /// capped so a diverse window doesn't produce a wall of text — the full list is always in the
+    /// card's <see cref="AuditData.Events"/>, never lost.
     /// </summary>
+    /// <remarks>
+    /// The actor breakdown is what lets the model answer "who did it". The events carry the actor,
+    /// but a summary that mentioned it only when it was <em>missing</em> left the model with nothing
+    /// to say for the rows that had one — so it answered that the log does not record who, about a
+    /// log that did.
+    /// </remarks>
     private static string BuildSummary(
         string? instance, string window, IReadOnlyList<AuditEventRow> events,
         string emptyWording, bool changeFraming = false)
@@ -186,11 +194,48 @@ public static class AuditReport
         var sentence = $"{events.Count} {noun}{(events.Count == 1 ? "" : "s")} for {subject} in the last " +
             $"{window}: {string.Join(", ", shown)}" + (omitted > 0 ? $", +{omitted} other kind(s)" : "") + ".";
 
+        var actors = events
+            .Where(e => e.Actor is not null)
+            .GroupBy(e => e.Actor!, StringComparer.Ordinal)
+            .Select(g => (Actor: DescribeActor(g.Key), Count: g.Count()))
+            .OrderByDescending(g => g.Count)
+            .ThenBy(g => g.Actor, StringComparer.Ordinal)
+            .ToList();
+
+        if (actors.Count > 0)
+        {
+            const int maxActors = 6;
+            var shownActors = actors.Take(maxActors).Select(a => $"{a.Actor} ({a.Count})");
+            var omittedActors = actors.Count - Math.Min(actors.Count, maxActors);
+            sentence += $" By: {string.Join(", ", shownActors)}"
+                + (omittedActors > 0 ? $", +{omittedActors} other{(omittedActors == 1 ? "" : "s")}" : "") + ".";
+        }
+
         var unknownActor = events.Count(e => e.Actor is null);
         if (unknownActor > 0)
             sentence += $" Actor is unknown for {unknownActor} of these.";
 
         return sentence;
+    }
+
+    /// <summary>
+    /// Renders one actor for the summary. An actor arrives as <c>provider:name</c> (or a bare name
+    /// for an OS user), and the provider is kept rather than stripped because <c>system</c> is not a
+    /// person: an event a supervisor performed on its own has no human answer to "who did it", and
+    /// flattening it to a bare name would offer one.
+    /// </summary>
+    private static string DescribeActor(string actor)
+    {
+        int split = actor.IndexOf(':');
+        if (split <= 0 || split == actor.Length - 1)
+            return actor;
+
+        var provider = actor[..split];
+        var name = actor[(split + 1)..];
+
+        return string.Equals(provider, "system", StringComparison.Ordinal)
+            ? $"{name} (system)"
+            : name;
     }
 
     private static string Label(string type, int count) =>

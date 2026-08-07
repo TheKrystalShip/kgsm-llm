@@ -22,6 +22,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
+using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.Kgsm.Assistant.Status;
 using TheKrystalShip.KGSM.Core.Interfaces;
@@ -182,11 +183,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // A confirmation token bound to "alice" must not be confirmable by "bob".
         var factory = Factory(Substitute.For<IServerAssistant>(),
-            configure: b => b.UseSetting("Assistant:Confirmation:Key", "test-key"));
+            configure: b => b.UseSetting("Assistant:ActionsEnabled", "true"));
         var bob = await AuthedAsync(factory, "bob");
 
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        var aliceToken = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Uninstall, "terraria"), "alice");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        var aliceToken = pending.Put(new PendingConfirmation(ConfirmationKind.Uninstall, "terraria"), "alice", DateTimeOffset.UtcNow.AddMinutes(5));
 
         var response = await bob.PostAsJsonAsync("/confirm", new { token = aliceToken });
 
@@ -225,14 +226,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("Assistant:Confirmation:Key", "test-key");
             b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
         var client = await AuthedAsync(factory); // userId=user1, DisplayName="User One"
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        var token = pending.Put(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1", DateTimeOffset.UtcNow.AddMinutes(5));
 
         var response = await client.PostAsJsonAsync("/confirm", new { token });
 
@@ -276,14 +276,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("Assistant:Confirmation:Key", "test-key");
             b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
         var client = await AuthedAsync(factory);
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        var token = pending.Put(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1", DateTimeOffset.UtcNow.AddMinutes(5));
 
         var response = await client.PostAsJsonAsync("/confirm", new { token });
 
@@ -319,14 +318,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("Assistant:Confirmation:Key", "test-key");
             b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
         var client = await AuthedAsync(factory);
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        var token = pending.Put(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1", DateTimeOffset.UtcNow.AddMinutes(5));
 
         var response = await client.PostAsJsonAsync("/confirm", new { token });
 
@@ -354,11 +352,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         {
             b.UseSetting("Assistant:Relay:Secret", "relay-secret");
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("Assistant:Confirmation:Key", "test-key");
         });
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        var token = tokenSvc.Create(
-            new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"), "relayuser");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        var token = pending.Put(
+            new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"),
+            "relayuser", DateTimeOffset.UtcNow.AddMinutes(5));
 
         var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", "operator");
 
@@ -385,11 +383,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         {
             b.UseSetting("Assistant:Relay:Secret", "relay-secret");
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("Assistant:Confirmation:Key", "test-key");
         });
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        var token = tokenSvc.Create(
-            new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"), "relayuser");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        var token = pending.Put(
+            new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"),
+            "relayuser", DateTimeOffset.UtcNow.AddMinutes(5));
 
         var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", tier);
 
@@ -905,7 +903,6 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("Assistant:Confirmation:Key", "test-key");
             b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
         });
         var client = await AuthedAsync(factory);
@@ -1097,7 +1094,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.Confirmation(new PendingConfirmation(ConfirmationKind.Uninstall, "terraria")),
                 AssistantStreamEvent.Final("Staged.")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Confirmation:Key", "test-key"));
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:ActionsEnabled", "true"));
         var response = await StreamTurnAsync(await AuthedAsync(factory), "remove terraria");
         var body = await response.Content.ReadAsStringAsync();
 
@@ -1105,9 +1102,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var token = ExtractConfirmationToken(body);
 
         // The token minted into the SSE frame must validate AND be bound to the caller (user1).
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        tokenSvc.TryValidate(token, out var confirmation, out var stagedBy).Should().BeTrue();
-        stagedBy.Should().Be("user1");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        pending.TryTake(token, "user1", out var confirmation).Should().BeTrue();
         confirmation.Kind.Should().Be(ConfirmationKind.Uninstall);
         confirmation.Target.Should().Be("terraria");
     }
@@ -1125,7 +1121,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 AssistantStreamEvent.Confirmation(new PendingConfirmation(ConfirmationKind.Start, "factorio")),
                 AssistantStreamEvent.Final("Proposed.")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Confirmation:Key", "test-key"));
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:ActionsEnabled", "true"));
         var response = await StreamTurnAsync(await AuthedAsync(factory), "start factorio");
         var body = await response.Content.ReadAsStringAsync();
 
@@ -1136,8 +1132,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         body.Should().Contain("\"id\":\"factorio\"");         // subject.id (the resolved target)
         body.Should().Contain("\"confirm\":\"Start factorio?\"");
 
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        tokenSvc.TryValidate(ExtractConfirmationToken(body), out var confirmation, out _).Should().BeTrue();
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        pending.TryTake(ExtractConfirmationToken(body), "user1", out var confirmation).Should().BeTrue();
         confirmation.Kind.Should().Be(ConfirmationKind.Start);
         confirmation.Target.Should().Be("factorio");
     }
@@ -1319,13 +1315,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("Assistant:Confirmation:Key", "test-key");
             b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
-        var tokenSvc = factory.Services.GetRequiredService<ConfirmationTokenService>();
-        var token = tokenSvc.Create(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1");
+        var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
+        var token = pending.Put(new PendingConfirmation(ConfirmationKind.Start, "inst"), "user1", DateTimeOffset.UtcNow.AddMinutes(5));
         return await Task.FromResult((factory, token));
     }
 
@@ -1443,7 +1438,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     private static void ConfigureActionRoles(IWebHostBuilder b)
     {
         b.UseSetting("Assistant:ActionsEnabled", "true");
-        b.UseSetting("Assistant:Confirmation:Key", "test-key");
+        b.UseSetting("Assistant:ActionsEnabled", "true");
         b.UseSetting("KgsmAuth:RoleOperatorIds", ActionOperatorRole);
         b.UseSetting("KgsmAuth:RoleAdminIds", ActionAdminRole);
     }

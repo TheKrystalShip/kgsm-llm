@@ -477,7 +477,7 @@ public class ServerAssistant : IServerAssistant
     /// <summary>
     /// Executes a confirmed single-instance command (start/stop/restart/update/backup).
     /// Re-validates the target still exists (it was resolved at staging time, which may
-    /// have been a while ago, and a stateless token is replayable within its lifetime),
+    /// have been a while ago, and confirming is a separate, later act),
     /// then runs the matching <see cref="IServerOperations"/> op and settles the result against
     /// the observed run state — the engine's exit code says the request was accepted, which for
     /// start/stop/restart is a different claim from the server actually having got there.
@@ -519,7 +519,7 @@ public class ServerAssistant : IServerAssistant
 
     /// <summary>
     /// Re-validates the target still exists (it was resolved at staging time, which may
-    /// have been a while ago, and a stateless token is replayable within its lifetime),
+    /// have been a while ago, and confirming is a separate, later act),
     /// then uninstalls it.
     /// </summary>
     private async Task<ConfirmOutcome> ConfirmUninstallAsync(string target, CancellationToken cancellationToken)
@@ -578,7 +578,7 @@ public class ServerAssistant : IServerAssistant
 
     /// <summary>
     /// Re-validates the instance still exists (it was resolved at staging time, and a
-    /// stateless token is replayable within its lifetime), then sets one config value.
+    /// confirming is a separate, later act), then sets one config value.
     /// kgsm owns the key-safety policy, so a refused (denylisted/invalid) key surfaces
     /// here as a failed <see cref="Result"/> reported to the user, never an exception.
     /// </summary>
@@ -609,8 +609,8 @@ public class ServerAssistant : IServerAssistant
     }
 
     /// <summary>
-    /// Re-validates the instance still exists (it was resolved at staging time, and a stateless token is
-    /// replayable within its lifetime), then overwrites the file at the staged path (<paramref name="key"/>)
+    /// Re-validates the instance still exists (it was resolved at staging time, and confirming is a
+    /// separate, later act), then overwrites the file at the staged path (<paramref name="key"/>)
     /// with the staged content (<paramref name="value"/>) via <see cref="IServerOperations.WriteInstanceFileAsync"/>
     /// — the same jail the read tools use. The Service rehydrates the real content from its pending-write
     /// store BEFORE calling this (see the /confirm handler); this method always sees real content and stays
@@ -643,8 +643,8 @@ public class ServerAssistant : IServerAssistant
     }
 
     /// <summary>
-    /// Re-validates the instance still exists (it was resolved at staging time, and a stateless token is
-    /// replayable within its lifetime), re-parses the port spec carried on the token, then opens the
+    /// Re-validates the instance still exists (it was resolved at staging time, and confirming is a
+    /// separate, later act), re-parses the port spec carried on the token, then opens the
     /// HOST-FIREWALL ports via <see cref="INetworkInfo.OpenPortsAsync"/> — the real execution point.
     /// The firewall authority's precise outcome is mapped to an honest user-facing result: an unreachable
     /// authority, an unsupported backend, and an inactive (staged-not-enforcing) backend each read

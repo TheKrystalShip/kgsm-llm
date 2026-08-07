@@ -69,7 +69,6 @@ public class DiscordAuthServiceTests : IDisposable
         var assistantOptions = Options.Create(new AssistantServiceOptions
         {
             ActionsEnabled = actionsEnabled,
-            Confirmation = new ConfirmationOptions { Key = "signing-key" },
         });
 
         // Through the shared options so the tests exercise the same string→map parse the host does.
@@ -85,7 +84,6 @@ public class DiscordAuthServiceTests : IDisposable
             registry,
             new SessionValidator(registry, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromSeconds(5)),
             new DiscordTierCache(TimeSpan.FromSeconds(roleCacheTtlSeconds)),
-            new ConfirmationTokenService(assistantOptions),
             roleMap,
             authOptions,
             assistantOptions,
@@ -115,14 +113,12 @@ public class DiscordAuthServiceTests : IDisposable
         var assistantOptions = Options.Create(new AssistantServiceOptions
         {
             ActionsEnabled = true,
-            Confirmation = new ConfirmationOptions { Key = "signing-key" },
         });
 
         return new DiscordAuthService(
             directory, tokens, registry,
             new SessionValidator(registry, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromSeconds(5)),
             new DiscordTierCache(TimeSpan.FromSeconds(60)),
-            new ConfirmationTokenService(assistantOptions),
             new KgsmAuthOptions { RoleAdminIds = AdminRole, RoleOperatorIds = OperatorRole }.ToRoleMap(),
             authOptions, assistantOptions, NullLogger<DiscordAuthService>.Instance);
     }

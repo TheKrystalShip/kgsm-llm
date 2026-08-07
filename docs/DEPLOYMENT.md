@@ -38,7 +38,7 @@ from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead 
 | `DiscordOAuth__RedirectUri` | **yes** for web login | This service's own `/auth/discord/callback`, registered on the Discord application exactly. |
 | `Auth__SigningKey` | **yes** for web login | Signs session tokens. `openssl rand -base64 48`, once. Unset ⇒ a per-process key, so every restart signs everyone out. **Secret.** |
 | `Auth__AllowedOrigins__0` | **yes** for the SPA | Your panel origin (scheme + host, no trailing slash). Empty ⇒ browser calls are CORS-blocked. |
-| `Assistant__ActionsEnabled` + `Assistant__Confirmation__Key` | for actions | Set `true` + a **stable** `openssl rand -base64 48`. If the key changes or empties, pending confirmations break and actions fall back to read-only. |
+| `Assistant__ActionsEnabled` | for actions | Set `true`. A staged action is held by the Service itself, so there is no key to keep stable and a restart does not void one. |
 | `Assistant__Relay__Secret` | if fronted by kgsm-api | Shared secret for the trusted-relay hop (kgsm-api → assistant). Empty ⇒ that path is off. **Secret.** |
 | `WebSearch__ApiKey` | optional | Tavily key (`tvly-…`, from [tavily.com](https://tavily.com)) — enables the **web** half of the `search` tool. **Secret.** |
 | `Rag__Enabled` (template default **true**) + a doc corpus | optional | The **local-doc** half of `search`. On by default — but returns nothing until you populate a corpus and run the indexer (§8) and `ollama pull embeddinggemma`. |
@@ -307,7 +307,6 @@ create an app, add a bot, invite it to your guild, and register **this service's
 | `Auth__SigningKey` | signs session tokens — **keep stable** (**secret**) | everyone signed out on restart |
 | `Auth__AllowedOrigins__0` | your SPA origin (CORS) | browser calls blocked |
 | `Assistant__ActionsEnabled` | master switch for actions | actions off |
-| `Assistant__Confirmation__Key` | HMAC signing for confirm tokens — **keep stable** | actions read-only |
 
 Generate a stable signing key once: `openssl rand -base64 48`. If it changes (or is empty),
 pending confirmations are rejected and the service falls back to read-only.
@@ -444,7 +443,7 @@ Full indexer reference: [`../TheKrystalShip.Rag.Indexer/README.md`](../TheKrysta
 | **CLI exits `2` immediately** | `KGSM:Path` missing/wrong. Set `KGSM__Path` or the config key to a real `kgsm.sh`. |
 | **Index is stale after a reboot; `journalctl -u kgsm-rag-indexer` shows an embed failure at boot** | **Known gap:** if Ollama is down when the indexer starts, the initial build fails and there is **no periodic retry** — it only rebuilds on the next doc change. Fix: the unit's `After=ollama.service` ordering (already set). If Ollama isn't a systemd unit, fix the ordering or `--once` it manually after Ollama is up. |
 | **Service logs "index … model mismatch" / RAG returns nothing** | The `.krag` was built with a different `EmbeddingModel` than `Rag:EmbeddingModel`. Re-index with the configured model (or align the config). |
-| **Every web user re-logged-in after a deploy** | `Auth__SigningKey` is unset, so each start signs with a fresh per-process key and every issued token becomes unverifiable. Generate one (`openssl rand -base64 48`) and keep it. Same rule for `Assistant__Confirmation__Key` and pending confirmations. |
+| **Every web user re-logged-in after a deploy** | `Auth__SigningKey` is unset, so each start signs with a fresh per-process key and every issued token becomes unverifiable. Generate one (`openssl rand -base64 48`) and keep it. |
 | **Turns 502 / "couldn't reach the model"** | Ollama down or the model not pulled. `ollama ps` should show the chat model `100% GPU`. |
 | **SSE replies arrive all-at-once at the end** | The reverse proxy is buffering. Set `proxy_buffering off` ([§7](#7--reverse-proxy--tls)). |
 | **`search` tool never offered** | Both sources are off: `Rag:Enabled=false` *and* no `WebSearch:ApiKey`. Enable at least one. |

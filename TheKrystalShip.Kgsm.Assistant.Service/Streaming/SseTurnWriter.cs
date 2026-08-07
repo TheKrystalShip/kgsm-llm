@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 
 using TheKrystalShip.Kgsm.Assistant;
-using TheKrystalShip.Kgsm.Assistant.Service.PendingWrites;
+using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service;
@@ -42,9 +42,8 @@ internal static class SseTurnWriter
     public static async Task WriteAsync(
         HttpContext http,
         IServerAssistant assistant,
-        ConfirmationTokenService tokens,
-        IPendingWriteStore pendingWrites,
-        int writeConfirmationTtlSeconds,
+        IPendingConfirmationStore pending,
+        int confirmationTtlSeconds,
         AuthPrincipal principal,
         string conversationId,
         string prompt,
@@ -120,34 +119,29 @@ internal static class SseTurnWriter
                         break;
 
                     case AssistantEventKind.Confirmation:
-                        // Mint the confirmation token HERE, bound to the verified caller — same as
-                        // the buffered /turn path. The library only ever hands us the raw op. The
-                        // token is RETAINED (additive) for the /confirm surfaces; the SPA routes a
-                        // confirm to the API's M3 command path instead (fork (a)).
+                        // Stage the operation HERE, bound to the verified caller — same as the
+                        // buffered /turn path. The library only ever hands us the raw op; what the
+                        // frame carries is the handle that redeems it at /confirm.
                         var c = ev.StagedConfirmation!;
 
-                        // write_file: the frame's `file` block carries the real content for a diff
-                        // preview (built from the UN-swapped `c`, before the token swap below removes
-                        // it) — the content rides the frame body, never the token.
+                        // write_file: the frame's `file` block carries the real content, so the SPA
+                        // can render a diff before anyone approves it.
                         CommandFile? file = c.Kind == ConfirmationKind.WriteFile
                             && c.ConfigKey is not null && c.ConfigValue is not null
                             ? new CommandFile(c.ConfigKey, c.ConfigValue)
                             : null;
-
-                        // Swap the real content for an opaque pending-write id BEFORE minting the
-                        // token (a 10 MB body can't ride a stateless HMAC token) — every other kind
-                        // passes through unchanged.
-                        var forToken = PendingWriteTokenSwap.ForToken(c, pendingWrites, writeConfirmationTtlSeconds);
 
                         var proposed = new CommandProposedEvent(
                             Id: $"cmd_{proposalSeq++}",
                             Verb: ApiVerb(c.Kind),
                             Subject: new CommandSubject(SubjectResource(c.Kind), c.Target),
                             Confirm: ComposeConfirm(c),
-                            Token: tokens.Create(forToken, principal.UserId),
+                            Token: pending.Put(
+                                c, principal.UserId,
+                                DateTimeOffset.UtcNow.AddSeconds(Math.Max(confirmationTtlSeconds, 1))),
                             Reason: null,
-                            // write_file's real content already rides `file` above — ConfigKey/ConfigValue
-                            // here stay set-config's own fields, never the (now-opaque) write payload.
+                            // write_file's content already rides `file` above — ConfigKey/ConfigValue
+                            // here stay set-config's own fields, never the write payload.
                             ConfigKey: c.Kind == ConfirmationKind.WriteFile ? null : c.ConfigKey,
                             ConfigValue: c.Kind == ConfirmationKind.WriteFile ? null : c.ConfigValue,
                             InstanceName: c.InstanceName,

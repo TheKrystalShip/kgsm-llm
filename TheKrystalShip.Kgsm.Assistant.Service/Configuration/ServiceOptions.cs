@@ -52,14 +52,7 @@ public sealed class RelayOptions
 /// <summary>HMAC key + lifetime for stateless confirmation tokens.</summary>
 public sealed class ConfirmationOptions
 {
-    /// <summary>Secret used to sign confirmation tokens. Must be set for actions to be confirmable.</summary>
-    /// <panel>Secret used to sign the token that carries a staged action from proposal to confirmation.
-    /// Unset, nothing can be confirmed and every action is refused.</panel>
-    [LeafField("confirmationKey", "Confirmation signing key", Group = "actions", Type = LeafType.Secret,
-        Risk = LeafRisk.Wiring, DependsOn = "actionsEnabled", NoDefault = true)]
-    public string Key { get; set; } = string.Empty;
-
-    /// <summary>How long a staged confirmation token stays valid. Keep short — re-validation backstops replay.</summary>
+    /// <summary>How long a staged action stays confirmable. Keep short — re-validation backstops replay.</summary>
     /// <panel>How long a proposed action stays confirmable. Keep it short: it is how long a stale
     /// confirmation could still be used.</panel>
     [LeafField("confirmationTtlSec", "Confirmation lifetime", Group = "actions", Min = 1, Unit = "s")]

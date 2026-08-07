@@ -333,16 +333,6 @@
       "risk": "safe"
     },
     {
-      "key": "confirmationKey",
-      "env": "Assistant__Confirmation__Key",
-      "label": "Confirmation signing key",
-      "description": "Secret used to sign the token that carries a staged action from proposal to confirmation. Unset, nothing can be confirmed and every action is refused.",
-      "group": "actions",
-      "type": "secret",
-      "risk": "wiring",
-      "dependsOn": "actionsEnabled"
-    },
-    {
       "key": "confirmationTtlSec",
       "env": "Assistant__Confirmation__TtlSeconds",
       "label": "Confirmation lifetime",

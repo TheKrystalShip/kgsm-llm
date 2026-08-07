@@ -61,7 +61,6 @@ internal sealed class DiscordAuthService(
     ISessionRegistry sessions,
     ISessionValidator validator,
     DiscordTierCache tierCache,
-    ConfirmationTokenService confirmations,
     KgsmRoleMap roleMap,
     IOptions<AuthOptions> authOptions,
     IOptions<AssistantServiceOptions> assistantOptions,
@@ -158,13 +157,13 @@ internal sealed class DiscordAuthService(
 
     /// <summary>
     /// Whether this principal may perform mutating/destructive actions right now. The master
-    /// kill-switch (actions enabled + a confirmation signing key + a configured operator role) is
-    /// checked live; the per-user tier comes from the short-TTL cache, else from Discord with the BOT
-    /// token. No caller token is involved, so a re-check never forces a re-login.
+    /// kill-switch (actions enabled + a configured operator role) is checked live; the per-user tier
+    /// comes from the short-TTL cache, else from Discord with the BOT token. No caller token is
+    /// involved, so a re-check never forces a re-login.
     /// </summary>
     public async Task<bool> CanPerformActionsAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (!_assistant.ActionsEnabled || !confirmations.IsConfigured || roleMap.IsEmpty)
+        if (!_assistant.ActionsEnabled || roleMap.IsEmpty)
             return false;
 
         return await ResolveTierAsync(principal, ct) >= KgsmTier.Operator;

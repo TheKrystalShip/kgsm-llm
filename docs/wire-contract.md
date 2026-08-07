@@ -125,13 +125,15 @@ frame per staged operation.
 | `verb` | `start`, `stop`, `restart`, `update`, `install`, `uninstall`, `backup`, `set_config`, `open_ports`, `write_file` |
 | `subject` | `{ resource, id }` — `blueprint` for `install`, `server` for everything else |
 | `confirm` | a human prompt composed from the staged operation |
-| `token` | the opaque, security-bearing confirmation token. This is what `POST /confirm` takes |
+| `token` | the opaque, security-bearing handle onto the staged operation. This is what `POST /confirm` takes |
 | `configKey` / `configValue` | `set_config` (the key and value) and `open_ports` (the port spec, and `router` on the key when a UPnP forward is included) |
 | `instanceName` | the custom name for an `install`; absent when kgsm auto-names |
 | `file` | `write_file` only: `{ path, proposedContent }` — the complete new content, so a client can render a diff before the user confirms |
 
-`token` and `file` are independent by design: a large file body rides the frame, never the
-stateless token.
+`token` and `file` are independent by design: the handle identifies the staged operation, and the
+frame carries the content a client needs to show. The operation itself, file body included, is held
+by the Service — the handle is 32 characters whatever the operation is, so it fits inside every
+surface's identifier limits, a Discord button's 100-character id included.
 
 **Auto-run is the one exception to propose-only.** A turn authorised for auto-run executes the
 lifecycle verbs inline instead of staging them; those emit no `command.proposed` and surface as an
@@ -171,9 +173,10 @@ Takes `{ token, editedContent? }`. `token` is the one carried by a `command.prop
 `editedContent` applies to a blueprint finalize — the reviewed, possibly edited draft; absent
 means the staged draft is used.
 
-Authority is **re-derived at confirm time**, never read off the token. A token staged by a
-different user is refused with the same message as a malformed or expired one, so the response is
-not an oracle for which case occurred.
+Authority is **re-derived at confirm time**, never read off the token. A handle is single-use, and
+one staged by a different user is refused with the same message as an unknown, already-redeemed or
+expired one, so the response is not an oracle for which case occurred. A refused handle is not
+consumed: someone else's guess cannot cancel an action its owner is about to approve.
 
 ### Buffered form
 
@@ -262,6 +265,7 @@ type of an existing field; making an optional field required; changing what an e
 Two rules are load-bearing enough to call out separately, because breaking either produces a
 client that looks fine against a stale leaf and fails against a current one:
 
-- **`token` is opaque.** No client parses, inspects or reconstructs it.
+- **`token` is opaque.** No client parses, inspects or reconstructs it. It is a handle the Service
+  issued, not an encoding of the operation, and only the Service can say what it means.
 - **`id` on `command.proposed` and on the tool frames is a correlation handle**, meaningful only
   within its own turn. Nothing persists it or treats it as a resource identifier.

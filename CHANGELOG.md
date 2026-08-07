@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a staged action is held server-side, and a client holds only a handle
+
+A proposed action lives in `pending_confirmations` (the conversation store's SQLite file) and a
+client receives a 32-hex-character handle onto it. *What* would be done never leaves the process:
+`POST /confirm` takes the handle, looks the operation up, and executes it.
+
+**One model for every surface.** The handle is 32 characters whatever the operation is, so a
+browser and a Discord button carry the same thing and no surface works around another's identifier
+limits — a Discord `customId` caps at 100 characters, which a self-describing token cannot meet
+once it carries a config value of any size.
+
+**Redemption is single-use, and belongs to the user it was staged for.** The store enforces both:
+approving twice — a double-clicked button, a retried request — would run once what the user asked
+for once. A handle presented by anybody else is refused *and left standing*, so a wrong guess
+cannot cancel an action its owner is about to approve. Authority is still re-derived at the click
+and the target still re-validated against live inventory, neither of them read off the handle.
+
+**`Assistant:Confirmation:Key` is gone**, along with the whole class of restart that voided pending
+confirmations: there is no signature to keep verifiable, and a staged action survives a restart
+because it is stored rather than signed. `Assistant:Confirmation:TtlSeconds` is unchanged and still
+bounds how long one stays confirmable. A host with the old variable still set binds it to nothing.
+
+**The wire is unchanged.** `token` was always documented opaque and no client ever parsed it, so
+the SPAs, the API relay and the bot are unaffected. `write_file`'s separate pending-write store and
+its token-swap are deleted: a file body is held with the action it belongs to rather than beside
+it, so nothing rehydrates and nothing expires independently of the action it serves.
+
 ### Added — a calling leaf may override the prompts, and records its own audit origin
 
 `X-Relay-Leaf` names the deployed leaf making a relayed call (`kgsm-bot`, `kgsm-api`). Two things

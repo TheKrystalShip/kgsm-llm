@@ -79,7 +79,31 @@ public sealed record UsageDto(
 /// </summary>
 public sealed record ConfirmationDto(
     string Kind, string Target, string? InstanceName, string Token,
-    string? ConfigKey = null, string? ConfigValue = null);
+    string? ConfigKey = null, string? ConfigValue = null)
+{
+    /// <summary>
+    /// Projects a staged operation onto the wire, alongside the <paramref name="handle"/> that
+    /// redeems it. Built in one place because both the buffered turn and the confirm path's re-edit
+    /// loop hand a client the same shape, and two projections are two things to keep in step.
+    /// </summary>
+    /// <remarks>
+    /// The kinds whose <c>ConfigValue</c> is a file body or a blueprint draft report no value here.
+    /// A whole file is not a field a client renders inline, and a buffered reply is not where one
+    /// belongs; a client that shows the content reads it off the streaming <c>command.proposed</c>
+    /// frame, which carries it in a field meant for it.
+    /// </remarks>
+    public static ConfirmationDto From(PendingConfirmation confirmation, string handle)
+    {
+        var carriesBody = confirmation.Kind is ConfirmationKind.WriteFile or ConfirmationKind.Blueprint;
+        return new ConfirmationDto(
+            confirmation.Kind.ToString().ToLowerInvariant(),
+            confirmation.Target,
+            confirmation.InstanceName,
+            handle,
+            confirmation.ConfigKey,
+            carriesBody ? null : confirmation.ConfigValue);
+    }
+}
 
 /// <summary>The assistant's reply plus any staged confirmations and the turn's token usage.</summary>
 public sealed record TurnResponse(

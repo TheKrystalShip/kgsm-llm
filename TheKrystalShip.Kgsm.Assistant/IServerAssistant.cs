@@ -210,8 +210,9 @@ public interface IServerAssistant
     /// <para>
     /// The target is re-validated against live inventory before executing (the
     /// instance still exists for an uninstall; the blueprint still exists and the
-    /// requested name doesn't now collide for an install). That re-validation also
-    /// guards against replay of a stateless confirmation token within its lifetime.
+    /// requested name doesn't now collide for an install). Time passes between staging
+    /// and confirming, so what was true when the action was proposed is re-established
+    /// rather than assumed.
     /// </para>
     /// </summary>
     /// <param name="confirmation">The staged operation to execute.</param>

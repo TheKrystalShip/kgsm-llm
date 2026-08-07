@@ -81,9 +81,14 @@ Every turn, the **host** (Service or CLI) decides policy and hands it to the loo
 
 Mutating operations (start/stop/install/config edits) are **never executed inside a turn**. A tool
 call *stages* the action and returns a confirmation token; the user must explicitly confirm
-(`/confirm` on the Service, an interactive y/N in the CLI). Tokens are **stateless HMACs** — they
-survive a Service restart iff the signing key (`Assistant:Confirmation:Key`) is stable. A run with
-no confirmation never touches a server.
+(`/confirm` on the Service, an interactive y/N in the CLI). A run with no confirmation never touches
+a server.
+
+The Service holds the staged operation itself, in `pending_confirmations` alongside the conversation
+history, and the token a client receives is an opaque 32-character handle onto it — single-use,
+bounded by `Assistant:Confirmation:TtlSeconds`, and redeemable only by the user it was staged for.
+Being durable, a staged action survives a Service restart. The CLI needs none of this: it holds the
+`PendingConfirmation` in memory for the length of one prompt.
 
 ### The `search` tool (RAG + web)
 

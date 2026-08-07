@@ -99,9 +99,14 @@ Things that bite if you don't know them:
   fresh each turn for this reason.
 - **Propose, then confirm — mutations never execute inside a turn.** A mutating tool call *stages*
   the action and returns a confirmation token; the user confirms out-of-band (`/confirm` on the
-  Service, interactive y/N on the CLI). Tokens are **stateless HMACs** keyed by
-  `Assistant:Confirmation:Key` — they survive a Service restart *only if that key is stable*. A run
-  with no confirmation touches no server.
+  Service, interactive y/N on the CLI). A run with no confirmation touches no server.
+- **A staged action lives server-side; a client only ever holds a handle to it.** The Service keeps
+  the resolved operation in `pending_confirmations` (the conversation store's SQLite file) and hands
+  out a 32-hex-character handle — *what* would be done never leaves the process. The handle is
+  single-use, expires with `Assistant:Confirmation:TtlSeconds`, and is redeemable only by the user it
+  was staged for; the store enforces that itself, and leaves anyone else's handle standing rather
+  than consuming it. One model for every surface: a browser and a Discord button carry the same
+  thing, and no surface works around another's identifier limits.
 - **One model-facing `search` tool, deterministic aggregator (no nested model calls).** Queries the
   local RAG index first; a hit ≥ `LocalMinScore` answers from docs, else falls back to Tavily, else
   an honest "nothing found". `web_search` is internal — the model only ever sees `search`. A web

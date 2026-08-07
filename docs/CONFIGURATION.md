@@ -23,7 +23,6 @@ Replace each `:` in a config path with a double underscore `__`:
 
 ```bash
 Ollama__Model=mistral:7b          # Ollama:Model
-Assistant__Confirmation__Key=…    # Assistant:Confirmation:Key  (nested)
 Rag__Enabled=true                 # Rag:Enabled
 ```
 
@@ -45,14 +44,13 @@ any committed settings file — which declares each of them blank so the Control
 | `KgsmAuth__ClientSecret` | Service (shared, `/etc/kgsm/discord-auth.env`) |
 | `KgsmAuth__BotToken` | Service (shared, `/etc/kgsm/discord-auth.env`) |
 | `Auth__SigningKey` | Service (keep **stable** across restarts) |
-| `Assistant__Confirmation__Key` | Service (keep **stable** across restarts) |
 | `Assistant__Webhook__Secret` | Service |
 | `Assistant__Relay__Secret` | Service (optional) |
 | `WebSearch__ApiKey` | Service & CLI |
 
 > An **empty** secret means "disabled," not "error": no `WebSearch:ApiKey` ⇒ web search off (and the
-> `search` tool omitted entirely only if `Rag:Enabled` is also off); no `Assistant:Confirmation:Key` ⇒
-> actions fall back to read-only; no `Assistant:Webhook:Secret` ⇒ webhook signatures unverified (dev only).
+> `search` tool omitted entirely only if `Rag:Enabled` is also off); no `Assistant:Webhook:Secret` ⇒
+> webhook signatures unverified (dev only).
 
 ---
 
@@ -250,7 +248,6 @@ Bind address. Default `http://localhost:5180` (loopback). Override with the stan
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
 | `ActionsEnabled` | `false` | `Assistant__ActionsEnabled` | Master switch for mutating actions |
-| `Confirmation:Key` | _(empty)_ | `Assistant__Confirmation__Key` | **Secret.** HMAC for confirm tokens — **keep stable** or pending confirms break |
 | `Confirmation:TtlSeconds` | `300` | `Assistant__Confirmation__TtlSeconds` | Confirmation token lifetime |
 | `Webhook:Secret` | _(empty)_ | `Assistant__Webhook__Secret` | **Secret.** HMAC for `POST /events`; empty ⇒ unverified (dev) |
 | `Relay:Secret` | _(empty)_ | `Assistant__Relay__Secret` | **Secret.** Trusted-relay auth (e.g. kgsm-api); empty ⇒ relay path off |

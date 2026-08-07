@@ -16,7 +16,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
-using TheKrystalShip.Kgsm.Assistant.Service.PendingWrites;
+using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
@@ -98,10 +98,10 @@ builder.Services.AddKgsmEventListener(builder.Configuration);
 builder.Services.AddHostedService<BlueprintProbeSweepService>();
 
 // --- Security ----------------------------------------------------------------
-builder.Services.AddSingleton<ConfirmationTokenService>();
-// write_file's confirmation-token carrier for a body too large for a stateless HMAC token (§ Contracts) —
-// shares the conversation store's SQLite file (bound by AddLocalLlm above), adding its own table.
-builder.Services.AddSingleton<IPendingWriteStore, SqlitePendingWriteStore>();
+// Every action the assistant proposes is held here and surfaced to the client as an opaque handle;
+// what would be done never leaves this process. Shares the conversation store's SQLite file (bound
+// by AddLocalLlm above), adding its own table.
+builder.Services.AddSingleton<IPendingConfirmationStore, SqlitePendingConfirmationStore>();
 
 // --- Web auth (Discord OAuth) ------------------------------------------------
 // A sign-in yields a short-lived access bearer plus a refresh token, both signed by this service
@@ -183,13 +183,8 @@ app.UseStaticFiles();
 // then stays read-only (CanPerformActionsAsync requires all of these), the safe default.
 {
     var opts = app.Services.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
-    var tokens = app.Services.GetRequiredService<ConfirmationTokenService>();
     var sharedAuth = app.Services.GetRequiredService<IOptions<KgsmAuthOptions>>().Value;
     var roleMap = app.Services.GetRequiredService<KgsmRoleMap>();
-    if (opts.ActionsEnabled && !tokens.IsConfigured)
-        app.Logger.LogWarning(
-            "Assistant:ActionsEnabled is true but Assistant:Confirmation:Key is unset — " +
-            "the service will run READ-ONLY until a key is configured.");
     if (opts.ActionsEnabled &&
         (string.IsNullOrEmpty(sharedAuth.ClientSecret) || !sharedAuth.CanResolveRoles || roleMap.IsEmpty))
         app.Logger.LogWarning(
@@ -717,8 +712,7 @@ secured.MapPost("/turn", async (
     TurnRequest request,
     HttpContext http,
     IServerAssistant assistant,
-    ConfirmationTokenService tokens,
-    IPendingWriteStore pendingWrites,
+    IPendingConfirmationStore pending,
     IOptions<AssistantServiceOptions> assistantOptions,
     DiscordAuthService auth,
     IInvocationContext invocation,
@@ -748,7 +742,7 @@ secured.MapPost("/turn", async (
     if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
     {
         var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
-        canPerform = relayTier >= KgsmTier.Operator && asstOpts.ActionsEnabled && tokens.IsConfigured;
+        canPerform = relayTier >= KgsmTier.Operator && asstOpts.ActionsEnabled;
         var relayAutoAct = http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
             && autoObj is bool b && b;
         autoExecute = canPerform && relayAutoAct;
@@ -796,7 +790,7 @@ secured.MapPost("/turn", async (
     if (wantsStream)
     {
         await SseTurnWriter.WriteAsync(
-            http, assistant, tokens, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds,
+            http, assistant, pending, assistantOptions.Value.Confirmation.TtlSeconds,
             principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, request.DraftYaml,
             relayLeaf);
         return Results.Empty;
@@ -815,16 +809,10 @@ secured.MapPost("/turn", async (
                 : StatusCodes.Status502BadGateway);
     }
 
+    var stagedUntil = DateTimeOffset.UtcNow.AddSeconds(
+        Math.Max(assistantOptions.Value.Confirmation.TtlSeconds, 1));
     var confirmations = result.Confirmations
-        .Select(c =>
-        {
-            // write_file: swap the real content for an opaque pending-write id BEFORE minting the
-            // token (a 10 MB body can't ride a stateless HMAC token) — every other kind is untouched.
-            var forToken = PendingWriteTokenSwap.ForToken(c, pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds);
-            return new ConfirmationDto(
-                forToken.Kind.ToString().ToLowerInvariant(), forToken.Target, forToken.InstanceName,
-                tokens.Create(forToken, principal.UserId), forToken.ConfigKey, forToken.ConfigValue);
-        })
+        .Select(c => ConfirmationDto.From(c, pending.Put(c, principal.UserId, stagedUntil)))
         .ToArray();
 
     return Results.Ok(new TurnResponse(result.Text, confirmations, UsageDto.From(result.Usage)));
@@ -834,8 +822,7 @@ secured.MapPost("/confirm", async (
     ConfirmRequest request,
     HttpContext http,
     IServerAssistant assistant,
-    ConfirmationTokenService tokens,
-    IPendingWriteStore pendingWrites,
+    IPendingConfirmationStore pending,
     DiscordAuthService auth,
     IInvocationContext invocation,
     IOptions<AssistantServiceOptions> assistantOptions,
@@ -843,10 +830,10 @@ secured.MapPost("/confirm", async (
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
 
-    // Reject a malformed/expired token AND a token staged by a different user — with the same
-    // generic message, so it isn't an oracle for which case occurred.
-    if (!tokens.TryValidate(request.Token, out var confirmation, out var stagedBy) ||
-        !string.Equals(stagedBy, principal.UserId, StringComparison.Ordinal))
+    // Redeem the handle for THIS caller. Unknown, already redeemed, expired, and staged by a
+    // different user all answer the same way — a caller learns that there is nothing to confirm,
+    // never which of those it was, so the endpoint is no oracle for handles it was not given.
+    if (!pending.TryTake(request.Token, principal.UserId, out var confirmation))
         return Results.BadRequest(new { error = "Invalid or expired confirmation." });
 
     // Re-derive authority FRESH at confirm time — never trust it from the token. Mirror the /turn path
@@ -856,7 +843,7 @@ secured.MapPost("/confirm", async (
     // back to its own Discord lookup.
     bool canPerform;
     if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
-        canPerform = relayTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled && tokens.IsConfigured;
+        canPerform = relayTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled;
     else
         canPerform = await auth.CanPerformActionsAsync(principal, ct);
     // The confirming user is the authority for the action they just approved, recorded under the surface
@@ -875,21 +862,18 @@ secured.MapPost("/confirm", async (
         var outcome = await assistant.FinalizeBlueprintAsync(game, editedYaml, canPerform, c);
         var data = outcome.Data;
 
-        // On DraftReady, re-stage the returned draft so the user can edit + save again. Mint a fresh token
-        // over it (the draft body swapped into the pending-write store, same as the initial stage).
+        // On DraftReady, re-stage the returned draft so the user can edit + save again — a fresh
+        // handle over a fresh row, exactly as the initial stage was.
         ConfirmationDto[]? reEdit = null;
         if (data is not null && data.Outcome == BlueprintAuthoringOutcome.DraftReady && data.DraftYaml is not null)
         {
-            var restaged = PendingWriteTokenSwap.ForToken(
-                new PendingConfirmation(ConfirmationKind.Blueprint, data.BlueprintName ?? game,
-                    InstanceName: game, ConfigValue: data.DraftYaml),
-                pendingWrites, assistantOptions.Value.Confirmation.TtlSeconds);
-            reEdit =
-            [
-                new ConfirmationDto(
-                    restaged.Kind.ToString().ToLowerInvariant(), restaged.Target, restaged.InstanceName,
-                    tokens.Create(restaged, principal.UserId), restaged.ConfigKey, restaged.ConfigValue),
-            ];
+            var restaged = new PendingConfirmation(
+                ConfirmationKind.Blueprint, data.BlueprintName ?? game,
+                InstanceName: game, ConfigValue: data.DraftYaml);
+            var handle = pending.Put(
+                restaged, principal.UserId,
+                DateTimeOffset.UtcNow.AddSeconds(Math.Max(assistantOptions.Value.Confirmation.TtlSeconds, 1)));
+            reEdit = [ConfirmationDto.From(restaged, handle)];
         }
 
         var card = JsonSerializer.SerializeToElement(ToolResultCard.From(outcome), SseTurnWriter.Json);
@@ -907,34 +891,31 @@ secured.MapPost("/confirm", async (
     }
 
     // Resolve the staged payload before anything runs, so a stale one is still a clean pre-stream 4xx.
+    // The staged operation comes back from the store whole — a file body and a blueprint draft are held
+    // with it rather than beside it, so there is nothing to rehydrate and nothing that can expire apart
+    // from the action it belongs to.
     Func<CancellationToken, Task<ConfirmResponse>> work;
     if (confirmation.Kind == ConfirmationKind.Blueprint)
     {
         // The user reviewed/edited the draft in the chat. The edited YAML rides the request body
-        // (re-validated downstream); a save without edits falls back to the staged draft (the token's
-        // ConfigValue is its opaque pending-write id).
+        // (re-validated downstream); a save without edits falls back to the draft as staged.
         var game = confirmation.InstanceName ?? confirmation.Target;
         var editedYaml = request.EditedContent;
         if (string.IsNullOrWhiteSpace(editedYaml))
         {
-            if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var stagedDraft))
+            if (string.IsNullOrWhiteSpace(confirmation.ConfigValue))
                 return Results.BadRequest(new { error = "This draft has expired — ask the assistant to draft it again." });
-            editedYaml = stagedDraft;
+            editedYaml = confirmation.ConfigValue;
         }
         work = c => FinalizeBlueprintAsync(game, editedYaml!, c);
     }
     else
     {
-        // write_file: the token's ConfigValue is the opaque pending-write id (never the real content —
-        // see PendingWriteTokenSwap), so rehydrate the real content here, single-use. An expired/already-
-        // used id is an honest failure — never silently treated as an empty write.
-        if (confirmation.Kind == ConfirmationKind.WriteFile)
-        {
-            if (confirmation.ConfigValue is null || !pendingWrites.TryTake(confirmation.ConfigValue, out var realContent))
-                return Results.BadRequest(new { error = "This file write has expired or was already confirmed — ask the assistant to propose it again." });
+        // write_file carries its complete new content on ConfigValue. An empty one is a staged write
+        // with nothing to write — an honest failure, never silently treated as truncating the file.
+        if (confirmation.Kind == ConfirmationKind.WriteFile && confirmation.ConfigValue is null)
+            return Results.BadRequest(new { error = "This file write has expired or was already confirmed — ask the assistant to propose it again." });
 
-            confirmation = confirmation with { ConfigValue = realContent };
-        }
         var staged = confirmation;
         work = c => ExecuteAsync(staged, c);
     }

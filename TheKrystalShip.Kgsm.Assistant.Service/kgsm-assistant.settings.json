@@ -63,12 +63,11 @@
     "Directory": ""
   },
 
-  // Actions are OFF until switched on. Confirmation tokens are stateless HMACs keyed below, so they
-  // survive a restart only while that key stays the same — a blank key mints a fresh one per boot.
+  // Actions are OFF until switched on. A proposed action is held server-side and a client is given
+  // only a handle to approve it with, so it survives a restart and needs no secret of its own.
   "Assistant": {
     "ActionsEnabled": false,
     "Confirmation": {
-      "Key": "",
       "TtlSeconds": 300
     },
     "Webhook": {

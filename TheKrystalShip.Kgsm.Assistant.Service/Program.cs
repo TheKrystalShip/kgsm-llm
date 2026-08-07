@@ -459,8 +459,10 @@ secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, Can
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     // The tier is re-derived, not read off the bearer: a role granted or taken away since sign-in is
     // already in effect for every action, so reporting the token's snapshot here would tell a client
-    // something the next request would contradict.
-    var tier = await auth.ResolveTierAsync(principal, ct);
+    // something the next request would contradict. An unresolvable authority floors to none, which
+    // reads the chat down to a viewer for as long as Discord is unreachable rather than failing the
+    // boot the whole dock hangs off.
+    var tier = (await auth.ResolveTierAsync(principal, ct)).OrNone;
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
     return Results.Ok(new MeResponse(
         principal.UserId, principal.DisplayName, KgsmTiers.ToWire(tier), canPerform));

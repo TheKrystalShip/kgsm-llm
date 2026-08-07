@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a Discord outage reported itself as "you don't have access"
+
+The review surface (`/admin/conversations/…`) resolves its gate by asking Discord which roles the
+caller holds. That lookup answered `503` twelve times in a 47-second window on 2026-08-08, and each
+one resolved the caller to no tier at all and returned `403` — which the Control Panel rendered as
+*"Statistics unavailable — the assistant didn't answer for its conversation statistics."* The
+assistant was answering perfectly; only the role check couldn't be made, and the next lookup three
+minutes later succeeded untouched.
+
+Nobody was wrongly admitted — access is refused either way — but the report sent an operator to
+diagnose a healthy service and to doubt permissions that had not changed. That is the security
+analog of a fabricated status: "we could not ask" was being stated as "the answer is no". The shared
+package has said so on `DiscordAuthException` all along ("the caller surfaces this as an upstream
+error, and **never** as a denial or a default grant"); this gate was collapsing the two.
+
+Authority now resolves to three answers rather than two. `ResolveTierAsync` returns a
+`TierResolution` carrying whether the question was answered at all, and the review gate reports an
+unanswerable one as `502` with `{"error": "authority_unavailable"}` — a stable code, so a client can
+tell it from a reverse proxy's own `502` for a leaf that is genuinely down. A resolved non-admin, and
+a host with no review role configured, stay plain `403`s: those are verdicts, not outages.
+
+Callers that cannot report an outage still deny during one. `CanPerformActionsAsync` floors an
+unknown to no tier, so a Discord blip costs at most a staged confirmation instead of an immediate
+run, and `/auth/me` floors the same way rather than failing the boot the chat dock hangs off. The
+failure is still never cached — a brief outage must not become a full-TTL lockout for someone who
+really does hold the role.
+
 ### Fixed — a reply claiming an action the turn never took is corrected
 
 The model narrates its own turn, and it is sometimes wrong about it: asked to back up a server it

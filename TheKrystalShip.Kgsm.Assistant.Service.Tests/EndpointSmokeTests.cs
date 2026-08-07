@@ -1859,6 +1859,59 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Review_Bearer_WhenDiscordCannotBeAsked_Is502WithAnAuthorityUnavailableEnvelope()
+    {
+        // The whole round trip a browser makes, with Discord down: a real session bearer, the real
+        // gate, and the real response a client has to make sense of. It must not read as 403 — a panel
+        // told "forbidden" reports a permissions problem for what is a transient upstream outage.
+        var directory = Substitute.For<IDiscordDirectory>();
+        directory.GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(_ => throw new DiscordAuthException("Discord unreachable."));
+
+        var factory = Factory(
+            discord: directory,
+            configure: b => b.UseSetting("KgsmAuth:RoleAdminIds", "role-admin"),
+            withStore: new RecordingConversationStore());
+
+        var client = await AuthedAsync(factory, tier: KgsmTier.Admin);
+        var response = await client.GetAsync("/admin/conversations/stats");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+
+        // The envelope is the part clients branch on — a reverse proxy fronting a dead leaf answers
+        // 502 too, with no body, and that case really is "the assistant isn't answering".
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("authority_unavailable");
+        body.GetProperty("message").GetString().Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task Review_Bearer_WhenDiscordAnswersAndTheCallerIsNotAnAdmin_Is403()
+    {
+        // The counterpart, and the reason the two are worth telling apart: an answered question with a
+        // negative answer stays a plain denial.
+        var directory = Substitute.For<IDiscordDirectory>();
+        directory.GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(["role-123"]);
+
+        var factory = Factory(
+            discord: directory,
+            configure: b =>
+            {
+                b.UseSetting("KgsmAuth:RoleAdminIds", "role-admin");
+                b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
+            },
+            withStore: new RecordingConversationStore());
+
+        var client = await AuthedAsync(factory, tier: KgsmTier.Admin);
+        var response = await client.GetAsync("/admin/conversations/stats");
+
+        // The bearer's own claim says admin and is ignored: authority is re-derived, and Discord says
+        // this person is an operator.
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
     public async Task Review_Users_ListsEveryoneOnTheWebSurface()
     {
         var store = new RecordingConversationStore

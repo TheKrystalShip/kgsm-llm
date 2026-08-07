@@ -1,4 +1,8 @@
+using System.Text.Json;
+
 using FluentAssertions;
+
+using Microsoft.AspNetCore.Http;
 
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -266,7 +270,10 @@ public class DiscordAuthServiceTests : IDisposable
         directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<string>?)null);
 
-        (await service.ResolveTierAsync(Principal())).Should().Be(KgsmTier.None);
+        // A KNOWN answer, and the answer is no — nothing about this is an outage.
+        TierResolution resolved = await service.ResolveTierAsync(Principal());
+        resolved.Known.Should().BeTrue();
+        resolved.Tier.Should().Be(KgsmTier.None);
         (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
     }
 
@@ -278,7 +285,9 @@ public class DiscordAuthServiceTests : IDisposable
         directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
             .Returns<IReadOnlyList<string>?>([]);
 
-        (await service.ResolveTierAsync(Principal())).Should().Be(KgsmTier.Viewer);
+        TierResolution resolved = await service.ResolveTierAsync(Principal());
+        resolved.Known.Should().BeTrue();
+        resolved.Tier.Should().Be(KgsmTier.Viewer);
         (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
     }
 
@@ -299,6 +308,117 @@ public class DiscordAuthServiceTests : IDisposable
             .Returns<IReadOnlyList<string>?>([OperatorRole]);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AnUnreachableDiscordResolvesToUnknownRatherThanADenial()
+    {
+        // The distinction the whole type exists for: an outage must not be reportable as a verdict.
+        var directory = Substitute.For<IDiscordDirectory>();
+        DiscordAuthService service = Build(directory, out _, out _);
+
+        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(_ => throw new DiscordAuthException("Discord unreachable."));
+
+        TierResolution resolved = await service.ResolveTierAsync(Principal());
+        resolved.Known.Should().BeFalse();
+
+        // The review gate sees the same unknown, which is what lets it answer 502 instead of 403.
+        (await service.ResolveReviewAuthorityAsync(Principal())).Known.Should().BeFalse();
+
+        // And a caller that only wants a yes/no still gets a safe no — nobody is admitted in an outage.
+        resolved.OrNone.Should().Be(KgsmTier.None);
+        (await service.IsAdminAsync(Principal())).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AnUnconfiguredAdminRoleIsAKnownDenialNotAnOutage()
+    {
+        // This host's own configuration answering, with Discord never asked. A client must render it as
+        // "you don't have access here", never as "we couldn't check".
+        var directory = Substitute.For<IDiscordDirectory>();
+        DiscordAuthService service = Build(directory, out _, out _, adminRoleId: "");
+
+        TierResolution resolved = await service.ResolveReviewAuthorityAsync(Principal());
+
+        resolved.Known.Should().BeTrue();
+        resolved.Tier.Should().Be(KgsmTier.None);
+        await directory.DidNotReceive().GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AResolvedNonAdminIsAKnownDenial()
+    {
+        var directory = Substitute.For<IDiscordDirectory>();
+        DiscordAuthService service = Build(directory, out _, out _);
+        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>([OperatorRole]);
+
+        TierResolution resolved = await service.ResolveReviewAuthorityAsync(Principal());
+
+        resolved.Known.Should().BeTrue();
+        resolved.Tier.Should().Be(KgsmTier.Operator);
+    }
+
+    // --- The review gate's HTTP answers ------------------------------------------------------------
+    // What a client actually sees, which is where the outage/denial distinction has to survive: a
+    // browser told 403 shows the operator a permissions problem that does not exist.
+
+    private const string PassedThrough = "handler ran";
+
+    /// <summary>Runs AdminOnlyFilter over a session-bearer request and reports what it answered.</summary>
+    private static async Task<object?> RunReviewGateAsync(DiscordAuthService auth)
+    {
+        var http = new DefaultHttpContext();
+        http.Items[BearerAuthFilter.PrincipalKey] = Principal();
+
+        return await new AdminOnlyFilter(auth).InvokeAsync(
+            EndpointFilterInvocationContext.Create(http),
+            _ => ValueTask.FromResult<object?>(PassedThrough));
+    }
+
+    [Fact]
+    public async Task ReviewGate_WhenDiscordIsUnreachable_Answers502AndNot403()
+    {
+        var directory = Substitute.For<IDiscordDirectory>();
+        DiscordAuthService service = Build(directory, out _, out _);
+        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>(_ => throw new DiscordAuthException("Discord unreachable."));
+
+        object? answer = await RunReviewGateAsync(service);
+
+        answer.Should().BeAssignableTo<IStatusCodeHttpResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status502BadGateway);
+
+        // The code the SPA branches on to say "couldn't check" rather than "unavailable". It also
+        // separates this from a reverse proxy's own 502 for a dead leaf, which carries no envelope.
+        JsonSerializer.Serialize(answer.As<IValueHttpResult>().Value)
+            .Should().Contain(AdminOnlyFilter.UnavailableCode);
+    }
+
+    [Fact]
+    public async Task ReviewGate_WhenTheCallerIsSimplyNotAnAdmin_Answers403()
+    {
+        var directory = Substitute.For<IDiscordDirectory>();
+        DiscordAuthService service = Build(directory, out _, out _);
+        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>([OperatorRole]);
+
+        object? answer = await RunReviewGateAsync(service);
+
+        answer.Should().BeAssignableTo<IStatusCodeHttpResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    [Fact]
+    public async Task ReviewGate_WhenTheCallerHoldsTheReviewRole_RunsTheHandler()
+    {
+        var directory = Substitute.For<IDiscordDirectory>();
+        DiscordAuthService service = Build(directory, out _, out _);
+        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<string>?>([AdminRole]);
+
+        (await RunReviewGateAsync(service)).Should().Be(PassedThrough);
     }
 
     [Fact]

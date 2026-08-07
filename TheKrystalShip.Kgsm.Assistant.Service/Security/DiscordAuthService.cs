@@ -28,6 +28,34 @@ internal sealed record AuthPrincipal(
     string SessionId,
     KgsmTier TokenTier = KgsmTier.None);
 
+/// <summary>
+/// The answer to an authority question, with <em>"we could not ask"</em> kept apart from <em>"the
+/// answer is no"</em>. <see cref="Tier"/> carries a verdict only when <see cref="Known"/>; an unknown
+/// resolution means Discord could not be reached and this caller's authority is simply not established
+/// right now.
+/// </summary>
+/// <remarks>
+/// The distinction exists because the two facts want different reporting. A denial is terminal and
+/// belongs to the caller — a <c>403</c>, and a surface that says "you don't have access". An unknown
+/// is an upstream outage that belongs to the host — a <c>502</c>, and a surface that says "we couldn't
+/// check", which is both true and worth retrying. Collapsing them tells an admin they lost a role they
+/// still hold.
+/// </remarks>
+internal readonly record struct TierResolution(bool Known, KgsmTier Tier)
+{
+    /// <summary>Discord could not be asked; no verdict is carried.</summary>
+    public static readonly TierResolution Unknown = new(false, KgsmTier.None);
+
+    /// <summary>A verdict that was actually established — including a denial.</summary>
+    public static TierResolution Of(KgsmTier tier) => new(true, tier);
+
+    /// <summary>
+    /// The tier for a decision that must produce an answer either way. An unknown resolution floors to
+    /// <see cref="KgsmTier.None"/>, so a caller that cannot report an outage still denies during one.
+    /// </summary>
+    public KgsmTier OrNone => Known ? Tier : KgsmTier.None;
+}
+
 /// <summary>The tokens a completed login (or a refresh) hands back.</summary>
 internal sealed record AuthSessionResult(
     string AccessToken,
@@ -161,28 +189,46 @@ internal sealed class DiscordAuthService(
     /// comes from the short-TTL cache, else from Discord with the BOT token. No caller token is
     /// involved, so a re-check never forces a re-login.
     /// </summary>
+    /// <remarks>
+    /// An unresolvable authority denies here rather than propagating: this answers whether to OFFER an
+    /// action, and the worst it costs during a Discord outage is that a mutation is staged for
+    /// confirmation instead of running immediately. The review gate reports the outage instead, because
+    /// there the alternative is a blank page the operator has to diagnose.
+    /// </remarks>
     public async Task<bool> CanPerformActionsAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
         if (!_assistant.ActionsEnabled || roleMap.IsEmpty)
             return false;
 
-        return await ResolveTierAsync(principal, ct) >= KgsmTier.Operator;
+        return (await ResolveTierAsync(principal, ct)).OrNone >= KgsmTier.Operator;
     }
 
     /// <summary>
-    /// Whether this principal may read OTHER users' conversations (the review surface). Reading
-    /// someone's chat is an administrator's power, the same tier that configures the host from the
-    /// Control Panel — one ladder, so a person cannot hold a power on one surface that they lack on
-    /// another. No configured admin role ⇒ nobody, so a host that never set one cannot have the
-    /// surface opened by a session bearer.
+    /// Whether this principal may read OTHER users' conversations (the review surface), as a three-way
+    /// answer: granted, denied, or unknown because Discord could not be asked. Reading someone's chat is
+    /// an administrator's power, the same tier that configures the host from the Control Panel — one
+    /// ladder, so a person cannot hold a power on one surface that they lack on another.
     /// </summary>
-    public async Task<bool> IsAdminAsync(AuthPrincipal principal, CancellationToken ct = default)
+    /// <remarks>
+    /// No configured admin role resolves to a KNOWN denial: that is this host's own configuration
+    /// answering, not Discord, so it is a verdict and never an outage.
+    /// </remarks>
+    public async Task<TierResolution> ResolveReviewAuthorityAsync(
+        AuthPrincipal principal, CancellationToken ct = default)
     {
         if (roleMap.AdminRoleIds.Count == 0)
-            return false;
+            return TierResolution.Of(KgsmTier.None);
 
-        return await ResolveTierAsync(principal, ct) >= KgsmTier.Admin;
+        return await ResolveTierAsync(principal, ct);
     }
+
+    /// <summary>
+    /// Whether this principal holds the review tier, for the callers that need a plain yes/no. An
+    /// unresolvable authority reads as no; a caller that must tell an outage apart from a denial asks
+    /// <see cref="ResolveReviewAuthorityAsync"/> instead.
+    /// </summary>
+    public async Task<bool> IsAdminAsync(AuthPrincipal principal, CancellationToken ct = default) =>
+        (await ResolveReviewAuthorityAsync(principal, ct)).OrNone >= KgsmTier.Admin;
 
     /// <summary>
     /// The tier this principal holds, cached for the role-cache TTL. Not being a member of the guild
@@ -190,15 +236,18 @@ internal sealed class DiscordAuthService(
     /// reach Discord on every call.
     /// </summary>
     /// <remarks>
-    /// A failure to reach Discord denies this one check and is <b>not</b> cached. "We could not ask" is
-    /// a different fact from "the answer is no", and storing the first as the second would turn a
-    /// thirty-second Discord outage into a full-TTL lockout for someone who is genuinely an operator.
-    /// The session itself stays valid throughout — there is no caller token to expire.
+    /// A failure to reach Discord returns an UNKNOWN resolution and is <b>not</b> cached. "We could not
+    /// ask" is a different fact from "the answer is no": storing the first as the second would turn a
+    /// thirty-second Discord outage into a full-TTL lockout for someone who is genuinely an operator,
+    /// and reporting it as the second tells that person they lost a role they still hold. Each caller
+    /// decides what an unknown costs it — see <see cref="CanPerformActionsAsync"/> and
+    /// <see cref="ResolveReviewAuthorityAsync"/>. The session itself stays valid throughout — there is
+    /// no caller token to expire.
     /// </remarks>
-    public async Task<KgsmTier> ResolveTierAsync(AuthPrincipal principal, CancellationToken ct = default)
+    public async Task<TierResolution> ResolveTierAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
         if (tierCache.TryGet(principal.UserId, out KgsmTier cached))
-            return cached;
+            return TierResolution.Of(cached);
 
         IReadOnlyList<string>? roles;
         try
@@ -207,13 +256,15 @@ internal sealed class DiscordAuthService(
         }
         catch (DiscordAuthException ex)
         {
-            logger.LogWarning(ex, "Could not resolve authority for {UserId} — denying this check.", principal.UserId);
-            return KgsmTier.None;
+            logger.LogWarning(
+                ex, "Could not resolve authority for {UserId} — reporting it as unavailable, not as a denial.",
+                principal.UserId);
+            return TierResolution.Unknown;
         }
 
         KgsmTier tier = roleMap.Resolve(roles);
         tierCache.Set(principal.UserId, tier);
-        return tier;
+        return TierResolution.Of(tier);
     }
 
     /// <summary>

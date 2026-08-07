@@ -1,4 +1,5 @@
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
+using TheKrystalShip.Kgsm.Assistant.Relay;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
@@ -26,11 +27,13 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 internal static class RelayLeaves
 {
     /// <summary>The Discord bot. Its surface is Discord, so its actions are Discord's.</summary>
-    public const string Bot = "kgsm-bot";
+    public const string Bot = RelayLeaf.Bot;
 
     /// <summary>The Control Panel API, which relays the browser chat dock.</summary>
-    public const string Api = "kgsm-api";
+    public const string Api = RelayLeaf.Api;
 
+    // Keyed by the same constants the senders write, so the row that decides an audit origin and the
+    // header that selects it cannot come to mean different leaves.
     private static readonly IReadOnlyDictionary<string, string> Origins =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {

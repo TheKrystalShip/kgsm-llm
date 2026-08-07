@@ -6,6 +6,7 @@
   <Project Path="TheKrystalShip.Rag.Indexer/TheKrystalShip.Rag.Indexer.csproj" />
   <Project Path="TheKrystalShip.Rag.Indexer.Tests/TheKrystalShip.Rag.Indexer.Tests.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant/TheKrystalShip.Kgsm.Assistant.csproj" />
+  <Project Path="TheKrystalShip.Kgsm.Assistant.Relay/TheKrystalShip.Kgsm.Assistant.Relay.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Infrastructure/TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Tests/TheKrystalShip.Kgsm.Assistant.Tests.csproj" />
   <Project Path="TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests/TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests.csproj" />

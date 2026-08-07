@@ -55,6 +55,7 @@
          (AddKgsmAdapters), which this service and the CLI both sit on. -->
     <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
+    <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Relay\TheKrystalShip.Kgsm.Assistant.Relay.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
   </ItemGroup>
 

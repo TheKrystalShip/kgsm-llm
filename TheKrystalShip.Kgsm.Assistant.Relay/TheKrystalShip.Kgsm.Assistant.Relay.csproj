@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <RootNamespace>TheKrystalShip.Kgsm.Assistant.Relay</RootNamespace>
+    <AssemblyName>TheKrystalShip.Kgsm.Assistant.Relay</AssemblyName>
+
+    <!-- The trusted-relay half of the assistant's wire contract: who is calling, on whose behalf,
+         with what authority. Built here (the assistant owns the contract it validates), packed to
+         the local feed, and consumed by every leaf that relays a turn — kgsm-api and kgsm-bot.
+         A second hand-rolled implementation of these headers is how two surfaces come to disagree
+         about who someone is, which is the one disagreement an authority header cannot survive.
+
+         Deliberately NOT the endpoint surface: each consumer calls the paths it needs and shapes
+         the responses its own way (the api relays them near-verbatim to the SPA, the bot renders
+         them into Discord messages). What must not diverge is the identity, not the routes. -->
+    <PackageId>TheKrystalShip.Kgsm.Assistant.Relay</PackageId>
+    <!-- Bump on ANY change to the header set or their spellings. NuGet caches by id+version, so a
+         same-version repack serves a stale dll to a consumer. -->
+    <Version>1.0.0</Version>
+    <Authors>Heisenberg</Authors>
+    <Description>The trusted-relay client contract for kgsm-assistant-service: the forwarded principal, the relay headers (identity, verified tier, auto-accept, conversation sub-scope, calling leaf) and the liveness probe. Referenced by the leaves that relay a turn on a verified user's behalf.</Description>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
+    <RepositoryType>GitHub</RepositoryType>
+    <NeutralLanguage>en</NeutralLanguage>
+
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- KgsmTier + its canonical wire spelling. The auth model only — this package sends a tier
+         someone else already verified and never resolves one, so it takes none of the transport. -->
+    <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

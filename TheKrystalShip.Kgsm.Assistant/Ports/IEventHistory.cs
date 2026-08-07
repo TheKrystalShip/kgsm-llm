@@ -21,6 +21,7 @@ public sealed record EventHistoryReading(AuditReadState State, IReadOnlyList<Aud
 /// answer on a host with no other leaf installed, which is not true of the metrics tools beside them.
 /// Fails closed — an unreadable journal returns <see cref="AuditReadState.JournalUnavailable"/> — and
 /// implementations MUST NOT throw.
+/// </para>
 /// </summary>
 public interface IEventHistory
 {

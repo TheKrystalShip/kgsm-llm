@@ -63,7 +63,7 @@ internal sealed class KgsmEventHistory : IEventHistory
         }
 
         AuditEventRow[] rows = [.. page.Events.Select(e =>
-            new AuditEventRow(e.Id, e.Ts, e.Type, e.Instance, e.Actor, e.Origin))];
+            new AuditEventRow(e.Id, e.Ts, e.Type, e.Instance, e.Actor, e.Origin, e.Blueprint))];
 
         return new EventHistoryReading(AuditReadState.Available, rows);
     }

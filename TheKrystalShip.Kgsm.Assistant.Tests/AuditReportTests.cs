@@ -11,8 +11,8 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 /// <summary>
 /// The pure <c>get_audit_log</c> / <c>get_change_timeline</c> composer: turns a neutral
 /// <see cref="EventHistoryReading"/> into an <see cref="AuditData"/> card plus a grounding summary.
-/// Covers the honest states (available-with-rows / available-empty / monitor-unavailable), the
-/// deterministic type-count summary, the never-fabricate rule for a null actor, and the
+/// Covers the honest states (available-with-rows / available-empty / journal-unavailable), the
+/// per-event listing the model is grounded on, the never-fabricate rule for a null actor, and the
 /// change-timeline's state-changing filter.
 /// </summary>
 public class AuditReportTests
@@ -20,10 +20,14 @@ public class AuditReportTests
     private static AuditEventRow Row(string type, string? instance = "factorio-test", string? actor = "discord:tester", int minutesAgo = 0) =>
         new($"evt_{type}_{minutesAgo}", DateTimeOffset.UtcNow.AddMinutes(-minutesAgo), type, instance, actor, "assistant");
 
+    /// <summary>The event lines only — the leading frame and the trailing "+N older" note dropped.</summary>
+    private static string[] SummaryLines(string summary) =>
+        summary.Split('\n').Skip(1).Where(l => !l.StartsWith("(+", StringComparison.Ordinal)).ToArray();
+
     // ---------------------------------------------------------------- get_audit_log ---------------
 
     [Fact]
-    public void Build_Available_WithRows_CountsByType_MostFrequentFirst()
+    public void Build_Available_WithRows_ListsEveryEvent_NewestFirst()
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
@@ -40,9 +44,109 @@ public class AuditReportTests
         result.Subject.Should().Be(new ResultRef(ResourceKind.Audit, "factorio-test"));
         result.Data.State.Should().Be(AuditReadState.Available);
         result.Data.Events.Should().HaveCount(4);
-        // 2 starts leads; ties among the rest broken alphabetically (crash before stop).
-        result.Summary.Should().Contain("4 events for factorio-test in the last 24h:")
-            .And.Contain("2 starts").And.Contain("1 crash").And.Contain("1 stop");
+
+        result.Summary.Should().Contain("4 events for factorio-test in the last 24h, newest first");
+
+        // One line per event, in time order — not a tally the model would have to guess back apart.
+        var lines = SummaryLines(result.Summary);
+        lines.Should().HaveCount(4);
+        lines.Select(l => l.Split('—')[1].Trim()).Should().Equal(
+            "factorio-test started, by tester",
+            "factorio-test stopped, by tester",
+            "factorio-test started, by tester",
+            "factorio-test crashed, by tester");
+    }
+
+    /// <summary>
+    /// The point of the listing: each line answers when, which server, what, and who on its own, so
+    /// the model can say "tester started factorio-test at 14:05" — which no count can support.
+    /// </summary>
+    [Fact]
+    public void Build_EachLine_CarriesTheTime_TheServer_TheEvent_AndTheActor()
+    {
+        var at = new DateTimeOffset(2026, 8, 7, 10, 28, 26, TimeSpan.Zero);
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            new AuditEventRow("evt_1", at, "instance_stopped", "minecraft", "discord:claude", "api"),
+        });
+
+        var result = AuditReport.Build(reading, "minecraft", "24h");
+
+        var local = at.ToLocalTime();
+        SummaryLines(result.Summary).Should().ContainSingle().Which.Should().Be(
+            $"{local:yyyy-MM-dd HH:mm:ss zzz} — minecraft stopped, by claude");
+    }
+
+    /// <summary>
+    /// Fleet-wide reads mix servers, so the server is on every line rather than in the frame — an
+    /// event read against the wrong server is a wrong answer, not a vague one.
+    /// </summary>
+    [Fact]
+    public void Build_FleetWide_NamesTheServerOnEveryLine()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            Row("instance_started", instance: "minecraft", minutesAgo: 5),
+            Row("instance_backup_created", instance: "romestead", actor: "scheduler", minutesAgo: 30),
+        });
+
+        var result = AuditReport.Build(reading, instance: null, "24h");
+
+        result.Summary.Should().Contain("minecraft started, by tester");
+        result.Summary.Should().Contain("romestead backed up, by scheduler");
+    }
+
+    /// <summary>A host-level event has no instance; it is labelled as such, never blank.</summary>
+    [Fact]
+    public void Build_HostLevelEvent_IsLabelled_NotLeftServerless()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            Row("kgsm_started", instance: null),
+        });
+
+        var result = AuditReport.Build(reading, instance: null, "24h");
+
+        result.Summary.Should().Contain("host-level kgsm_started, by tester");
+    }
+
+    /// <summary>
+    /// A blueprint event carries no instance, so the blueprint name is the only subject it has —
+    /// without it the line says something happened to nothing in particular.
+    /// </summary>
+    [Fact]
+    public void Build_BlueprintEvent_NamesTheBlueprint_NotJustHostLevel()
+    {
+        var reading = new EventHistoryReading(AuditReadState.Available, new[]
+        {
+            new AuditEventRow("evt_1", DateTimeOffset.UtcNow, "blueprint_updated",
+                Instance: null, Actor: "heisen", Origin: "ui", Blueprint: "factorio"),
+        });
+
+        var result = AuditReport.Build(reading, instance: null, "24h");
+
+        result.Summary.Should().Contain("blueprint factorio updated, by heisen");
+        result.Summary.Should().NotContain("host-level");
+    }
+
+    /// <summary>
+    /// A window can hold more events than are worth putting in front of the model. The newest are
+    /// listed and the rest is declared — a silent trim would let the model treat a partial list as
+    /// the whole window.
+    /// </summary>
+    [Fact]
+    public void Build_LongWindow_ListsTheNewest_AndDeclaresTheRemainder()
+    {
+        var rows = Enumerable.Range(0, 130)
+            .Select(i => Row("instance_started", minutesAgo: i))
+            .ToArray();
+
+        var result = AuditReport.Build(new EventHistoryReading(AuditReadState.Available, rows), "factorio-test", "24h");
+
+        SummaryLines(result.Summary).Should().HaveCount(100);
+        result.Summary.Should().Contain("130 events for factorio-test");
+        result.Summary.Should().Contain("(+30 older events in this window, not listed here.)");
+        result.Data.Events.Should().HaveCount(130);   // the card still carries all of them
     }
 
     [Fact]
@@ -91,28 +195,8 @@ public class AuditReportTests
         var result = AuditReport.Build(reading, "factorio-test", "24h");
 
         result.Data.Events[0].Actor.Should().BeNull();
-        result.Summary.Should().Contain("Actor is unknown for 1 of these");
+        result.Summary.Should().Contain("factorio-test started, actor not recorded");
         result.Summary.Should().NotContain("system");
-    }
-
-    /// <summary>
-    /// The events carry the actor, so the summary must say who — a model handed only a count of
-    /// events answers "the log does not record who" about a log that does.
-    /// </summary>
-    [Fact]
-    public void Build_NamesTheActorsItHas()
-    {
-        var reading = new EventHistoryReading(AuditReadState.Available, new[]
-        {
-            Row("instance_started", actor: "discord:claude"),
-            Row("instance_stopped", actor: "discord:claude"),
-            Row("instance_backup_created", actor: "scheduler"),
-        });
-
-        var result = AuditReport.Build(reading, "factorio-test", "24h");
-
-        result.Summary.Should().Contain("By: claude (2)");
-        result.Summary.Should().Contain("scheduler (1)");
     }
 
     /// <summary>
@@ -129,43 +213,26 @@ public class AuditReportTests
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
 
-        result.Summary.Should().Contain("watchdog (system) (1)");
+        result.Summary.Should().Contain("by watchdog (system)");
     }
 
     /// <summary>
-    /// Naming the known actors must not soften the unknown ones — a window that is part-attributed
-    /// says both things.
+    /// Attribution is per event, so a part-attributed window names who did what and says which ones
+    /// nobody is recorded for — neither half smooths over the other.
     /// </summary>
     [Fact]
-    public void Build_MixedAttribution_NamesTheKnown_AndStillFlagsTheUnknown()
+    public void Build_MixedAttribution_AttributesPerEvent_NotAcrossTheWindow()
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            Row("instance_started", actor: "discord:claude"),
-            Row("instance_stopped", actor: null),
+            Row("instance_started", actor: "discord:claude", minutesAgo: 5),
+            Row("instance_stopped", actor: null, minutesAgo: 10),
         });
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
 
-        result.Summary.Should().Contain("By: claude (1)");
-        result.Summary.Should().Contain("Actor is unknown for 1 of these");
-    }
-
-    /// <summary>Deterministic wording: most events first, ties alphabetical.</summary>
-    [Fact]
-    public void Build_ActorOrder_IsCountThenAlphabetical()
-    {
-        var reading = new EventHistoryReading(AuditReadState.Available, new[]
-        {
-            Row("instance_started", actor: "discord:zoe"),
-            Row("instance_stopped", actor: "discord:adam"),
-            Row("instance_started", actor: "discord:mia"),
-            Row("instance_stopped", actor: "discord:mia"),
-        });
-
-        var result = AuditReport.Build(reading, "factorio-test", "24h");
-
-        result.Summary.Should().Contain("By: mia (2), adam (1), zoe (1)");
+        result.Summary.Should().Contain("factorio-test started, by claude");
+        result.Summary.Should().Contain("factorio-test stopped, actor not recorded");
     }
 
     /// <summary>The change timeline grounds "who changed it" the same way.</summary>
@@ -179,7 +246,7 @@ public class AuditReportTests
 
         var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
 
-        result.Summary.Should().Contain("By: claude (1)");
+        result.Summary.Should().Contain("factorio-test updated, by claude");
     }
 
     [Fact]
@@ -189,7 +256,7 @@ public class AuditReportTests
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
 
-        result.Summary.Should().Contain("1 instance_relocated");
+        result.Summary.Should().Contain("factorio-test instance_relocated,");
     }
 
     // ------------------------------------------------------------ get_change_timeline -------------

@@ -7,21 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed — the audit summary names who did it
+### Changed — the audit tools hand the model the events, not a description of them
 
-`get_audit_log` and `get_change_timeline` ground the model with a count-by-type breakdown, and that
-sentence mentioned the actor only when one was **missing**. The events carried the actor the whole
-time — so asked "who did it", the model answered that the log does not record who, about a log that
-did.
+`get_audit_log` and `get_change_timeline` grounded the model with an aggregate — counts by event
+type, then counts by actor. The model sees only the summary (`Data` is surface-only), so an
+aggregate was the whole of what it knew: it could report that a window held two starts and six
+watchdog actions, and could not say when a server was started, by whom, or in what order. Asked what
+happened, it described the shape of the window.
 
-The summary now carries a count-by-actor breakdown beside the type one: `By: claude (2), scheduler
-(1).` Same ordering rule as the types (most frequent first, ties alphabetical) so the wording is
-deterministic, capped at six with a `+N others` tail.
+Both tools now list the events themselves, one line each, newest first:
 
-A `system:` actor keeps its provider — `watchdog (system)` — because a supervisor acting on its own
-has no human answer to "who did it", and rendering it as a bare name offers one. Every other
-provider renders as the plain name. The "Actor is unknown for N of these" note is unchanged and
-still fires alongside the named ones, so a part-attributed window says both things.
+```
+25 events for minecraft in the last 24h, newest first, times host-local:
+2026-08-07 12:28:27 +02:00 — minecraft stopped, by claude
+2026-08-07 12:25:38 +02:00 — minecraft started, by claude
+2026-08-07 06:00:53 +02:00 — romestead backed up, by scheduler
+```
+
+Every line is self-contained — time, server, what happened, who did it — so an event cannot be read
+against the wrong server or actor, and the model can quote one directly. Counts remain derivable
+from a list; a list was not derivable from counts.
+
+The timestamp is host-local with its UTC offset spelled out per line, which stays true across a
+window that crosses a DST boundary and needs no legend. An event with no recorded actor says `actor
+not recorded` on its own line rather than being absorbed into a trailing tally. A window holding
+more than 100 events lists the newest 100 and declares the remainder (`+30 older events in this
+window, not listed here.`); the card still carries every row.
+
+The event-type vocabulary is spelled out — `became ready`, `UPnP forward opened`, `install began` —
+covering what kgsm emits, with the raw type as the honest fallback for anything unmapped. A
+blueprint event names its blueprint (`blueprint factorio updated`), which the row shape previously
+dropped, leaving it as a subject-less host-level line.
 
 ### Changed — audit history reads the engine journal, not kgsm-monitor
 

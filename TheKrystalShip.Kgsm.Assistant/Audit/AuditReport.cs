@@ -1,3 +1,5 @@
+using System.Globalization;
+
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 
@@ -49,12 +51,18 @@ public static class AuditWindow
 /// Pure and I/O-free (the socket fetch happens in the port impl), so it's unit-testable without mocks
 /// and is the single home for how an event window is worded.
 /// <para>
+/// The summary is the event list itself — one line per event, newest first, each carrying when,
+/// which server, what, and who. The model never sees <see cref="AuditData"/>, so anything the
+/// summary condenses is simply gone: it could not say when a server was started or who stopped it,
+/// only how many times something of that kind occurred.
+/// </para>
+/// <para>
 /// Honesty rules baked in: a <see cref="AuditReadState.JournalUnavailable"/> read is an honest
 /// "couldn't read" — explicitly NOT a claim that nothing happened; an
 /// <see cref="AuditReadState.Available"/> read with zero rows is a real, measured "no events
-/// recorded"; the actors that ARE recorded are named in the summary so the model can answer "who
-/// did it"; and an event with no <see cref="AuditEventRow.Actor"/> is reported as unknown, never
-/// defaulted to a placeholder like "system" (the never-fabricate rule).
+/// recorded"; an event with no <see cref="AuditEventRow.Actor"/> says so on its own line, never
+/// defaulted to a placeholder like "system" (the never-fabricate rule); and a window holding more
+/// events than are listed declares the remainder as a count rather than trimming in silence.
 /// </para>
 /// </summary>
 public static class AuditReport
@@ -80,24 +88,59 @@ public static class AuditReport
         "instance_ports_closed",
     };
 
-    /// <summary>Friendly (singular, plural) labels for the raw kgsm event-type vocabulary the
-    /// deterministic summary counts by type. An event type not in this map (a future/unknown kgsm
-    /// event) falls back to its raw type string for BOTH forms — honest, never a guessed grammar.</summary>
-    private static readonly IReadOnlyDictionary<string, (string One, string Many)> TypeLabels =
-        new Dictionary<string, (string, string)>(StringComparer.Ordinal)
+    /// <summary>Friendly labels for the raw kgsm event-type vocabulary, so a listed event reads as
+    /// something that happened rather than as an identifier. An event type not in this map (a
+    /// future/unknown kgsm event) falls back to its raw type string — honest, never a guessed
+    /// wording.</summary>
+    private static readonly IReadOnlyDictionary<string, string> TypeLabels =
+        new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["instance_started"] = ("start", "starts"),
-            ["instance_stopped"] = ("stop", "stops"),
-            ["instance_crashed"] = ("crash", "crashes"),
-            ["instance_updated"] = ("update", "updates"),
-            ["instance_installed"] = ("install", "installs"),
-            ["instance_uninstalled"] = ("uninstall", "uninstalls"),
-            ["instance_version_updated"] = ("version update", "version updates"),
-            ["instance_backup_created"] = ("backup", "backups"),
-            ["instance_ports_opened"] = ("port-open event", "port-open events"),
-            ["instance_ports_closed"] = ("port-close event", "port-close events"),
-            ["instance_player_joined"] = ("player join", "player joins"),
-            ["instance_player_left"] = ("player leave", "player leaves"),
+            ["instance_started"] = "started",
+            ["instance_stopped"] = "stopped",
+            ["instance_restarted"] = "restarted",
+            ["instance_crashed"] = "crashed",
+            ["instance_ready"] = "became ready",
+            ["instance_created"] = "created",
+            ["instance_removed"] = "removed",
+            ["instance_updated"] = "updated",
+            ["instance_installed"] = "installed",
+            ["instance_uninstalled"] = "uninstalled",
+            ["instance_deployed"] = "deployed",
+            ["instance_downloaded"] = "downloaded",
+            ["instance_version_updated"] = "version updated",
+            ["instance_backup_created"] = "backed up",
+            ["instance_backup_restored"] = "backup restored",
+            ["instance_config_changed"] = "config changed",
+            ["instance_input_sent"] = "console input sent",
+            ["instance_ports_opened"] = "ports opened",
+            ["instance_ports_closed"] = "ports closed",
+            ["instance_upnp_opened"] = "UPnP forward opened",
+            ["instance_upnp_closed"] = "UPnP forward closed",
+            ["instance_player_joined"] = "player joined",
+            ["instance_player_left"] = "player left",
+            ["instance_player_kicked"] = "player kicked",
+            ["instance_player_banned"] = "player banned",
+            ["instance_player_unbanned"] = "player unbanned",
+            ["instance_stop_started"] = "stop began",
+            ["instance_stop_finished"] = "stop finished",
+            ["instance_installation_started"] = "install began",
+            ["instance_installation_finished"] = "install finished",
+            ["instance_uninstall_started"] = "uninstall began",
+            ["instance_uninstall_finished"] = "uninstall finished",
+            ["instance_update_started"] = "update began",
+            ["instance_update_finished"] = "update finished",
+            ["instance_download_started"] = "download began",
+            ["instance_download_finished"] = "download finished",
+            ["instance_deploy_started"] = "deploy began",
+            ["instance_deploy_finished"] = "deploy finished",
+            ["instance_directories_created"] = "directories created",
+            ["instance_directories_removed"] = "directories removed",
+            ["instance_files_created"] = "files created",
+            ["instance_files_removed"] = "files removed",
+            // A blueprint event names its subject as "blueprint <name>", so the label stays bare.
+            ["blueprint_created"] = "created",
+            ["blueprint_updated"] = "updated",
+            ["blueprint_removed"] = "removed",
         };
 
     /// <summary>
@@ -106,11 +149,12 @@ public static class AuditReport
     public static ToolResult<AuditData> Build(EventHistoryReading reading, string? instance, string window)
     {
         var subject = instance ?? "primary";
-        var data = new AuditData(instance, window, reading.State, reading.Events);
+        var events = NewestFirst(reading.Events);
+        var data = new AuditData(instance, window, reading.State, events);
 
         var (confidence, summary) = reading.State switch
         {
-            AuditReadState.Available => (Confidence.Confirmed, BuildSummary(instance, window, reading.Events,
+            AuditReadState.Available => (Confidence.Confirmed, BuildSummary(instance, window, events,
                 emptyWording: $"No events recorded for {(instance ?? "any server")} in the last {window}.")),
             _ => (Confidence.Possible,
                 $"Event history for {(instance ?? "this host")} is unavailable right now — the engine's " +
@@ -133,7 +177,7 @@ public static class AuditReport
     {
         var subject = instance ?? "primary";
         var changes = reading.State == AuditReadState.Available
-            ? reading.Events.Where(e => ChangeEventTypes.Contains(e.Type)).ToArray()
+            ? NewestFirst(reading.Events.Where(e => ChangeEventTypes.Contains(e.Type)).ToArray())
             : Array.Empty<AuditEventRow>();
         var data = new AuditData(instance, range, reading.State, changes);
 
@@ -158,17 +202,36 @@ public static class AuditReport
     }
 
     /// <summary>
-    /// Authors the grounding sentence: a count-by-type breakdown, then a count-by-actor breakdown,
-    /// then an honest note when some rows carry no actor. Both breakdowns are most-frequent-first
-    /// with ties broken alphabetically, so the wording is deterministic for a given window. Each is
-    /// capped so a diverse window doesn't produce a wall of text — the full list is always in the
-    /// card's <see cref="AuditData.Events"/>, never lost.
+    /// Orders a read newest-first, breaking a same-timestamp tie by id descending. The port already
+    /// returns rows in this order; ordering here is what makes the card and the listing say the same
+    /// thing in the same sequence, so the model's "the most recent event was X" and the card's top
+    /// row cannot disagree.
+    /// </summary>
+    private static IReadOnlyList<AuditEventRow> NewestFirst(IReadOnlyList<AuditEventRow> events) =>
+        events
+            .OrderByDescending(e => e.Ts)
+            .ThenByDescending(e => e.Id, StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>
+    /// The most events listed to the model in one read. The window can legitimately hold more (the
+    /// port fetches up to a few hundred), and a list that long crowds out the conversation it is
+    /// meant to inform, so the newest <see cref="MaxListedEvents"/> are listed and the remainder is
+    /// declared as a count rather than dropped silently. The card's
+    /// <see cref="AuditData.Events"/> always carries every row.
+    /// </summary>
+    private const int MaxListedEvents = 100;
+
+    /// <summary>
+    /// Authors the grounding text: a one-line frame (how many, which server, which window), then one
+    /// line per event, newest first. Each line carries when it happened, which server it happened
+    /// to, what happened, and who did it — the four things "what happened here?" is really asking,
+    /// which no aggregate of them can answer.
     /// </summary>
     /// <remarks>
-    /// The actor breakdown is what lets the model answer "who did it". The events carry the actor,
-    /// but a summary that mentioned it only when it was <em>missing</em> left the model with nothing
-    /// to say for the rows that had one — so it answered that the log does not record who, about a
-    /// log that did.
+    /// The model sees only this text — <see cref="AuditData"/> is surface-only — so an aggregate
+    /// here means the model cannot say a single concrete thing about a single event no matter what
+    /// it is asked. Counts are recoverable from a list; a list is not recoverable from counts.
     /// </remarks>
     private static string BuildSummary(
         string? instance, string window, IReadOnlyList<AuditEventRow> events,
@@ -177,45 +240,44 @@ public static class AuditReport
         if (events.Count == 0)
             return emptyWording;
 
-        var groups = events
-            .GroupBy(e => e.Type, StringComparer.Ordinal)
-            .Select(g => (Type: g.Key, Count: g.Count()))
-            .OrderByDescending(g => g.Count)
-            .ThenBy(g => g.Type, StringComparer.Ordinal)
-            .ToList();
-
-        const int maxGroups = 8;
-        var shown = groups.Take(maxGroups)
-            .Select(g => $"{g.Count} {Label(g.Type, g.Count)}");
-        var omitted = groups.Count - Math.Min(groups.Count, maxGroups);
-
         var subject = instance ?? "all servers";
         var noun = changeFraming ? "change" : "event";
-        var sentence = $"{events.Count} {noun}{(events.Count == 1 ? "" : "s")} for {subject} in the last " +
-            $"{window}: {string.Join(", ", shown)}" + (omitted > 0 ? $", +{omitted} other kind(s)" : "") + ".";
+        var header = $"{events.Count} {noun}{(events.Count == 1 ? "" : "s")} for {subject} in the last " +
+            $"{window}, newest first, times host-local:";
 
-        var actors = events
-            .Where(e => e.Actor is not null)
-            .GroupBy(e => e.Actor!, StringComparer.Ordinal)
-            .Select(g => (Actor: DescribeActor(g.Key), Count: g.Count()))
-            .OrderByDescending(g => g.Count)
-            .ThenBy(g => g.Actor, StringComparer.Ordinal)
-            .ToList();
+        var listed = string.Join("\n", events.Take(MaxListedEvents).Select(Describe));
 
-        if (actors.Count > 0)
-        {
-            const int maxActors = 6;
-            var shownActors = actors.Take(maxActors).Select(a => $"{a.Actor} ({a.Count})");
-            var omittedActors = actors.Count - Math.Min(actors.Count, maxActors);
-            sentence += $" By: {string.Join(", ", shownActors)}"
-                + (omittedActors > 0 ? $", +{omittedActors} other{(omittedActors == 1 ? "" : "s")}" : "") + ".";
-        }
+        var omitted = events.Count - Math.Min(events.Count, MaxListedEvents);
+        var tail = omitted > 0
+            ? $"\n(+{omitted} older {noun}{(omitted == 1 ? "" : "s")} in this window, not listed here.)"
+            : "";
 
-        var unknownActor = events.Count(e => e.Actor is null);
-        if (unknownActor > 0)
-            sentence += $" Actor is unknown for {unknownActor} of these.";
+        return header + "\n" + listed + tail;
+    }
 
-        return sentence;
+    /// <summary>
+    /// Renders one event as a line the model can quote or rephrase without joining anything back
+    /// together: every line is self-contained, so an event cannot be read against the wrong server
+    /// or the wrong actor.
+    /// <para>
+    /// The timestamp is the host's local time with its UTC offset spelled out on every line, rather
+    /// than a zone named once up top: an offset stated per line stays true across a window that
+    /// crosses a DST boundary, and an operator reading it against their own wall clock never has to
+    /// guess which frame it is in.
+    /// </para>
+    /// </summary>
+    private static string Describe(AuditEventRow e)
+    {
+        var when = e.Ts.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture);
+        var subject = e.Instance is { Length: > 0 } name ? name
+            : e.Blueprint is { Length: > 0 } blueprint ? $"blueprint {blueprint}"
+            : "host-level";
+        var what = $"{subject} {Label(e.Type)}";
+        var who = e.Actor is { Length: > 0 } actor
+            ? $"by {DescribeActor(actor)}"
+            : "actor not recorded";
+
+        return $"{when} — {what}, {who}";
     }
 
     /// <summary>
@@ -238,6 +300,6 @@ public static class AuditReport
             : name;
     }
 
-    private static string Label(string type, int count) =>
-        TypeLabels.TryGetValue(type, out var label) ? (count == 1 ? label.One : label.Many) : type;
+    private static string Label(string type) =>
+        TypeLabels.TryGetValue(type, out var label) ? label : type;
 }

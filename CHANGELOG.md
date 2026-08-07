@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — deploying the leaf no longer deletes its web client
+
+`deploy.sh` synced the publish tree over `$PREFIX/service/` with `--delete`, and the assistant's
+`wwwroot/` is published into that same directory by kgsm-web's `deploy-assistant.sh` — not by this
+repo. Every deploy therefore removed the standalone assistant page, and
+`https://assistant.<host>/` served a 404 until the SPA was republished.
+
+The sync now excludes `/wwwroot/`, which is the ownership boundary: this repo publishes the service
+tree, kgsm-web publishes the page. `setup.sh` already created the directory for exactly this reason.
+
+Republishing alone does not bring the page back if the service started while the directory was
+absent — ASP.NET resolves the web root once at startup, so a directory that appears later stays
+invisible until a restart.
+
 ### Changed — the audit tools hand the model the events, not a description of them
 
 `get_audit_log` and `get_change_timeline` grounded the model with an aggregate — counts by event

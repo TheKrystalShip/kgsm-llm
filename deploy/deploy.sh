@@ -89,7 +89,11 @@ STOPPED=1
 [[ "$WITH_INDEXER" -eq 1 ]] && { sysctl_do stop "$INDEXER" || true; }
 
 log "syncing publish trees → ${PREFIX}"
-rsync -a --delete --exclude='*.pdb' --exclude='*.xml' "$PUB/service/" "$PREFIX/service/"
+# wwwroot belongs to whoever publishes the web client (kgsm-web's deploy-assistant.sh), not to this
+# repo's publish tree, so --delete must not reach into it: a sibling's artifact living under our
+# prefix is still a sibling's artifact. setup.sh creates the directory for the same reason.
+rsync -a --delete --exclude='*.pdb' --exclude='*.xml' --exclude='/wwwroot/' \
+    "$PUB/service/" "$PREFIX/service/"
 rsync -a --delete --exclude='*.pdb' --exclude='*.xml' "$PUB/cli/"     "$PREFIX/cli/"
 [[ "$WITH_INDEXER" -eq 1 ]] && rsync -a --delete "$PUB/indexer/" "$PREFIX/indexer/"
 

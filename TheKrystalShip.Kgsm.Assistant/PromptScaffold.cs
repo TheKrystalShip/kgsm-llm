@@ -25,13 +25,14 @@ public static class PromptScaffold
     /// into <paramref name="directory"/>, skipping any that already exist. Returns which were written
     /// vs already present.
     /// </summary>
-    /// <param name="leaf">
-    /// Seed a calling leaf's own overrides at <c>&lt;directory&gt;/&lt;leaf&gt;/</c> instead of the
+    /// <remarks>
+    /// <paramref name="leaf"/> seeds a calling leaf's own overrides at
+    /// <c>&lt;directory&gt;/&lt;leaf&gt;/</c> instead of the
     /// assistant's own at the root. Seeded from the same in-code defaults, so an operator starts from
     /// working text and edits only the lines that differ for that surface — an unedited copy behaves
     /// identically to having no override at all. An unusable leaf name is refused rather than written
     /// somewhere unexpected.
-    /// </param>
+    /// </remarks>
     public static DumpResult WriteDefaults(string directory, string? leaf = null)
     {
         if (leaf is not null)

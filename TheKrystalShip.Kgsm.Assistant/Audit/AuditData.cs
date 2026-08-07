@@ -28,10 +28,10 @@ public enum AuditReadState
 /// placeholder like "system". <see cref="Type"/> is the raw kgsm event name (e.g.
 /// <c>instance_started</c>) — no domain shaping; that stays a read-time concern of the composer that
 /// builds the model-grounding summary.
+/// <see cref="Blueprint"/> names what a blueprint event acts on (<c>blueprint_created</c> and its
+/// siblings) — the only name such an event has, since it carries no <see cref="Instance"/>;
+/// <see langword="null"/> everywhere else.
 /// </summary>
-/// <param name="Blueprint">The blueprint the event is about, for an event that acts on a blueprint
-/// rather than on a server (<c>blueprint_created</c> and its siblings) — the only name such an event
-/// has, since it carries no <see cref="Instance"/>. <see langword="null"/> everywhere else.</param>
 public sealed record AuditEventRow(
     string Id,
     DateTimeOffset Ts,

@@ -16,12 +16,13 @@ public interface IPromptOverrides
     /// directory, trimmed; <c>null</c> if there is no directory, the file is absent/blank, or it
     /// can't be read (so the caller falls back to config/constant).
     /// </summary>
-    /// <param name="leaf">
-    /// The leaf this turn is being run for (<c>kgsm-bot</c>, <c>kgsm-api</c>). Its own file in
-    /// <c>&lt;directory&gt;/&lt;leaf&gt;/</c> wins when present; otherwise the host-wide file at the
-    /// root answers, which is the assistant's own text. <see langword="null"/> — the CLI, the
-    /// assistant's own web client, any caller that names no leaf — reads the root directly.
-    /// </param>
+    /// <remarks>
+    /// <paramref name="leaf"/> is the leaf this turn is being run for (<c>kgsm-bot</c>,
+    /// <c>kgsm-api</c>). Its own file in <c>&lt;directory&gt;/&lt;leaf&gt;/</c> wins when present;
+    /// otherwise the host-wide file at the root answers, which is the assistant's own text.
+    /// <see langword="null"/> — the CLI, the assistant's own web client, any caller that names no
+    /// leaf — reads the root directly.
+    /// </remarks>
     string? ReadText(string fileName, string? leaf = null);
 
     /// <summary>

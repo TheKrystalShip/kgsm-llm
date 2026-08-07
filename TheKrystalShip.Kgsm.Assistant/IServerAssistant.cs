@@ -149,6 +149,15 @@ public interface IServerAssistant
     /// it (only the host knows who the id belongs to); null simply records none. Last param to keep
     /// existing positional callers unshifted.
     /// </param>
+    /// <param name="openDraftYaml">
+    /// The current content of a blueprint draft the user is reviewing in the editor, when this turn
+    /// carries one. Present ⇒ <c>revise_blueprint</c> is offered and the draft is injected into this
+    /// turn's context so the model can change it.
+    /// </param>
+    /// <param name="leaf">
+    /// The leaf this turn is being run for (<c>kgsm-bot</c>, <c>kgsm-api</c>), selecting that leaf's
+    /// prompt and tool-description overrides; null reads the assistant's own text.
+    /// </param>
     Task<AssistantResult> RunAsync(
         string conversationId,
         string userPrompt,

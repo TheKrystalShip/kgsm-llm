@@ -162,6 +162,13 @@ public interface IConfirmationContext
     void Stage(PendingConfirmation confirmation);
 
     /// <summary>
+    /// Records that this turn RAN something rather than staging it — the auto-accept path, the only
+    /// one that acts without leaving a staged confirmation behind. Read back off the scope so a turn
+    /// that acted is never mistaken for one that did nothing.
+    /// </summary>
+    void NoteActionPerformed();
+
+    /// <summary>
     /// The confirmations staged in the CURRENT ambient turn (empty outside one). Valid for a
     /// synchronous drain right after the turn; for a streaming turn read the scope's
     /// <see cref="IConfirmationScope.Staged"/> instead (this one is lost across yields).
@@ -181,39 +188,65 @@ public interface IConfirmationScope : IDisposable
 {
     /// <summary>A snapshot of the ops staged during this turn, read from the live backing list.</summary>
     IReadOnlyList<PendingConfirmation> Staged { get; }
+
+    /// <summary>
+    /// Whether this turn ran an action outright (the auto-accept path). Read from the live backing
+    /// state for the same reason <see cref="Staged"/> is — it stays correct across a streaming
+    /// turn's yields.
+    /// </summary>
+    bool ActionPerformed { get; }
 }
 
 /// <inheritdoc />
 public sealed class ConfirmationContext : IConfirmationContext
 {
-    private static readonly AsyncLocal<List<PendingConfirmation>?> Current = new();
+    private static readonly AsyncLocal<TurnState?> Current = new();
     private static readonly AsyncLocal<bool> CurrentAutoExecute = new();
 
     public IConfirmationScope BeginTurn(bool autoExecute = false)
     {
-        var list = new List<PendingConfirmation>();
-        Current.Value = list;
+        var state = new TurnState();
+        Current.Value = state;
         CurrentAutoExecute.Value = autoExecute;
-        return new Scope(list);
+        return new Scope(state);
     }
 
-    public void Stage(PendingConfirmation confirmation) => Current.Value?.Add(confirmation);
+    public void Stage(PendingConfirmation confirmation) => Current.Value?.Staged.Add(confirmation);
+
+    public void NoteActionPerformed()
+    {
+        if (Current.Value is { } state)
+            state.ActionPerformed = true;
+    }
 
     public IReadOnlyList<PendingConfirmation> Staged =>
-        Current.Value is { } list ? list.ToArray() : Array.Empty<PendingConfirmation>();
+        Current.Value is { } state ? state.Staged.ToArray() : Array.Empty<PendingConfirmation>();
 
     public bool AutoExecute => CurrentAutoExecute.Value;
 
+    /// <summary>
+    /// What the dispatcher records about the turn in progress. Held BY REFERENCE by the scope, so
+    /// both fields survive the async-iterator yields that drop the ambient AsyncLocal value.
+    /// </summary>
+    private sealed class TurnState
+    {
+        public List<PendingConfirmation> Staged { get; } = [];
+
+        public bool ActionPerformed { get; set; }
+    }
+
     private sealed class Scope : IConfirmationScope
     {
-        // Holds the SAME list instance the dispatcher stages into (via the AsyncLocal it was set
+        // Holds the SAME state instance the dispatcher writes into (via the AsyncLocal it was set
         // as). Reading it here is by reference, so it survives async-iterator yields that drop the
         // ambient AsyncLocal value. ToArray gives the caller an immutable snapshot.
-        private readonly List<PendingConfirmation> _staged;
+        private readonly TurnState _state;
 
-        public Scope(List<PendingConfirmation> staged) => _staged = staged;
+        public Scope(TurnState state) => _state = state;
 
-        public IReadOnlyList<PendingConfirmation> Staged => _staged.ToArray();
+        public IReadOnlyList<PendingConfirmation> Staged => _state.Staged.ToArray();
+
+        public bool ActionPerformed => _state.ActionPerformed;
 
         public void Dispose()
         {

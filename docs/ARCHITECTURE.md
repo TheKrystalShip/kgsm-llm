@@ -90,6 +90,17 @@ bounded by `Assistant:Confirmation:TtlSeconds`, and redeemable only by the user 
 Being durable, a staged action survives a Service restart. The CLI needs none of this: it holds the
 `PendingConfirmation` in memory for the length of one prompt.
 
+**The reply is held against the turn.** Staging is what makes an action real, and the model's account
+of its own turn is not always right — it sometimes answers a mutating request conversationally and
+reports the action as staged anyway. Such a claim can move nothing, but it misinforms: the user waits
+on a confirmation prompt that was never posted. So on a turn that staged nothing and ran nothing, a
+first-person claim of a staged or completed action is false by construction, and `ServerAssistant`
+appends a correction (`UnbackedActionClaim`) rather than shipping it. The check runs only on that
+turn shape, so it can never contradict a real action; the auto-accept path, which runs a command
+without staging one, records that it acted. Offers and reports of world state are honest and pass
+through untouched. On the streaming path the correction is emitted as a token too, since the claim
+has already reached the screen.
+
 ### The `search` tool (RAG + web)
 
 There is a single model-facing `search` tool backed by a deterministic **aggregator** (no nested

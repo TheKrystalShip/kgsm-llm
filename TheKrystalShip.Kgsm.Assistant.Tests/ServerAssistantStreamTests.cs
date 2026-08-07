@@ -333,6 +333,50 @@ public class ServerAssistantStreamTests
     /// stages the given destructive ops into the ambient confirmation sink — exactly as the real
     /// dispatcher does inside the agent loop (so <see cref="ServerAssistant"/> drains them after).
     /// </summary>
+    /// <summary>
+    /// A streamed reply is already on the client's screen token by token, so a correction that only
+    /// reached the Final frame would never be seen by a client that renders the live stream. It is
+    /// streamed as a token too, and lands in the final text.
+    /// </summary>
+    [Fact]
+    public async Task AClaimedActionOnADoNothingTurn_IsCorrectedInTheStreamAndTheFinalText()
+    {
+        var confirmations = new ConfirmationContext();
+        var agent = new ScriptedAgent(confirmations, new[]
+        {
+            AgentEvent.Token("I've staged a backup for Ketchup."),
+            AgentEvent.Final("I've staged a backup for Ketchup."),
+        });
+
+        var events = await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "back up ketchup", true));
+
+        // No confirmation was produced, so the claim is false and gets corrected.
+        events.Should().NotContain(e => e.Kind == AssistantEventKind.Confirmation);
+        events.Last().Kind.Should().Be(AssistantEventKind.Final);
+        events.Last().Text.Should().Contain("Correction");
+
+        var streamed = string.Concat(
+            events.Where(e => e.Kind == AssistantEventKind.Token).Select(e => e.Text));
+        streamed.Should().Contain("Correction");
+    }
+
+    [Fact]
+    public async Task AClaimedActionIsLeftAloneInTheStream_WhenTheTurnActuallyStagedIt()
+    {
+        var confirmations = new ConfirmationContext();
+        var agent = new ScriptedAgent(confirmations, new[]
+            {
+                AgentEvent.Token("I've staged a backup for Ketchup."),
+                AgentEvent.Final("I've staged a backup for Ketchup."),
+            },
+            stage: new[] { new PendingConfirmation(ConfirmationKind.Backup, "Ketchup") });
+
+        var events = await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "back up ketchup", true));
+
+        events.Should().Contain(e => e.Kind == AssistantEventKind.Confirmation);
+        events.Last().Text.Should().NotContain("Correction");
+    }
+
     private sealed class ScriptedAgent : ILlmAgent
     {
         private readonly IConfirmationContext _confirmations;

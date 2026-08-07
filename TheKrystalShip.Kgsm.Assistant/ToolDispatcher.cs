@@ -626,6 +626,10 @@ public class ToolDispatcher : IToolDispatcher
 
         _logger.LogInformation("Auto-executing {Verb} of {Instance}", ConfirmationKinds.Verb(kind), instance);
 
+        // This turn acts without staging anything, so record that it acted: it is the one path on
+        // which a reply reporting the command as done is telling the truth.
+        _confirmations.NoteActionPerformed();
+
         var outcome = await CommandSettlement.RunAndSettleAsync(
             _operations, kind, instance, op, _settlement, cancellationToken: cancellationToken);
 

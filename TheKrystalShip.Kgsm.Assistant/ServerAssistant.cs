@@ -241,7 +241,10 @@ public class ServerAssistant : IServerAssistant
         var confirmations = scope.Staged;
 
         return result.IsSuccess
-            ? AssistantResult.Ok(result.Value!.Text, confirmations, result.Value!.Usage)
+            ? AssistantResult.Ok(
+                CorrectUnbackedClaim(result.Value!.Text, scope, conversationId),
+                confirmations,
+                result.Value!.Usage)
             : AssistantResult.Fail(result.Error!);
     }
 
@@ -391,6 +394,17 @@ public class ServerAssistant : IServerAssistant
                 foreach (var confirmation in scope.Staged)
                     await writer.WriteAsync(AssistantStreamEvent.Confirmation(confirmation), cancellationToken);
 
+                var corrected = CorrectUnbackedClaim(finalText, scope, turn.ConversationId);
+                if (!ReferenceEquals(corrected, finalText))
+                {
+                    // The false sentence has already been streamed to the client token by token, so
+                    // the correction is streamed too — a client that renders the live tokens and
+                    // never re-reads the final text still sees it.
+                    await writer.WriteAsync(
+                        AssistantStreamEvent.Token(UnbackedActionClaim.Correction), cancellationToken);
+                    finalText = corrected;
+                }
+
                 await writer.WriteAsync(
                     AssistantStreamEvent.Final(finalText, finalUsage, finalTurnId), cancellationToken);
             }
@@ -399,6 +413,33 @@ public class ServerAssistant : IServerAssistant
         {
             writer.Complete();
         }
+    }
+
+    /// <summary>
+    /// Holds the model's narration of the turn against what the turn actually did, and appends a
+    /// correction when it claims an action that never happened.
+    /// <para>
+    /// The propose-only design means such a claim can never move a server — nothing was staged, so
+    /// there is nothing to confirm. What it does is misinform: the user is told to expect a
+    /// confirmation prompt that was never posted, or that a server was stopped when it is running.
+    /// That is a fabricated status, and the rule against those does not stop at metrics. The check
+    /// is deliberately one-sided — it runs ONLY on a turn that staged nothing and ran nothing, where
+    /// any such claim is false by construction, so it can never contradict a real action.
+    /// </para>
+    /// </summary>
+    private string CorrectUnbackedClaim(string text, IConfirmationScope scope, string conversationId)
+    {
+        if (scope.Staged.Count > 0 || scope.ActionPerformed)
+            return text;
+
+        if (!UnbackedActionClaim.IsPresentIn(text))
+            return text;
+
+        _logger.LogWarning(
+            "Reply claimed an action on a turn that staged and ran nothing; correction appended. "
+            + "Conversation {ConversationId}", conversationId);
+
+        return text + UnbackedActionClaim.Correction;
     }
 
     public async Task<ConfirmOutcome> ConfirmAsync(

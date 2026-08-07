@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a reply claiming an action the turn never took is corrected
+
+The model narrates its own turn, and it is sometimes wrong about it: asked to back up a server it
+would occasionally answer conversationally — no tool call at all, or only a read — and then report
+the backup as staged. Measured across 213 recorded turns, five replies claimed an action the turn
+never took: three claimed a staging, one claimed the command itself was carried out ("I've halted
+that process for you"), and two claimed a blueprint draft edit that never happened — that last pair
+caught in the record by the user's next message, *"Show me the updated draft, I don't see it in
+chat"*.
+
+Propose-only means such a claim could never move a server, because nothing was staged and there was
+nothing to confirm. What it does is misinform: the user waits for a confirmation prompt nobody
+posted, or believes a server was stopped while it is running. That is a fabricated status, and the
+rule against those does not stop at metrics.
+
+The turn's reply is now held against what the turn actually did. On a turn that staged nothing and
+ran nothing, any first-person claim of a staged or completed action is false by construction, and a
+correction is appended saying so. The check is one-sided by design — it never runs on a turn that
+staged or executed anything, so it cannot contradict a real action, and the auto-accept path (which
+runs a command and stages nothing) records that it acted. An offer is left alone: "I can stop it"
+promises nothing, and promising is honest. So is a report of the world — "it was restarted an hour
+ago", read from the audit log, is true and stays.
+
+A streamed reply is already on screen by the time the turn ends, so the correction is streamed as a
+token as well as carried in the final text; a client that renders live tokens and never re-reads the
+final still shows it. Each correction logs a warning naming the conversation, so the rate is
+measurable rather than anecdotal.
+
 ### Changed — a staged action is held server-side, and a client holds only a handle
 
 A proposed action lives in `pending_confirmations` (the conversation store's SQLite file) and a

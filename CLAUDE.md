@@ -132,6 +132,13 @@ Things that bite if you don't know them:
 - **Never fabricate a status or metric.** Measured, or explicitly "unknown" — never invented. The
   ecosystem-wide rule; it's also why the eval scores *trajectory* (which tool was called), never a
   world fact (`TheKrystalShip.Kgsm.Assistant.Eval/CLAUDE.md` invariant #1).
+- **The rule covers the model's account of its own turn.** A reply is held against what the turn did:
+  on a turn that staged nothing and ran nothing, a first-person claim of a staged or completed action
+  is false by construction, and `ServerAssistant` appends a correction (`UnbackedActionClaim`). The
+  check is one-sided — it never runs on a turn that staged or executed something, so it cannot
+  contradict a real action; the auto-accept path records that it acted via
+  `IConfirmationContext.NoteActionPerformed`. Offers ("I can stop it") and reports of the world ("it
+  was restarted an hour ago") are honest and untouched.
 - **This leaf depends only on kgsm-lib + a local Ollama** and runs fully standalone — no other
   ecosystem service. Don't add a dependency on the API or a sibling leaf.
 - **Authority is the ecosystem's ordered tier, not this service's own booleans.** The role→tier map

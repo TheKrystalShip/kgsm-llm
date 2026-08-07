@@ -420,4 +420,75 @@ public class ServerAssistantTests
         result.IsSuccess.Should().BeTrue();
         _progress.DidNotReceiveWithAnyArgs().BeginTurn(default!);
     }
+
+    // --- the reply is held against what the turn actually did --------------------------------------
+
+    /// <summary>Runs a turn whose model reply is <paramref name="reply"/>, letting
+    /// <paramref name="duringTurn"/> record whatever the dispatcher would have recorded.</summary>
+    private async Task<string> ReplyAfterTurnAsync(
+        string reply, Action? duringTurn = null, bool autoExecute = false)
+    {
+        _agent.RunAsync(Arg.Any<AgentTurn>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                duringTurn?.Invoke();   // inside the live confirmation scope, exactly as the dispatcher is
+                return Result.Success(new AgentRunResult(reply, null));
+            });
+
+        var result = await Create().RunAsync(
+            Conversation, "back up ketchup", canPerformActions: true, autoExecute: autoExecute);
+
+        result.IsSuccess.Should().BeTrue();
+        return result.Text!;
+    }
+
+    /// <summary>
+    /// The model occasionally answers a mutating request conversationally — no tool call — and then
+    /// reports the action as staged. Nothing can execute (nothing was staged), but the user is told
+    /// to expect a confirmation prompt that was never posted, so the reply is corrected.
+    /// </summary>
+    [Fact]
+    public async Task AClaimedActionIsCorrected_WhenTheTurnStagedAndRanNothing()
+    {
+        var text = await ReplyAfterTurnAsync("I've staged a backup for Ketchup. Just confirm it on your end.");
+
+        text.Should().Contain("Correction");
+        text.Should().Contain("nothing was actually staged");
+        // The original is kept, not discarded — a reply may carry real content beside the false claim.
+        text.Should().StartWith("I've staged a backup for Ketchup.");
+    }
+
+    [Fact]
+    public async Task AClaimedActionIsLeftAlone_WhenTheTurnActuallyStagedIt()
+    {
+        var text = await ReplyAfterTurnAsync(
+            "I've staged a backup for Ketchup. Just confirm it on your end.",
+            duringTurn: () => _confirmations.Stage(new PendingConfirmation(ConfirmationKind.Backup, "Ketchup")));
+
+        text.Should().NotContain("Correction");
+    }
+
+    /// <summary>
+    /// The auto-accept path RUNS the command and stages nothing, so "I've backed it up" is true
+    /// there. Correcting it would be the same fabrication in the other direction.
+    /// </summary>
+    [Fact]
+    public async Task AClaimedActionIsLeftAlone_OnAnAutoAcceptTurnThatRanIt()
+    {
+        var text = await ReplyAfterTurnAsync(
+            "I've backed up Ketchup — done.",
+            duringTurn: () => _confirmations.NoteActionPerformed(),
+            autoExecute: true);
+
+        text.Should().NotContain("Correction");
+    }
+
+    [Fact]
+    public async Task AnHonestReplyIsNeverTouched()
+    {
+        var text = await ReplyAfterTurnAsync(
+            "I can't find a server called Ketchup — check the name?");
+
+        text.Should().NotContain("Correction");
+    }
 }

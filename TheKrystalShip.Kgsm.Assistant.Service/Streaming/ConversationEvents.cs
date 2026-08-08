@@ -19,6 +19,9 @@ internal static class ConversationStream
     /// <summary>A conversation was soft-deleted and should leave the list.</summary>
     public const string Deleted = "conversation.deleted";
 
+    /// <summary>The verdict standing on one turn; the payload names the turn and what it now says.</summary>
+    public const string Feedback = "conversation.feedback";
+
     /// <summary>
     /// A conversation's log grew — a turn, or a compaction checkpoint. The payload names the
     /// conversation and nothing more: what changed is the transcript, which a client re-reads rather
@@ -54,6 +57,14 @@ internal sealed record ConversationChanged(string ConversationId, string? Origin
 /// value it would read back.
 /// </summary>
 internal sealed record SwitchesChanged(string ConversationId, string? Origin, bool Think, bool Autorun);
+
+/// <summary>
+/// The verdict that now stands on one turn. <paramref name="Rating"/> is <c>null</c> when a verdict was
+/// withdrawn — the same shape the transcript reads back, so a surface applying this frame and one
+/// re-reading the history land on the same bubble.
+/// </summary>
+internal sealed record FeedbackChanged(
+    string ConversationId, string? Origin, long TurnId, string? Rating, string? Note);
 
 /// <summary>One frame to fan out: the event name and the payload it carries.</summary>
 internal sealed record ConversationEvent(string Name, object Payload);

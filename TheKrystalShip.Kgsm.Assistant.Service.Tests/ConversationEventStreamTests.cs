@@ -16,6 +16,8 @@ using NSubstitute;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
+using TheKrystalShip.Llm.Interfaces;
+using TheKrystalShip.Llm.Models;
 
 using Xunit;
 
@@ -298,5 +300,98 @@ public class ConversationEventStreamTests : IClassFixture<WebApplicationFactory<
 
         (await panel.NextChangeAsync())!.Data.GetProperty("conversationId").GetString().Should().Be("both-chat");
         (await app.NextChangeAsync())!.Data.GetProperty("conversationId").GetString().Should().Be("both-chat");
+    }
+
+    /// <summary>Put one finished turn in the log so there is something to rate, and answer with its id.</summary>
+    private static long RecordTurn(WebApplicationFactory<Program> factory, string conversationId)
+    {
+        var store = factory.Services.GetRequiredService<IConversationStore>();
+        return store.AppendTurn(new ConversationTurnRecord
+        {
+            ConversationId = conversationId,
+            StartedAt = DateTimeOffset.UtcNow,
+            CompletedAt = DateTimeOffset.UtcNow,
+            UserPrompt = "is it running?",
+            SystemPromptHash = "hash",
+            Tools = [],
+            Iterations = 1,
+            Outcome = TurnOutcome.Ok,
+            Think = false,
+            Final = "Yes.",
+        });
+    }
+
+    [Fact]
+    public async Task AVerdictLeftOnOneSurface_ReachesTheSamePersonsOther()
+    {
+        // A thumb is part of what a transcript says, so a surface showing the same answer must not go
+        // on showing the thumb that stood a moment ago.
+        var factory = Factory("rating-user");
+        var watching = await AuthedAsync(factory, "rating-user");
+        var acting = await AuthedAsync(factory, "rating-user");
+        var turnId = RecordTurn(factory, "web:rating-user:rated-chat");
+
+        await using var stream = await Stream.OpenAsync(watching);
+        await HelloAsync(stream);
+
+        (await acting.PostAsJsonAsync(
+            $"/conversations/rated-chat/turns/{turnId}/feedback",
+            new TurnFeedbackRequest("down", "it stopped the wrong server")))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var frame = await stream.NextChangeAsync();
+        frame.Should().NotBeNull();
+        frame!.Name.Should().Be("conversation.feedback");
+        frame.Data.GetProperty("conversationId").GetString().Should().Be("rated-chat");
+        frame.Data.GetProperty("turnId").GetInt64().Should().Be(turnId);
+        frame.Data.GetProperty("rating").GetString().Should().Be("down");
+        frame.Data.GetProperty("note").GetString().Should().Be("it stopped the wrong server");
+    }
+
+    [Fact]
+    public async Task AWithdrawnVerdict_IsAnnouncedAsOne()
+    {
+        // Un-rating has to travel too, or the other surface keeps a thumb the person has taken back.
+        var factory = Factory("unrating-user");
+        var client = await AuthedAsync(factory, "unrating-user");
+        var turnId = RecordTurn(factory, "web:unrating-user:unrated-chat");
+
+        await client.PostAsJsonAsync(
+            $"/conversations/unrated-chat/turns/{turnId}/feedback", new TurnFeedbackRequest("up", null));
+
+        await using var stream = await Stream.OpenAsync(client);
+        await HelloAsync(stream);
+
+        await client.PostAsJsonAsync(
+            $"/conversations/unrated-chat/turns/{turnId}/feedback", new TurnFeedbackRequest(null, null));
+
+        var frame = await stream.NextChangeAsync();
+        frame.Should().NotBeNull();
+        frame!.Name.Should().Be("conversation.feedback");
+        frame.Data.GetProperty("rating").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task AnUnknownTurn_AnnouncesNothing()
+    {
+        // The store refuses a turn that is not this conversation's, and nothing is published for a
+        // write that did not happen — a frame here would tell another surface to render a verdict on
+        // a turn that has none.
+        var factory = Factory("phantom-user");
+        var client = await AuthedAsync(factory, "phantom-user");
+
+        await using var stream = await Stream.OpenAsync(client);
+        await HelloAsync(stream);
+
+        (await client.PostAsJsonAsync(
+            "/conversations/phantom-chat/turns/99999999/feedback", new TurnFeedbackRequest("up", null)))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Something the caller DID do, so the stream is proven live rather than merely quiet.
+        await client.PostAsJsonAsync("/commands/think", new CommandRequest("phantom-chat", ChatCommands.On));
+
+        var frame = await stream.NextChangeAsync();
+        frame.Should().NotBeNull();
+        frame!.Name.Should().Be("conversation.switches");
     }
 }

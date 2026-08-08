@@ -781,7 +781,8 @@ secured.MapDelete("/conversations/{id}", (
 // The key is composed exactly as the reads above, and the store additionally verifies the turn belongs
 // to it, so neither the route nor the id can reach another user's turn.
 secured.MapPost("/conversations/{id}/turns/{turnId:long}/feedback", (
-    string id, long turnId, TurnFeedbackRequest request, HttpContext http, IConversationStore store) =>
+    string id, long turnId, TurnFeedbackRequest request, HttpContext http, IConversationStore store,
+    IConversationEventBus bus) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
@@ -804,9 +805,22 @@ secured.MapPost("/conversations/{id}/turns/{turnId:long}/feedback", (
     // answer the person said was fine, which is not a thing any reader could act on.
     var note = rating == TurnFeedbackRating.Down ? request.Note : null;
 
-    return store.SetTurnFeedback(conversationId, turnId, rating, note)
-        ? Results.NoContent()
-        : Results.NotFound(new { error = "unknown turn." });
+    if (!store.SetTurnFeedback(conversationId, turnId, rating, note))
+        return Results.NotFound(new { error = "unknown turn." });
+
+    // A verdict is part of what a transcript says, so the caller's other surfaces are told it moved
+    // rather than left showing the thumb that stood a moment ago. Sent to every one of their streams
+    // and not only the attached ones: a turn id addresses one bubble wherever it is rendered, and a
+    // surface reading a different conversation still holds this one in its list.
+    bus.Publish(principal.UserId, new ConversationEvent(
+        ConversationStream.Feedback,
+        new FeedbackChanged(
+            chatScope ?? string.Empty,
+            http.Request.Headers.TryGetValue(OriginHeaderName, out var named) && named.Count > 0 ? named[0] : null,
+            turnId,
+            rating switch { TurnFeedbackRating.Up => "up", TurnFeedbackRating.Down => "down", _ => null },
+            note)));
+    return Results.NoContent();
 });
 
 // Compact one of the caller's chats on demand: summarise its history in place to free up the context

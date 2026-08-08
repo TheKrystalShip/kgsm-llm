@@ -343,6 +343,7 @@ a caller that sends none is simply not distinguished, which costs it one redunda
 | `conversation.started` | `{ conversationId, origin }` | a conversation exists and is listable |
 | `conversation.deleted` | `{ conversationId, origin }` | a conversation was soft-deleted and should leave the list |
 | `conversation.activity` | `{ conversationId, origin }` | its log grew — a turn, or a compaction checkpoint |
+| `conversation.feedback` | `{ conversationId, origin, turnId, rating, note }` | the verdict now standing on one turn; `rating` is `null` when one was withdrawn. Sent only for a write that landed — an unknown turn 404s and announces nothing |
 | `turn.attach` | the whole state of a turn (below) | a turn started, or this stream is being redrawn |
 | `turn.queue` | `{ conversationId, runningTurnId, queued: [{turnId, prompt}] }` | what is running here and what waits behind it |
 

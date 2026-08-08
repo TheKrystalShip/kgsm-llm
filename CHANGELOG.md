@@ -98,12 +98,15 @@ before it said anything still records no reply.
 ### Added — the leaf pushes a person's conversation changes to their own surfaces
 
 `GET /events` is a per-caller SSE stream carrying that person's own conversation changes: where the
-switches now stand (`conversation.switches`, effective), a conversation started or deleted, and a log
-that grew (`conversation.activity`). It closes the case reading-back alone cannot — two surfaces open
-at once, where a switch flipped in one sat stale in the other until something happened to it.
+switches now stand (`conversation.switches`, effective), the verdict standing on a turn
+(`conversation.feedback`), a conversation started or deleted, and a log that grew
+(`conversation.activity`). It closes the case reading-back alone cannot — two surfaces open at once,
+where a switch flipped in one sat stale in the other until something happened to it.
 
-Only the switches travel by value. Everything else names a conversation and stops there, because a
-transcript has one way to be obtained and a second streaming path for it could drift from the first.
+The switches and a verdict travel by value; a verdict is announced only for a write the store
+accepted, so an unknown turn 404s and tells no surface to render a thumb on a turn that has none.
+Everything else names a conversation and stops there, because a transcript has one way to be obtained
+and a second streaming path for it could drift from the first.
 
 The stream names itself in its opening frame, and a client sends that id back as `X-Assistant-Origin`.
 The events its calls cause come back stamped with it, so a surface can tell its own echo from a change

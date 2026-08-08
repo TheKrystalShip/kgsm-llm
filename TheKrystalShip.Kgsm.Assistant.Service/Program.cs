@@ -119,6 +119,13 @@ builder.Services.AddSingleton<IPendingConfirmationStore, SqlitePendingConfirmati
 // re-reads the listing when its stream opens.
 builder.Services.AddSingleton<IConversationEventBus, ConversationEventBus>();
 
+// The running turns. A turn is a session with its own lifetime rather than work owned by the request
+// that asked for it — which is what lets a second surface watch one, lets any of them stop it, and
+// lets it survive the surface that started it going away. Also in memory: a turn that was interrupted
+// by a restart is over, and nothing here is owed durability the conversation store does not give.
+builder.Services.AddSingleton<ITurnRegistry, TurnRegistry>();
+builder.Services.AddHostedService<TurnPresenceWorker>();
+
 // --- Web auth (Discord OAuth) ------------------------------------------------
 // A sign-in yields a short-lived access bearer plus a refresh token, both signed by this service
 // and both carrying the session id the registry can revoke. The in-flight login handshake needs no
@@ -486,10 +493,11 @@ var secured = app.MapGroup("").AddEndpointFilter<BearerAuthFilter>();
 // A surface that names itself with X-Assistant-Origin gets its own changes back stamped with that id
 // and skips them, having already applied what it asked for.
 secured.MapGet("/events", async (
-    HttpContext http, IConversationEventBus bus, ISessionValidator sessions) =>
+    HttpContext http, IConversationEventBus bus, ISessionValidator sessions, ITurnRegistry turns) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    await SseConversationWriter.WriteAsync(http, bus, sessions, principal);
+    await SseConversationWriter.WriteAsync(
+        http, bus, sessions, turns, principal, $"{WebSurface}:{principal.UserId}");
     return Results.Empty;
 });
 
@@ -948,6 +956,10 @@ secured.MapPost("/auth/logout", async (HttpContext http, DiscordAuthService auth
     return Results.NoContent();
 });
 
+// Ask a turn of a conversation. The turn does NOT run inside this request: it becomes a session with
+// its own lifetime, and this request attaches to it. That is what lets a second surface watch the same
+// turn, lets any of them stop it, and lets the reply survive the phone that asked for it locking its
+// screen. A conversation runs one turn at a time; a second prompt queues behind the running one.
 secured.MapPost("/turn", async (
     TurnRequest request,
     HttpContext http,
@@ -957,6 +969,7 @@ secured.MapPost("/turn", async (
     DiscordAuthService auth,
     IInvocationContext invocation,
     IConversationStore conversations,
+    ITurnRegistry turns,
     IConversationEventBus bus,
     CancellationToken ct) =>
 {
@@ -965,20 +978,6 @@ secured.MapPost("/turn", async (
 
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
 
-    // Two separate permissions, and conflating them is how a client ends up unable to propose a start
-    // because auto-run happens to be off.
-    //
-    //  canPerform  — may this turn PROPOSE actions? An operator capability, and no toggle: the user
-    //                still confirms every proposal, so gating it on one only hides the button.
-    //  autoExecute — may the dispatcher RUN a lifecycle command with no confirmation? Admin only, AND
-    //                the caller asked for it. Gated to canPerform so the propose-gate always allows
-    //                what auto-execute then runs.
-    //
-    // Both transports resolve them the same way, from the same ladder. The relay reads the caller's
-    // verified tier off X-Relay-Tier and their auto-accept intent off X-Relay-Auto-Act (a relay host
-    // may have no Discord config of its own, so the forwarded tier is the only correct source); a
-    // direct session bearer re-derives its own tier from Discord and reads the intent off the body.
-    // A caller's capability follows their authority, never the transport that carried the turn.
     // The conversation (memory) key. ALWAYS namespaced under the server-derived user id, so one user can
     // never read or poison another's history. An optional per-CHAT sub-id partitions THIS user's own
     // memory into separate conversations — each "new chat" in the SPA becomes a fresh context window. It
@@ -993,69 +992,39 @@ secured.MapPost("/turn", async (
         ? $"{WebSurface}:{principal.UserId}"
         : $"{WebSurface}:{principal.UserId}:{chatScope}";
 
-    // The switches this conversation carries, set by /think and /autorun. Read here rather than off the
-    // request: the leaf owns them, so a client cannot ask for behaviour the conversation contradicts.
-    // An unset switch falls to the host's configured default, never to false.
-    var preferences = conversations.GetPreferences(conversationId);
-    var think = preferences.Think
-        ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
-    var wantsAutoRun = preferences.Autorun ?? false;
-
-    // Two separate permissions, and conflating them is how a client ends up unable to propose a start
-    // because auto-run happens to be off.
-    //
-    //  canPerform  — may this turn PROPOSE actions? An operator capability, and no toggle: the user
-    //                still confirms every proposal, so gating it on one only hides the button.
-    //  autoExecute — may the dispatcher RUN a lifecycle command with no confirmation? The conversation
-    //                asked for it AND the caller is admin. Gated to canPerform so the propose-gate
-    //                always allows what auto-execute then runs.
-    //
-    // Both transports resolve them the same way, from the same ladder. The relay reads the caller's
-    // verified tier off X-Relay-Tier (a relay host may have no Discord config of its own, so the
-    // forwarded tier is the only correct source); a direct session bearer re-derives its own tier from
-    // Discord. A caller's capability follows their authority, never the transport that carried the turn.
-    //
-    // X-Relay-Auto-Act is a FLOOR, not an override: it is ANDed with the stored preference, never
-    // substituted for it. kgsm-bot pins it false, so a conversation held in Discord can never auto-run
-    // whatever is stored against it.
-    bool canPerform;
-    bool autoExecute;
-    if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
-    {
-        var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
-        canPerform = relayTier >= KgsmTier.Operator && asstOpts.ActionsEnabled;
-        var relayAutoAct = http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
-            && autoObj is bool b && b;
-        autoExecute = canPerform && wantsAutoRun && relayAutoAct;
-    }
-    else
-    {
-        canPerform = await auth.CanPerformActionsAsync(principal, ct);
-        autoExecute = canPerform && wantsAutoRun && await auth.IsAdminAsync(principal, ct);
-    }
-
     // The leaf this turn arrives through, when one named itself. It picks the prompt overrides the turn
     // is built from and the origin its actions are recorded under; absent, both are the assistant's own.
     var relayLeaf = http.Items.TryGetValue(BearerAuthFilter.RelayLeafKey, out var leafObj) && leafObj is string rl
         ? rl
         : null;
 
-    // Attribute any server mutation this turn runs to the asking user, under the surface they were
-    // actually using; flows down the awaited turn → tool dispatch → kgsm chokepoint. Covers both the
-    // SSE and buffered paths below.
-    using var provenance = invocation.Begin(
-        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(relayLeaf)));
+    // How this turn's authority will be established WHEN IT RUNS, which for a queued turn is not now.
+    // The relay reads the caller's verified tier off X-Relay-Tier and their auto-accept intent off
+    // X-Relay-Auto-Act — a relay host may have no Discord config of its own, so the forwarded tier is
+    // the only correct source. A direct session bearer re-derives its own tier from Discord at
+    // execution. Either way a caller's capability follows their authority, never the transport.
+    //
+    // X-Relay-Auto-Act is a FLOOR, not an override: the session ANDs it with the conversation's stored
+    // preference, never substitutes it. kgsm-bot pins it false, so a conversation held in Discord can
+    // never auto-run whatever is stored against it.
+    var authority = http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier
+        ? new KgsmTierSource(
+            FromRelay: true,
+            RelayTier: relayTier,
+            RelayAutoAct: http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
+                && autoObj is bool b && b)
+        : new KgsmTierSource(FromRelay: false, RelayTier: KgsmTier.None, RelayAutoAct: false);
 
-    // Opt into token streaming with `Accept: text/event-stream`; everyone else gets the buffered
-    // JSON contract unchanged. (SSE here is POST, so the SPA reads it via fetch()+ReadableStream —
-    // the browser EventSource is GET-only and can't carry the bearer.)
+    // Opt into frames with `Accept: text/event-stream`; everyone else gets the buffered JSON contract
+    // unchanged. (SSE here is POST, so the SPA reads it via fetch()+ReadableStream — the browser
+    // EventSource is GET-only and can't carry the bearer.)
     var wantsStream = http.Request.Headers.Accept
         .Any(v => v is not null && v.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase));
 
     // The caller's OTHER surfaces re-read this conversation once the turn has landed: its title, its
-    // place in the list and its transcript all just moved. Published even when the stream was cut
-    // short, because a turn abandoned part-way is still a turn that may have been recorded — and the
-    // cost of saying so when nothing changed is one re-read.
+    // place in the list and its transcript all just moved. Published even when the turn was cut short,
+    // because one abandoned part-way is still a turn that may have been recorded — and the cost of
+    // saying so when nothing changed is one re-read.
     void PublishActivity() => bus.Publish(principal.UserId, new ConversationEvent(
         ConversationStream.Activity,
         new ConversationChanged(
@@ -1064,15 +1033,66 @@ secured.MapPost("/turn", async (
 
     if (wantsStream)
     {
-        await SseTurnWriter.WriteAsync(
-            http, assistant, pending, assistantOptions.Value.Confirmation.TtlSeconds,
-            principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, request.DraftYaml,
-            relayLeaf);
+        var admission = turns.Admit(
+            principal, conversationId, chatScope ?? string.Empty,
+            new TurnRun(request.Prompt, request.Tools, request.DraftYaml, relayLeaf, authority));
+
+        if (admission.Outcome == TurnAdmission.QueueFull)
+            return Results.Json(
+                new
+                {
+                    error = new
+                    {
+                        code = "queue_full",
+                        message = "Too many turns are already waiting on this conversation. "
+                                + "Wait for one to finish, or cancel one.",
+                    },
+                },
+                statusCode: StatusCodes.Status409Conflict);
+
+        // This response is the session's first consumer. Leaving detaches it and nothing more: the turn
+        // belongs to the session, and whether it keeps running is a question about whether its person is
+        // still around, not about whether this particular connection survived.
+        await SseTurnWriter.AttachAsync(http, admission.Session!, turns);
         PublishActivity();
         return Results.Empty;
     }
 
-    var result = await assistant.RunAsync(conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct, request.DraftYaml, principal.DisplayName, relayLeaf);
+    // A BUFFERED caller wants one whole answer, and runs outside the session model: not attachable, not
+    // stoppable from another surface, and not queued. That is deliberate rather than an omission —
+    // kgsm-bot is the caller, its conversations are keyed by Discord channel where a browser's are keyed
+    // by the chat id it minted, so a buffered turn and a watched one are never the same conversation and
+    // cannot race for it. Routing a live surface's turn path through the session runner to gain a queue
+    // it cannot collide over would be risk bought for nothing.
+    //
+    // Authority is resolved here for the same reason it is resolved at execution there: it is the moment
+    // this turn actually runs.
+    var preferences = conversations.GetPreferences(conversationId);
+    var think = preferences.Think
+        ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
+    var wantsAutoRun = preferences.Autorun ?? false;
+
+    bool canPerform;
+    bool autoExecute;
+    if (authority.FromRelay)
+    {
+        canPerform = authority.RelayTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled;
+        autoExecute = canPerform && wantsAutoRun && authority.RelayAutoAct;
+    }
+    else
+    {
+        canPerform = await auth.CanPerformActionsAsync(principal, ct);
+        autoExecute = canPerform && wantsAutoRun && await auth.IsAdminAsync(principal, ct);
+    }
+
+    // Attribute any server mutation this turn runs to the asking user, under the surface they were
+    // actually using; flows down the awaited turn → tool dispatch → kgsm chokepoint.
+    using var provenance = invocation.Begin(
+        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(relayLeaf)));
+
+    var result = await assistant.RunAsync(
+        conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct,
+        request.DraftYaml, principal.DisplayName, relayLeaf);
 
     if (result.IsFailure)
     {
@@ -1094,6 +1114,62 @@ secured.MapPost("/turn", async (
         .ToArray();
 
     return Results.Ok(new TurnResponse(result.Text, confirmations, UsageDto.From(result.Usage)));
+});
+
+// Stop a running turn, or cancel one that is still waiting. A call rather than a disconnect, because a
+// surface that is only watching holds no connection to abort — and every one of that person's surfaces
+// can see the turn, so every one of them can end it. Idempotent: two people pressing the same button is
+// the ordinary case, not a race to police.
+//
+// A stop ends THIS turn. What is queued behind it proceeds, exactly as interrupting a command does not
+// discard what you typed ahead; discarding one of those is its own call on its own id.
+secured.MapDelete("/turns/{turnId}", (string turnId, HttpContext http, ITurnRegistry turns) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    // A turn id is not a handle on somebody else's conversation: an id belonging to another person
+    // answers exactly as an unknown one does.
+    return turns.Cancel(turnId, principal.UserId)
+        ? Results.NoContent()
+        : Results.NotFound(new { error = "There is no such turn." });
+});
+
+// Point this caller's event stream at a conversation. Turn frames arrive at token rate and mean nothing
+// to a surface rendering a different conversation, so they go only to the streams attached to the one
+// they belong to; the state events (switches, started, deleted, activity) keep going to every stream,
+// because those are about the chat LIST rather than about one conversation.
+//
+// The stream identifies itself with the id it was given in its `hello` frame — the same header it
+// stamps its calls with. What it attached to comes back ON THE STREAM rather than in this response: a
+// surface renders from frames, and answering here as well would be a second source for the same state,
+// arriving by a different route and able to disagree with it.
+secured.MapPost("/events/attach", (
+    AttachRequest? request, HttpContext http, IConversationEventBus bus, ITurnRegistry turns) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    if (!http.Request.Headers.TryGetValue(OriginHeaderName, out var named) || named.Count == 0
+        || string.IsNullOrWhiteSpace(named[0]))
+        return Results.BadRequest(new { error = $"{OriginHeaderName} must name the stream to attach." });
+
+    var streamId = named[0]!;
+    var chatId = ConversationScope.Sanitize(request?.ConversationId);
+    if (!bus.Attach(streamId, principal.UserId, chatId))
+        return Results.NotFound(new { error = "There is no such stream." });
+
+    var conversationId = string.IsNullOrEmpty(chatId)
+        ? $"{WebSurface}:{principal.UserId}"
+        : $"{WebSurface}:{principal.UserId}:{chatId}";
+    var running = turns.Running(conversationId);
+    var queued = turns.Queued(conversationId);
+
+    // Either a turn to render, or the fact that there is none — both matter. A surface told nothing
+    // cannot tell "nothing is happening" from "the frame has not arrived yet", and would sit on a
+    // spinner for a turn that ended before it got here.
+    bus.PublishTo(streamId, principal.UserId, running is null
+        ? new ConversationEvent(
+            ConversationStream.TurnQueue, new TurnQueueEvent(chatId ?? string.Empty, null, queued))
+        : new ConversationEvent(ConversationStream.TurnAttach, running.Snapshot(queued)));
+
+    return Results.NoContent();
 });
 
 secured.MapPost("/confirm", async (

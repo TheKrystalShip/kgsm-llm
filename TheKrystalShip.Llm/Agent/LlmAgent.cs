@@ -119,6 +119,11 @@ public class LlmAgent : ILlmAgent
         // The model's reasoning across the WHOLE turn (every round), captured for the record only —
         // never replayed into the model's context.
         var thinking = new StringBuilder();
+        // Everything handed to the caller as reply text, across every round. A turn that is stopped is
+        // recorded with THIS rather than with nothing: the text was generated, it was shown, and a
+        // record that omits it makes the surfaces reading that record disagree with the one that
+        // watched it arrive.
+        var streamed = new StringBuilder();
         // A terminal record was emitted (Ok/Error/CapHit). The finally then captures only the case
         // we can't reach in-body: cancellation / an exception unwinding the iterator before a finish.
         var recorded = false;
@@ -175,6 +180,7 @@ public class LlmAgent : ILlmAgent
                     if (!string.IsNullOrEmpty(chunk.ContentDelta))
                     {
                         content.Append(chunk.ContentDelta);
+                        streamed.Append(chunk.ContentDelta);
                         yield return AgentEvent.Token(chunk.ContentDelta);
                     }
 
@@ -259,10 +265,14 @@ public class LlmAgent : ILlmAgent
             // token requested by now → Cancelled; an unexpected throw (e.g. a dispatcher that doesn't
             // swallow) records Error instead of masquerading as a user bail-out. The buffered path
             // discriminates the same way via its catch filter.
+            //
+            // The record carries whatever reply text was streamed before it ended. A surface that
+            // watched the turn and one that reads it back afterwards must describe it the same way,
+            // and a stopped turn holding nothing would make them describe two different things.
             if (!recorded)
                 PersistTurn(turn, startedAt, trajectory, iterationsRun,
                     cancellationToken.IsCancellationRequested ? TurnOutcome.Cancelled : TurnOutcome.Error,
-                    null, null, null, thinking.ToString());
+                    streamed.Length == 0 ? null : streamed.ToString(), null, null, thinking.ToString());
         }
     }
 

@@ -114,6 +114,13 @@ public sealed record CommandResultDto(
 public sealed record CommandRequest(string? ConversationId = null, string? Argument = null);
 
 /// <summary>
+/// The body of <c>POST /events/attach</c>: which conversation this caller's event stream is looking at.
+/// Null or blank detaches it, which is the honest state for a surface showing no conversation.
+/// </summary>
+public sealed record AttachRequest(string? ConversationId = null);
+
+
+/// <summary>
 /// Token accounting for a turn, in tokens (never a percentage): the prompt the model evaluated,
 /// what it generated, the sum (<see cref="UsedTokens"/>), the configured <see cref="ContextWindow"/>
 /// (num_ctx), and what's left. Lets the SPA render "used / available". Null when the backend

@@ -265,6 +265,12 @@ A kind that reports no steps still gets heartbeats and a terminal frame.
 Token, authority and the staged payload are all resolved **before** the stream opens, so a stale
 token is a plain JSON 4xx and never a 200 whose only failure signal is buried in a frame.
 
+**A streamed turn is a shared session, not this request's work.** The response is its first consumer;
+other surfaces attach over `GET /events` (§5) and receive the very same frames. The caller going away
+does not end it, and `DELETE /turns/{turnId}` from any of that person's surfaces does. A **buffered**
+caller — no `Accept: text/event-stream` — runs outside that model: one whole answer, not attachable,
+not stoppable from elsewhere, not queued.
+
 ---
 
 ## 4 · The command surface — `GET /commands`, `POST /commands/{name}`
@@ -337,6 +343,56 @@ a caller that sends none is simply not distinguished, which costs it one redunda
 | `conversation.started` | `{ conversationId, origin }` | a conversation exists and is listable |
 | `conversation.deleted` | `{ conversationId, origin }` | a conversation was soft-deleted and should leave the list |
 | `conversation.activity` | `{ conversationId, origin }` | its log grew — a turn, or a compaction checkpoint |
+| `turn.attach` | the whole state of a turn (below) | a turn started, or this stream is being redrawn |
+| `turn.queue` | `{ conversationId, runningTurnId, queued: [{turnId, prompt}] }` | what is running here and what waits behind it |
+
+### Turns are shared, and a stream attaches to one conversation
+
+A turn runs at the leaf with its own lifetime, and every one of that person's surfaces can attach to
+it — so the same turn is watched from more than one place, and any of them can end it.
+
+**Turn frames go only to the streams attached to that conversation.** A stream says which one with:
+
+```
+POST /events/attach   { conversationId }      → 204
+```
+
+using its `X-Assistant-Origin` id to name itself. The state frames above keep going to **every**
+stream, because they are about the chat list rather than about one conversation. Attaching answers
+**on the stream** — `turn.attach` if something is running there, `turn.queue` naming no running turn
+if not — never in the response body, so a surface renders from one source.
+
+`turn.attach` carries everything that happened before this consumer arrived, and is also what a
+consumer that fell behind is redrawn with rather than being fed deltas with a hole in them:
+
+```json
+{ "turnId": "t_…", "conversationId": "…", "prompt": "…", "state": "running",
+  "text": "the reply so far", "thinking": null,
+  "tools": [{ "id": "…", "name": "get_status", "state": "done", "summary": "…", "card": null }],
+  "proposals": [ … ], "queued": [ … ], "done": null, "error": null }
+```
+
+After it, frames are the **verbatim** §2 vocabulary. A watcher's experience is not a reduced version
+of the sender's, and the frames are produced once at the leaf, so two surfaces cannot be shown
+different renderings of one turn.
+
+**`POST /turn` with `Accept: text/event-stream` is itself an attach** — its response is the session's
+first consumer and receives exactly those frames. Leaving detaches it; the turn keeps running.
+
+```
+DELETE /turns/{turnId}    → 204 stopped or cancelled, 404 unknown or not yours
+```
+
+Stop is a call rather than a disconnect, because a surface that is only watching holds no connection
+to abort. Idempotent, and authoritative for everyone. It ends **that** turn; anything queued behind it
+proceeds, and discarding one of those is the same call on its own id.
+
+A conversation runs **one turn at a time**. A second prompt queues, up to three; a fourth is
+`409 queue_full`. A queued turn re-derives its authority when it runs, never at enqueue — a role
+removed while it waited takes effect on it. The queue is in memory and dies with the leaf.
+
+A stopped turn is recorded with the text it had already streamed, `outcome: "cancelled"` — so a
+surface that watched it and one that reads it back afterwards describe it the same way.
 
 **Only the switches travel by value.** Everything else names a conversation and stops there: a
 transcript has one way to be obtained, and a second streaming path for it could drift from the first.

@@ -55,6 +55,46 @@ conversation" cannot mean the one it was typed in.
 The CLI REPL's `/reset` is now `/new`, so the two surfaces spell the same command the same way, and
 it gains `/tools` and `/autorun`. `/exit` and `/quit` stay terminal-only and out of the catalog.
 
+### Added — a turn is a shared session, watchable from every one of that person's surfaces
+
+A turn runs at the leaf with its own lifetime rather than as work owned by the request that asked for
+it. Every surface attaches to it and receives the **same verbatim frames**, produced once, so two of
+them cannot be shown different renderings of one turn. `turn.attach` states everything that happened
+before a consumer arrived — the greeting a late attach gets and the redraw a consumer that fell behind
+gets, one way to arrive at a correct view rather than a join path and a repair path.
+
+`POST /turn` with `Accept: text/event-stream` is itself an attach, so its wire shape is unchanged and
+the peer relay is untouched. The caller going away no longer ends the turn: it survives while its
+person is present at all — any open `/events` stream, plus a 60-second grace, which is what separates
+leaving from a screen locking or a network changing hands. Nobody present for that long and the turn
+stops, because the GPU is reserved away from the game servers.
+
+`DELETE /turns/{turnId}` ends a running turn or cancels a queued one, from any of that person's
+surfaces — a call rather than a disconnect, because a watcher holds no connection to abort. Idempotent,
+and authoritative for everyone.
+
+`POST /events/attach` points a stream at a conversation. Turn frames arrive at token rate and go only
+to the surfaces rendering that conversation; the state events still reach every stream, being about
+the chat list rather than one conversation.
+
+A conversation runs **one turn at a time** — two would each read a history the other has not written
+yet. A second prompt queues, up to three, and a fourth is `409 queue_full`. Stopping the running turn
+leaves the queue standing, exactly as interrupting a command does not discard what you typed ahead. A
+queued turn re-derives its authority **when it runs**, so a role removed while it waited takes effect
+on it; carrying a snapshot of permissions forward is how a queue launders privilege past a revocation.
+
+A **buffered** caller runs outside this model: one whole answer, not attachable, not stoppable from
+elsewhere, not queued. kgsm-bot is that caller and its conversations are keyed by Discord channel where
+a browser's are keyed by a minted chat id, so the two can never be the same conversation.
+
+### Changed — a stopped turn is recorded with what it said
+
+A cancelled turn carries the reply text that was generated before it ended, rather than nothing. The
+text was produced and it was shown, so a surface that watched the turn and one that reads it back
+afterwards now describe it the same way. This applies to every surface the agent loop serves, the CLI
+and the bot included, and that text becomes part of the corpus marked as cancelled. A turn stopped
+before it said anything still records no reply.
+
 ### Added — the leaf pushes a person's conversation changes to their own surfaces
 
 `GET /events` is a per-caller SSE stream carrying that person's own conversation changes: where the

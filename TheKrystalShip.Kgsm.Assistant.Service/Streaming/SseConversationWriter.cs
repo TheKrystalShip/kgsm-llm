@@ -26,7 +26,9 @@ internal static class SseConversationWriter
         HttpContext http,
         IConversationEventBus bus,
         ISessionValidator sessions,
-        AuthPrincipal principal)
+        ITurnRegistry turns,
+        AuthPrincipal principal,
+        string userScopePrefix)
     {
         var response = http.Response;
         response.StatusCode = StatusCodes.Status200OK;
@@ -55,6 +57,15 @@ internal static class SseConversationWriter
                 if (await Task.WhenAny(next, beat) == next)
                 {
                     var ev = await next;
+                    // A stream that fell behind is redrawn rather than fed deltas with a hole in them:
+                    // the backlog goes, and the running turn (if any) restates itself whole.
+                    if (subscription.NeedsRedraw)
+                    {
+                        subscription.Redrawn();
+                        await WriteAttachAsync(response, turns, subscription.Attached, userScopePrefix, ct);
+                        next = subscription.Reader.ReadAsync(ct).AsTask();
+                        continue;
+                    }
                     await SseTurnWriter.WriteEventAsync(response, ev.Name, ev.Payload, ct);
                     next = subscription.Reader.ReadAsync(ct).AsTask();
                     continue;
@@ -75,5 +86,34 @@ internal static class SseConversationWriter
         {
             // The client went away, or the host is shutting down. Either way there is nobody to tell.
         }
+    }
+
+    /// <summary>
+    /// State the turn running on the conversation this stream is looking at, if there is one. It is
+    /// what a surface that has just attached needs before live frames mean anything, and what a stream
+    /// that fell behind is given instead of the deltas it missed — one way to arrive at a correct view,
+    /// rather than a join path and a separate repair path.
+    /// </summary>
+    internal static async Task WriteAttachAsync(
+        HttpResponse response, ITurnRegistry turns, string? chatId, string userScopePrefix,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(chatId))
+            return;
+
+        var conversationId = $"{userScopePrefix}:{chatId}";
+        var running = turns.Running(conversationId);
+        var queued = turns.Queued(conversationId);
+        if (running is null)
+        {
+            // Nothing is running, and saying so matters: a surface that had been rendering a turn
+            // needs to learn it is over, not sit on a spinner because no frame ever arrived.
+            await SseTurnWriter.WriteEventAsync(
+                response, ConversationStream.TurnQueue, new TurnQueueEvent(chatId, null, queued), ct);
+            return;
+        }
+
+        await SseTurnWriter.WriteEventAsync(
+            response, ConversationStream.TurnAttach, running.Snapshot(queued), ct);
     }
 }

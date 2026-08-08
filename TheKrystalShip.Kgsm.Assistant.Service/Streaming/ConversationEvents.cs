@@ -25,6 +25,16 @@ internal static class ConversationStream
     /// than has mirrored to it frame by frame.
     /// </summary>
     public const string Activity = "conversation.activity";
+
+    /// <summary>
+    /// The whole state of a turn in progress: what a surface must render before the live frames start
+    /// making sense. Sent when a surface attaches to a conversation, and again as a redraw when one
+    /// falls too far behind to be given deltas.
+    /// </summary>
+    public const string TurnAttach = "turn.attach";
+
+    /// <summary>What is running on a conversation and what is waiting behind it, restated whole.</summary>
+    public const string TurnQueue = "turn.queue";
 }
 
 /// <summary>The opening frame of a stream: the id this connection answers to.</summary>
@@ -50,11 +60,54 @@ internal sealed record ConversationEvent(string Name, object Payload);
 
 /// <summary>A live subscription. Disposing it detaches the stream from the bus.</summary>
 internal sealed class ConversationEventSubscription(
-    string streamId, ChannelReader<ConversationEvent> reader, Action release) : IDisposable
+    string streamId, ChannelReader<ConversationEvent> reader, Subscriber subscriber, Action release)
+    : IDisposable
 {
     public string StreamId { get; } = streamId;
     public ChannelReader<ConversationEvent> Reader { get; } = reader;
+
+    /// <summary>The conversation this stream is looking at, or null when it is looking at none.</summary>
+    public string? Attached => subscriber.Attached;
+
+    /// <summary>Whether frames were dropped for this stream and it owes itself a redraw.</summary>
+    public bool NeedsRedraw => subscriber.NeedsRedraw;
+
+    /// <summary>Drop the backlog and clear the flag, once the redraw has been written.</summary>
+    public void Redrawn() => subscriber.Redrawn();
+
     public void Dispose() => release();
+}
+
+/// <summary>
+/// One open stream. <see cref="Attached"/> is the conversation it is looking at: turn frames are
+/// high-rate and belong only to the surfaces rendering them, where the state events belong to every
+/// stream because they are about the chat LIST rather than about one conversation.
+/// </summary>
+internal sealed class Subscriber(string userId, Channel<ConversationEvent> channel)
+{
+    public string UserId { get; } = userId;
+    public Channel<ConversationEvent> Channel { get; } = channel;
+    public volatile string? Attached;
+
+    /// <summary>Set when a frame could not be queued. A turn frame missed is a hole in a reply, so the
+    /// writer answers it with a fresh attach rather than carrying on.</summary>
+    public bool NeedsRedraw { get; private set; }
+
+    public void Offer(ConversationEvent ev)
+    {
+        if (Channel.Writer.TryWrite(ev))
+            return;
+        // The state events state where something now stands rather than how it moved, so losing one is
+        // survivable; a turn frame is a delta and losing one is not. Either way the answer is the same:
+        // stop trusting the backlog and redraw.
+        NeedsRedraw = true;
+    }
+
+    public void Redrawn()
+    {
+        while (Channel.Reader.TryRead(out _)) { }
+        NeedsRedraw = false;
+    }
 }
 
 /// <summary>
@@ -70,8 +123,33 @@ internal interface IConversationEventBus
     /// </summary>
     void Publish(string userId, ConversationEvent ev);
 
+    /// <summary>
+    /// Deliver to that person's streams that are looking at <paramref name="conversationId"/>, and to
+    /// no others. This is the turn-frame path: those frames arrive at token rate and mean nothing to a
+    /// surface rendering a different conversation, so they are not sent to one.
+    /// </summary>
+    void PublishToAttached(string userId, string conversationId, ConversationEvent ev);
+
+    /// <summary>
+    /// Deliver to exactly one of that person's streams. Used to answer an attach on the stream itself,
+    /// so a surface learns what it attached to through the same channel everything else arrives on —
+    /// one path into its renderer rather than an HTTP response and a frame that could disagree.
+    /// </summary>
+    bool PublishTo(string streamId, string userId, ConversationEvent ev);
+
     /// <summary>Attach a new stream for <paramref name="userId"/>. Dispose to detach.</summary>
     ConversationEventSubscription Subscribe(string userId);
+
+    /// <summary>Point a stream at a conversation, so it starts receiving that turn's frames.</summary>
+    bool Attach(string streamId, string userId, string? conversationId);
+
+    /// <summary>
+    /// Whether this person is around: a stream open now, or one that closed within
+    /// <paramref name="grace"/>. It is what decides whether a turn nobody is attached to keeps running
+    /// — a phone locking its screen must not kill the reply a desktop is watching, and a wifi handover
+    /// must not either.
+    /// </summary>
+    bool PresentWithin(string userId, TimeSpan grace);
 }
 
 /// <inheritdoc/>
@@ -91,32 +169,79 @@ internal sealed class ConversationEventBus : IConversationEventBus
     // people, a surface or two each) walking is not worth a second data structure.
     private readonly ConcurrentDictionary<string, Subscriber> _streams = new(StringComparer.Ordinal);
 
-    private sealed record Subscriber(string UserId, Channel<ConversationEvent> Channel);
+    // When each person's last stream closed, so a turn survives the gap between a surface going away
+    // and the same person's next one arriving.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastSeen = new(StringComparer.Ordinal);
 
     public void Publish(string userId, ConversationEvent ev)
     {
         foreach (var (_, subscriber) in _streams)
         {
             if (string.Equals(subscriber.UserId, userId, StringComparison.Ordinal))
-                subscriber.Channel.Writer.TryWrite(ev);
+                subscriber.Offer(ev);
         }
+    }
+
+    public void PublishToAttached(string userId, string conversationId, ConversationEvent ev)
+    {
+        foreach (var (_, subscriber) in _streams)
+        {
+            if (string.Equals(subscriber.UserId, userId, StringComparison.Ordinal)
+                && string.Equals(subscriber.Attached, conversationId, StringComparison.Ordinal))
+                subscriber.Offer(ev);
+        }
+    }
+
+    public bool PublishTo(string streamId, string userId, ConversationEvent ev)
+    {
+        if (!_streams.TryGetValue(streamId, out var subscriber)
+            || !string.Equals(subscriber.UserId, userId, StringComparison.Ordinal))
+            return false;
+        subscriber.Offer(ev);
+        return true;
     }
 
     public ConversationEventSubscription Subscribe(string userId)
     {
+        // A turn frame per token, so the backlog is deep enough that only a stalled reader reaches it.
+        // DropWrite rather than DropOldest: losing the OLDEST delta silently is how a reply arrives with
+        // a hole in the middle, where a refused write is something the writer can answer with a redraw.
         var channel = Channel.CreateBounded<ConversationEvent>(new BoundedChannelOptions(Backlog)
         {
-            FullMode = BoundedChannelFullMode.DropOldest,
+            FullMode = BoundedChannelFullMode.DropWrite,
             SingleReader = true,
         });
 
         var streamId = Guid.NewGuid().ToString("N");
-        _streams[streamId] = new Subscriber(userId, channel);
+        var subscriber = new Subscriber(userId, channel);
+        _streams[streamId] = subscriber;
 
-        return new ConversationEventSubscription(streamId, channel.Reader, () =>
+        return new ConversationEventSubscription(streamId, channel.Reader, subscriber, () =>
         {
             _streams.TryRemove(streamId, out _);
+            _lastSeen[userId] = DateTimeOffset.UtcNow;
             channel.Writer.TryComplete();
         });
+    }
+
+    public bool Attach(string streamId, string userId, string? conversationId)
+    {
+        // Scoped to the caller: a stream id is not a handle on somebody else's stream.
+        if (!_streams.TryGetValue(streamId, out var subscriber)
+            || !string.Equals(subscriber.UserId, userId, StringComparison.Ordinal))
+            return false;
+        subscriber.Attached = conversationId;
+        return true;
+    }
+
+    public bool PresentWithin(string userId, TimeSpan grace)
+    {
+        foreach (var (_, subscriber) in _streams)
+        {
+            if (string.Equals(subscriber.UserId, userId, StringComparison.Ordinal))
+                return true;
+        }
+        return _lastSeen.TryGetValue(userId, out var last)
+            && DateTimeOffset.UtcNow - last <= grace;
     }
 }

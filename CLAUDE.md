@@ -107,6 +107,13 @@ Things that bite if you don't know them:
   was staged for; the store enforces that itself, and leaves anyone else's handle standing rather
   than consuming it. One model for every surface: a browser and a Discord button carry the same
   thing, and no surface works around another's identifier limits.
+- **A turn is a session, not a request.** `TurnSession` runs it with its own lifetime and broadcasts to
+  every surface attached to that conversation; `POST /turn`'s SSE response is simply its first consumer.
+  So the caller going away does not end it — a turn ends when its *person* has been absent for the grace
+  window, or when any of their surfaces calls `DELETE /turns/{id}`. Frames are produced **once**, in
+  the session, which is what makes two surfaces watching one turn agree by construction; never
+  re-derive them per consumer. A conversation runs one turn at a time (the rest queue), and a queued
+  turn re-derives its authority when it runs, never at enqueue.
 - **The event stream is an optimisation, never a source of truth.** `GET /events` pushes a person's
   own conversation changes to their own open surfaces so two of them agree without polling. The bus is
   **in memory and per-user**: nothing is buffered for a stream that is not connected, and there is no

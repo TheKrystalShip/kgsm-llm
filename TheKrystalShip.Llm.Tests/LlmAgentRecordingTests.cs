@@ -86,7 +86,7 @@ public class LlmAgentRecordingTests
     }
 
     [Fact]
-    public async Task StreamingTurn_Cancelled_RecordsCancelled_WithNullFinal()
+    public async Task StreamingTurn_Cancelled_RecordsCancelled_KeepingWhatWasStreamed()
     {
         // Simulate a real Ctrl-C: the token is cancelled mid-stream (as TurnInterruptor does), so the
         // generation throws an OCE with the token requested — the finally must label this Cancelled.
@@ -94,6 +94,26 @@ public class LlmAgentRecordingTests
         var client = new CancellingStreamClient(cts);
 
         var drain = async () => await DrainAsync(CreateAgent(client).RunStreamAsync(Turn(), cts.Token));
+
+        await drain.Should().ThrowAsync<OperationCanceledException>();
+        var rec = _store.Turns.Should().ContainSingle().Subject;
+        rec.Outcome.Should().Be(TurnOutcome.Cancelled);
+
+        // The text was generated and it was handed to the caller, so the record keeps it. A surface
+        // that watched the turn and one that reads it back later must describe it the same way, and a
+        // stopped turn recorded as empty is how those two come to disagree.
+        rec.Final.Should().Be("partial");
+    }
+
+    [Fact]
+    public async Task StreamingTurn_CancelledBeforeAnyText_RecordsNoReply()
+    {
+        // Nothing was said, so nothing is invented: an empty reply is recorded as absent rather than as
+        // an empty answer the assistant gave.
+        using var cts = new CancellationTokenSource();
+
+        var drain = async () => await DrainAsync(
+            CreateAgent(new CancellingStreamClient(cts, partial: null)).RunStreamAsync(Turn(), cts.Token));
 
         await drain.Should().ThrowAsync<OperationCanceledException>();
         var rec = _store.Turns.Should().ContainSingle().Subject;
@@ -204,10 +224,13 @@ public class LlmAgentRecordingTests
     /// Yields one token, then cancels the turn's token and observes it — the shape of a real Ctrl-C
     /// mid-generation (an OCE thrown with the token genuinely requested).
     /// </summary>
+    /// <summary>Streams <paramref name="partial"/> (when given) and then cancels mid-generation.</summary>
     private sealed class CancellingStreamClient : ILlmClient
     {
         private readonly CancellationTokenSource _cts;
-        public CancellingStreamClient(CancellationTokenSource cts) => _cts = cts;
+        private readonly string? _partial;
+        public CancellingStreamClient(CancellationTokenSource cts, string? partial = "partial")
+            => (_cts, _partial) = (cts, partial);
 
         public Task<Result<LlmResponse>> ChatAsync(
             IReadOnlyList<LlmMessage> messages,
@@ -223,7 +246,8 @@ public class LlmAgentRecordingTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
-            yield return new LlmStreamChunk("partial", null, false);
+            if (_partial is not null)
+                yield return new LlmStreamChunk(_partial, null, false);
             _cts.Cancel();
             cancellationToken.ThrowIfCancellationRequested();
         }

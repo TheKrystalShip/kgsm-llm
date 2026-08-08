@@ -43,7 +43,7 @@ public class ServerAssistantTests
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
-            _agent, _prompt, _confirmations, _progress, _inventory, _operations, Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
+            _agent, _prompt, _confirmations, _progress, _inventory, _operations,
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), _blueprintAuthoring,
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
             Options.Create(fetch ?? new FetchOptions { Available = true }),

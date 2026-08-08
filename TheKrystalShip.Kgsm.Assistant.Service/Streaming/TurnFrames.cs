@@ -108,7 +108,6 @@ internal static class TurnFrames
         ConfirmationKind.Uninstall => "uninstall",
         ConfirmationKind.Backup => "backup",
         ConfirmationKind.SetConfig => "set_config",
-        ConfirmationKind.OpenPorts => "open_ports",
         ConfirmationKind.WriteFile => "write_file",
         _ => kind.ToString().ToLowerInvariant(),
     };
@@ -127,16 +126,6 @@ internal static class TurnFrames
         // ConfigValue — the prompt names the file, never dumps the content into the confirm text.
         if (c.Kind == ConfirmationKind.WriteFile && c.ConfigKey is not null)
             return $"Overwrite '{c.ConfigKey}' on {c.Target}?";
-
-        // open_ports carries the port spec on ConfigValue and the optional router leg on ConfigKey
-        // ("router" ⇒ also open the UPnP forward). Surface both in the prompt.
-        if (c.Kind == ConfirmationKind.OpenPorts && !string.IsNullOrWhiteSpace(c.ConfigValue))
-        {
-            bool includeRouter = string.Equals(c.ConfigKey, "router", StringComparison.Ordinal);
-            return includeRouter
-                ? $"Open host-firewall + router/UPnP forward for port(s) {c.ConfigValue} on {c.Target}?"
-                : $"Open host-firewall port(s) {c.ConfigValue} on {c.Target}?";
-        }
 
         var verb = ConfirmationKinds.Verb(c.Kind); // "start", "back up", "set config on", …
         return $"{char.ToUpperInvariant(verb[0])}{verb[1..]} {c.Target}?";

@@ -95,14 +95,6 @@ public static class LlmTools
     public static readonly Tool UninstallServer = new("uninstall_server");
     public static readonly Tool SetConfigValue = new("set_config_value");
 
-    // Propose opening a server's firewall ports for it. The model supplies only the instance name (and
-    // optionally include_router); the configured port spec is read deterministically from kgsm's instance
-    // info — never passed by the model — so there is no port to guess. Staged for human confirmation
-    // like every command; on confirm it opens the host firewall (via the kgsm-firewall authority), and —
-    // when include_router is set — also sets up the router/UPnP forward (via the watchdog), honoring the
-    // instance's port-forwarding gate.
-    public static readonly Tool OpenPorts = new("open_ports");
-
     // Propose overwriting a text file inside a server's OWN directory with COMPLETE new content —
     // e.g. a game's own config (Palworld's PalWorldSettings.ini), never KGSM's .config.ini (that's
     // set_config_value). Staged for human confirmation like every command; the confirm step shows a
@@ -197,14 +189,6 @@ public static class LlmTools
         "verb",
         "Which lifecycle action to take on the server: start, stop, restart, update, or backup.",
         AllowedValues: ServerCommandVerbs);
-
-    private static readonly LlmToolParameter IncludeRouter = new(
-        "include_router",
-        "Optional. Set to true to ALSO set up the router/UPnP port forward for these ports (so the server " +
-        "is reachable from the internet), not just the host firewall. Use it when the user wants the server " +
-        "reachable from outside their network. The router leg only takes effect if the server has " +
-        "port-forwarding enabled; otherwise it's skipped. Defaults to false (host firewall only).",
-        Required: false);
 
     private static readonly LlmToolParameter ReadPath = new(
         "path",
@@ -437,17 +421,6 @@ public static class LlmTools
             "forwarding/_command_shortcuts) — those have dedicated flows — so proposing one of those is " +
             "rejected when confirmed; tell the user rather than retrying.",
             InstanceName, ConfigKey, ConfigValue),
-
-        LlmToolDefinition.Create(OpenPorts,
-            "Propose opening this server's firewall ports so players can reach it. You do NOT pass the " +
-            "ports — they are read automatically from the server's configured (blueprint) ports, so just " +
-            "give the instance name. Staged for human confirmation; it does not run until a person " +
-            "confirms. By default it opens the host's own firewall only. To ALSO make the server reachable " +
-            "from the internet, set include_router to true — that additionally sets up the router/UPnP " +
-            "forward for the same ports (only effective if the server has port-forwarding enabled; " +
-            "otherwise the router leg is skipped). If the server has no ports configured, the tool " +
-            "returns an honest error and nothing is staged — relay that to the user.",
-            InstanceName, IncludeRouter),
 
         LlmToolDefinition.Create(WriteFile,
             "Propose OVERWRITING a text file inside a game server's OWN directory — e.g. its actual " +

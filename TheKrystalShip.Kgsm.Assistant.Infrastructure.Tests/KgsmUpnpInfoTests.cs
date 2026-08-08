@@ -94,38 +94,4 @@ public class KgsmUpnpInfoTests
         reading.State.Should().Be(UpnpState.DaemonUnavailable);
     }
 
-    [Fact]
-    public async Task OpenForwards_MapsApplied_AndPassesOrigin()
-    {
-        _watchdog.OpenUpnpAsync("factorio", Arg.Any<IReadOnlyList<PortMapping>>(), "assistant", Arg.Any<CancellationToken>())
-            .Returns(new WatchdogUpnpActionResult { Instance = "factorio", Outcome = "applied", Detail = "router mapping opened" });
-
-        var result = await Create().OpenForwardsAsync("factorio", new[] { new PortRule(34197, 34197, "udp") });
-
-        result.State.Should().Be(UpnpActionState.Applied);
-        await _watchdog.Received(1).OpenUpnpAsync(
-            "factorio", Arg.Any<IReadOnlyList<PortMapping>>(), "assistant", Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task OpenForwards_Skipped_IsPreserved_NotFabricated()
-    {
-        _watchdog.OpenUpnpAsync("factorio", Arg.Any<IReadOnlyList<PortMapping>>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(new WatchdogUpnpActionResult { Instance = "factorio", Outcome = "skipped", Detail = "port-forwarding disabled" });
-
-        var result = await Create().OpenForwardsAsync("factorio", new[] { new PortRule(34197, 34197, "udp") });
-
-        result.State.Should().Be(UpnpActionState.Skipped);
-    }
-
-    [Fact]
-    public async Task OpenForwards_Throws_FailsClosed_AsUnavailable()
-    {
-        _watchdog.OpenUpnpAsync("factorio", Arg.Any<IReadOnlyList<PortMapping>>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns<Task<WatchdogUpnpActionResult>>(_ => throw new HttpRequestException("down"));
-
-        var result = await Create().OpenForwardsAsync("factorio", new[] { new PortRule(34197, 34197, "udp") });
-
-        result.State.Should().Be(UpnpActionState.Unavailable);
-    }
 }

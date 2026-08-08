@@ -29,7 +29,7 @@ internal static class BenchmarkSuite
     /// v2 added the ambiguous-diagnosis "G" group. v3 retargeted the E-group search rubrics from the
     /// removed model-facing <c>web_search</c> onto the unified <c>search</c> tool. v4 covers the tools
     /// added since the hand-eval — performance (P), network reachability (N), event/change/root-cause
-    /// history (H), file reads (R), and the open-ports / uninstall staging cases (C11–C13) — so tool
+    /// history (H), file reads (R), and the uninstall staging case (C13) — so tool
     /// selection is measured across the whole current catalog, not just its original half. v5 adds the
     /// propose-only <c>write_file</c> group (W): a full read-then-stage flow for a game's own config
     /// file, plus a <c>set_config_value</c>-vs-<c>write_file</c> disambiguation pair guarding the two
@@ -41,7 +41,10 @@ internal static class BenchmarkSuite
     /// <c>create_blueprint</c>, and an installable-but-uninstalled game (reusing C10's role/prompt) still
     /// routes to <c>install_server</c>, never <c>create_blueprint</c> — the disambiguation pair guarding
     /// the two "get me a new game" paths from routing collisions.
-    public const string Version = "v7";
+    /// v8 drops the open-ports staging cases (C11/C12) with the tool they measured: an instance's ports
+    /// are opened by the supervisor when it starts and released when it stops, so there is no on-demand
+    /// open for the model to route to.
+    public const string Version = "v8";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -270,22 +273,6 @@ internal static class BenchmarkSuite
             "what files are in {unique_game}'s directory?",
             C.AnyOf(Rubric.B_Routing, "lists the server's files",
                 C.CalledTool(LlmTools.ListFiles), C.CalledTool(LlmTools.ReadFile)),
-            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
-
-        // Open ports (staged): host firewall only, and the include_router leg proven via the staged payload.
-        // The tool reads the instance's configured (blueprint) ports deterministically from kgsm, so the
-        // prompt names the server (not a port number) — the model calls open_ports with only the instance.
-        Single("C11", "open the firewall ports for <game>", true, new[] { FixtureRole.UniqueGame },
-            "open the firewall ports for {unique_game}",
-            C.Stages(ConfirmationKind.OpenPorts),
-            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
-            C.ResolvedNotAsked(FixtureRole.UniqueGame)),
-
-        Single("C12", "make <game> reachable from the internet", true, new[] { FixtureRole.UniqueGame },
-            "open {unique_game} up so my friends outside my network can join",
-            C.StagesWith(ConfirmationKind.OpenPorts, s => string.Equals(s.ConfigKey, "router", StringComparison.OrdinalIgnoreCase),
-                "stages the router/UPnP forward leg (include_router)"),
-            C.FinalHas(ConfirmLang, "narrates as awaiting confirmation", Rubric.C_ProposeOnly),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
         // Uninstall (staged, irreversible tier) — the one staged command with no prior benchmark case.

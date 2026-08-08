@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The `open_ports` tool, and with it every path by which the assistant could change a host's network
+  exposure.** An instance's ports are opened by the supervisor when it starts and released when it stops,
+  so a rule written outside a run is either about to be re-asserted by the next start or belongs to a
+  server that isn't running — there is no outcome an on-demand open produces that the system considers
+  correct. Gone with it: the `OpenPorts` confirmation kind and its confirm path, the `include_router` leg,
+  `INetworkInfo.OpenPortsAsync`, `IUpnpInfo.OpenForwardsAsync` and their adapters, the port-spec parser
+  they shared, and the benchmark's C11/C12 routing cases (corpus v8).
+
+  The read halves stay: `get_network` still reports the host-firewall picture and the router's forwards,
+  because "why can't my friends connect?" is answered by looking, and looking is all this leaf now does to
+  a network. The staged action was also unaudited — it wrote firewall rules and emitted no event and no
+  audit row — so removing it closes that gap by removing the capability rather than instrumenting it.
+
+### Changed
+
+- **`ConfirmationKind` members carry explicit, permanent numbers.** The Service persists `(int)Kind`
+  against a staged action, so the number — not the position — is what a pending row redeems as. Retiring
+  `OpenPorts` by deletion alone would have shifted `WriteFile` and `Blueprint` down onto rows already
+  written, and a staged file write would have come back as a blueprint finalize. 8 is now a permanent
+  hole; a row still carrying it fails `Enum.IsDefined` and is refused, which is the right answer for a
+  staged action this build can no longer perform.
+
+
 ### Added — a typed-command surface, and one catalog behind every one of them
 
 The assistant answers to commands typed at it, declared once in `ChatCommands` and read three ways:

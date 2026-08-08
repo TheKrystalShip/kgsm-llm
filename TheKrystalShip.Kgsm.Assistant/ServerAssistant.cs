@@ -64,8 +64,6 @@ public class ServerAssistant : IServerAssistant
     private readonly ITurnProgress _progress;
     private readonly IServerInventory _inventory;
     private readonly IServerOperations _operations;
-    private readonly INetworkInfo _network;
-    private readonly IUpnpInfo _upnp;
     private readonly IToolRelevanceFilter _toolFilter;
     private readonly IPromptOverrides _promptOverrides;
     private readonly IBlueprintAuthoring _blueprintAuthoring;
@@ -82,8 +80,6 @@ public class ServerAssistant : IServerAssistant
         ITurnProgress progress,
         IServerInventory inventory,
         IServerOperations operations,
-        INetworkInfo network,
-        IUpnpInfo upnp,
         IToolRelevanceFilter toolFilter,
         IPromptOverrides promptOverrides,
         IBlueprintAuthoring blueprintAuthoring,
@@ -99,8 +95,6 @@ public class ServerAssistant : IServerAssistant
         _progress = progress;
         _inventory = inventory;
         _operations = operations;
-        _network = network;
-        _upnp = upnp;
         _toolFilter = toolFilter;
         _promptOverrides = promptOverrides;
         _blueprintAuthoring = blueprintAuthoring;
@@ -459,8 +453,6 @@ public class ServerAssistant : IServerAssistant
                 confirmation.Target, confirmation.InstanceName, cancellationToken),
             ConfirmationKind.SetConfig => await ConfirmSetConfigAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
-            ConfirmationKind.OpenPorts => await ConfirmOpenPortsAsync(
-                confirmation.Target, confirmation.ConfigValue, confirmation.ConfigKey, cancellationToken),
             ConfirmationKind.WriteFile => await ConfirmWriteFileAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
             // The text path (CLI, and any surface that only reads the outcome line): finalize returns a
@@ -681,81 +673,6 @@ public class ServerAssistant : IServerAssistant
                 $"Wrote '{key}' on '{match}'. A running server picks up the change on its next restart.", verb, match)
             : ConfirmOutcome.Failed(
                 $"Could not write '{key}' on '{match}': {result.Error ?? "unknown error"}.", verb, match, result.Error);
-    }
-
-    /// <summary>
-    /// Re-validates the instance still exists (it was resolved at staging time, and confirming is a
-    /// separate, later act), re-parses the port spec carried on the token, then opens the
-    /// HOST-FIREWALL ports via <see cref="INetworkInfo.OpenPortsAsync"/> — the real execution point.
-    /// The firewall authority's precise outcome is mapped to an honest user-facing result: an unreachable
-    /// authority, an unsupported backend, and an inactive (staged-not-enforcing) backend each read
-    /// differently and never as a fabricated "opened".
-    /// <para>
-    /// When the router leg was opted in at staging (<paramref name="scope"/> == <c>"router"</c>), it ALSO
-    /// opens the router / UPnP forward for the same ports via <see cref="IUpnpInfo.OpenForwardsAsync"/> (a
-    /// separate authority — the watchdog) and appends an honest per-axis clause: applied, skipped (the
-    /// instance has port-forwarding disabled), failed, or watchdog-unavailable — never a fabricated forward.
-    /// The firewall outcome still determines success/failure; the router clause is additive context.
-    /// </para>
-    /// </summary>
-    private async Task<ConfirmOutcome> ConfirmOpenPortsAsync(
-        string target, string? portSpec, string? scope, CancellationToken cancellationToken)
-    {
-        var verb = ConfirmationKinds.Verb(ConfirmationKind.OpenPorts);
-        if (!PortSpecParser.TryParse(portSpec, out var ports, out var parseError))
-            return ConfirmOutcome.Refused($"The staged ports were invalid ({parseError}) — nothing was opened.");
-
-        var instances = await _inventory.GetInstancesAsync(cancellationToken);
-        var match = instances.Keys.FirstOrDefault(
-            k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
-        if (match is null)
-            return ConfirmOutcome.Refused($"'{target}' no longer exists — nothing to open ports on.");
-
-        bool includeRouter = string.Equals(scope, "router", StringComparison.Ordinal);
-        _logger.LogInformation("Confirmed open-ports of {Instance} ({Ports}, router={Router})",
-            match, PortSpecParser.ToCanonical(ports), includeRouter);
-
-        var result = await _network.OpenPortsAsync(match, ports, cancellationToken);
-        var shown = PortSpecParser.ToDisplay(ports);
-        var backend = string.IsNullOrWhiteSpace(result.Backend) ? "the firewall" : result.Backend;
-
-        var (firewallOk, firewallText) = result.State switch
-        {
-            NetworkActionState.Applied =>
-                (true, $"Opened host-firewall port(s) {shown} for '{match}' ({backend})."),
-            NetworkActionState.AppliedInactive =>
-                (true, $"Wrote host-firewall rules for port(s) {shown} on '{match}', but {backend} isn't " +
-                       "enforcing yet — they'll take effect when it's enabled (the ports are reachable meanwhile)."),
-            NetworkActionState.NoOp =>
-                (true, $"Host-firewall port(s) {shown} were already open for '{match}' — nothing to change."),
-            NetworkActionState.Unsupported =>
-                (false, $"This host has no firewall backend that can open ports, so nothing was changed for '{match}'."),
-            NetworkActionState.FirewallUnavailable =>
-                (false, $"The firewall service isn't reachable, so the port(s) for '{match}' couldn't be opened. Nothing was changed."),
-            _ =>
-                (false, $"Could not open host-firewall port(s) {shown} for '{match}': {result.Detail ?? "the firewall rejected the change"}."),
-        };
-
-        var summary = firewallText;
-
-        if (includeRouter)
-        {
-            // The router leg — a separate authority (the watchdog). Its outcome is appended honestly and
-            // never upgrades a firewall failure to success (the firewall axis carries the verdict).
-            var upnp = await _upnp.OpenForwardsAsync(match, ports, cancellationToken);
-            string routerClause = upnp.State switch
-            {
-                UpnpActionState.Applied => $"Also opened the router/UPnP forward for {shown}.",
-                UpnpActionState.Skipped => "The router/UPnP forward was skipped — this server has port-forwarding disabled, so nothing was forwarded on the router.",
-                UpnpActionState.Unavailable => "The router/UPnP forward couldn't be set — the watchdog isn't reachable.",
-                _ => $"The router/UPnP forward failed{(string.IsNullOrWhiteSpace(upnp.Detail) ? "" : $" ({upnp.Detail})")} — the host firewall change above still stands.",
-            };
-            summary = $"{firewallText} {routerClause}";
-        }
-
-        return firewallOk
-            ? ConfirmOutcome.Accepted(summary, verb, match)
-            : ConfirmOutcome.Failed(summary, verb, match, result.Detail);
     }
 
     /// <summary>

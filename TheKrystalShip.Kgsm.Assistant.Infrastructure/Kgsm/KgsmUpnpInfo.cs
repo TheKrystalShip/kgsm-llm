@@ -11,22 +11,20 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 /// Satisfies the assistant's <see cref="IUpnpInfo"/> port by calling kgsm-lib's
 /// <see cref="IWatchdogClient"/> — the single typed client for the kgsm-watchdog, the sole owner of
 /// router / UPnP port forwarding. Maps the watchdog's UPnP result types onto the assistant's neutral
-/// <see cref="UpnpReading"/> / <see cref="UpnpActionResult"/> at this boundary, so the assistant domain
-/// never references kgsm-lib's watchdog types.
+/// <see cref="UpnpReading"/> at this boundary, so the assistant domain never references kgsm-lib's
+/// watchdog types.
 /// <para>
-/// Per the port contract this NEVER throws. The two honest-unknown layers are preserved: the client
-/// returns <c>null</c> only when the daemon is unreachable (→ <see cref="UpnpState.DaemonUnavailable"/>),
-/// and an in-body <c>state:"unavailable"</c> means the daemon was reached but the router was not (→
-/// <see cref="UpnpState.RouterUnavailable"/>) — distinct from a real query that owns no forwards (→
-/// <see cref="UpnpState.Queried"/> with an empty list). An open that throws (daemon unreachable) maps to
-/// <see cref="UpnpActionState.Unavailable"/>; a reachable-but-gated open keeps its honest
-/// <see cref="UpnpActionState.Skipped"/>, never collapsed to a fabricated forward.
+/// Read-only, because the forwards are not this leaf's to drive: the watchdog opens them when an
+/// instance starts and releases them when it stops. Per the port contract this NEVER throws, and the two
+/// honest-unknown layers are preserved: the client returns <c>null</c> only when the daemon is
+/// unreachable (→ <see cref="UpnpState.DaemonUnavailable"/>), and an in-body <c>state:"unavailable"</c>
+/// means the daemon was reached but the router was not (→ <see cref="UpnpState.RouterUnavailable"/>) —
+/// distinct from a real query that owns no forwards (→ <see cref="UpnpState.Queried"/> with an empty
+/// list).
 /// </para>
 /// </summary>
 internal sealed class KgsmUpnpInfo : IUpnpInfo
 {
-    private const string Origin = "assistant";
-
     private readonly IWatchdogClient _watchdog;
     private readonly ILogger<KgsmUpnpInfo> _logger;
 
@@ -62,32 +60,4 @@ internal sealed class KgsmUpnpInfo : IUpnpInfo
             return new UpnpReading(UpnpState.DaemonUnavailable, Array.Empty<UpnpForward>());
         }
     }
-
-    public async Task<UpnpActionResult> OpenForwardsAsync(
-        string instance, IReadOnlyList<PortRule> ports, CancellationToken cancellationToken = default)
-    {
-        var mappings = ports
-            .Select(p => new PortMapping { Start = p.Start, End = p.End, Protocol = p.Protocol })
-            .ToArray();
-
-        try
-        {
-            var result = await _watchdog.OpenUpnpAsync(instance, mappings, Origin, cancellationToken).ConfigureAwait(false);
-            return new UpnpActionResult(MapOutcome(result.Outcome), result.Detail);
-        }
-        catch (Exception ex)
-        {
-            // OpenUpnpAsync throws only when the daemon is unreachable — honest "couldn't reach it".
-            _logger.LogDebug(ex, "watchdog UPnP open failed for instance '{Instance}'", instance);
-            return new UpnpActionResult(UpnpActionState.Unavailable, null);
-        }
-    }
-
-    private static UpnpActionState MapOutcome(string outcome) => outcome switch
-    {
-        "applied" => UpnpActionState.Applied,
-        "skipped" => UpnpActionState.Skipped,
-        // "failed" or any unexpected token is an honest failure, never a fabricated open.
-        _ => UpnpActionState.Failed,
-    };
 }

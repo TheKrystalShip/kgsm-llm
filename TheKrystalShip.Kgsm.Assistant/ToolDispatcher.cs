@@ -120,8 +120,6 @@ public class ToolDispatcher : IToolDispatcher
                 return await StageInstallAsync(call, cancellationToken);
             if (call.Name == LlmTools.SetConfigValue)
                 return await StageSetConfigAsync(call, cancellationToken);
-            if (call.Name == LlmTools.OpenPorts)
-                return await StageOpenPortsAsync(call, cancellationToken);
             if (call.Name == LlmTools.WriteFile)
                 return await StageWriteFileAsync(call, cancellationToken);
 
@@ -735,61 +733,6 @@ public class ToolDispatcher : IToolDispatcher
         key.Equals("note", StringComparison.OrdinalIgnoreCase)
         || key.Equals("note_updated_by", StringComparison.OrdinalIgnoreCase)
         || key.Equals("note_updated_at", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Propose-only (§3.5): resolves the instance, reads its configured (blueprint) port spec
-    /// deterministically from kgsm's instance info, re-validates it through <see cref="PortSpecParser"/>,
-    /// then STAGES an open-ports for human confirmation — nothing is touched here. The model never
-    /// supplies ports; the configured ports are the engine's truth, so there is no guess to get wrong.
-    /// The validated ports ride the confirmation as a canonical string on <c>ConfigValue</c>, and the
-    /// optional router leg rides on <c>ConfigKey</c> (<c>"router"</c> ⇒ also open the UPnP forward;
-    /// null ⇒ host firewall only) — both round-trip through the existing token with no new payload
-    /// field. The confirm path re-parses exactly what was staged. An instance with no configured ports
-    /// (or one whose spec won't parse) short-circuits to the model with an honest error, and nothing
-    /// is staged.
-    /// </summary>
-    private async Task<string> StageOpenPortsAsync(LlmToolCall call, CancellationToken cancellationToken)
-    {
-        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
-        if (error is not null)
-            return error;
-
-        // The configured ports are the engine's truth — fetch them deterministically rather than
-        // asking the model for a (guessable) port string.
-        var portResult = await _operations.GetConfiguredPortsAsync(resolved!, cancellationToken);
-        if (!portResult.IsSuccess)
-            return $"Error: {portResult.Error ?? "could not read the instance's configured ports."}";
-
-        // Re-validate the engine's spec through the single parser/canonicalizer so the confirm path
-        // (which re-parses ConfigValue) stays the source of truth and the two never drift.
-        if (!PortSpecParser.TryParse(portResult.Value, out var ports, out var parseError))
-            return $"Error: '{resolved}' has a malformed configured port spec ({parseError}) — nothing was staged.";
-
-        var canonical = PortSpecParser.ToCanonical(ports);
-        // Arguments arrive as strings; treat true/1/yes (any case) as the opt-in, everything else as off.
-        var routerArg = call.Arg("include_router")?.Trim();
-        bool includeRouter = routerArg is not null
-            && (routerArg.Equals("true", StringComparison.OrdinalIgnoreCase)
-                || routerArg.Equals("1", StringComparison.Ordinal)
-                || routerArg.Equals("yes", StringComparison.OrdinalIgnoreCase));
-        string? scope = includeRouter ? "router" : null;
-
-        _confirmations.Stage(new PendingConfirmation(
-            ConfirmationKind.OpenPorts, resolved!, InstanceName: null, ConfigKey: scope, ConfigValue: canonical));
-
-        string scopeText = includeRouter
-            ? "host-firewall AND router/UPnP forward for port(s) "
-            : "host-firewall port(s) ";
-        string routerNote = includeRouter
-            ? " The router leg only takes effect if the server has port-forwarding enabled; otherwise it's skipped."
-            : " Note this opens the HOST firewall only, not router/UPnP port forwarding.";
-
-        return $"Staged opening {scopeText}{PortSpecParser.ToDisplay(ports)} on '{resolved}' for " +
-               "confirmation. These are the instance's configured blueprint ports, read directly from " +
-               "kgsm. A confirmation prompt with a button has been shown to the user. This is NOT done " +
-               "yet and will only run if a permitted human clicks Confirm — tell the user it's awaiting their " +
-               $"confirmation.{routerNote}";
-    }
 
     /// <summary>Mirrors the <see cref="IServerOperations.WriteInstanceFileAsync"/> adapter's write cap —
     /// enforced here too so an oversized body is refused before it ever reaches a confirmation token or

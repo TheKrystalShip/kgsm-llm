@@ -139,11 +139,11 @@ frame per staged operation.
 | Field | Meaning |
 |---|---|
 | `id` | `cmd_<n>`, turn-stable. A display correlation handle — **not** security-bearing |
-| `verb` | `start`, `stop`, `restart`, `update`, `install`, `uninstall`, `backup`, `set_config`, `open_ports`, `write_file` |
+| `verb` | `start`, `stop`, `restart`, `update`, `install`, `uninstall`, `backup`, `set_config`, `write_file` |
 | `subject` | `{ resource, id }` — `blueprint` for `install`, `server` for everything else |
 | `confirm` | a human prompt composed from the staged operation |
 | `token` | the opaque, security-bearing handle onto the staged operation. This is what `POST /confirm` takes |
-| `configKey` / `configValue` | `set_config` (the key and value) and `open_ports` (the port spec, and `router` on the key when a UPnP forward is included) |
+| `configKey` / `configValue` | `set_config` only: the key and the value |
 | `instanceName` | the custom name for an `install`; absent when kgsm auto-names |
 | `file` | `write_file` only: `{ path, proposedContent }` — the complete new content, so a client can render a diff before the user confirms |
 

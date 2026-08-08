@@ -11,14 +11,14 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 /// Satisfies the assistant's <see cref="INetworkInfo"/> port by calling kgsm-lib's
 /// <see cref="IFirewallService"/> — the single typed client for the kgsm-firewall authority (the owner
 /// of host-firewall rules). Maps the authority's precise result types onto the assistant's neutral
-/// <see cref="NetworkReading"/> / <see cref="NetworkActionResult"/> at this boundary, so the assistant
-/// domain never references kgsm-lib's firewall types.
+/// <see cref="NetworkReading"/> at this boundary, so the assistant domain never references kgsm-lib's
+/// firewall types.
 /// <para>
-/// Per the port contract this NEVER throws: kgsm-lib throws <see cref="Exceptions.FirewallException"/>
-/// only when the authority is unreachable, which maps to <see cref="NetworkState.FirewallUnavailable"/> /
-/// <see cref="NetworkActionState.FirewallUnavailable"/> — failure as data, never an exception. A
-/// reachable-but-unsuccessful op keeps its honest outcome (unsupported / unknown / failed), never
-/// collapsed to a fabricated open. Covers the HOST FIREWALL only — no UPnP/router path exists from C#.
+/// Read-only, because the rules are not this leaf's to write: an instance's ports are opened by the
+/// supervisor when it starts and released when it stops. Per the port contract this NEVER throws —
+/// kgsm-lib throws <see cref="Exceptions.FirewallException"/> only when the authority is unreachable,
+/// which maps to <see cref="NetworkState.FirewallUnavailable"/>: failure as data, never an exception.
+/// Covers the HOST FIREWALL only; router/UPnP forwarding is the watchdog's, behind IUpnpInfo.
 /// </para>
 /// </summary>
 internal sealed class KgsmNetworkInfo : INetworkInfo
@@ -63,25 +63,6 @@ internal sealed class KgsmNetworkInfo : INetworkInfo
         }
     }
 
-    public async Task<NetworkActionResult> OpenPortsAsync(
-        string instance, IReadOnlyList<PortRule> ports, CancellationToken cancellationToken = default)
-    {
-        var mappings = ports
-            .Select(p => new PortMapping { Start = p.Start, End = p.End, Protocol = p.Protocol })
-            .ToArray();
-
-        try
-        {
-            var result = await _firewall.EnsureOpenAsync(instance, mappings, cancellationToken).ConfigureAwait(false);
-            return new NetworkActionResult(MapOutcome(result.Outcome), result.Backend, result.Detail);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "firewall open-ports failed for instance '{Instance}'", instance);
-            return new NetworkActionResult(NetworkActionState.FirewallUnavailable, string.Empty, null);
-        }
-    }
-
     private static PortListState MapListStatus(FirewallListStatus status) => status switch
     {
         FirewallListStatus.Ok => PortListState.Enumerated,
@@ -94,15 +75,5 @@ internal sealed class KgsmNetworkInfo : INetworkInfo
         FirewallEnforcement.Enforcing => NetworkEnforcement.Enforcing,
         FirewallEnforcement.Inactive => NetworkEnforcement.Inactive,
         _ => NetworkEnforcement.Unknown,
-    };
-
-    private static NetworkActionState MapOutcome(FirewallOutcome outcome) => outcome switch
-    {
-        FirewallOutcome.Applied => NetworkActionState.Applied,
-        FirewallOutcome.AppliedInactive => NetworkActionState.AppliedInactive,
-        FirewallOutcome.NoOp => NetworkActionState.NoOp,
-        FirewallOutcome.Unsupported => NetworkActionState.Unsupported,
-        // Removed/Ok/Unknown are not open-op outcomes; treat anything else as an honest failure.
-        _ => NetworkActionState.Failed,
     };
 }

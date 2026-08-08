@@ -82,41 +82,4 @@ public class KgsmNetworkInfoTests
         reading.Ports.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task OpenPorts_MapsAppliedInactive_Outcome()
-    {
-        _firewall.EnsureOpenAsync("factorio", Arg.Any<IReadOnlyList<PortMapping>>(), Arg.Any<CancellationToken>())
-            .Returns(new FirewallActionResult
-            {
-                Ok = true, Outcome = FirewallOutcome.AppliedInactive, Backend = "ufw", Detail = "ufw inactive",
-            });
-
-        var result = await Create().OpenPortsAsync("factorio", new[] { new PortRule(34197, 34197, "udp") });
-
-        result.State.Should().Be(NetworkActionState.AppliedInactive);
-        result.Backend.Should().Be("ufw");
-        result.Detail.Should().Be("ufw inactive");
-    }
-
-    [Fact]
-    public async Task OpenPorts_Unsupported_IsPreserved_NotFabricatedOpen()
-    {
-        _firewall.EnsureOpenAsync("factorio", Arg.Any<IReadOnlyList<PortMapping>>(), Arg.Any<CancellationToken>())
-            .Returns(new FirewallActionResult { Ok = false, Outcome = FirewallOutcome.Unsupported, Backend = "none" });
-
-        var result = await Create().OpenPortsAsync("factorio", new[] { new PortRule(34197, 34197, "udp") });
-
-        result.State.Should().Be(NetworkActionState.Unsupported);
-    }
-
-    [Fact]
-    public async Task OpenPorts_AuthorityUnreachable_FailsClosed_NeverThrows()
-    {
-        _firewall.EnsureOpenAsync("factorio", Arg.Any<IReadOnlyList<PortMapping>>(), Arg.Any<CancellationToken>())
-            .Returns<Task<FirewallActionResult>>(_ => throw new FirewallException("down"));
-
-        var result = await Create().OpenPortsAsync("factorio", new[] { new PortRule(34197, 34197, "udp") });
-
-        result.State.Should().Be(NetworkActionState.FirewallUnavailable);
-    }
 }

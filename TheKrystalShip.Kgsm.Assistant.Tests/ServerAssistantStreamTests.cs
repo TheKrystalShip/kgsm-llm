@@ -38,7 +38,6 @@ public class ServerAssistantStreamTests
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             agent, _prompt, confirmations, progress ?? new TurnProgress(), _inventory, _operations,
-            Substitute.For<INetworkInfo>(), Substitute.For<IUpnpInfo>(),
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), Substitute.For<IBlueprintAuthoring>(),
             Options.Create(new SearchOptions { WebEnabled = true }), Options.Create(new FetchOptions { Available = true }),
             Options.Create(new BlueprintAuthoringFlags { Available = true }),

@@ -3,42 +3,48 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// <summary>
 /// The kind of command awaiting confirmation. Every server command is propose-only
 /// (§3.5): the model never executes one, it only stages it here; a human confirms
-/// before it runs. New members are APPENDED (never reordered) — the Service stores
-/// <c>(int)Kind</c> against a staged action, so reordering would make an already-staged
-/// action redeem as a different operation.
+/// before it runs.
+/// <para>
+/// <b>Every member's number is written out and is permanent.</b> The Service persists
+/// <c>(int)Kind</c> against a staged action, so the number — not the position — is what a
+/// pending row redeems as. A member that goes away leaves its number behind as a hole rather
+/// than letting the ones after it shift down onto rows already written: a staged file write
+/// coming back as a blueprint finalize is the failure that buys. A retired number is never
+/// reused, and a row still carrying one fails <c>Enum.IsDefined</c> at redemption and is
+/// refused, which is the right answer for a staged action this build can no longer perform.
+/// </para>
 /// </summary>
 public enum ConfirmationKind
 {
     // Original destructive tier.
-    Uninstall,
-    Install,
+    Uninstall = 0,
+    Install = 1,
     // §3.5 generalisation: the formerly-inline commands, now propose-only too.
-    Start,
-    Stop,
-    Restart,
-    Update,
-    Backup,
+    Start = 2,
+    Stop = 3,
+    Restart = 4,
+    Update = 5,
+    Backup = 6,
     // §3.8: set a single key=value in an instance's .config.ini. Propose-only like the
     // rest; carries a key/value payload and has its own confirm path (like Install).
-    SetConfig,
-    // Open host-firewall ports for an instance (via the kgsm-firewall authority). Propose-only
-    // like the rest; carries the port spec on ConfigValue and has its own confirm path (like
-    // SetConfig). APPENDED — never reorder (tokens encode (int)Kind).
-    OpenPorts,
+    SetConfig = 7,
+    //
+    // 8 is retired and must not be reused. It staged an on-demand host-firewall open; an
+    // instance's ports are now opened by the supervisor when it starts and released when it
+    // stops, so there is no port for a person — or a model — to open by hand.
+    //
     // Overwrite a GAME's own config file (as opposed to KGSM's .config.ini — that's SetConfig).
     // Propose-only like the rest; carries the relative path on ConfigKey and the COMPLETE new
     // content on ConfigValue, and has its own confirm path. Not Destructive (a .kgsmbak backup
-    // + the confirm-time preview are the friction, not a type-the-name gate). APPENDED — never
-    // reorder (tokens encode (int)Kind).
-    WriteFile,
+    // + the confirm-time preview are the friction, not a type-the-name gate).
+    WriteFile = 9,
     // Finalize an assistant-authored blueprint the user reviewed/edited in the chat (the human-review
     // checkpoint — assistant-blueprint-review-plan.md). Unlike the rest, "confirm" runs a long pipeline
     // (test-install → verify → repair → keep) and its RESULT is a rich card, not a one-line outcome — so it
     // has its own confirm entrypoint that returns a BlueprintAuthoringData rather than ConfirmAsync's text.
     // Carries the resolved slug on Target, the game display name on InstanceName, and the DRAFT YAML on
     // ConfigValue (the fallback body; the user's Save sends the possibly-edited YAML alongside the token).
-    // APPENDED — never reorder (tokens encode (int)Kind).
-    Blueprint
+    Blueprint = 10
 }
 
 /// <summary>
@@ -84,7 +90,6 @@ public static class ConfirmationKinds
         ConfirmationKind.Uninstall => "uninstall",
         ConfirmationKind.Install => "install",
         ConfirmationKind.SetConfig => "set config on",
-        ConfirmationKind.OpenPorts => "open firewall ports on",
         ConfirmationKind.WriteFile => "write to a file on",
         ConfirmationKind.Blueprint => "test-install and add",
         _ => kind.ToString().ToLowerInvariant(),
@@ -101,7 +106,6 @@ public static class ConfirmationKinds
         ConfirmationKind.Uninstall => "uninstalled",
         ConfirmationKind.Install => "installed",
         ConfirmationKind.SetConfig => "reconfigured",
-        ConfirmationKind.OpenPorts => "had its firewall ports opened",
         ConfirmationKind.WriteFile => "had a file updated",
         ConfirmationKind.Blueprint => "added to the catalog",
         _ => kind.ToString().ToLowerInvariant(),
@@ -116,8 +120,8 @@ public static class ConfirmationKinds
 /// instance-targeted kinds, a known blueprint for <see cref="ConfirmationKind.Install"/>)
 /// — never the model's raw argument. <see cref="InstanceName"/> is Install-only (the
 /// optional custom name for the new instance). <see cref="ConfigKey"/>/<see cref="ConfigValue"/>
-/// are overloaded per kind (like <see cref="ConfirmationKind.OpenPorts"/>'s router-scope/port-spec
-/// pair): for <see cref="ConfirmationKind.SetConfig"/> they are the config key/value (the value may
+/// are overloaded per kind: for <see cref="ConfirmationKind.SetConfig"/> they are the config
+/// key/value (the value may
 /// legitimately be the empty string); for <see cref="ConfirmationKind.WriteFile"/> they are the
 /// file's relative path (<see cref="ConfigKey"/>) and its COMPLETE new content
 /// (<see cref="ConfigValue"/>). Both surfaces carry the real content here — the CLI in-process for

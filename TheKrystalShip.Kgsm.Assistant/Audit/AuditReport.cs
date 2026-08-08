@@ -116,6 +116,7 @@ public static class AuditReport
             ["instance_ports_closed"] = "ports closed",
             ["instance_upnp_opened"] = "UPnP forward opened",
             ["instance_upnp_closed"] = "UPnP forward closed",
+            ["instance_upnp_reasserted"] = "UPnP forward restored after the router dropped it",
             ["instance_player_joined"] = "player joined",
             ["instance_player_left"] = "player left",
             ["instance_player_kicked"] = "player kicked",

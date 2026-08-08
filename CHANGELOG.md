@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`instance_upnp_reasserted`** reads as *"UPnP forward restored after the router dropped it"* in the
+  audit surfaces, rather than falling back to its raw type string. Deliberately not a change-timeline
+  event, matching the UPnP open/close pair: the sweep that restores a dropped forward is the daemon
+  keeping the declared state true, not somebody changing the server.
+
 ### Removed
 
 - **The `open_ports` tool, and with it every path by which the assistant could change a host's network

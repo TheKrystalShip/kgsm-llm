@@ -7,10 +7,11 @@ it — `kgsm-web`'s assistant dock and the standalone assistant SPA — on indep
 cadences, so the shapes here are the compatibility boundary: additive changes are free, anything
 else is a version bump.
 
-This document covers the three channels that carry an assistant interaction: the **turn stream**
-(`POST /turn`), the **confirm channel** (`POST /confirm`), and the **command surface**
-(`GET /commands`, `POST /commands/{name}`). Authentication, conversations and the review surface
-are separate; see `CONFIGURATION.md` and `ARCHITECTURE.md`.
+This document covers the four channels that carry an assistant interaction: the **turn stream**
+(`POST /turn`), the **confirm channel** (`POST /confirm`), the **command surface**
+(`GET /commands`, `POST /commands/{name}`), and the **conversation event stream** (`GET /events`).
+Authentication, conversations and the review surface are separate; see `CONFIGURATION.md` and
+`ARCHITECTURE.md`.
 
 ---
 
@@ -61,7 +62,8 @@ default, never to `false`.
 Both are **read back**: `GET /conversations` carries `think` and `autorun` on every row, and
 `GET /conversations/{id}` carries them for the one — already resolved against that default, so what a
 client shows is what the next turn will run on. A surface displaying the switches states what it read,
-never what it last remembered, since any other surface may have moved them since.
+never what it last remembered, since any other surface may have moved them since. A move made while
+it is watching arrives on the event stream (§5), so it need not wait to be asked.
 
 Auto-run is **intent, not authority**. It asks for lifecycle commands to run with no confirmation
 step, and every gate it passes narrows it further: the caller's admin tier, and on the relay path the
@@ -306,7 +308,52 @@ filtered: a live surface shows a person what they can type, a descriptive file d
 
 ---
 
-## 5 · Compatibility
+## 5 · The conversation event stream — `GET /events`
+
+A conversation can be open in more than one place at once — the Control Panel in a tab, the
+installed assistant app on a phone, a Discord thread — and it carries state those surfaces show:
+which switches it stands at, whether it exists, what its log holds. This stream is how they find out
+without asking each other.
+
+`Accept: text/event-stream`, a session bearer, and the stream stays open. It is **principal-scoped**:
+it carries the caller's own conversations and nothing else, resolved from the bearer the same way
+every other read is.
+
+The first frame names the stream:
+
+```
+event: hello
+data: {"type":"hello","streamId":"3c8075be2cb94f1482dc473810db9a43"}
+```
+
+A client sends that id back as **`X-Assistant-Origin`** on the calls it makes. The events those calls
+cause come back carrying it as `origin`, so a surface can tell its own echo from a change made
+somewhere else and decline to apply what it has already applied. The header is optional everywhere;
+a caller that sends none is simply not distinguished, which costs it one redundant re-read.
+
+| Frame | Payload | Meaning |
+|---|---|---|
+| `conversation.switches` | `{ conversationId, origin, think, autorun }` | where the switches now stand — **effective**, resolved as the listing resolves them, so applying the frame lands exactly where a re-read would |
+| `conversation.started` | `{ conversationId, origin }` | a conversation exists and is listable |
+| `conversation.deleted` | `{ conversationId, origin }` | a conversation was soft-deleted and should leave the list |
+| `conversation.activity` | `{ conversationId, origin }` | its log grew — a turn, or a compaction checkpoint |
+
+**Only the switches travel by value.** Everything else names a conversation and stops there: a
+transcript has one way to be obtained, and a second streaming path for it could drift from the first.
+A client answers `activity` by re-reading the conversation, and `started` by re-reading the listing.
+
+**Nothing is buffered for a stream that is not connected**, and there is no replay, no cursor and no
+delivery guarantee — a client that reconnects **re-reads the listing**, which restates every
+conversation's switches in one call and closes whatever gap the outage left. That is what lets the
+stream be a plain optimisation: a surface with no stream at all is correct, just slower to notice.
+
+A comment frame (`: ping`) every 20 seconds keeps the connection through a proxy's idle timeout, and
+is the beat on which the caller's session is **re-checked** — a stream held open does not outlive the
+logout that was meant to end it.
+
+---
+
+## 6 · Compatibility
 
 The contract version at the top of this document changes when a client must change with it.
 

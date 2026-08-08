@@ -107,6 +107,13 @@ Things that bite if you don't know them:
   was staged for; the store enforces that itself, and leaves anyone else's handle standing rather
   than consuming it. One model for every surface: a browser and a Discord button carry the same
   thing, and no surface works around another's identifier limits.
+- **The event stream is an optimisation, never a source of truth.** `GET /events` pushes a person's
+  own conversation changes to their own open surfaces so two of them agree without polling. The bus is
+  **in memory and per-user**: nothing is buffered for a stream that is not connected, and there is no
+  replay or cursor — a reconnecting client re-reads the listing, which restates everything. Keep it
+  that way. The moment a client has to *rely* on a frame arriving, the stream becomes a second source
+  for state the endpoints already own. This is also why only the switches travel by value and a
+  transcript never does.
 - **One model-facing `search` tool, deterministic aggregator (no nested model calls).** Queries the
   local RAG index first; a hit ≥ `LocalMinScore` answers from docs, else falls back to Tavily, else
   an honest "nothing found". `web_search` is internal — the model only ever sees `search`. A web

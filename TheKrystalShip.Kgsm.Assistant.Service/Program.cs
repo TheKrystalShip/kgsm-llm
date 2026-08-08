@@ -18,6 +18,7 @@ using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.Kgsm.Assistant.Service.Streaming;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
@@ -112,6 +113,12 @@ builder.Services.AddHostedService<BlueprintProbeSweepService>();
 // by AddLocalLlm above), adding its own table.
 builder.Services.AddSingleton<IPendingConfirmationStore, SqlitePendingConfirmationStore>();
 
+// Fan-out of a person's own conversation changes to their own open streams (GET /events), so a chat
+// held in the Control Panel and in the installed app agrees with itself without either polling. In
+// memory on purpose: a change nobody was connected for is not owed to anyone, because every surface
+// re-reads the listing when its stream opens.
+builder.Services.AddSingleton<IConversationEventBus, ConversationEventBus>();
+
 // --- Web auth (Discord OAuth) ------------------------------------------------
 // A sign-in yields a short-lived access bearer plus a refresh token, both signed by this service
 // and both carrying the session id the registry can revoke. The in-flight login handshake needs no
@@ -160,6 +167,11 @@ builder.Services.AddScoped<DiscordAuthService>();
 builder.Services.AddScoped<BearerAuthFilter>();
 builder.Services.AddScoped<AdminOnlyFilter>();
 
+// The header a surface names its own event stream with, so the changes it causes come back stamped
+// and it can skip re-applying what it already did. Optional everywhere: a caller that sends none is
+// simply not distinguished from any other, which costs it one redundant re-read.
+const string OriginHeaderName = "X-Assistant-Origin";
+
 // CORS: allow the configured SPA origins to call with an Authorization header. NO
 // AllowCredentials (bearer, not cookies). UseCors is ordered before the secured group so
 // cross-origin preflight (OPTIONS) is answered by the CORS middleware, pre-auth.
@@ -167,10 +179,14 @@ builder.Services.AddScoped<AdminOnlyFilter>();
 // DELETE is here because a client owns its conversations and deleting one is a DELETE; without it a
 // cross-origin client can hold a whole chat history it has no way to remove. The list is the verbs
 // this service actually answers on — not a wildcard.
+//
+// X-Assistant-Origin is how a surface names its own event stream. Without it on this list the
+// preflight refuses the header and a cross-origin surface silently loses the ability to recognise its
+// own echoes — it would re-apply everything it just did.
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(authOptions.AllowedOrigins)
     .WithMethods("GET", "POST", "DELETE")
-    .WithHeaders("Authorization", "Content-Type")));
+    .WithHeaders("Authorization", "Content-Type", OriginHeaderName)));
 
 var app = builder.Build();
 
@@ -462,6 +478,21 @@ app.MapPost("/events", async (
 // action role additionally gates mutations, computed FRESH per call.
 var secured = app.MapGroup("").AddEndpointFilter<BearerAuthFilter>();
 
+// The caller's own conversation changes, pushed as they happen: what the switches now stand at, a
+// conversation started or deleted, a log that grew. Principal-scoped — a stream only ever carries its
+// own caller's changes — and content-free beyond the switches, so a transcript is still read from the
+// endpoint that owns it rather than mirrored down a second, drifting path.
+//
+// A surface that names itself with X-Assistant-Origin gets its own changes back stamped with that id
+// and skips them, having already applied what it asked for.
+secured.MapGet("/events", async (
+    HttpContext http, IConversationEventBus bus, ISessionValidator sessions) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    await SseConversationWriter.WriteAsync(http, bus, sessions, principal);
+    return Results.Empty;
+});
+
 // Who am I, and may I act right now? Lets the SPA show/hide action affordances.
 secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
 {
@@ -529,11 +560,15 @@ secured.MapPost("/commands/{name}", async (
     IConversationStore conversations,
     IConversationCompactor compactor,
     IPromptOverrides promptOverrides,
+    IConversationEventBus bus,
     IOptions<SearchOptions> searchOptions,
     IOptions<OllamaOptions> ollamaOptions,
     CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var origin = http.Request.Headers.TryGetValue(OriginHeaderName, out var named) && named.Count > 0
+        ? named[0]
+        : null;
 
     var command = ChatCommands.Find(name);
     if (command is null)
@@ -558,6 +593,19 @@ secured.MapPost("/commands/{name}", async (
     var conversationId = string.IsNullOrEmpty(chatScope)
         ? $"{WebSurface}:{principal.UserId}"
         : $"{WebSurface}:{principal.UserId}:{chatScope}";
+
+    // Tell the caller's OTHER surfaces where the switches now stand, re-read rather than assembled
+    // from what was just written — the frame and a later listing must not be able to disagree.
+    void PublishSwitches()
+    {
+        var standing = conversations.GetPreferences(conversationId);
+        bus.Publish(principal.UserId, new ConversationEvent(
+            ConversationStream.Switches,
+            new SwitchesChanged(
+                chatScope ?? string.Empty, origin,
+                standing.Think ?? ollamaOptions.Value.Think,
+                standing.Autorun ?? false)));
+    }
 
     switch (command.Name)
     {
@@ -590,6 +638,8 @@ secured.MapPost("/commands/{name}", async (
                 : Guid.NewGuid().ToString("N");
 
             conversations.CreateConversation($"{WebSurface}:{principal.UserId}:{started}");
+            bus.Publish(principal.UserId, new ConversationEvent(
+                ConversationStream.Started, new ConversationChanged(started, origin)));
             return Results.Ok(new CommandResultDto(
                 command.Name, "Started a fresh conversation.", ConversationId: started));
         }
@@ -602,6 +652,10 @@ secured.MapPost("/commands/{name}", async (
 
             var outcome = result.Value!;
             var n = outcome.MessagesCompacted;
+            // A checkpoint is a transcript change, so the caller's other surfaces re-read it.
+            if (outcome.Compacted)
+                bus.Publish(principal.UserId, new ConversationEvent(
+                    ConversationStream.Activity, new ConversationChanged(chatScope ?? string.Empty, origin)));
             return Results.Ok(new CommandResultDto(
                 command.Name,
                 outcome.Compacted
@@ -615,6 +669,7 @@ secured.MapPost("/commands/{name}", async (
             var standing = conversations.GetPreferences(conversationId).Think ?? ollamaOptions.Value.Think;
             var next = requested ?? !standing;
             conversations.SetPreferences(conversationId, new ConversationPreferences(next, null));
+            PublishSwitches();
             return Results.Ok(new CommandResultDto(
                 command.Name,
                 next
@@ -628,6 +683,7 @@ secured.MapPost("/commands/{name}", async (
             var standing = conversations.GetPreferences(conversationId).Autorun ?? false;
             var next = requested ?? !standing;
             conversations.SetPreferences(conversationId, new ConversationPreferences(null, next));
+            PublishSwitches();
             return Results.Ok(new CommandResultDto(
                 command.Name,
                 next
@@ -693,7 +749,8 @@ secured.MapGet("/conversations/{id}", (
 // append-only history (the self-improvement corpus is never destroyed). The key is composed exactly as the
 // reads above — the server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever
 // address the caller's OWN conversation. Idempotent; a later turn on the same id (a resume) un-hides it.
-secured.MapDelete("/conversations/{id}", (string id, HttpContext http, IConversationStore store) =>
+secured.MapDelete("/conversations/{id}", (
+    string id, HttpContext http, IConversationStore store, IConversationEventBus bus) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
@@ -701,6 +758,11 @@ secured.MapDelete("/conversations/{id}", (string id, HttpContext http, IConversa
         ? $"{WebSurface}:{principal.UserId}"
         : $"{WebSurface}:{principal.UserId}:{chatScope}";
     store.SoftDelete(conversationId);
+    bus.Publish(principal.UserId, new ConversationEvent(
+        ConversationStream.Deleted,
+        new ConversationChanged(
+            chatScope ?? string.Empty,
+            http.Request.Headers.TryGetValue(OriginHeaderName, out var named) && named.Count > 0 ? named[0] : null)));
     return Results.NoContent();
 });
 
@@ -746,7 +808,8 @@ secured.MapPost("/conversations/{id}/turns/{turnId:long}/feedback", (
 // idempotent-ish: a conversation with too little history to be worth a model round-trip returns
 // Compacted=false, untouched. A model/upstream failure ⇒ 502; the stored history is left as-is.
 secured.MapPost("/conversations/{id}/compact", async (
-    string id, HttpContext http, IConversationCompactor compactor, CancellationToken ct) =>
+    string id, HttpContext http, IConversationCompactor compactor, IConversationEventBus bus,
+    CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
@@ -759,6 +822,13 @@ secured.MapPost("/conversations/{id}/compact", async (
         return Results.Problem(result.Error, statusCode: StatusCodes.Status502BadGateway);
 
     var outcome = result.Value!;
+    // A checkpoint is a transcript change, so the caller's other surfaces re-read it.
+    if (outcome.Compacted)
+        bus.Publish(principal.UserId, new ConversationEvent(
+            ConversationStream.Activity,
+            new ConversationChanged(
+                chatScope ?? string.Empty,
+                http.Request.Headers.TryGetValue(OriginHeaderName, out var named) && named.Count > 0 ? named[0] : null)));
     return Results.Ok(new CompactionResultDto(outcome.Compacted, outcome.MessagesCompacted, outcome.Summary));
 });
 
@@ -887,6 +957,7 @@ secured.MapPost("/turn", async (
     DiscordAuthService auth,
     IInvocationContext invocation,
     IConversationStore conversations,
+    IConversationEventBus bus,
     CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.Prompt))
@@ -981,12 +1052,23 @@ secured.MapPost("/turn", async (
     var wantsStream = http.Request.Headers.Accept
         .Any(v => v is not null && v.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase));
 
+    // The caller's OTHER surfaces re-read this conversation once the turn has landed: its title, its
+    // place in the list and its transcript all just moved. Published even when the stream was cut
+    // short, because a turn abandoned part-way is still a turn that may have been recorded — and the
+    // cost of saying so when nothing changed is one re-read.
+    void PublishActivity() => bus.Publish(principal.UserId, new ConversationEvent(
+        ConversationStream.Activity,
+        new ConversationChanged(
+            chatScope ?? string.Empty,
+            http.Request.Headers.TryGetValue(OriginHeaderName, out var named) && named.Count > 0 ? named[0] : null)));
+
     if (wantsStream)
     {
         await SseTurnWriter.WriteAsync(
             http, assistant, pending, assistantOptions.Value.Confirmation.TtlSeconds,
             principal, conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, request.DraftYaml,
             relayLeaf);
+        PublishActivity();
         return Results.Empty;
     }
 
@@ -1002,6 +1084,8 @@ secured.MapPost("/turn", async (
                 ? StatusCodes.Status400BadRequest
                 : StatusCodes.Status502BadGateway);
     }
+
+    PublishActivity();
 
     var stagedUntil = DateTimeOffset.UtcNow.AddSeconds(
         Math.Max(assistantOptions.Value.Confirmation.TtlSeconds, 1));

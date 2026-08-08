@@ -55,6 +55,26 @@ conversation" cannot mean the one it was typed in.
 The CLI REPL's `/reset` is now `/new`, so the two surfaces spell the same command the same way, and
 it gains `/tools` and `/autorun`. `/exit` and `/quit` stay terminal-only and out of the catalog.
 
+### Added — the leaf pushes a person's conversation changes to their own surfaces
+
+`GET /events` is a per-caller SSE stream carrying that person's own conversation changes: where the
+switches now stand (`conversation.switches`, effective), a conversation started or deleted, and a log
+that grew (`conversation.activity`). It closes the case reading-back alone cannot — two surfaces open
+at once, where a switch flipped in one sat stale in the other until something happened to it.
+
+Only the switches travel by value. Everything else names a conversation and stops there, because a
+transcript has one way to be obtained and a second streaming path for it could drift from the first.
+
+The stream names itself in its opening frame, and a client sends that id back as `X-Assistant-Origin`.
+The events its calls cause come back stamped with it, so a surface can tell its own echo from a change
+made elsewhere. The header is optional; a caller that sends none is simply not distinguished.
+
+Nothing is buffered, replayed or guaranteed — a reconnecting client re-reads the listing, which
+restates everything in one call. That is what keeps the channel an optimisation rather than a
+dependency: a surface with no stream at all is still correct. The 20s heartbeat both holds the
+connection through a proxy's idle timeout and is the beat on which the caller's session is re-checked,
+so a stream held open does not outlive the logout meant to end it.
+
 ### Fixed — a conversation holding only bookkeeping is no longer a conversation
 
 Flipping a switch on a chat that was never started leaves an id carrying nothing but a preference.

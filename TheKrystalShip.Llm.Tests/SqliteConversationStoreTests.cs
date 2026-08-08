@@ -771,4 +771,148 @@ public sealed class SqliteConversationStoreTests : IDisposable
         notes[0].ConversationId.Should().Be("web:u:a");
         notes[0].Prompt.Should().Be("p");
     }
+
+    [Fact]
+    public void Preferences_AreUnsetUntilSomethingSetsThem()
+    {
+        // Unset must NOT read as false: a conversation nobody has told anything falls to the host's
+        // configured default, and answering false would override that configuration with a value
+        // nobody chose.
+        var standing = Create().GetPreferences("web:u:never-touched");
+
+        standing.Think.Should().BeNull();
+        standing.Autorun.Should().BeNull();
+    }
+
+    [Fact]
+    public void Preferences_AreWrittenAsDeltas_SoTheTwoSwitchesAreIndependent()
+    {
+        var store = Create();
+        store.SetPreferences("web:u:a", new ConversationPreferences(Think: true, Autorun: null));
+        store.SetPreferences("web:u:a", new ConversationPreferences(Think: null, Autorun: true));
+
+        // The second write said nothing about thinking, so it left it standing rather than clearing it.
+        var standing = Create().GetPreferences("web:u:a");
+        standing.Think.Should().BeTrue();
+        standing.Autorun.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Preferences_ResolveLatestWins_PerField()
+    {
+        var store = Create();
+        store.SetPreferences("web:u:a", new ConversationPreferences(true, true));
+        store.SetPreferences("web:u:a", new ConversationPreferences(false, null));
+
+        var standing = Create().GetPreferences("web:u:a");
+        standing.Think.Should().BeFalse();
+        standing.Autorun.Should().BeTrue();
+    }
+
+    [Fact]
+    public void APreferenceAlone_DoesNotConjureAConversation()
+    {
+        // Flipping a switch on a chat that was never started leaves an id holding nothing but
+        // bookkeeping. That is not a conversation — it has no beginning and no activity — so it must
+        // not be listed, counted, or reported with null timestamps.
+        var store = Create();
+        store.SetPreferences("web:u:never-spoken", new ConversationPreferences(true, null));
+
+        Create().ListConversations("web:u").Should().BeEmpty();
+        Create().ListActors("web").Should().BeEmpty();
+        Create().GetStats("web").Conversations.Should().Be(0);
+
+        // The switch itself still stands — it just does not make the chat exist.
+        Create().GetPreferences("web:u:never-spoken").Think.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Preferences_AreScopedToOneConversation()
+    {
+        var store = Create();
+        store.SetPreferences("web:u:a", new ConversationPreferences(true, true));
+
+        var other = store.GetPreferences("web:u:b");
+        other.Think.Should().BeNull();
+        other.Autorun.Should().BeNull("auto-run armed in one chat must not reach another");
+    }
+
+    [Fact]
+    public void SettingNothing_WritesNothing()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u:a", "hello", "hi"));
+        var before = store.ListConversations("web:u").Single().LastActivityAt;
+
+        store.SetPreferences("web:u:a", ConversationPreferences.Unset);
+
+        // An append saying nothing would still sit in the log claiming a switch was touched.
+        Create().ListConversations("web:u").Single().LastActivityAt.Should().Be(before);
+    }
+
+    [Fact]
+    public void APreference_IsNotActivity_AndDoesNotReorderTheList()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u:older", "first", "a"));
+        store.AppendTurn(Turn("web:u:newer", "second", "b"));
+
+        // Flipping a switch on the older chat is bookkeeping ABOUT it, not something that happened IN
+        // it — so it must not jump the list.
+        store.SetPreferences("web:u:older", new ConversationPreferences(true, null));
+
+        Create().ListConversations("web:u").First().ConversationId.Should().Be("web:u:newer");
+    }
+
+    [Fact]
+    public void APreference_IsNeverShownInTheTranscript()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u:a", "hello", "hi"));
+        store.SetPreferences("web:u:a", new ConversationPreferences(true, null));
+
+        // Its payload is not a turn record; reaching the turn deserializer would put an empty bubble
+        // in the conversation.
+        var history = Create().GetHistory("web:u:a");
+        history.Should().ContainSingle();
+        history[0].Kind.Should().Be(ConversationEntryKind.Turn);
+    }
+
+    [Fact]
+    public void CreateConversation_MakesAnEmptyConversationExistAndList()
+    {
+        var store = Create();
+        store.CreateConversation("web:u:fresh").Should().BeTrue();
+
+        // Started, not yet spoken into — and visible, so another device sees the chat that was opened.
+        var listed = Create().ListConversations("web:u").Single();
+        listed.ConversationId.Should().Be("web:u:fresh");
+        listed.TurnCount.Should().Be(0);
+        listed.Title.Should().BeNull();
+    }
+
+    [Fact]
+    public void CreateConversation_IsIdempotent_AndNeverClaimsASecondBeginning()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u:a", "hello", "hi"));
+
+        store.CreateConversation("web:u:a").Should().BeFalse("it already exists");
+
+        var listed = Create().ListConversations("web:u").Single();
+        listed.TurnCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void CreateConversation_DoesNotResurrectADeletedOne()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u:a", "hello", "hi"));
+        store.SoftDelete("web:u:a");
+
+        // The id is known, so there is nothing to create — and no new entry that could out-id the
+        // tombstone and quietly un-hide the conversation.
+        store.CreateConversation("web:u:a").Should().BeFalse();
+        Create().ListConversations("web:u").Should().BeEmpty();
+    }
 }

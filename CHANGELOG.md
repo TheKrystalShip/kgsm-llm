@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a typed-command surface, and one catalog behind every one of them
+
+The assistant answers to commands typed at it, declared once in `ChatCommands` and read three ways:
+`GET /commands` serves them filtered to the caller's tier, the build writes them to
+`deploy/kgsm-llm.commands.json` for the Control Panel, and the CLI REPL dispatches from them. A
+command is declared on one line and reaches every surface.
+
+`/help`, `/tools`, `/compact`, `/new`, `/think [on|off]` and `/autorun [on|off]`. **The leaf runs
+every command it lists**, so a client treats the catalog as authoritative rather than advisory:
+`POST /commands/{name}` honours any name the listing carries, re-checking the gate rather than
+trusting what it served. An unknown name is a 404, not a fall-through to the model.
+
+`/autorun` is admin-gated; the rest need viewer. A command above the caller's tier never appears in
+the listing, so a surface cannot offer what would then be refused.
+
+### Changed — thinking and auto-run belong to the conversation, not to the request
+
+`TurnRequest.Think` and `TurnRequest.Actions` are gone. Both are switches the conversation carries,
+stored as append-only `preference` entries resolved latest-wins per field, and read by the turn. Two
+surfaces looking at one conversation cannot disagree about what it is set to, and a client cannot
+ask for behaviour the stored preference contradicts. An unset switch falls to the configured
+default, never to `false`.
+
+Auto-run is scoped to a conversation rather than to a person on purpose: it is the one switch that
+skips the confirmation gate on a destructive action, and a per-user preference would mean arming it
+in a browser silently arms every other conversation, including one held in Discord weeks later.
+`X-Relay-Auto-Act` is now a **floor** ANDed with the stored value, so kgsm-bot's pinned `false` keeps
+Discord conversations from ever auto-running.
+
+The wire contract moves to **2.0** (`docs/wire-contract.md`) — removing a field is breaking by its
+own rule. kgsm-bot is unaffected: it posts only `prompt` and carries auto-run on the relay path.
+
+`GET /conversations/{id}` carries the conversation's effective `think`/`autorun`, already resolved
+against the host default, so a client shows what the next turn will do rather than guessing.
+
+`/new` mints the conversation server-side, so a chat exists, lists and is resumable from another
+device the moment it is started rather than only once something is said in it.
+
+The CLI REPL's `/reset` is now `/new`, so the two surfaces spell the same command the same way, and
+it gains `/tools` and `/autorun`. `/exit` and `/quit` stay terminal-only and out of the catalog.
+
+### Fixed — a conversation holding only bookkeeping is no longer a conversation
+
+Flipping a switch on a chat that was never started leaves an id carrying nothing but a preference.
+Such an id has no beginning and no activity, so `ListConversations`, `ListActors` and `GetStats` skip
+it rather than reporting one with null timestamps.
+
+### Fixed — a stray NUL byte made a source file unsearchable
+
+`SqliteConversationStore.cs` carried a literal NUL inside a sentinel string rather than the `\0`
+escape. The string was correct and the file compiled, but every text tool read the whole 845-line
+file as binary and silently returned no matches.
+
 ### Fixed — a Discord outage reported itself as "you don't have access"
 
 The review surface (`/admin/conversations/…`) resolves its gate by asking Discord which roles the

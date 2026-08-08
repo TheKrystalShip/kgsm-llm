@@ -21,6 +21,13 @@ internal sealed class CliRunner
     /// <summary>Whether thinking mode is enabled for the current session. Toggleable via the REPL.</summary>
     public bool Think { get; set; }
 
+    /// <summary>
+    /// Whether an authorized action runs without the interactive confirmation. Off unless the REPL's
+    /// <c>/autorun</c> turns it on, and ANDed with <c>canPerformActions</c> at the turn — so it can
+    /// only ever skip a prompt for something this session was already allowed to do.
+    /// </summary>
+    public bool AutoRun { get; set; }
+
     public CliRunner(
         IServerAssistant assistant,
         IInventoryInvalidation inventory,
@@ -61,7 +68,7 @@ internal sealed class CliRunner
         try
         {
             await foreach (var ev in _assistant
-                               .RunStreamAsync(conversationId, prompt, _canPerformActions, Think, autoExecute: false, requestedTools: null, cancellationToken))
+                               .RunStreamAsync(conversationId, prompt, _canPerformActions, Think, _canPerformActions && AutoRun, requestedTools: null, cancellationToken))
             {
                 spinner?.Stop();
                 renderer.Handle(ev);

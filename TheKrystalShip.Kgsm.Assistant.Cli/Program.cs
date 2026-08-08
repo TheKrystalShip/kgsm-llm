@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
+using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Cli;
@@ -208,9 +209,21 @@ using (host)
         return ok ? ExitOk : ExitRuntime;
     }
 
-    // No prompt + interactive stdin → the REPL (which also offers /compact).
+    // No prompt + interactive stdin → the REPL, whose commands come from the shared ChatCommands
+    // catalog.
     var compactor = host.Services.GetRequiredService<IConversationCompactor>();
-    return await Repl.RunAsync(runner, interruptor, compactor, canPerformActions, colorErr);
+    var store = host.Services.GetRequiredService<IConversationStore>();
+
+    // What /tools lists, resolved the same way the turn selects them — the authorized set, minus
+    // `search` when nothing backs it, with any prompt override applied. Listing a tool the turn would
+    // reject would be the surface lying about its own reach.
+    var offered = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+    if (!host.Services.GetRequiredService<IOptions<SearchOptions>>().Value.Available)
+        offered = [.. offered.Where(t => t.Tool != LlmTools.Search)];
+    offered = host.Services.GetRequiredService<IPromptOverrides>().OverlayTools(offered);
+
+    return await Repl.RunAsync(
+        runner, interruptor, compactor, store, offered, canPerformActions, colorErr);
 }
 
 // --- helpers ---------------------------------------------------------------------------------

@@ -19,6 +19,10 @@
          assemblies it names in LeafDescriptor.cs. -->
     <LeafSettingsFile>kgsm-assistant.settings.json</LeafSettingsFile>
     <LeafDescriptorFile>$(MSBuildProjectDirectory)/../deploy/kgsm-llm.leaf.json</LeafDescriptorFile>
+
+    <!-- The command manifest the Control Panel lists this leaf's commands from. Named for the repo
+         beside the leaf descriptor; deploy.sh installs it under the leaf id the file declares. -->
+    <AssistantCommandManifestFile>$(MSBuildProjectDirectory)/../deploy/kgsm-llm.commands.json</AssistantCommandManifestFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -58,5 +62,17 @@
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Relay\TheKrystalShip.Kgsm.Assistant.Relay.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
   </ItemGroup>
+
+  <!-- Write the command manifest by running the binary that was just built, so the shipped file is
+       generated from this build's own ChatCommands catalog rather than a list someone maintains
+       beside it. Same reason the leaf descriptor is generated — and, like it, the result is
+       committed. Inputs/Outputs keep it off no-op builds; a design-time build never runs it. -->
+  <Target Name="EmitAssistantCommandManifest" AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true'"
+          Inputs="$(TargetPath)" Outputs="$(AssistantCommandManifestFile)">
+    <Exec Command="dotnet exec &quot;$(TargetPath)&quot; --emit-commands &quot;$(AssistantCommandManifestFile)&quot;"
+          StandardOutputImportance="low" />
+    <Message Importance="normal" Text="kgsm-assistant command manifest → $(AssistantCommandManifestFile)" />
+  </Target>
 
 </Project>

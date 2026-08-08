@@ -33,6 +33,14 @@ public sealed class SqliteConversationStore : IConversationStore
     // same append-only shape as the tombstone above. Re-rating and un-rating are both just appends, so a
     // rated turn's own record is never rewritten, and the corpus keeps the fact that a verdict changed.
     private const string KindFeedback = "feedback";
+    // A per-conversation preference the next turn reads (thinking, auto-run), carried as a DELTA and
+    // resolved latest-wins per field — the same append-only shape as the tombstone and the verdict, so
+    // setting one is an append and the log keeps the fact that it changed.
+    private const string KindPreference = "preference";
+    // A conversation brought into being before it holds a turn, so "start a fresh conversation" is
+    // something the leaf DID rather than an id a client is holding on to. Content, not bookkeeping: it
+    // is what makes an empty conversation exist and list.
+    private const string KindCreated = "created";
 
     // The recap wording prepended to a checkpoint summary when projected into the model's context, so
     // the model reads it as a compacted recap rather than a normal assistant message.
@@ -116,11 +124,18 @@ public sealed class SqliteConversationStore : IConversationStore
             END)
         """;
 
-    // A verdict is bookkeeping ABOUT a turn, not activity IN the conversation, so every aggregate that
-    // treats an entry as the conversation happening has to skip it: rating an old chat must not bump it
-    // to the top of its owner's list, and rating a turn inside a hidden chat must not out-id the
-    // tombstone and resurrect it.
-    private const string NotFeedbackSql = "kind <> $feedback";
+    // A verdict and a preference are both bookkeeping ABOUT a conversation, not activity IN it, so every
+    // aggregate that treats an entry as the conversation happening has to skip them: rating an old chat
+    // — or flipping its thinking switch — must not bump it to the top of its owner's list, and neither
+    // must out-id a tombstone and resurrect a hidden chat.
+    private const string NotBookkeepingSql = "kind NOT IN ($feedback, $preference)";
+
+    // Whether an id holds anything but bookkeeping. Flipping a switch on a chat that was never started
+    // writes a preference and nothing else, and such an id is not a conversation: it has no beginning
+    // and no activity, so every aggregate over the log has to skip it rather than report one whose
+    // timestamps are null. Grouped queries carry this in their HAVING.
+    private const string HasContentSql =
+        $"MAX(CASE WHEN {NotBookkeepingSql} THEN id ELSE 0 END) > 0";
 
     // The verdict that stands for each rated turn: the newest feedback row per turn id, since re-rating
     // appends rather than rewrites. A cleared verdict is the newest row too and carries a null rating,
@@ -163,13 +178,13 @@ public sealed class SqliteConversationStore : IConversationStore
             const string DeletedExpr =
                 $"""
                 MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
-                    > MAX(CASE WHEN kind <> $deleted AND {NotFeedbackSql} THEN id ELSE 0 END)
+                    > MAX(CASE WHEN kind <> $deleted AND {NotBookkeepingSql} THEN id ELSE 0 END)
                 """;
             agg.CommandText =
                 $"""
                 SELECT conversation_id,
-                       MIN(CASE WHEN {NotFeedbackSql} THEN created_at END) AS created,
-                       MAX(CASE WHEN {NotFeedbackSql} THEN created_at END) AS last,
+                       MIN(CASE WHEN {NotBookkeepingSql} THEN created_at END) AS created,
+                       MAX(CASE WHEN {NotBookkeepingSql} THEN created_at END) AS last,
                        SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns,
                        {DeletedExpr} AS is_deleted,
                        SUM(CASE WHEN kind = $turn AND json_extract(payload, '$.outcome') = 'error'
@@ -186,12 +201,13 @@ public sealed class SqliteConversationStore : IConversationStore
                 FROM conversation_entries
                 WHERE conversation_id = $scope OR conversation_id LIKE $child
                 GROUP BY conversation_id
-                HAVING $includeDeleted OR NOT ({DeletedExpr})
+                HAVING ({HasContentSql}) AND ($includeDeleted OR NOT ({DeletedExpr}))
                 ORDER BY last DESC;
                 """;
             agg.Parameters.AddWithValue("$turn", KindTurn);
             agg.Parameters.AddWithValue("$deleted", KindDeleted);
             agg.Parameters.AddWithValue("$feedback", KindFeedback);
+            agg.Parameters.AddWithValue("$preference", KindPreference);
             agg.Parameters.AddWithValue("$scope", scopeKey);
             agg.Parameters.AddWithValue("$child", childPattern);
             agg.Parameters.AddWithValue("$includeDeleted", includeDeleted ? 1 : 0);
@@ -293,14 +309,15 @@ public sealed class SqliteConversationStore : IConversationStore
             WITH per_conversation AS (
                 SELECT {ActorSql} AS actor,
                        conversation_id,
-                       MIN(CASE WHEN {NotFeedbackSql} THEN created_at END) AS created,
-                       MAX(CASE WHEN {NotFeedbackSql} THEN created_at END) AS last,
+                       MIN(CASE WHEN {NotBookkeepingSql} THEN created_at END) AS created,
+                       MAX(CASE WHEN {NotBookkeepingSql} THEN created_at END) AS last,
                        SUM(CASE WHEN kind = $turn THEN 1 ELSE 0 END) AS turns,
                        MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
-                           > MAX(CASE WHEN kind <> $deleted AND {NotFeedbackSql} THEN id ELSE 0 END) AS is_deleted
+                           > MAX(CASE WHEN kind <> $deleted AND {NotBookkeepingSql} THEN id ELSE 0 END) AS is_deleted
                 FROM conversation_entries
                 WHERE conversation_id = $surface OR conversation_id LIKE $pattern
                 GROUP BY conversation_id
+                HAVING {HasContentSql}
             )
             SELECT actor,
                    COUNT(*) AS conversations,
@@ -322,6 +339,7 @@ public sealed class SqliteConversationStore : IConversationStore
         cmd.Parameters.AddWithValue("$turn", KindTurn);
         cmd.Parameters.AddWithValue("$deleted", KindDeleted);
         cmd.Parameters.AddWithValue("$feedback", KindFeedback);
+        cmd.Parameters.AddWithValue("$preference", KindPreference);
         cmd.Parameters.AddWithValue("$surface", surface);
         cmd.Parameters.AddWithValue("$pattern", pattern);
 
@@ -368,15 +386,17 @@ public sealed class SqliteConversationStore : IConversationStore
                     SELECT conversation_id,
                            {ActorSql} AS actor,
                            MAX(CASE WHEN kind = $deleted THEN id ELSE 0 END)
-                               > MAX(CASE WHEN kind <> $deleted AND {NotFeedbackSql} THEN id ELSE 0 END) AS is_deleted
+                               > MAX(CASE WHEN kind <> $deleted AND {NotBookkeepingSql} THEN id ELSE 0 END) AS is_deleted
                     FROM conversation_entries
                     WHERE conversation_id = $surface OR conversation_id LIKE $pattern
                     GROUP BY conversation_id
+                    HAVING {HasContentSql}
                 )
                 SELECT COUNT(*), SUM(is_deleted), COUNT(DISTINCT actor) FROM per_conversation;
                 """;
             shape.Parameters.AddWithValue("$deleted", KindDeleted);
             shape.Parameters.AddWithValue("$feedback", KindFeedback);
+            shape.Parameters.AddWithValue("$preference", KindPreference);
             shape.Parameters.AddWithValue("$surface", surface);
             shape.Parameters.AddWithValue("$pattern", pattern);
             using var reader = shape.ExecuteReader();
@@ -401,7 +421,7 @@ public sealed class SqliteConversationStore : IConversationStore
         var byDay = new SortedDictionary<string, int>(StringComparer.Ordinal);
         // A prompt hash is nullable, and a dictionary cannot key on null — this stands in for "no hash
         // recorded" and is mapped back to null on the way out.
-        const string NoHash = " none";
+        const string NoHash = "\0none";
 
         // The verdict standing on each rated turn, read BEFORE the turns themselves so the per-turn pass
         // can attribute each one to its prompt-version bucket in the same sweep. Only judged turns appear
@@ -748,6 +768,87 @@ public sealed class SqliteConversationStore : IConversationStore
     /// </summary>
     private sealed record FeedbackPayload(long TurnId, TurnFeedbackRating? Rating, string? Note);
 
+    /// <summary>
+    /// The stored shape of a <see cref="KindPreference"/> entry: a DELTA, so a null field is "this
+    /// append said nothing about that switch" rather than "unset it". Resolution takes the newest
+    /// non-null value per field, which is what lets the two switches be set independently without
+    /// either one having to read the other first.
+    /// </summary>
+    private sealed record PreferencePayload(bool? Think, bool? Autorun);
+
+    public ConversationPreferences GetPreferences(string conversationId)
+    {
+        using var connection = Open();
+        using var cmd = connection.CreateCommand();
+        // Newest first, and the fold below takes the first non-null it sees for each field — so the scan
+        // stops mattering as soon as both are answered. Preference entries are a handful per
+        // conversation (one per time somebody flipped a switch), so this is bounded by hand-typing.
+        cmd.CommandText =
+            """
+            SELECT payload FROM conversation_entries
+            WHERE conversation_id = $cid AND kind = $preference
+            ORDER BY id DESC;
+            """;
+        cmd.Parameters.AddWithValue("$cid", conversationId);
+        cmd.Parameters.AddWithValue("$preference", KindPreference);
+
+        bool? think = null, autorun = null;
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read() && (think is null || autorun is null))
+        {
+            var recorded = JsonSerializer.Deserialize<PreferencePayload>(reader.GetString(0), Json);
+            if (recorded is null)
+                continue;
+            think ??= recorded.Think;
+            autorun ??= recorded.Autorun;
+        }
+
+        return new ConversationPreferences(think, autorun);
+    }
+
+    public void SetPreferences(string conversationId, ConversationPreferences delta)
+    {
+        // An append saying nothing is still an append — and it would sit in the log claiming a switch was
+        // touched when none was. Nothing to record is not an error, it is simply no entry.
+        if (delta.Think is null && delta.Autorun is null)
+            return;
+
+        Insert(conversationId, KindPreference, DateTimeOffset.UtcNow,
+            JsonSerializer.Serialize(new PreferencePayload(delta.Think, delta.Autorun), Json));
+    }
+
+    public bool CreateConversation(string conversationId)
+    {
+        lock (_writeGate)
+        {
+            using (var connection = Open())
+            using (var exists = connection.CreateCommand())
+            {
+                // Idempotent by existence, not by kind: a conversation that already holds turns is a
+                // conversation, and re-creating it would append a second birth to a log that already
+                // says when it started. Under the write gate so two callers cannot both find it absent.
+                exists.CommandText =
+                    "SELECT 1 FROM conversation_entries WHERE conversation_id = $cid LIMIT 1;";
+                exists.Parameters.AddWithValue("$cid", conversationId);
+                if (exists.ExecuteScalar() is not null)
+                    return false;
+            }
+
+            using var connection2 = Open();
+            using var cmd = connection2.CreateCommand();
+            cmd.CommandText =
+                """
+                INSERT INTO conversation_entries (conversation_id, kind, created_at, payload)
+                VALUES ($cid, $kind, $createdAt, '{}');
+                """;
+            cmd.Parameters.AddWithValue("$cid", conversationId);
+            cmd.Parameters.AddWithValue("$kind", KindCreated);
+            cmd.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
+            cmd.ExecuteNonQuery();
+            return true;
+        }
+    }
+
     private long Insert(string conversationId, string kind, DateTimeOffset createdAt, string payload)
     {
         lock (_writeGate)
@@ -806,6 +907,13 @@ public sealed class SqliteConversationStore : IConversationStore
                         ? null
                         : new TurnFeedback(recorded.Rating.Value, recorded.Note, createdAt);
                 }
+                continue;
+            }
+            if (kind == KindPreference || kind == KindCreated)
+            {
+                // Neither is a thing that was said. They carry their own payload shapes, so they must
+                // not reach the turn deserializer in the else-branch below, which would read one as a
+                // turn with every field defaulted and put an empty bubble in the transcript.
                 continue;
             }
             if (kind == KindCheckpoint)

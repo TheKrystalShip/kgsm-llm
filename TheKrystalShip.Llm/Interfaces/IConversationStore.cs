@@ -97,4 +97,28 @@ public interface IConversationStore
     /// </para>
     /// </summary>
     bool SetTurnFeedback(string conversationId, long turnId, TurnFeedbackRating? rating, string? note);
+
+    /// <summary>
+    /// The switches standing on <paramref name="conversationId"/>, resolved latest-wins per field. A
+    /// field is null when nothing has ever set it, which the caller reads as "use the configured
+    /// default" — never as <c>false</c>. Unknown conversations answer
+    /// <see cref="ConversationPreferences.Unset"/> rather than throwing: a conversation that does not
+    /// exist yet has set nothing, which is the same answer.
+    /// </summary>
+    ConversationPreferences GetPreferences(string conversationId);
+
+    /// <summary>
+    /// Records a change to one or both switches, as an append. <paramref name="delta"/> is read as a
+    /// delta: a null field says nothing about that switch and leaves what stands, so the two can be
+    /// set independently without a read-modify-write. A delta that says nothing at all writes nothing.
+    /// </summary>
+    void SetPreferences(string conversationId, ConversationPreferences delta);
+
+    /// <summary>
+    /// Brings a conversation into being before it holds any turn, so it exists, lists, and is
+    /// resumable from another device the moment it is started. Returns whether this call created it —
+    /// <c>false</c> when the id was already known, which makes starting a conversation idempotent
+    /// rather than an error to be handled.
+    /// </summary>
+    bool CreateConversation(string conversationId);
 }

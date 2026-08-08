@@ -2282,6 +2282,32 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
         return FeedbackAccepted;
     }
 
+    /// <summary>The switches each conversation carries, so a test can stand one up and assert the turn read it.</summary>
+    public Dictionary<string, Llm.Models.ConversationPreferences> Preferences { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Every conversation <c>/new</c> asked to create, in order.</summary>
+    public List<string> Created { get; } = new();
+
+    public Llm.Models.ConversationPreferences GetPreferences(string conversationId) =>
+        Preferences.TryGetValue(conversationId, out var p) ? p : Llm.Models.ConversationPreferences.Unset;
+
+    public void SetPreferences(string conversationId, Llm.Models.ConversationPreferences delta)
+    {
+        // Mirror the real store's per-field latest-wins: a null field says nothing about that switch.
+        var standing = GetPreferences(conversationId);
+        Preferences[conversationId] = new Llm.Models.ConversationPreferences(
+            delta.Think ?? standing.Think,
+            delta.Autorun ?? standing.Autorun);
+    }
+
+    public bool CreateConversation(string conversationId)
+    {
+        if (Created.Contains(conversationId))
+            return false;
+        Created.Add(conversationId);
+        return true;
+    }
+
     /// <summary>What <c>GetStats</c> hands back, and the surface it was asked for.</summary>
     public Llm.Models.ConversationStats Stats { get; set; } = EmptyStats;
     public string? StatsSurface { get; private set; }

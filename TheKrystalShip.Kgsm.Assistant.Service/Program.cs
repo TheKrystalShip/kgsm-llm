@@ -27,6 +27,15 @@ using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 using TheKrystalShip.Llm.Ollama;
 
+// Writing the command manifest is a build step, not a service: the build runs the binary it just
+// produced so the shipped file is generated from this build's own catalog. Handled before anything
+// else is composed — it needs no configuration, no Ollama and no kgsm.
+if (args is ["--emit-commands", string manifestPath])
+{
+    CommandManifest.WriteTo(manifestPath);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // The files declaring the service's whole configurable surface, shipped beside the binary. Resolved
@@ -468,12 +477,12 @@ secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, Can
         principal.UserId, principal.DisplayName, KgsmTiers.ToWire(tier), canPerform));
 });
 
-// The tools the caller is authorized to use, with names/descriptions/parameters.
-// Fully server-derived — no client input. Lets the SPA populate a tool picker.
-secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IPromptOverrides promptOverrides,
-    IOptions<SearchOptions> searchOptions, CancellationToken ct) =>
+// The tools the caller is authorized to use, with names/descriptions/parameters. Fully server-derived
+// — no client input. Lets the SPA populate a tool picker, and backs the /tools chat command.
+static async Task<ToolDto[]> AuthorizedToolsAsync(
+    AuthPrincipal principal, DiscordAuthService auth, IPromptOverrides promptOverrides,
+    IOptions<SearchOptions> searchOptions, CancellationToken ct)
 {
-    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
 
     var tools = canPerform ? LlmTools.All : LlmTools.ReadOnly;
@@ -483,13 +492,152 @@ secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IProm
         tools = tools.Where(t => t.Tool != LlmTools.Search).ToArray();
     tools = promptOverrides.OverlayTools(tools);
 
-    var dtos = tools.Select(t => new ToolDto(
+    return [.. tools.Select(t => new ToolDto(
         t.Name,
         t.Description,
-        t.Parameters.Select(p => new ToolParameterDto(
-            p.Name, p.Description, p.Required, p.Type, p.AllowedValues)).ToArray())).ToArray();
+        [.. t.Parameters.Select(p => new ToolParameterDto(
+            p.Name, p.Description, p.Required, p.Type, p.AllowedValues))]))];
+}
 
-    return Results.Ok(dtos);
+secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IPromptOverrides promptOverrides,
+    IOptions<SearchOptions> searchOptions, CancellationToken ct) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    return Results.Ok(await AuthorizedToolsAsync(principal, auth, promptOverrides, searchOptions, ct));
+});
+
+// The commands this caller may type at the assistant, filtered to their tier — a command above it is
+// absent rather than listed and refused, so a surface never offers what it would then reject. The
+// shipped manifest the Control Panel renders carries the same catalog UNfiltered: a live surface shows
+// a person what they can type, a descriptive file documents the leaf.
+secured.MapGet("/commands", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var tier = (await auth.ResolveTierAsync(principal, ct)).OrNone;
+    return Results.Ok(ChatCommands.For(tier).Select(CommandDto.From).ToArray());
+});
+
+// Run one command. The leaf performs every command it lists — nothing here is a client-side convention
+// this service is unaware of, which is what lets a surface treat GET /commands as authoritative rather
+// than advisory. Unknown names 404 rather than falling through to the model: this endpoint is not a
+// second way to ask a question, and answering one here would hide a client bug.
+secured.MapPost("/commands/{name}", async (
+    string name,
+    CommandRequest? request,
+    HttpContext http,
+    DiscordAuthService auth,
+    IConversationStore conversations,
+    IConversationCompactor compactor,
+    IPromptOverrides promptOverrides,
+    IOptions<SearchOptions> searchOptions,
+    IOptions<OllamaOptions> ollamaOptions,
+    CancellationToken ct) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+
+    var command = ChatCommands.Find(name);
+    if (command is null)
+        return Results.NotFound(new { error = $"There is no /{name} command." });
+
+    // The same gate GET /commands filters on, re-checked here rather than trusted from the listing: a
+    // client can post any name it likes, and the listing is a convenience, never the authorization.
+    var tier = (await auth.ResolveTierAsync(principal, ct)).OrNone;
+    if (tier < command.Gate)
+        return Results.Json(
+            new { error = $"/{command.Name} needs {KgsmTiers.ToWire(command.Gate)}." },
+            statusCode: StatusCodes.Status403Forbidden);
+
+    if (!ChatCommands.TryReadState(request?.Argument, out var requested))
+        return Results.BadRequest(new
+        {
+            error = $"/{command.Name} takes {ChatCommands.On} or {ChatCommands.Off}, "
+                  + "or nothing at all to toggle it.",
+        });
+
+    var chatScope = ConversationScope.Sanitize(request?.ConversationId);
+    var conversationId = string.IsNullOrEmpty(chatScope)
+        ? $"{WebSurface}:{principal.UserId}"
+        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+
+    switch (command.Name)
+    {
+        case "help":
+            return Results.Ok(new CommandResultDto(
+                command.Name,
+                "Here's what you can type here.",
+                Commands: [.. ChatCommands.For(tier).Select(CommandDto.From)]));
+
+        case "tools":
+            return Results.Ok(new CommandResultDto(
+                command.Name,
+                "Here's what I can do for you.",
+                Tools: await AuthorizedToolsAsync(principal, auth, promptOverrides, searchOptions, ct)));
+
+        case "new":
+        {
+            // The id is the client's to choose (it is what the next turn will carry), but the
+            // conversation is the leaf's to create — so a fresh chat exists, lists, and is resumable
+            // from another device the moment it is started rather than only once it is spoken into.
+            if (string.IsNullOrEmpty(chatScope))
+                return Results.BadRequest(new { error = "/new needs the id of the conversation to start." });
+
+            var created = conversations.CreateConversation(conversationId);
+            return Results.Ok(new CommandResultDto(
+                command.Name,
+                created ? "Started a fresh conversation." : "That conversation is already going.",
+                ConversationId: chatScope));
+        }
+
+        case "compact":
+        {
+            var result = await compactor.CompactAsync(conversationId, ct);
+            if (result.IsFailure)
+                return Results.Problem(result.Error, statusCode: StatusCodes.Status502BadGateway);
+
+            var outcome = result.Value!;
+            var n = outcome.MessagesCompacted;
+            return Results.Ok(new CommandResultDto(
+                command.Name,
+                outcome.Compacted
+                    ? $"Compacted {n} message{(n == 1 ? "" : "s")} into a summary."
+                    : "Nothing to compact yet.",
+                Compaction: new CompactionResultDto(outcome.Compacted, n, outcome.Summary)));
+        }
+
+        case "think":
+        {
+            var standing = conversations.GetPreferences(conversationId).Think ?? ollamaOptions.Value.Think;
+            var next = requested ?? !standing;
+            conversations.SetPreferences(conversationId, new ConversationPreferences(next, null));
+            return Results.Ok(new CommandResultDto(
+                command.Name,
+                next
+                    ? "Thinking on — I'll reason it through before answering."
+                    : "Thinking off — I'll answer directly.",
+                State: next));
+        }
+
+        case "autorun":
+        {
+            var standing = conversations.GetPreferences(conversationId).Autorun ?? false;
+            var next = requested ?? !standing;
+            conversations.SetPreferences(conversationId, new ConversationPreferences(null, next));
+            return Results.Ok(new CommandResultDto(
+                command.Name,
+                next
+                    ? "Auto-run on — I'll carry out authorized actions in this conversation without asking."
+                    : "Auto-run off — I'll ask you to confirm each action.",
+                State: next));
+        }
+
+        // Every catalog entry is handled above. Reaching here means a command was added to the catalog
+        // and not given a body, which is a bug in this file — reported as one rather than as a 404,
+        // which would say the command does not exist when the catalog says it does.
+        default:
+            return Results.Problem(
+                $"/{command.Name} is listed but not implemented.",
+                statusCode: StatusCodes.Status501NotImplemented);
+    }
 });
 
 // The caller's own past chats (the reverse path): list every conversation under their server-derived
@@ -508,7 +656,8 @@ secured.MapGet("/conversations", (HttpContext http, IConversationStore store) =>
 // client renders the WHOLE history as it happened. The key is composed exactly as /turn does — the
 // server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever address the caller's
 // OWN conversation. An unknown id ⇒ an empty transcript (still 200), never another user's data.
-secured.MapGet("/conversations/{id}", (string id, HttpContext http, IConversationStore store) =>
+secured.MapGet("/conversations/{id}", (
+    string id, HttpContext http, IConversationStore store, IOptions<OllamaOptions> ollamaOptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
@@ -518,7 +667,16 @@ secured.MapGet("/conversations/{id}", (string id, HttpContext http, IConversatio
     var entries = store.GetHistory(conversationId)
         .Select(ConversationHistoryMapper.ToEntryDto)
         .ToArray();
-    return Results.Ok(new ConversationHistoryDto(chatScope ?? string.Empty, entries));
+
+    // The switches resolved the same way the turn resolves them, so what a client shows is what the
+    // next turn will do. Auto-run's floor is false because nothing else is safe to assume of a
+    // conversation nobody has armed.
+    var preferences = store.GetPreferences(conversationId);
+    return Results.Ok(new ConversationHistoryDto(
+        chatScope ?? string.Empty,
+        entries,
+        preferences.Think ?? ollamaOptions.Value.Think,
+        preferences.Autorun ?? false));
 });
 
 // Soft-delete one of the caller's chats: hides it from their list while keeping the full transcript in the
@@ -718,6 +876,7 @@ secured.MapPost("/turn", async (
     IOptions<AssistantServiceOptions> assistantOptions,
     DiscordAuthService auth,
     IInvocationContext invocation,
+    IConversationStore conversations,
     CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.Prompt))
@@ -739,24 +898,6 @@ secured.MapPost("/turn", async (
     // may have no Discord config of its own, so the forwarded tier is the only correct source); a
     // direct session bearer re-derives its own tier from Discord and reads the intent off the body.
     // A caller's capability follows their authority, never the transport that carried the turn.
-    bool canPerform;
-    bool autoExecute;
-    if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
-    {
-        var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
-        canPerform = relayTier >= KgsmTier.Operator && asstOpts.ActionsEnabled;
-        var relayAutoAct = http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
-            && autoObj is bool b && b;
-        autoExecute = canPerform && relayAutoAct;
-    }
-    else
-    {
-        canPerform = await auth.CanPerformActionsAsync(principal, ct);
-        autoExecute = canPerform && (request.Actions ?? false) && await auth.IsAdminAsync(principal, ct);
-    }
-    var think = request.Think
-        ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
-
     // The conversation (memory) key. ALWAYS namespaced under the server-derived user id, so one user can
     // never read or poison another's history. An optional per-CHAT sub-id partitions THIS user's own
     // memory into separate conversations — each "new chat" in the SPA becomes a fresh context window. It
@@ -770,6 +911,47 @@ secured.MapPost("/turn", async (
     var conversationId = string.IsNullOrEmpty(chatScope)
         ? $"{WebSurface}:{principal.UserId}"
         : $"{WebSurface}:{principal.UserId}:{chatScope}";
+
+    // The switches this conversation carries, set by /think and /autorun. Read here rather than off the
+    // request: the leaf owns them, so a client cannot ask for behaviour the conversation contradicts.
+    // An unset switch falls to the host's configured default, never to false.
+    var preferences = conversations.GetPreferences(conversationId);
+    var think = preferences.Think
+        ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
+    var wantsAutoRun = preferences.Autorun ?? false;
+
+    // Two separate permissions, and conflating them is how a client ends up unable to propose a start
+    // because auto-run happens to be off.
+    //
+    //  canPerform  — may this turn PROPOSE actions? An operator capability, and no toggle: the user
+    //                still confirms every proposal, so gating it on one only hides the button.
+    //  autoExecute — may the dispatcher RUN a lifecycle command with no confirmation? The conversation
+    //                asked for it AND the caller is admin. Gated to canPerform so the propose-gate
+    //                always allows what auto-execute then runs.
+    //
+    // Both transports resolve them the same way, from the same ladder. The relay reads the caller's
+    // verified tier off X-Relay-Tier (a relay host may have no Discord config of its own, so the
+    // forwarded tier is the only correct source); a direct session bearer re-derives its own tier from
+    // Discord. A caller's capability follows their authority, never the transport that carried the turn.
+    //
+    // X-Relay-Auto-Act is a FLOOR, not an override: it is ANDed with the stored preference, never
+    // substituted for it. kgsm-bot pins it false, so a conversation held in Discord can never auto-run
+    // whatever is stored against it.
+    bool canPerform;
+    bool autoExecute;
+    if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
+    {
+        var asstOpts = http.RequestServices.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
+        canPerform = relayTier >= KgsmTier.Operator && asstOpts.ActionsEnabled;
+        var relayAutoAct = http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
+            && autoObj is bool b && b;
+        autoExecute = canPerform && wantsAutoRun && relayAutoAct;
+    }
+    else
+    {
+        canPerform = await auth.CanPerformActionsAsync(principal, ct);
+        autoExecute = canPerform && wantsAutoRun && await auth.IsAdminAsync(principal, ct);
+    }
 
     // The leaf this turn arrives through, when one named itself. It picks the prompt overrides the turn
     // is built from and the origin its actions are recorded under; absent, both are the assistant's own.

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 2,
+  "leaf": "assistant",
+  "surface": "chat",
+  "gates": {
+    "viewer": [
+      {
+        "name": "compact",
+        "description": "Summarize this conversation in place to free up context",
+        "mutates": true,
+        "options": []
+      },
+      {
+        "name": "help",
+        "description": "Show what you can type here",
+        "mutates": false,
+        "options": []
+      },
+      {
+        "name": "new",
+        "description": "Start a fresh conversation",
+        "mutates": true,
+        "options": []
+      },
+      {
+        "name": "think",
+        "description": "Whether the assistant reasons step by step before answering",
+        "mutates": true,
+        "options": [
+          {
+            "name": "state",
+            "description": "Whether step-by-step reasoning is on. Leave it out to toggle.",
+            "type": "string",
+            "required": false,
+            "autocomplete": true,
+            "values": [
+              "on",
+              "off"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "tools",
+        "description": "Show what the assistant can do for you",
+        "mutates": false,
+        "options": []
+      }
+    ],
+    "admin": [
+      {
+        "name": "autorun",
+        "description": "Whether authorized actions run without asking you to confirm each one",
+        "mutates": true,
+        "options": [
+          {
+            "name": "state",
+            "description": "Whether auto-run is on. Leave it out to toggle.",
+            "type": "string",
+            "required": false,
+            "autocomplete": true,
+            "values": [
+              "on",
+              "off"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

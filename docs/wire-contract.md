@@ -1,15 +1,16 @@
 # The assistant wire contract
 
-**Contract version 1.0.**
+**Contract version 2.0.**
 
 The public HTTP contract between the assistant leaf and any browser client. Two clients consume
 it — `kgsm-web`'s assistant dock and the standalone assistant SPA — on independent deploy
 cadences, so the shapes here are the compatibility boundary: additive changes are free, anything
 else is a version bump.
 
-This document covers the two channels that carry an assistant interaction: the **turn stream**
-(`POST /turn`) and the **confirm channel** (`POST /confirm`). Authentication, conversations and
-the review surface are separate; see `CONFIGURATION.md` and `ARCHITECTURE.md`.
+This document covers the three channels that carry an assistant interaction: the **turn stream**
+(`POST /turn`), the **confirm channel** (`POST /confirm`), and the **command surface**
+(`GET /commands`, `POST /commands/{name}`). Authentication, conversations and the review surface
+are separate; see `CONFIGURATION.md` and `ARCHITECTURE.md`.
 
 ---
 
@@ -48,17 +49,26 @@ Request body:
 | Field | Meaning |
 |---|---|
 | `prompt` | required |
-| `think` | opt into `thinking.delta` frames |
 | `tools` | restrict the offered tool set |
-| `actions` | the per-turn **auto-run** toggle — **intent, not authority**. It asks for lifecycle commands to run with no confirmation step, and is ANDed with the caller's admin tier, so it can only ever narrow. It does **not** gate whether an action may be *proposed*: that follows the caller's operator tier alone, because the user confirms every proposal |
 | `conversationId` | partitions this user's own history into separate context windows. It carries no identity — memory is always keyed by the server-resolved user id |
+
+**Thinking and auto-run are not turn fields.** They are switches the *conversation* carries, set by
+the `/think` and `/autorun` commands (§4) and read by the leaf when the turn runs — so two surfaces
+looking at one conversation cannot disagree about what it is set to, and a client cannot ask for
+behaviour the stored preference contradicts. A switch nothing has set falls to the host's configured
+default, never to `false`.
+
+Auto-run is **intent, not authority**. It asks for lifecycle commands to run with no confirmation
+step, and every gate it passes narrows it further: the caller's admin tier, and on the relay path the
+surface's own `X-Relay-Auto-Act` floor. It does **not** gate whether an action may be *proposed* —
+that follows the caller's operator tier alone, because the user confirms every proposal.
 
 ### Frames
 
 | Frame | Payload | Meaning |
 |---|---|---|
 | `text.delta` | `{ text }` | one slice of the reply |
-| `thinking.delta` | `{ text }` | one slice of model reasoning; emitted only when `think` is set |
+| `thinking.delta` | `{ text }` | one slice of model reasoning; emitted only when the conversation's thinking switch is on |
 | `tool.start` | `{ id, tool, arguments }` | a tool is about to run |
 | `tool.result` | `{ id, tool, summary, result? }` | that tool finished |
 | `progress` | `{ tool, key, label, status, id? }` | a step *inside* a still-running tool |
@@ -250,7 +260,42 @@ token is a plain JSON 4xx and never a 200 whose only failure signal is buried in
 
 ---
 
-## 4 · Compatibility
+## 4 · The command surface — `GET /commands`, `POST /commands/{name}`
+
+The commands a person can type at the assistant. **The leaf runs every command it lists**, so a
+client treats the catalog as authoritative rather than advisory: a name that appears in `GET
+/commands` is a name `POST /commands/{name}` will honour.
+
+`GET /commands` answers the catalog **filtered to the caller's tier** — a command above it is absent,
+never listed and then refused. Each entry carries `name`, `description`, `mutates`, and `options`;
+an option carries `values` when it offers a fixed set rather than free text.
+
+`POST /commands/{name}` takes `{ conversationId?, argument? }` and answers a result whose `message`
+is always present — the one line a surface puts in the transcript — plus whichever of these the
+command produced:
+
+| Field | From |
+|---|---|
+| `conversationId` | `/new` — the conversation it started |
+| `state` | `/think`, `/autorun` — the state the switch now stands at |
+| `compaction` | `/compact` — `{ compacted, messagesCompacted, summary }` |
+| `commands` | `/help` — the same catalog the listing answers |
+| `tools` | `/tools` — the same tools `GET /tools` answers |
+
+A switch given no `argument` **toggles**; `on`/`off` names a state. Anything else is a 400 rather
+than a guess. An unknown command name is a 404 — this endpoint is not a second way to ask a
+question, so a client's typo surfaces as one instead of reaching the model.
+
+The gate is re-checked at the POST rather than trusted from the listing: a client can post any name,
+and the listing is a convenience, never the authorization.
+
+The same catalog ships as `/var/lib/kgsm/leaves/commands/assistant.json` for the Control Panel, in
+the format `leaf-command-manifest.md` owns. The file is the **whole** catalog where the endpoint is
+filtered: a live surface shows a person what they can type, a descriptive file documents the leaf.
+
+---
+
+## 5 · Compatibility
 
 The contract version at the top of this document changes when a client must change with it.
 

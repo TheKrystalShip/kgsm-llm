@@ -12,17 +12,13 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// caller is is never client-supplied, so one caller can't read or poison another's history. An optional
 /// per-chat <see cref="ConversationId"/> sub-scopes that user's OWN memory into separate context windows.
 /// </summary>
+// Thinking and auto-run are NOT turn fields. They are switches the conversation carries
+// (ConversationPreferences), set by the /think and /autorun commands and read here by the leaf, so
+// two surfaces looking at one conversation cannot disagree about what it is set to and a client
+// cannot ask for behaviour the stored preference contradicts.
 public sealed record TurnRequest(
     string? Prompt,
-    bool? Think = null,
     IReadOnlyList<string>? Tools = null,
-    // The per-turn AUTO-RUN toggle (the SPA's chat switch). It is INTENT, not authority: it asks for
-    // lifecycle commands to run with no confirmation step, and is ANDed with the caller's admin tier,
-    // so it can only ever narrow. It does NOT gate whether the assistant may PROPOSE an action —
-    // proposing is an operator capability and the user confirms each one, so gating that on a toggle
-    // only hides the button. On the trusted-relay path the api forwards this intent as
-    // X-Relay-Auto-Act instead and this field is not read.
-    bool? Actions = null,
     // The per-CHAT conversation id (the SPA's "new chat" identity). It does NOT carry identity — memory
     // is always keyed web:{serverUserId}[:{ConversationId}], the user id resolved server-side — so it only
     // partitions THIS user's history into separate context windows, never reaching another caller's.
@@ -54,6 +50,68 @@ public sealed record ToolDto(
     string Name,
     string Description,
     IReadOnlyList<ToolParameterDto> Parameters);
+
+/// <summary>An option of a chat command, as returned by <c>GET /commands</c>.</summary>
+public sealed record CommandOptionDto(
+    string Name,
+    string? Description,
+    string Type,
+    bool Required,
+    bool Autocomplete,
+    IReadOnlyList<string>? Values = null);
+
+/// <summary>
+/// A chat command the caller may type, as returned by <c>GET /commands</c>. Only commands this caller
+/// can actually run appear — a command above their tier is absent, not listed and refused.
+/// </summary>
+public sealed record CommandDto(
+    string Name,
+    string Description,
+    bool Mutates,
+    IReadOnlyList<CommandOptionDto> Options)
+{
+    public static CommandDto From(ChatCommand command) => new(
+        command.Name,
+        command.Description,
+        command.Mutates,
+        [.. command.Options.Select(o => new CommandOptionDto(
+            o.Name, o.Description, o.Type, o.Required, o.Autocomplete, o.Values))]);
+}
+
+/// <summary>
+/// What running a chat command produced. <see cref="Message"/> is always present — the one line a
+/// surface puts in the transcript to say what happened — and the rest are the command's own result,
+/// absent on the commands that do not produce one.
+/// </summary>
+/// <param name="Command">The command that ran, so a client can route the result without tracking the request.</param>
+/// <param name="Message">What happened, in the leaf's words. Always present.</param>
+/// <param name="ConversationId">The conversation <c>/new</c> started.</param>
+/// <param name="State">The state a switch now stands at, after <c>/think</c> or <c>/autorun</c>.</param>
+/// <param name="Compaction">What <c>/compact</c> did.</param>
+/// <param name="Commands">The catalog, from <c>/help</c>.</param>
+/// <param name="Tools">What the assistant can do, from <c>/tools</c>.</param>
+public sealed record CommandResultDto(
+    string Command,
+    string Message,
+    string? ConversationId = null,
+    bool? State = null,
+    CompactionResultDto? Compaction = null,
+    IReadOnlyList<CommandDto>? Commands = null,
+    IReadOnlyList<ToolDto>? Tools = null);
+
+/// <summary>
+/// The body of <c>POST /commands/{name}</c>: which conversation the command applies to, and the
+/// command's own argument when it takes one.
+/// </summary>
+/// <param name="ConversationId">
+/// The per-chat id the command acts on. Null means the caller's bare per-user conversation, the same
+/// default a turn without one gets.
+/// </param>
+/// <param name="Argument">
+/// The command's single argument — <c>on</c>/<c>off</c> for a switch. Absent on a switch means
+/// toggle, which is what the composer's buttons and the CLI already do.
+/// </param>
+public sealed record CommandRequest(string? ConversationId = null, string? Argument = null);
 
 /// <summary>
 /// Token accounting for a turn, in tokens (never a percentage): the prompt the model evaluated,
@@ -222,9 +280,19 @@ public sealed record ConversationSummaryDto(
 /// verbatim (turns + non-destructive compaction checkpoints), so the client renders the WHOLE history as
 /// it happened (compaction affects only what the model replays, never what's shown).
 /// </summary>
+/// <param name="Id">The per-chat id, as the client addresses it.</param>
+/// <param name="Entries">The transcript, oldest-first.</param>
+/// <param name="Think">
+/// Whether this conversation reasons before answering — the EFFECTIVE value, already resolved
+/// against the host's configured default, so a client shows what the next turn will do rather than
+/// having to know what an unset switch falls back to.
+/// </param>
+/// <param name="Autorun">Whether this conversation runs authorized actions without confirming each one.</param>
 public sealed record ConversationHistoryDto(
     string Id,
-    IReadOnlyList<ConversationHistoryEntryDto> Entries);
+    IReadOnlyList<ConversationHistoryEntryDto> Entries,
+    bool Think,
+    bool Autorun);
 
 // ---- the review surface (GET /admin/conversations…) ---------------------------------------------
 // An administrator reading OTHER users' conversations, to judge where the assistant needs tuning.

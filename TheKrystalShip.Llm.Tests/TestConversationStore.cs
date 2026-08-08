@@ -139,6 +139,35 @@ internal sealed class TestConversationStore : IConversationStore
         return true;
     }
 
+    /// <summary>The switches standing on each conversation, keyed by id.</summary>
+    public Dictionary<string, ConversationPreferences> Preferences { get; } = new(StringComparer.Ordinal);
+
+    public ConversationPreferences GetPreferences(string conversationId) =>
+        Preferences.TryGetValue(conversationId, out var p) ? p : ConversationPreferences.Unset;
+
+    public void SetPreferences(string conversationId, ConversationPreferences delta)
+    {
+        // Mirror the real store: the write is a DELTA, so a null field leaves what stands rather than
+        // clearing it — which is what lets the two switches be set independently.
+        if (delta.Think is null && delta.Autorun is null)
+            return;
+
+        var standing = GetPreferences(conversationId);
+        Preferences[conversationId] = new ConversationPreferences(
+            delta.Think ?? standing.Think,
+            delta.Autorun ?? standing.Autorun);
+    }
+
+    public bool CreateConversation(string conversationId)
+    {
+        // Idempotent by existence, like the real store: a conversation that already holds entries is a
+        // conversation, and re-creating it would claim a second beginning.
+        if (_byConversation.ContainsKey(conversationId))
+            return false;
+        _byConversation[conversationId] = new List<ConversationEntry>();
+        return true;
+    }
+
     public void AddCheckpoint(string conversationId, string summary)
     {
         Checkpoints.Add(summary);

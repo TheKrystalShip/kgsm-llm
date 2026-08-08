@@ -168,9 +168,23 @@ public sealed class SqliteConversationStore : IConversationStore
         // migration is needed for a field it already carries). Ordered most-recently-active first so
         // the surface's list reads newest-down.
         var summaries = new List<(string Id, DateTimeOffset Created, DateTimeOffset Last, int Turns,
-            bool Deleted, int Errors, int CapHits, string? Display)>();
+            bool Deleted, int Errors, int CapHits, string? Display, bool? Think, bool? Autorun)>();
         using (var agg = connection.CreateCommand())
         {
+            // The newest entry that said anything about one switch — the same latest-non-null-wins fold
+            // GetPreferences does, expressed in SQL so a listing answers for every conversation in the
+            // one pass. A delta says nothing about the switch it leaves null, so those rows are skipped
+            // rather than read as "off".
+            static string StandingSwitch(string field) =>
+                $"""
+                (SELECT json_extract(p.payload, '$.{field}')
+                 FROM conversation_entries p
+                 WHERE p.conversation_id = conversation_entries.conversation_id
+                   AND p.kind = $preference
+                   AND json_extract(p.payload, '$.{field}') IS NOT NULL
+                 ORDER BY p.id DESC LIMIT 1)
+                """;
+
             // Soft-deleted = the newest tombstone out-ids every content (turn/checkpoint) entry. A
             // resuming turn is newer than the tombstone → not deleted (latest-entry-wins). A
             // tombstone-only id (no content at all) counts as deleted. The owner's own list filters
@@ -197,7 +211,9 @@ public sealed class SqliteConversationStore : IConversationStore
                         WHERE n.conversation_id = conversation_entries.conversation_id
                           AND n.kind = $turn
                           AND json_extract(n.payload, '$.userDisplay') IS NOT NULL
-                        ORDER BY n.id DESC LIMIT 1) AS display
+                        ORDER BY n.id DESC LIMIT 1) AS display,
+                       {StandingSwitch("think")} AS think,
+                       {StandingSwitch("autorun")} AS autorun
                 FROM conversation_entries
                 WHERE conversation_id = $scope OR conversation_id LIKE $child
                 GROUP BY conversation_id
@@ -222,7 +238,9 @@ public sealed class SqliteConversationStore : IConversationStore
                     reader.GetInt64(4) != 0,
                     reader.GetInt32(5),
                     reader.GetInt32(6),
-                    reader.IsDBNull(7) ? null : reader.GetString(7)));
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    reader.IsDBNull(8) ? null : reader.GetInt64(8) != 0,
+                    reader.IsDBNull(9) ? null : reader.GetInt64(9) != 0));
             }
         }
 
@@ -287,6 +305,7 @@ public sealed class SqliteConversationStore : IConversationStore
             ErrorTurns = s.Errors,
             CapHitTurns = s.CapHits,
             NegativeTurns = negatives.TryGetValue(s.Id, out var n) ? n : 0,
+            Preferences = new ConversationPreferences(s.Think, s.Autorun),
         }).ToList();
     }
 

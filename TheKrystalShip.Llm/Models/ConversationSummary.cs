@@ -48,4 +48,13 @@ public sealed record ConversationSummary
     /// from the verdict that currently stands, so a thumbs-down later changed or cleared stops counting.
     /// </summary>
     public int NegativeTurns { get; init; }
+
+    /// <summary>
+    /// The switches standing on the conversation, as stored — a null field means nothing has ever set
+    /// it, which the caller resolves against its own default exactly as
+    /// <see cref="Interfaces.IConversationStore.GetPreferences"/> would. Carried on the index so one
+    /// listing answers what every conversation is set to: a surface that shows the switches then has
+    /// them for the chat it opens without a second read, and cannot show a value it cached earlier.
+    /// </summary>
+    public ConversationPreferences Preferences { get; init; } = ConversationPreferences.Unset;
 }

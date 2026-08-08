@@ -39,11 +39,18 @@ Discord conversations from ever auto-running.
 The wire contract moves to **2.0** (`docs/wire-contract.md`) — removing a field is breaking by its
 own rule. kgsm-bot is unaffected: it posts only `prompt` and carries auto-run on the relay path.
 
-`GET /conversations/{id}` carries the conversation's effective `think`/`autorun`, already resolved
-against the host default, so a client shows what the next turn will do rather than guessing.
+Both switches are **read back**, so a surface states what the leaf says rather than what it
+remembers: `GET /conversations/{id}` carries the conversation's effective `think`/`autorun`, and
+`GET /conversations` carries them on every row — `ConversationSummary.Preferences`, folded
+latest-wins per field in the listing's own SQL pass. One call therefore re-states what every
+conversation is set to, which is what lets a chat opened on one surface be picked up on another
+showing the switches the next turn will actually run on.
 
 `/new` mints the conversation server-side, so a chat exists, lists and is resumable from another
-device the moment it is started rather than only once something is said in it.
+device the moment it is started rather than only once something is said in it. It answers **which
+conversation now stands**: the offered id is taken up only while it holds nothing, so sent from a
+conversation that has been spoken in the leaf starts a different one and names it — "start a fresh
+conversation" cannot mean the one it was typed in.
 
 The CLI REPL's `/reset` is now `/new`, so the two surfaces spell the same command the same way, and
 it gains `/tools` and `/autorun`. `/exit` and `/quit` stay terminal-only and out of the catalog.

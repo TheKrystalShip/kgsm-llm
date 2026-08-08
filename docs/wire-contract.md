@@ -58,6 +58,11 @@ looking at one conversation cannot disagree about what it is set to, and a clien
 behaviour the stored preference contradicts. A switch nothing has set falls to the host's configured
 default, never to `false`.
 
+Both are **read back**: `GET /conversations` carries `think` and `autorun` on every row, and
+`GET /conversations/{id}` carries them for the one — already resolved against that default, so what a
+client shows is what the next turn will run on. A surface displaying the switches states what it read,
+never what it last remembered, since any other surface may have moved them since.
+
 Auto-run is **intent, not authority**. It asks for lifecycle commands to run with no confirmation
 step, and every gate it passes narrows it further: the caller's admin tier, and on the relay path the
 surface's own `X-Relay-Auto-Act` floor. It does **not** gate whether an action may be *proposed* —
@@ -276,7 +281,7 @@ command produced:
 
 | Field | From |
 |---|---|
-| `conversationId` | `/new` — the conversation it started |
+| `conversationId` | `/new` — the conversation that now stands |
 | `state` | `/think`, `/autorun` — the state the switch now stands at |
 | `compaction` | `/compact` — `{ compacted, messagesCompacted, summary }` |
 | `commands` | `/help` — the same catalog the listing answers |
@@ -285,6 +290,12 @@ command produced:
 A switch given no `argument` **toggles**; `on`/`off` names a state. Anything else is a 400 rather
 than a guess. An unknown command name is a 404 — this endpoint is not a second way to ask a
 question, so a client's typo surfaces as one instead of reaching the model.
+
+**`/new` answers which conversation now stands, and a client follows it there.** The offered
+`conversationId` is taken up only while it holds nothing — a surface that minted an id and is asking
+for it to be brought into being. Sent from a conversation that has been spoken in, the leaf starts a
+different one and names it, because "start a fresh conversation" cannot mean the one it was typed in.
+Either way the answer is the conversation the next turn should carry.
 
 The gate is re-checked at the POST rather than trusted from the listing: a client can post any name,
 and the listing is a convenience, never the authorization.

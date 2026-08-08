@@ -22,8 +22,18 @@ internal static class ConversationHistoryMapper
             : string.Empty;
     }
 
-    public static ConversationSummaryDto ToSummaryDto(ConversationSummary s, string userId) =>
-        new(ChatIdOf(s.ConversationId, userId), s.Title, s.CreatedAt, s.LastActivityAt, s.TurnCount);
+    /// <param name="s">The stored index entry.</param>
+    /// <param name="userId">The verified caller, whose prefix is stripped to give the client-facing id.</param>
+    /// <param name="thinkDefault">
+    /// What thinking falls back to when the conversation has never set it — the host's configured
+    /// value, so the listing states what the next turn would do rather than leaving the client to guess
+    /// what an unset switch means. Auto-run's floor is false: nothing else is safe to assume of a
+    /// conversation nobody has armed.
+    /// </param>
+    public static ConversationSummaryDto ToSummaryDto(ConversationSummary s, string userId, bool thinkDefault) =>
+        new(ChatIdOf(s.ConversationId, userId), s.Title, s.CreatedAt, s.LastActivityAt, s.TurnCount,
+            s.Preferences.Think ?? thinkDefault,
+            s.Preferences.Autorun ?? false);
 
     public static ConversationHistoryEntryDto ToEntryDto(ConversationEntry e) =>
         e.Kind == ConversationEntryKind.Checkpoint

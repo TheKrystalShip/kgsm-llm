@@ -827,6 +827,44 @@ public sealed class SqliteConversationStoreTests : IDisposable
     }
 
     [Fact]
+    public void TheListing_CarriesTheSwitchesStandingOnEachConversation()
+    {
+        // The index answers what every chat is set to, so a surface showing the switches has them for
+        // the one it opens without a second read — and cannot fall back on a value it remembered.
+        var store = Create();
+        store.AppendTurn(Turn("web:u:armed", "hello", "hi"));
+        store.AppendTurn(Turn("web:u:plain", "hello", "hi"));
+        store.SetPreferences("web:u:armed", new ConversationPreferences(true, true));
+
+        var listed = Create().ListConversations("web:u").ToDictionary(c => c.ConversationId);
+
+        listed["web:u:armed"].Preferences.Think.Should().BeTrue();
+        listed["web:u:armed"].Preferences.Autorun.Should().BeTrue();
+
+        // Untouched is UNSET, not off: the caller resolves it against its own default, and answering
+        // false here would state a decision nobody made.
+        listed["web:u:plain"].Preferences.Think.Should().BeNull();
+        listed["web:u:plain"].Preferences.Autorun.Should().BeNull();
+    }
+
+    [Fact]
+    public void TheListing_FoldsEachSwitchLatestWins_LikeGetPreferencesDoes()
+    {
+        // Two folds of the same log must not be able to disagree — a listing that read only the newest
+        // delta would report the field that delta left null as unset.
+        var store = Create();
+        store.AppendTurn(Turn("web:u:a", "hello", "hi"));
+        store.SetPreferences("web:u:a", new ConversationPreferences(true, true));
+        store.SetPreferences("web:u:a", new ConversationPreferences(false, null));
+
+        var listed = Create().ListConversations("web:u").Single();
+
+        listed.Preferences.Should().Be(Create().GetPreferences("web:u:a"));
+        listed.Preferences.Think.Should().BeFalse();
+        listed.Preferences.Autorun.Should().BeTrue();
+    }
+
+    [Fact]
     public void Preferences_AreScopedToOneConversation()
     {
         var store = Create();

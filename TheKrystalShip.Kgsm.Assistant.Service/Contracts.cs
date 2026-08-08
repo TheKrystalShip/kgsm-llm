@@ -267,13 +267,22 @@ public sealed record MeResponse(
 /// conversation), so a client joins this list to its own chats by id and fetches one by it.
 /// <see cref="Title"/> is the first prompt (null for an empty conversation); the timestamps + count let
 /// the client order and label without loading the transcript.
+/// <para>
+/// <see cref="Think"/> and <see cref="Autorun"/> are the switches standing on each conversation,
+/// EFFECTIVE (already resolved against the host's configured default) exactly as
+/// <see cref="ConversationHistoryDto"/> resolves them. They ride the index so one listing re-states
+/// what every conversation is set to — which is what lets a surface picking a chat up on another
+/// device show the switches the next turn will actually run on rather than what it last remembered.
+/// </para>
 /// </summary>
 public sealed record ConversationSummaryDto(
     string Id,
     string? Title,
     DateTimeOffset CreatedAt,
     DateTimeOffset LastActivityAt,
-    int TurnCount);
+    int TurnCount,
+    bool Think,
+    bool Autorun);
 
 /// <summary>
 /// <c>GET /conversations/{id}</c>: the full transcript for one chat, oldest-first — the append-only log

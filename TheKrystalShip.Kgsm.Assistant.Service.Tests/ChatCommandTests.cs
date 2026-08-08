@@ -16,6 +16,7 @@ using NSubstitute;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
+using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
 using Xunit;
@@ -212,6 +213,31 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task TheConversationListing_StatesWhatEachChatIsSetTo()
+    {
+        // The reverse path for the switches: a surface opening on another device reads what they stand
+        // at from the leaf in the one call that builds its history list, rather than showing whatever it
+        // last remembered. Both are EFFECTIVE — already resolved against the host's default — so what
+        // is shown is what the next turn would run on.
+        var factory = Factory(AdminRole);
+        var client = await AuthedAsync(factory);
+
+        await RunAsync(client, "new", "listed-on");
+        await RunAsync(client, "think", "listed-on", ChatCommands.On);
+        await RunAsync(client, "autorun", "listed-on", ChatCommands.On);
+        await RunAsync(client, "new", "listed-untouched");
+
+        var listed = (await client.GetFromJsonAsync<ConversationSummaryDto[]>("/conversations"))!
+            .ToDictionary(c => c.Id);
+
+        listed["listed-on"].Think.Should().BeTrue();
+        listed["listed-on"].Autorun.Should().BeTrue();
+
+        // Never armed is never armed, whatever another conversation was set to.
+        listed["listed-untouched"].Autorun.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task ABadSwitchArgument_IsRefused_RatherThanGuessed()
     {
         var client = await AuthedAsync(Factory());
@@ -237,6 +263,38 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
         var listed = await client.GetFromJsonAsync<JsonElement>("/conversations");
         listed.EnumerateArray().Select(c => c.GetProperty("id").GetString())
             .Should().Contain("fresh-chat");
+    }
+
+    [Fact]
+    public async Task New_StartsADIFFERENTConversation_WhenTheOneItIsTypedInHasBeenSpokenIn()
+    {
+        // "Start a fresh conversation" typed mid-chat cannot mean the chat it was typed in. The leaf
+        // names the one it started and the surface follows it there — which is what makes /new the same
+        // thing as the New chat button rather than a report that the current chat exists.
+        var factory = Factory();
+        var client = await AuthedAsync(factory);
+        var store = factory.Services.GetRequiredService<IConversationStore>();
+        store.AppendTurn(new ConversationTurnRecord
+        {
+            ConversationId = "web:user1:in-progress",
+            StartedAt = DateTimeOffset.UtcNow,
+            CompletedAt = DateTimeOffset.UtcNow,
+            UserPrompt = "hello",
+            SystemPromptHash = "h",
+            Tools = [],
+            Iterations = 1,
+            Outcome = TurnOutcome.Ok,
+            Think = false,
+            Final = "hi",
+        });
+
+        var started = (await RunAsync(client, "new", "in-progress")).GetProperty("conversationId").GetString();
+
+        started.Should().NotBeNullOrEmpty().And.NotBe("in-progress");
+
+        // And the one it named exists, so the surface can open it and another device can see it.
+        var listed = await client.GetFromJsonAsync<JsonElement>("/conversations");
+        listed.EnumerateArray().Select(c => c.GetProperty("id").GetString()).Should().Contain(started);
     }
 
     [Fact]

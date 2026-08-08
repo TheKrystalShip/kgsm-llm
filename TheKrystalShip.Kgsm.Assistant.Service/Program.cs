@@ -575,17 +575,23 @@ secured.MapPost("/commands/{name}", async (
 
         case "new":
         {
-            // The id is the client's to choose (it is what the next turn will carry), but the
+            // The id is the client's to offer (it is what the next turn will carry), but the
             // conversation is the leaf's to create — so a fresh chat exists, lists, and is resumable
             // from another device the moment it is started rather than only once it is spoken into.
             if (string.IsNullOrEmpty(chatScope))
                 return Results.BadRequest(new { error = "/new needs the id of the conversation to start." });
 
-            var created = conversations.CreateConversation(conversationId);
+            // The offered id is taken up only while it holds nothing — a surface that minted one and is
+            // asking for it to be brought into being. Typed INTO a conversation that has been spoken in,
+            // "start a fresh conversation" has to mean a different one, so the leaf names it and the
+            // surface follows: the answer always says which conversation is now the fresh one.
+            var started = conversations.GetHistory(conversationId).Count == 0
+                ? chatScope
+                : Guid.NewGuid().ToString("N");
+
+            conversations.CreateConversation($"{WebSurface}:{principal.UserId}:{started}");
             return Results.Ok(new CommandResultDto(
-                command.Name,
-                created ? "Started a fresh conversation." : "That conversation is already going.",
-                ConversationId: chatScope));
+                command.Name, "Started a fresh conversation.", ConversationId: started));
         }
 
         case "compact":
@@ -643,11 +649,15 @@ secured.MapPost("/commands/{name}", async (
 // The caller's own past chats (the reverse path): list every conversation under their server-derived
 // memory namespace web:{userId}, so a fresh browser/device can show history that lives server-side, not
 // only in the client. Principal-scoped — a caller can only ever see ITS OWN conversations.
-secured.MapGet("/conversations", (HttpContext http, IConversationStore store) =>
+// Each row carries the switches standing on that conversation, so this one call re-states what every
+// chat is set to. A surface that showed a remembered value would be reporting its own history back to
+// the person: the switches live here, and any other surface may have moved them since.
+secured.MapGet("/conversations", (
+    HttpContext http, IConversationStore store, IOptions<OllamaOptions> ollamaOptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var conversations = store.ListConversations($"{WebSurface}:{principal.UserId}")
-        .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.UserId))
+        .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.UserId, ollamaOptions.Value.Think))
         .ToArray();
     return Results.Ok(conversations);
 });

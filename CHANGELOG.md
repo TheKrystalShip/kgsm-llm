@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The Discord guild, bot token and role→tier map are no longer read.** `KgsmAuth__GuildId`,
+  `KgsmAuth__BotToken`, `KgsmAuth__RoleAdminIds` and `KgsmAuth__RoleOperatorIds` belong to kgsm-bot —
+  the one surface that authorizes from a guild role, because it has no login of its own — and are
+  gone from this service's settings, its leaf descriptor and its startup checks. Signing someone in
+  through Discord needs the application and this surface's redirect URI, and nothing else.
+- **The role list no longer gates actions or conversation review.** An empty operator list used to
+  mean nobody could act and an empty admin list that nobody could review; both questions are the
+  caller's KGSM tier now, so a host that configures no roles at all authorizes exactly as it should.
+
 ### Changed
 
 - **Authority comes from the KGSM account store, for everyone.** A Discord login and a password login

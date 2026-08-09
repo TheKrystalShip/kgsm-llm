@@ -46,7 +46,7 @@ public class ConversationEventStreamTests : IClassFixture<WebApplicationFactory<
     {
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         foreach (var user in users)
-            StubTier(discord, [AdminRole]);
+            StubTier(discord, KgsmTier.Admin);
 
         return _factory.WithWebHostBuilder(builder =>
         {
@@ -61,7 +61,6 @@ public class ConversationEventStreamTests : IClassFixture<WebApplicationFactory<
             builder.UseSetting("Auth:HostId", "test-host");
             builder.UseSetting("Conversation:DatabasePath", DatabasePath);
             builder.UseSetting("Assistant:ActionsEnabled", "true");
-            builder.UseSetting("KgsmAuth:RoleAdminIds", AdminRole);
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<ISignInService>();

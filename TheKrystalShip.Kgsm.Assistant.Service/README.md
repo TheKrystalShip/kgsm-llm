@@ -68,8 +68,9 @@ Control Panel API in front of it.
    one in that browser's cookie — a login begun anywhere else is refused before any code is
    exchanged.
 3. The service exchanges the code server-side holding the client secret (the caller's Discord token
-   is used once, for identity, and discarded), reads the member's roles with the **bot token**, and
-   mints an access + refresh pair carrying a session id.
+   is used once, for identity, and discarded), finds the KGSM account that identity proves — or
+   creates an unapproved one for it to prove — and mints an access + refresh pair carrying a session
+   id.
 4. Every request re-checks that the session is still alive, which is what makes signing out and
    revoking mean something: a signed token is otherwise valid until it expires.
 
@@ -80,22 +81,22 @@ substitutes for the other, and the state is in a **cookie** rather than a server
 only a browser-bound value proves the login started *here*: a set of issued states admits the
 attacker's own login too.
 
-**Authority is re-derived, never read off the token.** The tier comes from the shared role→tier map
-(`admin ⊇ operator ⊇ viewer`), looked up by user id with the bot token and cached for
+**Authority is re-derived, never read off the token.** The tier is on the caller's KGSM account
+(`admin ⊇ operator ⊇ viewer`), read from the shared account store and cached for
 `Auth:RoleCacheTtlSeconds`. Acting needs `operator`; reading someone else's conversations needs
-`admin`; any guild member floors at `viewer` and can read. A role taken away therefore stops working
-within the cache TTL rather than surviving until the token expires. A Discord *outage* denies the
-check and is not cached — "we could not ask" is not "the answer is no".
+`admin`. A tier lowered in the Control Panel therefore stops working within the cache TTL rather than
+surviving until the token expires, and a disabled account's sessions stop being accepted at all. A
+store that cannot be *read* denies the check and is not cached — "we could not ask" is not "the
+answer is no".
 
 Required secrets (env-only — see [configuration](../docs/CONFIGURATION.md#secrets--environment-only-never-in-a-file)):
-`KgsmAuth__ClientSecret`, `KgsmAuth__BotToken`, `Auth__SigningKey`,
-`Assistant__Confirmation__Key`, plus the non-secret `KgsmAuth__ClientId`/`GuildId`/role ids,
-`DiscordOAuth__RedirectUri` and `Auth__AllowedOrigins`. The `KgsmAuth__*` block is the host's,
-shared with the Control Panel API and the Discord bot.
+`KgsmAuth__ClientSecret`, `Auth__SigningKey`, `Assistant__Confirmation__Key`, plus the non-secret
+`KgsmAuth__ClientId`, `DiscordOAuth__RedirectUri` and `Auth__AllowedOrigins`. The `KgsmAuth__*`
+application is the host's, shared with the Control Panel API.
 
 **Trusted relay (optional):** a co-located aggregator (kgsm-api) may call on a user's behalf with
-`X-Relay-Secret` (matching `Assistant:Relay:Secret`) + `X-Relay-User`. Authority is still derived
-from the bot by user id — the relay cannot escalate.
+`X-Relay-Secret` (matching `Assistant:Relay:Secret`) + `X-Relay-User`. Authority is still read from
+that user's KGSM account — the relay cannot escalate.
 
 ## Run
 

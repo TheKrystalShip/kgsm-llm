@@ -72,7 +72,7 @@ any committed settings file — which declares each of them blank so the Control
 | `Rag` (embedder + build) | ✅ (`index` verb) | reads only | ✅ | Embedding model + chunking |
 | `Prompts` | ✅ | (built-in) | — | Editable persona/tool prompts |
 | `Assistant` | — | ✅ | — | Action policy, confirm/webhook/relay |
-| `KgsmAuth` | — | ✅ | — | The host's Discord identity + role→tier map (shared) |
+| `KgsmAuth` | — | ✅ | — | The host's Discord application (shared) |
 | `DiscordOAuth` | — | ✅ | — | This surface's sign-in callback |
 | `Auth` | — | ✅ | — | Sessions + CORS |
 | `Urls` / `Logging` | (Logging) | ✅ | (Logging) | Bind address / log levels |
@@ -252,31 +252,29 @@ Bind address. Default `http://localhost:5180` (loopback). Override with the stan
 | `Webhook:Secret` | _(empty)_ | `Assistant__Webhook__Secret` | **Secret.** HMAC for `POST /events`; empty ⇒ unverified (dev) |
 | `Relay:Secret` | _(empty)_ | `Assistant__Relay__Secret` | **Secret.** Trusted-relay auth (e.g. kgsm-api); empty ⇒ relay path off |
 
-### `KgsmAuth` — the host's Discord identity + role map (shared)
+### `KgsmAuth` — the host's Discord application (shared)
 
-The **ecosystem's** block, identical across this service, the Control Panel API and the Discord bot,
-so a person holds the same authority whichever door they knock on. It lives once per host in
+The **ecosystem's** block, identical across this service and the Control Panel API, so a sign-in goes
+through the same application whichever door somebody knocks on. It lives once per host in
 `/etc/kgsm/discord-auth.env`, which every leaf's unit loads before its own env file. Setting one of
-these keys in *this* leaf's env overrides the shared value for this leaf alone — which is exactly how
-a host ends up with two surfaces disagreeing about who may stop a server.
+these keys in *this* leaf's env overrides the shared value for this leaf alone.
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
 | `ClientId` | _(empty)_ | `KgsmAuth__ClientId` | OAuth app id |
 | `ClientSecret` | _(empty)_ | `KgsmAuth__ClientSecret` | **Secret.** code→token exchange |
-| `BotToken` | _(empty)_ | `KgsmAuth__BotToken` | **Secret.** Reads roles; unset ⇒ **all logins denied** |
-| `GuildId` | _(empty)_ | `KgsmAuth__GuildId` | Server users must belong to |
-| `RoleOperatorIds` | _(empty)_ | `KgsmAuth__RoleOperatorIds` | Comma-separated; grants `operator` (may act) |
-| `RoleAdminIds` | _(empty)_ | `KgsmAuth__RoleAdminIds` | Comma-separated; grants `admin` (may review others' chats) |
 
-Any verified guild member floors at `viewer` and can read, so there is no viewer role to configure.
+The same file carries `GuildId`, `BotToken` and the role id lists. Those are **kgsm-bot's** — a
+person typing a slash command has proved nothing but their Discord account, so the bot maps a guild
+role to a tier. Nothing here reads them: a sign-in establishes who someone is, and what they may do
+is on their KGSM account (`Auth:UsersDbPath`).
 
 ### `DiscordOAuth` — this surface's own sign-in (`DiscordOAuthOptions`)
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
 | `RedirectUri` | _(empty)_ | `DiscordOAuth__RedirectUri` | This service's `/auth/discord/callback`; must match the Developer Portal exactly |
-| `Scopes` | `identify` | `DiscordOAuth__Scopes` | Roles are read via the bot, not the caller token |
+| `Scopes` | `identify` | `DiscordOAuth__Scopes` | Enough to establish who someone is, which is all a sign-in decides |
 
 ### `Auth` — sessions & CORS (`AuthOptions`)
 

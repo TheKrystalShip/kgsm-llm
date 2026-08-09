@@ -28,11 +28,11 @@
   <ItemGroup>
     <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.2.0" PrivateAssets="all" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="1.1.0" />
-    <PackageReference Include="TheKrystalShip.KGSM.Auth.Discord" Version="2.1.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth.Discord" Version="3.0.0" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Sessions" Version="2.0.0" />
     <!-- The host's KGSM accounts, read straight off the shared store. Not via kgsm-api: a file is
          not something a sibling service can be down for, which is what keeps this leaf standalone. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Auth.Users" Version="1.1.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth.Users" Version="1.2.0" />
   </ItemGroup>
 
   <ItemGroup>

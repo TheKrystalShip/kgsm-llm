@@ -28,25 +28,17 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 /// </summary>
 public class AuthServiceTests : IDisposable
 {
-    private const string OperatorRole = "role-1";
-    private const string AdminRole = "role-admin";
-
     private static readonly KgsmIdentity Alice =
         new(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]);
 
-    /// <summary>The role map these tests run against — the same one the service is built with.</summary>
-    private static readonly KgsmRoleMap RoleMap =
-        new KgsmAuthOptions { RoleAdminIds = AdminRole, RoleOperatorIds = OperatorRole }.ToRoleMap();
-
     /// <summary>
-    /// Stub the authority the way Discord answers it: a roles list run through the REAL role map. The
-    /// cases below turn on the difference between "not a member" (null), "a member holding nothing"
-    /// (empty) and an elevated role, so handing back a tier directly would assert the stub rather than
-    /// the distinction.
+    /// Stub the authority the way the account store answers it: one tier per identity. There is
+    /// nothing else to model — an identity attached to no account holds none, and which chat server
+    /// anyone is in has no bearing on any of it.
     /// </summary>
-    private static void StubRoles(ISignInService seam, IReadOnlyList<string>? roles) =>
+    private static void StubTier(ISignInService seam, KgsmTier tier) =>
         ((IAuthorityProvider)seam).ResolveTierAsync(Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>())
-            .Returns(_ => RoleMap.Resolve(roles));
+            .Returns(_ => tier);
 
     /// <summary>Stub the authority as unreachable — an outage, never a verdict.</summary>
     private static void StubUnreachable(ISignInService seam) =>
@@ -70,8 +62,6 @@ public class AuthServiceTests : IDisposable
         out ISessionRegistry registry,
         out ISessionTokenService tokens,
         bool actionsEnabled = true,
-        string operatorRoleId = OperatorRole,
-        string adminRoleId = AdminRole,
         int roleCacheTtlSeconds = 60)
     {
         var authOptions = Options.Create(new AuthOptions
@@ -97,13 +87,6 @@ public class AuthServiceTests : IDisposable
             ActionsEnabled = actionsEnabled,
         });
 
-        // Through the shared options so the tests exercise the same string→map parse the host does.
-        var roleMap = new KgsmAuthOptions
-        {
-            RoleAdminIds = adminRoleId,
-            RoleOperatorIds = operatorRoleId,
-        }.ToRoleMap();
-
         return new AuthService(
             directory,
             (IAuthorityProvider)directory,
@@ -111,7 +94,6 @@ public class AuthServiceTests : IDisposable
             registry,
             new SessionValidator(registry, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromSeconds(5)),
             new KgsmTierCache(TimeSpan.FromSeconds(roleCacheTtlSeconds)),
-            roleMap,
             authOptions,
             assistantOptions,
             NullLogger<AuthService>.Instance);
@@ -146,7 +128,6 @@ public class AuthServiceTests : IDisposable
             directory, (IAuthorityProvider)directory, tokens, registry,
             new SessionValidator(registry, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromSeconds(5)),
             new KgsmTierCache(TimeSpan.FromSeconds(60)),
-            new KgsmAuthOptions { RoleAdminIds = AdminRole, RoleOperatorIds = OperatorRole }.ToRoleMap(),
             authOptions, assistantOptions, NullLogger<AuthService>.Instance);
     }
 
@@ -276,7 +257,7 @@ public class AuthServiceTests : IDisposable
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        StubRoles(directory, [OperatorRole]);
+        StubTier(directory, KgsmTier.Operator);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
@@ -286,12 +267,13 @@ public class AuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task NotBeingAGuildMemberDenies()
+    public async Task AnIdentityThatProvesNoAccountDenies()
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        // null is "not a member", which is a different answer from a member holding no roles.
-        StubRoles(directory, null);
+        // Nobody has attached this identity to an account here. A stranger, whatever they hold
+        // anywhere else.
+        StubTier(directory, KgsmTier.None);
 
         // A KNOWN answer, and the answer is no — nothing about this is an outage.
         TierResolution resolved = await service.ResolveTierAsync(Principal());
@@ -301,11 +283,11 @@ public class AuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AMemberHoldingNoRolesFloorsAtViewer()
+    public async Task AViewerAccountReadsAndCannotAct()
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        StubRoles(directory, []);
+        StubTier(directory, KgsmTier.Viewer);
 
         TierResolution resolved = await service.ResolveTierAsync(Principal());
         resolved.Known.Should().BeTrue();
@@ -325,7 +307,7 @@ public class AuthServiceTests : IDisposable
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
 
-        StubRoles(directory, [OperatorRole]);
+        StubTier(directory, KgsmTier.Operator);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
     }
@@ -351,27 +333,11 @@ public class AuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUnconfiguredAdminRoleIsAKnownDenialNotAnOutage()
-    {
-        // This host's own configuration answering, with Discord never asked. A client must render it as
-        // "you don't have access here", never as "we couldn't check".
-        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
-        AuthService service = Build(directory, out _, out _, adminRoleId: "");
-
-        TierResolution resolved = await service.ResolveReviewAuthorityAsync(Principal());
-
-        resolved.Known.Should().BeTrue();
-        resolved.Tier.Should().Be(KgsmTier.None);
-        await Authority(directory).DidNotReceive().ResolveTierAsync(
-            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
     public async Task AResolvedNonAdminIsAKnownDenial()
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        StubRoles(directory, [OperatorRole]);
+        StubTier(directory, KgsmTier.Operator);
 
         TierResolution resolved = await service.ResolveReviewAuthorityAsync(Principal());
 
@@ -419,7 +385,7 @@ public class AuthServiceTests : IDisposable
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        StubRoles(directory, [OperatorRole]);
+        StubTier(directory, KgsmTier.Operator);
 
         object? answer = await RunReviewGateAsync(service);
 
@@ -432,7 +398,7 @@ public class AuthServiceTests : IDisposable
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        StubRoles(directory, [AdminRole]);
+        StubTier(directory, KgsmTier.Admin);
 
         (await RunReviewGateAsync(service)).Should().Be(PassedThrough);
     }
@@ -442,7 +408,7 @@ public class AuthServiceTests : IDisposable
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        StubRoles(directory, [OperatorRole]);
+        StubTier(directory, KgsmTier.Operator);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
         (await service.IsAdminAsync(Principal())).Should().BeFalse();
@@ -453,21 +419,10 @@ public class AuthServiceTests : IDisposable
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _);
-        StubRoles(directory, [AdminRole]);
+        StubTier(directory, KgsmTier.Admin);
 
         (await service.IsAdminAsync(Principal())).Should().BeTrue();
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task NoConfiguredAdminRoleMeansNobodyReviews()
-    {
-        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
-        AuthService service = Build(directory, out _, out _, adminRoleId: "");
-
-        (await service.IsAdminAsync(Principal())).Should().BeFalse();
-        await Authority(directory).DidNotReceive().ResolveTierAsync(
-            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -475,17 +430,6 @@ public class AuthServiceTests : IDisposable
     {
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
         AuthService service = Build(directory, out _, out _, actionsEnabled: false);
-
-        (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
-        await Authority(directory).DidNotReceive().ResolveTierAsync(
-            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task NoConfiguredOperatorRoleDenies()
-    {
-        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
-        AuthService service = Build(directory, out _, out _, operatorRoleId: "", adminRoleId: "");
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
         await Authority(directory).DidNotReceive().ResolveTierAsync(

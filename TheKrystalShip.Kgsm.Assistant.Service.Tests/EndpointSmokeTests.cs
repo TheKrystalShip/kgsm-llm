@@ -234,12 +234,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         // canPerformActions is re-derived live from the principal's guild role at confirm time.
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, ["role-123"]);
+        StubTier(discord, KgsmTier.Operator);
 
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
@@ -283,12 +282,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         });
 
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, ["role-123"]);
+        StubTier(discord, KgsmTier.Operator);
 
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
@@ -324,12 +322,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         });
 
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, ["role-123"]);
+        StubTier(discord, KgsmTier.Operator);
 
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
@@ -854,7 +851,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new ResolvedPrincipal(
                 new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
-        StubTier(discord, []);
+        StubTier(discord, KgsmTier.Viewer);
 
         var factory = Factory(discord: discord);
         var signIn = await (await SignInAsync(factory)).Content.ReadFromJsonAsync<AuthSessionResponse>();
@@ -892,7 +889,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // A signed token stays cryptographically valid until it expires, so signing out only means
         // something because the session behind it is checked on every request.
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, []);
+        StubTier(discord, KgsmTier.Viewer);
 
         var factory = Factory(discord: discord);
         var client = await AuthedAsync(factory);
@@ -947,12 +944,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Me_ReflectsLiveRoleLookup()
     {
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, ["role-123"]);
+        StubTier(discord, KgsmTier.Operator);
 
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
         });
         var client = await AuthedAsync(factory);
 
@@ -969,10 +965,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // Authority is re-derived rather than read off the bearer, so a role granted since sign-in is
         // already in effect — reporting the token's stale snapshot would contradict the next request.
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, ["role-123"]);
+        StubTier(discord, KgsmTier.Operator);
 
-        var factory = Factory(discord: discord, configure: b =>
-            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123"));
+        var factory = Factory(discord: discord);
         var client = await AuthedAsync(factory, tier: KgsmTier.Viewer);
 
         var me = await client.GetFromJsonAsync<MeResponse>("/auth/me");
@@ -1357,12 +1352,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         });
 
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, ["role-123"]);
+        StubTier(discord, KgsmTier.Operator);
 
         var factory = Factory(discord: discord, configure: b =>
         {
             b.UseSetting("Assistant:ActionsEnabled", "true");
-            b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             b.ConfigureTestServices(s => s.AddSingleton<IInstanceService>(instances));
         });
 
@@ -1460,7 +1454,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
 
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(directory, []);   // in the guild, holding neither role
+        StubTier(directory, KgsmTier.Viewer);   // in the guild, holding neither role
         WebApplicationFactory<Program> factory = Factory(assistant, directory, configure: ConfigureActionRoles);
         HttpClient client = await AuthedAsync(factory, ActionUser, KgsmTier.Admin);
 
@@ -1486,8 +1480,6 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         b.UseSetting("Assistant:ActionsEnabled", "true");
         b.UseSetting("Assistant:ActionsEnabled", "true");
-        b.UseSetting("KgsmAuth:RoleOperatorIds", ActionOperatorRole);
-        b.UseSetting("KgsmAuth:RoleAdminIds", ActionAdminRole);
     }
 
     /// <summary>A host where actions are enabled and <see cref="ActionUser"/> holds the OPERATOR role
@@ -1496,7 +1488,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         IServerAssistant assistant, out ISignInService directory)
     {
         var stub = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(stub, [ActionOperatorRole]);
+        StubTier(stub, KgsmTier.Operator);
         directory = stub;
         return Factory(assistant, stub, configure: ConfigureActionRoles);
     }
@@ -1915,7 +1907,6 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         var factory = Factory(
             discord: directory,
-            configure: b => b.UseSetting("KgsmAuth:RoleAdminIds", "role-admin"),
             withStore: new RecordingConversationStore());
 
         var client = await AuthedAsync(factory, tier: KgsmTier.Admin);
@@ -1936,14 +1927,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // The counterpart, and the reason the two are worth telling apart: an answered question with a
         // negative answer stays a plain denial.
         var directory = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(directory, ["role-123"]);
+        StubTier(directory, KgsmTier.Operator);
 
         var factory = Factory(
             discord: directory,
             configure: b =>
             {
-                b.UseSetting("KgsmAuth:RoleAdminIds", "role-admin");
-                b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123");
             },
             withStore: new RecordingConversationStore());
 

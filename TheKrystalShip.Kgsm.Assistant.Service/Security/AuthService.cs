@@ -106,7 +106,6 @@ internal sealed class AuthService(
     ISessionRegistry sessions,
     ISessionValidator validator,
     KgsmTierCache tierCache,
-    KgsmRoleMap roleMap,
     IOptions<AuthOptions> authOptions,
     IOptions<AssistantServiceOptions> assistantOptions,
     ILogger<AuthService> logger)
@@ -204,9 +203,9 @@ internal sealed class AuthService(
 
     /// <summary>
     /// Whether this principal may perform mutating/destructive actions right now. The master
-    /// kill-switch (actions enabled + a configured operator role) is checked live; the per-user tier
-    /// comes from the short-TTL cache, else from the authority. No caller token is involved, so a
-    /// re-check never forces a re-login.
+    /// kill-switch (actions enabled) is checked live; the per-user tier comes from the short-TTL
+    /// cache, else from the authority. No caller token is involved, so a re-check never forces a
+    /// re-login.
     /// </summary>
     /// <remarks>
     /// An unresolvable authority denies here rather than propagating: this answers whether to OFFER an
@@ -216,7 +215,7 @@ internal sealed class AuthService(
     /// </remarks>
     public async Task<bool> CanPerformActionsAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (!_assistant.ActionsEnabled || roleMap.IsEmpty)
+        if (!_assistant.ActionsEnabled)
             return false;
 
         return (await ResolveTierAsync(principal, ct)).OrNone >= KgsmTier.Operator;
@@ -228,18 +227,9 @@ internal sealed class AuthService(
     /// an administrator's power, the same tier that configures the host from the Control Panel — one
     /// ladder, so a person cannot hold a power on one surface that they lack on another.
     /// </summary>
-    /// <remarks>
-    /// No configured admin role resolves to a KNOWN denial: that is this host's own configuration
-    /// answering, not the provider, so it is a verdict and never an outage.
-    /// </remarks>
-    public async Task<TierResolution> ResolveReviewAuthorityAsync(
-        AuthPrincipal principal, CancellationToken ct = default)
-    {
-        if (roleMap.AdminRoleIds.Count == 0)
-            return TierResolution.Of(KgsmTier.None);
-
-        return await ResolveTierAsync(principal, ct);
-    }
+    public Task<TierResolution> ResolveReviewAuthorityAsync(
+        AuthPrincipal principal, CancellationToken ct = default) =>
+        ResolveTierAsync(principal, ct);
 
     /// <summary>
     /// Whether this principal holds the review tier, for the callers that need a plain yes/no. An

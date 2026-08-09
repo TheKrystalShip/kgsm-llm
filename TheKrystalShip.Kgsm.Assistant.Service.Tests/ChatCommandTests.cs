@@ -39,19 +39,17 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     private static readonly string DatabasePath = Path.Combine(
         Path.GetTempPath(), "kgsm-chat-commands-" + Guid.NewGuid().ToString("N"), "conversations.db");
 
-    private const string OperatorRole = "role-op";
-    private const string AdminRole = "role-admin";
-
     /// <summary>
-    /// A host where <paramref name="roles"/> decide the caller's tier, so a test names the authority it
-    /// wants rather than asserting against whatever the ambient config happens to grant.
+    /// A host where the caller holds <paramref name="tier"/>, so a test names the authority it wants
+    /// rather than asserting against whatever the ambient config happens to grant.
     /// </summary>
-    private WebApplicationFactory<Program> Factory(params string[] roles) => Factory(null, roles);
+    private WebApplicationFactory<Program> Factory(KgsmTier tier = KgsmTier.Viewer) =>
+        Factory(null, tier);
 
-    private WebApplicationFactory<Program> Factory(IServerAssistant? assistant, params string[] roles)
+    private WebApplicationFactory<Program> Factory(IServerAssistant? assistant, KgsmTier tier = KgsmTier.Viewer)
     {
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, roles);
+        StubTier(discord, tier);
 
         return _factory.WithWebHostBuilder(builder =>
         {
@@ -66,8 +64,6 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
             builder.UseSetting("Auth:HostId", "test-host");
             builder.UseSetting("Conversation:DatabasePath", DatabasePath);
             builder.UseSetting("Assistant:ActionsEnabled", "true");
-            builder.UseSetting("KgsmAuth:RoleOperatorIds", OperatorRole);
-            builder.UseSetting("KgsmAuth:RoleAdminIds", AdminRole);
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<ISignInService>();
@@ -131,7 +127,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // The gate is what keeps /autorun off an operator's list. A listed-then-refused command would
         // be the surface offering something it then rejects, which is the thing the filter prevents.
-        var client = await AuthedAsync(Factory(OperatorRole));
+        var client = await AuthedAsync(Factory(KgsmTier.Operator));
         var commands = await client.GetFromJsonAsync<CommandDto[]>("/commands");
 
         commands!.Select(c => c.Name).Should().NotContain("autorun");
@@ -140,7 +136,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Commands_IncludesAutorun_ForAnAdmin()
     {
-        var client = await AuthedAsync(Factory(AdminRole));
+        var client = await AuthedAsync(Factory(KgsmTier.Admin));
         var commands = await client.GetFromJsonAsync<CommandDto[]>("/commands");
 
         commands.Should().NotBeNull();
@@ -154,7 +150,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // Re-checked at the POST rather than trusted from the listing: a client can post any name, and
         // the listing is a convenience, never the authorization.
-        var client = await AuthedAsync(Factory(OperatorRole));
+        var client = await AuthedAsync(Factory(KgsmTier.Operator));
         var response = await client.PostAsJsonAsync("/commands/autorun", new CommandRequest("c1", "on"));
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -174,7 +170,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // The catalog's whole claim to a client is that listing means runnable. A command added to
         // ChatCommands without a case in the endpoint answers 501, and this is what says so.
-        var client = await AuthedAsync(Factory(AdminRole));
+        var client = await AuthedAsync(Factory(KgsmTier.Admin));
         var commands = await client.GetFromJsonAsync<CommandDto[]>("/commands");
 
         foreach (var command in commands!)
@@ -228,7 +224,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
         // at from the leaf in the one call that builds its history list, rather than showing whatever it
         // last remembered. Both are EFFECTIVE — already resolved against the host's default — so what
         // is shown is what the next turn would run on.
-        var factory = Factory(AdminRole);
+        var factory = Factory(KgsmTier.Admin);
         var client = await AuthedAsync(factory);
 
         await RunAsync(client, "new", "listed-on");
@@ -319,7 +315,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Help_AnswersTheSameCatalogTheListingDoes()
     {
-        var client = await AuthedAsync(Factory(AdminRole));
+        var client = await AuthedAsync(Factory(KgsmTier.Admin));
 
         var listed = await client.GetFromJsonAsync<CommandDto[]>("/commands");
         var help = await RunAsync(client, "help", "help-chat");
@@ -372,7 +368,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
         // The switch is not a turn field. The leaf owns it, so the turn reads what the conversation
         // carries rather than what a client asked for.
         var assistant = Substitute.For<IServerAssistant>();
-        var client = await AuthedAsync(Factory(assistant, AdminRole));
+        var client = await AuthedAsync(Factory(assistant, KgsmTier.Admin));
 
         var before = await TurnFlagsAsync(assistant, client, "think-turn");
         before.Think.Should().BeFalse("nothing has set it, so it falls to the configured default");
@@ -387,7 +383,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task ATurn_ReadsAutoRun_FromTheConversation()
     {
         var assistant = Substitute.For<IServerAssistant>();
-        var client = await AuthedAsync(Factory(assistant, AdminRole));
+        var client = await AuthedAsync(Factory(assistant, KgsmTier.Admin));
 
         var before = await TurnFlagsAsync(assistant, client, "auto-turn");
         before.AutoExecute.Should().BeFalse();
@@ -404,7 +400,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
         // This is why the switch is per-conversation: it is the one thing that skips the confirmation
         // gate, and arming it here must not silently arm a chat held somewhere else.
         var assistant = Substitute.For<IServerAssistant>();
-        var client = await AuthedAsync(Factory(assistant, AdminRole));
+        var client = await AuthedAsync(Factory(assistant, KgsmTier.Admin));
 
         await RunAsync(client, "autorun", "armed-chat", ChatCommands.On);
 
@@ -418,11 +414,11 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
         // Stored intent is not authority. An operator's turn on a conversation carrying autorun=true
         // still stages its actions, because auto-execute ANDs the stored value with the caller's tier.
         var admin = Substitute.For<IServerAssistant>();
-        var adminClient = await AuthedAsync(Factory(admin, AdminRole));
+        var adminClient = await AuthedAsync(Factory(admin, KgsmTier.Admin));
         await RunAsync(adminClient, "autorun", "shared-chat", ChatCommands.On);
 
         var assistant = Substitute.For<IServerAssistant>();
-        var operatorClient = await AuthedAsync(Factory(assistant, OperatorRole));
+        var operatorClient = await AuthedAsync(Factory(assistant, KgsmTier.Operator));
 
         var flags = await TurnFlagsAsync(assistant, operatorClient, "shared-chat");
         flags.AutoExecute.Should().BeFalse();

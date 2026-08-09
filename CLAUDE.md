@@ -159,7 +159,7 @@ Things that bite if you don't know them:
 - **Authority is the ecosystem's ordered tier, and it comes from the KGSM account store.** A Discord
   login and a password login are answered from the same record, so a person holds the same tier here
   as in the Control Panel — both read that record rather than each deriving one. A guild role is a
-  fact about a chat server and is not consulted. Acting needs `operator`; reading another person's
+  fact about a chat server and is not consulted anywhere in this service. Acting needs `operator`; reading another person's
   conversations needs `admin`. The store is the shared host file `/var/lib/kgsm/auth/users.db`
   (`Auth:UsersDbPath`), opened directly — a file cannot be down, which is what keeps this leaf
   standalone. This surface's own callback URL and scopes stay local, on `DiscordOAuth`.

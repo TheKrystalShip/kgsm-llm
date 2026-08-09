@@ -86,7 +86,7 @@ public class SharedTurnTests : IClassFixture<WebApplicationFactory<Program>>
     private WebApplicationFactory<Program> Factory(IServerAssistant assistant)
     {
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
-        StubTier(discord, [AdminRole]);
+        StubTier(discord, KgsmTier.Admin);
 
         return _factory.WithWebHostBuilder(builder =>
         {
@@ -101,7 +101,6 @@ public class SharedTurnTests : IClassFixture<WebApplicationFactory<Program>>
             builder.UseSetting("Auth:HostId", "test-host");
             builder.UseSetting("Conversation:DatabasePath", DatabasePath);
             builder.UseSetting("Assistant:ActionsEnabled", "true");
-            builder.UseSetting("KgsmAuth:RoleAdminIds", AdminRole);
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<ISignInService>();

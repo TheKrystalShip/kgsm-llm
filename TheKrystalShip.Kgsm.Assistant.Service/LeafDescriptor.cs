@@ -110,14 +110,11 @@ using TheKrystalShip.KGSM.LeafConfig;
 
 // ── TheKrystalShip.KGSM.Auth's section, described for this surface ───────────
 // The shared authorization block. The type lives in the auth package, which is deliberately free of
-// every dependency including this one, so its keys are described here rather than on the type. The
-// values are the ecosystem's — the Control Panel API and the Discord bot authorize against the same
-// ones, and on a provisioned host they arrive from /etc/kgsm/discord-auth.env. This surface's own
-// callback URL and scopes are NOT among them and stay on DiscordOAuth.
-
-[assembly: LeafFrameworkField("authGuildId", "KgsmAuth__GuildId", "Discord server id",
-    Description = "The Discord server whose membership decides who may sign in. Everyone in it can at least ask questions; roles decide who may act.",
-    Group = "authorization", Risk = LeafRisk.Wiring, NoDefault = true)]
+// every dependency including this one, so its keys are described here rather than on the type. Only
+// the application is described: signing in establishes who someone is, and what they may do — ask
+// questions, run actions, review other people's conversations — is on their KGSM account. The guild
+// and role ids in that same shared file are kgsm-bot's and bind to nothing here. This surface's own
+// callback URL and scopes are not among them either and stay on DiscordOAuth.
 
 [assembly: LeafFrameworkField("authClientId", "KgsmAuth__ClientId", "Discord application id",
     Description = "The Discord application users sign in through. The same application as the bot's.",
@@ -126,15 +123,3 @@ using TheKrystalShip.KGSM.LeafConfig;
 [assembly: LeafFrameworkField("authClientSecret", "KgsmAuth__ClientSecret", "Discord client secret",
     Description = "Secret for that application, used to complete a sign-in server-side.",
     Group = "authorization", Type = LeafType.Secret, Risk = LeafRisk.Wiring, NoDefault = true)]
-
-[assembly: LeafFrameworkField("authBotToken", "KgsmAuth__BotToken", "Discord bot token",
-    Description = "Token for the same application, used to look up whether someone is in the server and which roles they hold. Sign-in itself only ever asks Discord for a user's identity, never their roles, so without this every login is denied.",
-    Group = "authorization", Type = LeafType.Secret, Risk = LeafRisk.Wiring, NoDefault = true)]
-
-[assembly: LeafFrameworkField("authRoleAdminIds", "KgsmAuth__RoleAdminIds", "Administrator roles",
-    Description = "Comma-separated role ids granting admin, which here means reading other people's conversations to review how the assistant is answering. Empty means nobody signing in can.",
-    Group = "authorization", Type = LeafType.Csv, Risk = LeafRisk.Destructive, NoDefault = true)]
-
-[assembly: LeafFrameworkField("authRoleOperatorIds", "KgsmAuth__RoleOperatorIds", "Operator roles",
-    Description = "Comma-separated role ids granting operator — asking the assistant to start, stop, install or uninstall a server. Empty means it can still answer questions but will refuse every action.",
-    Group = "authorization", Type = LeafType.Csv, Risk = LeafRisk.Destructive, NoDefault = true)]

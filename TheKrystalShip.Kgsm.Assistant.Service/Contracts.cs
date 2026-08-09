@@ -253,6 +253,12 @@ public sealed record AuthSessionResponse(
 public sealed record RefreshRequest(string? Refresh);
 
 /// <summary>
+/// A KGSM username and password — the sign-in that needs no identity provider configured on this
+/// host at all.
+/// </summary>
+public sealed record LoginRequest(string? Username, string? Password);
+
+/// <summary>
 /// Who the caller is and what they may do right now. <see cref="Tier"/> is re-derived from Discord,
 /// not read off the bearer, so it reflects a role change without a new sign-in.
 /// </summary>

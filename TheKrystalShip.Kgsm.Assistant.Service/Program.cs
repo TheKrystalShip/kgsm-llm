@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +23,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Streaming;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
+using TheKrystalShip.KGSM.Auth.Users;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
@@ -174,12 +176,23 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<KgsmAuthOptio
 // composition resolves the client once so a single sign-in uses one client for both calls.
 builder.Services.AddHttpClient<DiscordDirectory>(c => c.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddTransient<IIdentityProvider>(sp => sp.GetRequiredService<DiscordDirectory>());
-builder.Services.AddTransient<IAuthorityProvider>(sp => sp.GetRequiredService<DiscordDirectory>());
 builder.Services.AddTransient<ISignInService>(sp =>
 {
     DiscordDirectory discord = sp.GetRequiredService<DiscordDirectory>();
     return new SignInService(discord, discord);
 });
+
+// This host's own KGSM accounts, read straight off the shared store file. A singleton because it
+// wraps one SQLite file every request reads; it opens connections per operation and holds none.
+builder.Services.AddSingleton<UserDirectory>();
+
+// Authority is routed by who verified the caller: a KGSM account answers from the account store, a
+// Discord identity from Discord. This surface re-derives authority on every request rather than
+// reading it off the bearer, so a password sign-in has to be answerable per request too — and
+// sending a `local:` handle to Discord would ask after a guild member who does not exist and get a
+// denial for somebody signed in perfectly legitimately. Transient, like the client underneath it.
+builder.Services.AddTransient<IAuthorityProvider>(sp => new RoutedAuthority(
+    sp.GetRequiredService<UserDirectory>(), sp.GetRequiredService<DiscordDirectory>()));
 
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<BearerAuthFilter>();
@@ -415,6 +428,77 @@ app.MapGet("/auth/discord/callback", async (
         () => Results.Ok(new AuthSessionResponse(
             "ok", KgsmTiers.ToWire(session.Tier), session.AccessToken, session.RefreshToken,
             session.AccessExpires, session.RefreshExpires, session.UserId, session.DisplayName)));
+});
+
+// Sign in with a KGSM password. The door that needs no identity provider configured on this host at
+// all — and the one an admin created at setup comes through. Unauthenticated by bearer on purpose:
+// it is what somebody without a session reaches for.
+//
+// An unknown username and a wrong password give one answer at one cost. Two answers is a username
+// oracle, and so is a faster one; the store spends a hash verification either way.
+app.MapPost("/auth/login", async (
+    LoginRequest request, UserDirectory users, AuthService auth, HttpContext http,
+    ILoggerFactory loggerFactory, CancellationToken ct) =>
+{
+    if (!users.Available)
+        return Results.Json(
+            new { error = "users_unavailable", message = users.UnavailableReason ?? "The KGSM account store is unavailable on this host." },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest(new { error = "bad_request", message = "a username and a password are required." });
+
+    DateTimeOffset now = DateTimeOffset.UtcNow;
+    LocalSignInResult result;
+    try
+    {
+        result = await users.SignIn.SignInAsync(request.Username, request.Password, now, ct);
+    }
+    catch (Exception ex)
+    {
+        // The store went away between startup and now. An outage, never a denial — the same rule as
+        // an unreachable identity provider.
+        loggerFactory.CreateLogger("LocalLogin").LogError(ex, "The KGSM account store could not be read.");
+        return Results.Json(
+            new { error = "users_unavailable", message = "The KGSM account store could not be read." },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    switch (result.Outcome)
+    {
+        case LocalSignInOutcome.InvalidCredentials:
+            // Logged with the username that was tried, so an operator can still see a run of attempts
+            // against one name — the distinction the wire deliberately does not carry.
+            loggerFactory.CreateLogger("LocalLogin")
+                .LogInformation("Sign-in refused for '{Username}'.", request.Username);
+            return Results.Json(
+                new { error = "invalid_credentials", message = "That username and password do not match an account here." },
+                statusCode: StatusCodes.Status401Unauthorized);
+
+        case LocalSignInOutcome.LockedOut:
+            int seconds = Math.Max(1, (int)Math.Ceiling(((result.RetryAfter ?? now) - now).TotalSeconds));
+            http.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
+            return Results.Json(
+                new { error = "too_many_attempts", message = $"Too many failed attempts. Try again in {seconds}s." },
+                statusCode: StatusCodes.Status429TooManyRequests);
+
+        case LocalSignInOutcome.Disabled:
+            return Results.Json(
+                new { error = "account_disabled", message = "That account is disabled on this host." },
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    // A pending account signs in and holds nothing — a real session at tier none, so a surface can
+    // say "awaiting approval" instead of showing somebody who just proved who they are a bare denial.
+    ResolvedPrincipal principal = result.Principal!;
+
+    string? loginUserAgent = http.Request.Headers.UserAgent.ToString();
+    if (string.IsNullOrWhiteSpace(loginUserAgent)) loginUserAgent = null;
+
+    AuthSessionResult signedIn = await auth.CreateSessionAsync(principal, loginUserAgent, ct);
+    return Results.Ok(new AuthSessionResponse(
+        "ok", KgsmTiers.ToWire(signedIn.Tier), signedIn.AccessToken, signedIn.RefreshToken,
+        signedIn.AccessExpires, signedIn.RefreshExpires, signedIn.UserId, signedIn.DisplayName));
 });
 
 // Trade a refresh token for a fresh pair. Unauthenticated by bearer on purpose — the whole point is

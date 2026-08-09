@@ -96,6 +96,9 @@
     // The token audience. Empty means this machine's name — a settings file cannot know the host
     // it will be installed on.
     "HostId": "",
+    // The host's shared KGSM account store. Every KGSM service on this host reads the same file, so
+    // one person is one account whichever surface they sign in to.
+    "UsersDbPath": "/var/lib/kgsm/auth/users.db",
     "AccessTtlSeconds": 900,
     "SessionTtlSeconds": 2592000,
     "RoleCacheTtlSeconds": 60,

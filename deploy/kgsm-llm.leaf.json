@@ -402,6 +402,16 @@
       "risk": "safe"
     },
     {
+      "key": "authUsersDbPath",
+      "env": "Auth__UsersDbPath",
+      "label": "Account store",
+      "description": "The file this host keeps its KGSM accounts and passwords in. Every KGSM service on the host reads the same one, so pointing this somewhere else gives the assistant a different set of users from the Control Panel.",
+      "group": "session",
+      "type": "path",
+      "default": "/var/lib/kgsm/auth/users.db",
+      "risk": "wiring"
+    },
+    {
       "key": "accessTtlSec",
       "env": "Auth__AccessTtlSeconds",
       "label": "Access token lifetime",

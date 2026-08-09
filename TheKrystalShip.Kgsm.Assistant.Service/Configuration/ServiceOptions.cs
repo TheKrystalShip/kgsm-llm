@@ -1,4 +1,5 @@
 using TheKrystalShip.KGSM.Auth.Sessions;
+using TheKrystalShip.KGSM.Auth.Users;
 using TheKrystalShip.KGSM.LeafConfig;
 
 // NOTE: KgsmConnectionOptions, InventoryCacheOptions, and WebSearchOptions moved to
@@ -141,6 +142,22 @@ public sealed class AuthOptions
     /// accepted anywhere else. Leave it empty to use the machine's own name.</panel>
     [LeafField("authHostId", "Host identity", Group = "session")]
     public string HostId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The host's shared KGSM account store — where local accounts, their credentials and their tiers
+    /// live. Every KGSM surface on this host reads the same file, so one person is one account
+    /// whichever door they come through.
+    /// </summary>
+    /// <remarks>
+    /// Reading it directly, rather than asking kgsm-api, is what keeps this leaf standalone: a file is
+    /// not something a sibling service can be down for.
+    /// </remarks>
+    /// <panel>The file this host keeps its KGSM accounts and passwords in. Every KGSM service on the
+    /// host reads the same one, so pointing this somewhere else gives the assistant a different set of
+    /// users from the Control Panel.</panel>
+    [LeafField("authUsersDbPath", "Account store", Group = "session", Type = LeafType.Path,
+        Risk = LeafRisk.Wiring)]
+    public string UsersDbPath { get; set; } = UserStoreOptions.DefaultPath;
 
     /// <summary>
     /// The audience tokens are actually minted under: <see cref="HostId"/>, or the machine name.

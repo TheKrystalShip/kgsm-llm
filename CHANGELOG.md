@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Signing in with a KGSM password — `POST /auth/login`.** This leaf authenticates somebody with no
+  identity provider configured on this host at all, which is what the account store is for. An
+  unknown username and a wrong password give one answer at one cost; a run of failures locks the
+  account with a `Retry-After`; an account awaiting approval signs in and holds `none`, so a surface
+  can say so rather than showing a bare denial. A disabled account is only told it is disabled once
+  the password verifies — up front, that would be a username oracle.
+- **Accounts are read straight off the host's shared store** (`Auth:UsersDbPath`, default
+  `/var/lib/kgsm/auth/users.db`, the same file the Control Panel reads). A file, not a service, so
+  this leaf still signs people in with kgsm-api absent. A store that cannot be opened leaves password
+  sign-in unavailable and everything else working, rather than stopping the service.
+- **Authority routes by who verified the caller** — a KGSM account answers from the account store, a
+  Discord identity from Discord. Authority is still re-derived per request rather than read off the
+  bearer, so a tier changed in the panel lands on a session already open.
+
 ### Changed
 
 - **`DiscordAuthService` is `AuthService`** and runs on the shared sign-in seams: `ISignInService` for

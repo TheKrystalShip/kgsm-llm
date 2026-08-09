@@ -259,11 +259,17 @@ public sealed record RefreshRequest(string? Refresh);
 public sealed record LoginRequest(string? Username, string? Password);
 
 /// <summary>
-/// Who the caller is and what they may do right now. <see cref="Tier"/> is re-derived from Discord,
-/// not read off the bearer, so it reflects a role change without a new sign-in.
+/// Who the caller is and what they may do right now. <see cref="Tier"/> is re-derived from the account
+/// store, not read off the bearer, so it reflects a change made in the Control Panel without a new
+/// sign-in.
 /// </summary>
+/// <param name="Status">
+/// The state of the KGSM account behind the caller: <c>active</c>, <c>pending</c>, or <c>unknown</c>
+/// when this identity proves no account on this host. It is why a <c>none</c> tier is not one fact —
+/// somebody awaiting approval and somebody this host has never heard of are owed different sentences.
+/// </param>
 public sealed record MeResponse(
-    string UserId, string DisplayName, string Tier, bool CanPerformActions);
+    string UserId, string DisplayName, string Tier, bool CanPerformActions, string Status);
 
 // --- Conversation history read-back (the reverse path) ----------------------------------------
 // The write path keys per-user, per-chat memory web:{userId}[:{chatId}] from the verified identity.

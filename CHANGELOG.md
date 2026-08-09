@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Authority comes from the KGSM account store, for everyone.** A Discord login and a password login
+  are answered from the same record, so a person holds the same tier here as in the Control Panel
+  because both read that record rather than each deriving one. Discord answers only *who* someone is;
+  a guild role is a fact about a chat server and contributes nothing here. Authority is still
+  re-derived per request, so a change made in the panel lands without anyone signing in again — within
+  `Auth:RoleCacheTtlSeconds`, whose default drops to 5 now that the lookup is a local file rather than
+  a call to Discord.
+- **The sign-in provisions rather than denies.** A verified identity with no account here gets an
+  unapproved one and a real session holding `none`, so the chat can say "awaiting approval" instead of
+  showing somebody who has just proved who they are a bare denial. The terminal `403` is now a fact
+  about the account (switched off). A host already holding `Auth:PendingUserCap` unapproved accounts
+  answers `503 not_accepting_accounts`, and an unreadable store answers `502 authority_unavailable`.
+- **A disabled account's live sessions stop being accepted**, rather than being lowered to no tier —
+  which is what makes disabling somebody in the Control Panel cut their sessions here too, with no
+  call between the two services.
+- **`/auth/me` reports the account's `status`** (`active`/`pending`/`unknown`), because a `none` tier
+  is two different facts.
+
+### Added
+
+- **`Auth:PendingUserCap`** and **`Auth:PendingUserTtlDays`** — how many people may be awaiting
+  approval at once, and how long an unattended request survives.
+
 ### Added
 
 - **Signing in with a KGSM password — `POST /auth/login`.** This leaf authenticates somebody with no

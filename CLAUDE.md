@@ -156,18 +156,26 @@ Things that bite if you don't know them:
   was restarted an hour ago") are honest and untouched.
 - **This leaf depends only on kgsm-lib + a local Ollama** and runs fully standalone — no other
   ecosystem service. Don't add a dependency on the API or a sibling leaf.
-- **Authority is the ecosystem's ordered tier, not this service's own booleans.** The role→tier map
-  comes from the shared `KgsmAuth` section (`TheKrystalShip.KGSM.Auth`), which lives once per host in
-  `/etc/kgsm/discord-auth.env` and is loaded by every leaf's unit before its own env file. Acting
-  needs `operator`; reading another person's conversations needs `admin`. This surface's own callback
-  URL and scopes stay local, on `DiscordOAuth`.
+- **Authority is the ecosystem's ordered tier, and it comes from the KGSM account store.** A Discord
+  login and a password login are answered from the same record, so a person holds the same tier here
+  as in the Control Panel — both read that record rather than each deriving one. A guild role is a
+  fact about a chat server and is not consulted. Acting needs `operator`; reading another person's
+  conversations needs `admin`. The store is the shared host file `/var/lib/kgsm/auth/users.db`
+  (`Auth:UsersDbPath`), opened directly — a file cannot be down, which is what keeps this leaf
+  standalone. This surface's own callback URL and scopes stay local, on `DiscordOAuth`.
+- **A verified identity with no account here is provisioned unapproved, not denied.** It gets a real
+  session holding `none`, so the chat can say "awaiting approval". `Auth:PendingUserCap` bounds that
+  surface and `Auth:PendingUserTtlDays` expires what nobody looks at. A **disabled** account's live
+  sessions stop being accepted outright, which is what makes disabling somebody in the Control Panel
+  cut their sessions here with no call between the two services.
 - **Nothing here talks to `discord.com` except `DiscordDirectory`**, and nothing mints or validates a
   session token except `TheKrystalShip.KGSM.Auth.Sessions`. Both come from `kgsm-auth`, shared with
   the API and the bot — a second implementation is how two surfaces come to disagree about who
   someone is. `AuthService` reaches them only through the neutral seams (`ISignInService` for the
   login, `IAuthorityProvider` for the tier), so it neither knows what a guild role is nor which
-  provider answered. Authority is re-derived per request (cached briefly), never read off the bearer,
-  so a revoked role takes effect without a new sign-in.
+  provider answered. Authority is re-derived per request (cached for `Auth:RoleCacheTtlSeconds`,
+  default 5), never read off the bearer, so a change made in the panel takes effect without a new
+  sign-in.
 - **`Auth:SigningKey` must be stable on any real host.** Unset means a per-process key: every restart
   invalidates every issued token and signs everyone out.
 - **`Directory.Build.props` carries a scoped NuGet-audit suppression** (one transitive SQLite

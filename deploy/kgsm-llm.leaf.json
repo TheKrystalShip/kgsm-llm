@@ -438,13 +438,36 @@
     {
       "key": "roleCacheTtlSec",
       "env": "Auth__RoleCacheTtlSeconds",
-      "label": "Role cache lifetime",
-      "description": "How long a user's role decision is reused before Discord is asked again. Longer means fewer calls to Discord and a longer wait before a revoked role takes effect.",
+      "label": "Authority cache lifetime",
+      "description": "How long a user's authority is reused before it is looked up again. This is how long after an admin changes what a person may do that the assistant can still let them do the old thing.",
       "group": "session",
       "type": "int",
-      "default": "60",
+      "default": "5",
       "min": 0,
       "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "pendingUserCap",
+      "env": "Auth__PendingUserCap",
+      "label": "Accounts awaiting approval",
+      "description": "How many people can be waiting for approval at the same time. Anyone who signs in through Discord and has no account here yet becomes one of them.",
+      "group": "session",
+      "type": "int",
+      "default": "32",
+      "min": 1,
+      "risk": "safe"
+    },
+    {
+      "key": "pendingUserTtlDays",
+      "env": "Auth__PendingUserTtlDays",
+      "label": "Approval request lifetime",
+      "description": "How long someone waiting for approval stays on the list before being forgotten.",
+      "group": "session",
+      "type": "int",
+      "default": "14",
+      "min": 1,
+      "unit": "days",
       "risk": "safe"
     },
     {

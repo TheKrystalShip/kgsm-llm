@@ -20,6 +20,7 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Auth.Users;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
@@ -520,6 +521,11 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     // --- the browser return leg (a client asking to be sent back with the session) ----------------
 
     /// <summary>A factory whose allowlist contains <paramref name="origin"/>, with a fake Discord.</summary>
+    /// <remarks>
+    /// The tier is written onto the ACCOUNT the arriving identity proves, not onto the fake. A provider
+    /// says who someone is and contributes nothing else, so a sign-in test that wants a particular tier
+    /// has to say what this host's record says about that person.
+    /// </remarks>
     private WebApplicationFactory<Program> ReturnLegFactory(string origin, KgsmTier tier = KgsmTier.Operator)
     {
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
@@ -529,7 +535,23 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             .Returns(new ResolvedPrincipal(
                 new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]), tier));
 
-        return Factory(discord: discord, configure: b => b.UseSetting("Auth:AllowedOrigins:0", origin));
+        WebApplicationFactory<Program> factory = Factory(
+            discord: discord, configure: b => b.UseSetting("Auth:AllowedOrigins:0", origin));
+        if (tier != KgsmTier.None)
+            GiveAnAccount(factory, "u1", tier);
+        return factory;
+    }
+
+    /// <summary>Give a Discord subject an approved account at <paramref name="tier"/> on this host.</summary>
+    private static void GiveAnAccount(
+        WebApplicationFactory<Program> factory, string subject, KgsmTier tier)
+    {
+        var users = factory.Services.GetRequiredService<Security.UserDirectory>();
+        var identity = new KgsmIdentity(
+            KgsmActorProvider.Discord, subject, "user" + subject, "User", null, []);
+        users.Linking.ProvisionAsync(
+            identity, tier, TierSource.Granted, UserStatus.Active, DateTimeOffset.UtcNow)
+            .GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -608,7 +630,14 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // A denial must come back the same way a success would; a browser that asked to be returned
         // must never be dead-ended on a JSON body it cannot act on.
         const string origin = "https://panel.example.com";
-        var response = await SignInAsync(ReturnLegFactory(origin, KgsmTier.None), returnTo: origin);
+        WebApplicationFactory<Program> factory = ReturnLegFactory(origin, KgsmTier.None);
+        // The one terminal refusal left: a fact about the account, not about a guild.
+        GiveAnAccount(factory, "u1", KgsmTier.Viewer);
+        var users = factory.Services.GetRequiredService<Security.UserDirectory>();
+        var account = await users.Store.FindByCredentialAsync("discord:u1");
+        await users.Store.UpdateAsync(account! with { Status = UserStatus.Disabled });
+
+        var response = await SignInAsync(factory, returnTo: origin);
 
         response.StatusCode.Should().Be(HttpStatusCode.Redirect);
         ParseFragment(response.Headers.Location!.ToString())["error"].Should().Be("denied");
@@ -699,16 +728,20 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task SignIn_WithAGuildMember_MintsAPair()
+    public async Task SignIn_MintsAPairAtTheTierTheAccountHolds()
     {
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new ResolvedPrincipal(
-                new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
+                new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]), KgsmTier.Admin));
 
-        var response = await SignInAsync(Factory(discord: discord));
+        WebApplicationFactory<Program> factory = Factory(discord: discord);
+        // The tier comes off the account, and the fake's claim of admin is ignored — which is the
+        // whole assertion below the obvious one.
+        GiveAnAccount(factory, "u1", KgsmTier.Viewer);
+        var response = await SignInAsync(factory);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var session = await response.Content.ReadFromJsonAsync<AuthSessionResponse>();
@@ -753,7 +786,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task SignIn_WhenNotAGuildMember_IsATerminalDenialWithNoTokens()
+    public async Task SignIn_WithNoAccountHere_ProvisionsOneAwaitingApproval()
     {
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
@@ -762,13 +795,22 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             .Returns(new ResolvedPrincipal(
                 new KgsmIdentity(KgsmActorProvider.Discord, "u9", "stranger", "Stranger", null, ["identify"]), KgsmTier.None));
 
-        var response = await SignInAsync(Factory(discord: discord));
+        WebApplicationFactory<Program> factory = Factory(discord: discord);
+        var response = await SignInAsync(factory);
 
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        // Proving who you are is not being let in — and it is not being turned away either. A real
+        // session holding nothing is what lets the chat say "waiting on an admin" rather than showing
+        // somebody who just proved who they are a bare denial.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
         var session = await response.Content.ReadFromJsonAsync<AuthSessionResponse>();
-        session!.Verdict.Should().Be("denied");
-        session.Token.Should().BeNull();
-        session.Refresh.Should().BeNull();
+        session!.Verdict.Should().Be("ok");
+        session.Tier.Should().Be("none");
+        session.Token.Should().NotBeNullOrEmpty();
+
+        var users = factory.Services.GetRequiredService<Security.UserDirectory>();
+        var provisioned = await users.Store.FindByCredentialAsync("discord:u9");
+        provisioned.Should().NotBeNull();
+        provisioned!.Status.Should().Be(UserStatus.Pending);
     }
 
     [Fact]

@@ -10,6 +10,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
+using TheKrystalShip.KGSM.Auth.Users;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
@@ -102,15 +103,18 @@ internal sealed class BearerAuthFilter : IEndpointFilter
 
     private readonly ISessionTokenService _tokens;
     private readonly ISessionValidator _sessions;
+    private readonly UserDirectory _users;
     private readonly AssistantServiceOptions _options;
 
     public BearerAuthFilter(
         ISessionTokenService tokens,
         ISessionValidator sessions,
+        UserDirectory users,
         IOptions<AssistantServiceOptions> options)
     {
         _tokens = tokens;
         _sessions = sessions;
+        _users = users;
         _options = options.Value;
     }
 
@@ -213,6 +217,27 @@ internal sealed class BearerAuthFilter : IEndpointFilter
 
         if (!await _sessions.IsValidAsync(sessionId, ct))
             return null;
+
+        // A switched-off account is a door closing, not a demotion. Left merely tierless it would keep
+        // reading its own conversations and holding an event stream open, so the session ends here —
+        // which is what makes disabling someone in the Control Panel cut their live sessions on this
+        // surface too, with no call between the two services.
+        //
+        // A store that cannot be read leaves the session standing. Every authority question this
+        // request goes on to ask reports the outage on its own terms, and ending sessions on a
+        // momentary read failure would sign the whole host out over a locked file.
+        if (_users.Available)
+        {
+            try
+            {
+                if ((await _users.Authority!.ResolveAsync(identity, ct)).Outcome == AuthorityOutcome.Disabled)
+                    return null;
+            }
+            catch (KgsmAuthProviderException)
+            {
+                // Unanswerable is not "no".
+            }
+        }
 
         return new AuthPrincipal(
             identity.Provider, identity.Subject, identity.Display, sessionId, SessionClaims.ReadTier(ci));

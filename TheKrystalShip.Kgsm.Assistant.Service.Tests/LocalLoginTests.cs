@@ -140,6 +140,49 @@ public sealed class LocalLoginTests : IClassFixture<WebApplicationFactory<Progra
     }
 
     [Fact]
+    public async Task DisablingAnAccountEndsItsLiveSessionRatherThanLoweringIt()
+    {
+        // A switched-off account is a door closing, not a demotion. Left merely tierless it would keep
+        // reading its own conversations and holding an event stream open — so the bearer stops being
+        // accepted, which is what makes disabling somebody in the Control Panel cut their sessions
+        // here with no call between the two services.
+        string name = Unique("switchedoff");
+        KgsmUser user = await Enrol(name, KgsmTier.Operator);
+
+        using HttpResponseMessage login = await Login(name, Password);
+        AuthSessionResponse session = (await login.Content.ReadFromJsonAsync<AuthSessionResponse>())!;
+
+        HttpClient client = _app.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", session.Token);
+        (await client.GetAsync("/auth/me")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await Users.Store.UpdateAsync(user with { Status = UserStatus.Disabled });
+
+        using HttpResponseMessage after = await client.GetAsync("/auth/me");
+        after.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task MeSaysWhetherAnAccountIsWaitingOrUnknownBehindTheSameNoneTier()
+    {
+        // `none` is two facts wearing one word, and a surface owes them different sentences.
+        string name = Unique("waiting");
+        await Enrol(name, KgsmTier.Admin, UserStatus.Pending);
+
+        using HttpResponseMessage login = await Login(name, Password);
+        AuthSessionResponse session = (await login.Content.ReadFromJsonAsync<AuthSessionResponse>())!;
+
+        HttpClient client = _app.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", session.Token);
+
+        using HttpResponseMessage me = await client.GetAsync("/auth/me");
+        using JsonDocument body = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
+
+        body.RootElement.GetProperty("tier").GetString().Should().Be(KgsmTiers.None);
+        body.RootElement.GetProperty("status").GetString().Should().Be(UserStatuses.Pending);
+    }
+
+    [Fact]
     public async Task AnAccountAwaitingApprovalSignsInAndHoldsNothing()
     {
         string name = Unique("pending");

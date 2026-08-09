@@ -28,15 +28,22 @@ internal sealed class UserDirectory
 {
     private readonly SqliteUserStore? _store;
     private readonly LocalSignInService? _signIn;
+    private readonly IdentityLinkService? _linking;
 
     public UserDirectory(IOptions<AuthOptions> options, ILogger<UserDirectory> logger)
     {
         string path = options.Value.UsersDbPath;
 
+        Pending = new PendingPolicy(options.Value.PendingUserCap, TimeSpan.FromDays(options.Value.PendingUserTtlDays));
+
         try
         {
             _store = new SqliteUserStore(new UserStoreOptions { Path = path });
+            // Uncached deliberately. The read behind it is a local point query, and this surface
+            // already caches the tier it derives from it for the role-cache TTL — a second cache under
+            // the first would add staleness and buy microseconds.
             Authority = new UserStoreAuthority(_store);
+            _linking = new IdentityLinkService(_store);
             _signIn = new LocalSignInService(_store, new IdentityPasswordHasher(), Authority);
             logger.LogInformation("KGSM account store opened at {Path}.", path);
         }
@@ -66,11 +73,20 @@ internal sealed class UserDirectory
     public string? UnavailableReason { get; }
 
     /// <summary>
-    /// Authority from the account store. Answers <see cref="KgsmTier.None"/> when unavailable —
-    /// deliberately, because a caller here is asking about an account it has no way to look up, which
-    /// is indistinguishable from one that does not exist.
+    /// Authority from the account store — this host's only answer to what a verified caller may do.
+    /// <see langword="null"/> while <see cref="Available"/> is false.
     /// </summary>
     public UserStoreAuthority? Authority { get; }
+
+    /// <summary>
+    /// Turning a verified external identity into the account it proves. Only valid while
+    /// <see cref="Available"/>.
+    /// </summary>
+    public IdentityLinkService Linking =>
+        _linking ?? throw new InvalidOperationException("The KGSM account store is unavailable.");
+
+    /// <summary>How many unapproved accounts this host will hold, and for how long.</summary>
+    public PendingPolicy Pending { get; }
 
     /// <summary>Username-and-password sign-in. Only valid while <see cref="Available"/>.</summary>
     public LocalSignInService SignIn =>
@@ -80,45 +96,40 @@ internal sealed class UserDirectory
     /// The accounts themselves. Only valid while <see cref="Available"/>.
     /// </summary>
     /// <remarks>
-    /// This surface reads accounts and never writes them: creating, approving and retiering happen in
-    /// the Control Panel, which is the one place authority on this host is decided. Exposed so the
-    /// tests can stand a real account up, and so a later read (a display name, a status) has the store
-    /// to ask rather than a second copy to drift from.
+    /// This surface never decides what anyone may do: creating, approving and retiering happen in the
+    /// Control Panel, which is the one place authority on this host is set. The one thing it writes is
+    /// an unapproved account for an identity nobody has claimed yet, so that somebody signing in here
+    /// for the first time appears on that screen to be approved.
     /// </remarks>
     public IUserStore Store =>
         _store ?? throw new InvalidOperationException("The KGSM account store is unavailable.");
 }
 
 /// <summary>
-/// Authority, routed by which provider verified the caller: a KGSM account answers from the account
-/// store, anything else from the identity provider that vouched for it.
+/// Authority: the account store, for everyone, however they proved who they are.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This service re-derives authority on every request rather than reading it off the bearer, so a
-/// password sign-in has to be answerable per request too — and the account store is the only thing
-/// that can answer for one. Sending a <c>local:</c> handle to Discord would ask about a guild member
-/// who does not exist and get a denial for somebody who is signed in perfectly legitimately.
+/// A provider says who someone is and contributes nothing else. A guild role is a fact about a chat
+/// server, not about this host — so a Discord login and a password login are answered from the same
+/// record, and a person holds the same tier here as they do in the Control Panel because both read
+/// that record rather than each deriving one.
 /// </para>
 /// <para>
-/// Routing here rather than teaching either provider about the other is the point of
-/// <see cref="IAuthorityProvider"/> being a seam: each half still answers only for what it knows, and
-/// an outage on either side still throws rather than resolving to a denial.
+/// This service re-derives authority on every request rather than reading it off the bearer, so a
+/// change made in the panel takes effect without anyone signing in again.
+/// </para>
+/// <para>
+/// A store that cannot be read <b>throws</b>. This seam's contract is that an unanswerable question
+/// is never a denial: the caller reports an outage, and nobody is told they lost authority they
+/// still hold.
 /// </para>
 /// </remarks>
-internal sealed class RoutedAuthority(UserDirectory users, IAuthorityProvider fallback) : IAuthorityProvider
+internal sealed class AccountAuthority(UserDirectory users) : IAuthorityProvider
 {
-    public Task<KgsmTier> ResolveTierAsync(KgsmIdentity identity, CancellationToken ct)
-    {
-        if (identity.Provider != KgsmActorProvider.Local)
-            return fallback.ResolveTierAsync(identity, ct);
-
-        return users.Authority is { } authority
+    public Task<KgsmTier> ResolveTierAsync(KgsmIdentity identity, CancellationToken ct) =>
+        users.Authority is { } authority
             ? authority.ResolveTierAsync(identity, ct)
-            // A KGSM account with no store to read is a question that cannot be answered, and this
-            // seam's contract says an unanswerable question throws rather than denying — the caller
-            // reports an outage, and nobody is told they lost authority they still hold.
             : throw new KgsmAuthProviderException(
                 users.UnavailableReason ?? "The KGSM account store is unavailable on this host.");
-    }
 }

@@ -101,7 +101,10 @@
     "UsersDbPath": "/var/lib/kgsm/auth/users.db",
     "AccessTtlSeconds": 900,
     "SessionTtlSeconds": 2592000,
-    "RoleCacheTtlSeconds": 60,
+    "RoleCacheTtlSeconds": 5,
+    // How many people can be awaiting approval at once, and how long an unattended request survives.
+    "PendingUserCap": 32,
+    "PendingUserTtlDays": 14,
     "StateTtlSeconds": 300,
     "AllowedOrigins": []
   },

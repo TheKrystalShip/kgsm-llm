@@ -188,11 +188,36 @@ public sealed class AuthOptions
     [LeafField("sessionTtlSec", "Session lifetime", Group = "session", Min = 60, Unit = "s")]
     public int SessionTtlSeconds { get; set; } = 30 * 24 * 60 * 60;
 
-    /// <summary>How long a per-user tier decision is cached, to throttle Discord calls.</summary>
-    /// <panel>How long a user's role decision is reused before Discord is asked again. Longer means fewer
-    /// calls to Discord and a longer wait before a revoked role takes effect.</panel>
-    [LeafField("roleCacheTtlSec", "Role cache lifetime", Group = "session", Min = 0, Unit = "s")]
-    public int RoleCacheTtlSeconds { get; set; } = 60;
+    /// <summary>
+    /// How long a per-user tier decision is reused before the account store is read again. The
+    /// staleness bound on a demotion, and the only one left in the model.
+    /// </summary>
+    /// <panel>How long a user's authority is reused before it is looked up again. This is how long
+    /// after an admin changes what a person may do that the assistant can still let them do the old
+    /// thing.</panel>
+    [LeafField("roleCacheTtlSec", "Authority cache lifetime", Group = "session", Min = 0, Unit = "s")]
+    public int RoleCacheTtlSeconds { get; set; } = 5;
+
+    /// <summary>The most accounts awaiting approval this host will hold at once. Floor 1.</summary>
+    /// <remarks>
+    /// Signing in through an identity provider with no account here provisions one, unapproved and at
+    /// no tier. Anyone who can complete a login at that provider can reach it, so the table it grows
+    /// needs a ceiling however little each row can do.
+    /// </remarks>
+    /// <panel>How many people can be waiting for approval at the same time. Anyone who signs in through
+    /// Discord and has no account here yet becomes one of them.</panel>
+    [LeafField("pendingUserCap", "Accounts awaiting approval", Group = "session", Min = 1)]
+    public int PendingUserCap { get; set; } = 32;
+
+    /// <summary>How long an unapproved, self-provisioned account survives unattended, in days.</summary>
+    /// <remarks>
+    /// What keeps the cap from becoming a lockout: without expiry, one burst of arrivals fills it
+    /// permanently and the next real person is refused. Only ever removes an account that arrived this
+    /// way, is still unapproved, and has no password.
+    /// </remarks>
+    /// <panel>How long someone waiting for approval stays on the list before being forgotten.</panel>
+    [LeafField("pendingUserTtlDays", "Approval request lifetime", Group = "session", Min = 1, Unit = "days")]
+    public int PendingUserTtlDays { get; set; } = 14;
 
     /// <summary>How long an in-flight authorize→callback handshake cookie stays valid.</summary>
     /// <panel>How long someone has to finish a sign-in once it starts before they have to begin again.</panel>

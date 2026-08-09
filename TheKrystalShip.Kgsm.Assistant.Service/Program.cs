@@ -169,30 +169,27 @@ builder.Services.AddSingleton(sp =>
 // behind IOptions — without it the real directory cannot be constructed at all, and every test that
 // substitutes the seam would still pass.
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<KgsmAuthOptions>>().Value);
-// Discord answers both halves of the sign-in here: who someone is, and — from their guild roles —
-// what they may do. They are separate seams so this surface can keep its login while taking authority
-// from elsewhere, or the reverse. Everything stays transient like the typed client it wraps: holding
-// one in a singleton pins a handler for the process lifetime and stops the factory rotating it. The
-// composition resolves the client once so a single sign-in uses one client for both calls.
+// Discord answers ONE half of the sign-in here: who someone is. Transient like the typed client it
+// wraps — holding one in a singleton pins a handler for the process lifetime and stops the factory
+// rotating it.
 builder.Services.AddHttpClient<DiscordDirectory>(c => c.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddTransient<IIdentityProvider>(sp => sp.GetRequiredService<DiscordDirectory>());
-builder.Services.AddTransient<ISignInService>(sp =>
-{
-    DiscordDirectory discord = sp.GetRequiredService<DiscordDirectory>();
-    return new SignInService(discord, discord);
-});
 
 // This host's own KGSM accounts, read straight off the shared store file. A singleton because it
 // wraps one SQLite file every request reads; it opens connections per operation and holds none.
 builder.Services.AddSingleton<UserDirectory>();
 
-// Authority is routed by who verified the caller: a KGSM account answers from the account store, a
-// Discord identity from Discord. This surface re-derives authority on every request rather than
-// reading it off the bearer, so a password sign-in has to be answerable per request too — and
-// sending a `local:` handle to Discord would ask after a guild member who does not exist and get a
-// denial for somebody signed in perfectly legitimately. Transient, like the client underneath it.
-builder.Services.AddTransient<IAuthorityProvider>(sp => new RoutedAuthority(
-    sp.GetRequiredService<UserDirectory>(), sp.GetRequiredService<DiscordDirectory>()));
+// The other half: what a verified caller may DO comes from the account store and nowhere else,
+// whichever provider vouched for them. A guild role is a fact about a chat server, not about this
+// host — so a Discord login and a password login are answered from the same record, and a person
+// holds the same tier here as in the Control Panel because both read that record rather than each
+// deriving one. This surface re-derives per request, so a change made in the panel lands without
+// anyone signing in again.
+builder.Services.AddTransient<IAuthorityProvider>(sp =>
+    new AccountAuthority(sp.GetRequiredService<UserDirectory>()));
+builder.Services.AddTransient<ISignInService>(sp => new SignInService(
+    sp.GetRequiredService<IIdentityProvider>(),
+    sp.GetRequiredService<IAuthorityProvider>()));
 
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<BearerAuthFilter>();
@@ -330,6 +327,7 @@ app.MapGet("/auth/discord/start", (
 app.MapGet("/auth/discord/callback", async (
     HttpContext http,
     AuthService auth,
+    UserDirectory users,
     ILoggerFactory loggerFactory,
     [FromQuery] string? code,
     [FromQuery] string? state,
@@ -407,13 +405,52 @@ app.MapGet("/auth/discord/callback", async (
             new { error = "login_required", message = "The authorization code was invalid or expired." },
             statusCode: StatusCodes.Status401Unauthorized));
 
-    // Identity verified, but no access on this host. Terminal: no tokens are minted, and a client
-    // must not treat it as something a retry could fix.
-    if (resolved.Tier == KgsmTier.None)
+    // A verified identity is not yet a user. It proves an account here or it proves none, and when it
+    // proves none an unapproved one is created for it to prove — at no tier, so the session it gets
+    // can say who it is and nothing else. Guild membership is not consulted and buys nothing.
+    if (!users.Available)
+        return Finish(Frag(("error", "authority_unavailable")), () => Results.Json(
+            new { error = "authority_unavailable", message = users.UnavailableReason ?? "The KGSM account store is unavailable on this host." },
+            statusCode: StatusCodes.Status502BadGateway));
+
+    LinkResult link;
+    try
+    {
+        link = await users.Linking.ResolveOrProvisionAsync(
+            resolved.Identity, DateTimeOffset.UtcNow, users.Pending, ct);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Could not resolve {Handle} against the KGSM account store.",
+            resolved.Identity.Handle);
+        return Finish(Frag(("error", "authority_unavailable")), () => Results.Json(
+            new { error = "authority_unavailable", message = "The KGSM account store could not be read." },
+            statusCode: StatusCodes.Status502BadGateway));
+    }
+
+    if (link.Outcome == LinkOutcome.PendingCapReached)
+    {
+        // Not a denial of this person — a refusal to hold more unapproved accounts, which from the
+        // outside is indistinguishable from one, so it is logged where an admin will see it.
+        logger.LogWarning(
+            "{Handle} signed in but this host is already holding {Cap} accounts awaiting approval.",
+            resolved.Identity.Handle, users.Pending.Cap);
+        return Finish(Frag(("error", "not_accepting_accounts")), () => Results.Json(
+            new { error = "not_accepting_accounts", message = "This host is not accepting new accounts right now." },
+            statusCode: StatusCodes.Status503ServiceUnavailable));
+    }
+
+    // Identity verified, and this host has switched the account off. Terminal: no tokens are minted,
+    // and a client must not treat it as something a retry could fix.
+    if (link.User!.Status == UserStatus.Disabled)
         return Finish(Frag(("error", "denied")), () => Results.Json(
             new AuthSessionResponse("denied", null, null, null, null, null,
                 resolved.Identity.Subject, resolved.Identity.Display),
             statusCode: StatusCodes.Status403Forbidden));
+
+    // An unapproved account signs in and holds nothing — a real session at tier none, so a surface can
+    // say "awaiting approval" instead of showing somebody who just proved who they are a bare denial.
+    resolved = resolved with { Tier = link.User.EffectiveTier };
 
     string? userAgent = http.Request.Headers.UserAgent.ToString();
     if (string.IsNullOrWhiteSpace(userAgent)) userAgent = null;
@@ -597,18 +634,31 @@ secured.MapGet("/events", async (
 });
 
 // Who am I, and may I act right now? Lets the SPA show/hide action affordances.
-secured.MapGet("/auth/me", async (HttpContext http, AuthService auth, CancellationToken ct) =>
+secured.MapGet("/auth/me", async (
+    HttpContext http, AuthService auth, UserDirectory users, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    // The tier is re-derived, not read off the bearer: a role granted or taken away since sign-in is
-    // already in effect for every action, so reporting the token's snapshot here would tell a client
-    // something the next request would contradict. An unresolvable authority floors to none, which
-    // reads the chat down to a viewer for as long as Discord is unreachable rather than failing the
-    // boot the whole dock hangs off.
+    // The tier is re-derived, not read off the bearer: authority granted or taken away since sign-in
+    // is already in effect for every action, so reporting the token's snapshot here would tell a
+    // client something the next request would contradict. An unresolvable authority floors to none,
+    // which reads the chat down to a viewer for as long as the store is unreadable rather than
+    // failing the boot the whole dock hangs off.
     var tier = (await auth.ResolveTierAsync(principal, ct)).OrNone;
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    // Two different facts wear the same `none`: somebody waiting on an admin, and somebody this host
+    // does not know. Reported as unknown rather than guessed at when the store cannot be read.
+    string status = "unknown";
+    if (users.Available)
+    {
+        try
+        {
+            if ((await users.Authority!.ResolveAsync(principal.AsIdentity(), ct)).User is { } account)
+                status = UserStatuses.ToWire(account.Status);
+        }
+        catch (KgsmAuthProviderException) { /* unknown, as above */ }
+    }
     return Results.Ok(new MeResponse(
-        principal.UserId, principal.DisplayName, KgsmTiers.ToWire(tier), canPerform));
+        principal.UserId, principal.DisplayName, KgsmTiers.ToWire(tier), canPerform, status));
 });
 
 // The tools the caller is authorized to use, with names/descriptions/parameters. Fully server-derived

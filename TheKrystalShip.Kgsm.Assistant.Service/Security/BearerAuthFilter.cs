@@ -19,7 +19,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// <item><b>Session bearer</b> — <c>Authorization: Bearer &lt;token&gt;</c>, a session JWT this service
 /// minted, resolved to an <see cref="AuthPrincipal"/> (the browser/SPA-direct path).</item>
 /// <item><b>Trusted relay</b> — a co-located kgsm-api forwarding a verified end-user. A request
-/// carrying a matching <c>X-Relay-Secret</c> is authenticated as the forwarded Discord identity
+/// carrying a matching <c>X-Relay-Secret</c> is authenticated as the forwarded identity
 /// (<c>X-Relay-User</c> + optional <c>X-Relay-User-Name</c>) with NO session login, carrying that
 /// caller's already-verified tier in <c>X-Relay-Tier</c>. Enabled only when
 /// <see cref="RelayOptions.Secret"/> is configured.</item>
@@ -135,7 +135,11 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             var displayName = request.Headers[RelayUserNameHeader].ToString();
             // The relay path holds no session of its own — the api authenticated the user upstream —
             // so the session id is empty and a logout on this path has nothing to revoke.
+            // The relay header carries a bare subject, not a qualified handle, so the provider is the
+            // one the relay speaks for rather than something this request states. Widening that is a
+            // change to the relay contract on both ends, not a default to be guessed at here.
             context.HttpContext.Items[PrincipalKey] = new AuthPrincipal(
+                KgsmActorProvider.Discord,
                 userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, string.Empty);
             // The caller's tier as the api verified it — one value answering every authority question
             // this service asks of a relayed caller. Parsed fail-closed: an unrecognised, empty or absent
@@ -202,7 +206,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
         if (ci.FindFirst(KgsmAuthClaims.TokenKind)?.Value != KgsmTokenKind.Access)
             return null;
 
-        DiscordIdentity? identity = SessionClaims.ReadIdentity(ci);
+        KgsmIdentity? identity = SessionClaims.ReadIdentity(ci);
         string? sessionId = SessionClaims.ReadSessionId(ci);
         if (identity is null || sessionId is null)
             return null;
@@ -210,7 +214,8 @@ internal sealed class BearerAuthFilter : IEndpointFilter
         if (!await _sessions.IsValidAsync(sessionId, ct))
             return null;
 
-        return new AuthPrincipal(identity.UserId, identity.Display, sessionId, SessionClaims.ReadTier(ci));
+        return new AuthPrincipal(
+            identity.Provider, identity.Subject, identity.Display, sessionId, SessionClaims.ReadTier(ci));
     }
 
     private static bool FixedTimeEquals(string a, string b) =>

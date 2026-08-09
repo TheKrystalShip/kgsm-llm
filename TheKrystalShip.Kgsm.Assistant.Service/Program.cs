@@ -152,7 +152,7 @@ builder.Services.AddHostedService(sp => new SessionCleanupWorker(
     sp.GetRequiredService<ISessionRegistry>(),
     TimeSpan.FromHours(1),
     sp.GetRequiredService<ILogger<SessionCleanupWorker>>()));
-builder.Services.AddSingleton(new DiscordTierCache(
+builder.Services.AddSingleton(new KgsmTierCache(
     TimeSpan.FromSeconds(authOptions.RoleCacheTtlSeconds > 0 ? authOptions.RoleCacheTtlSeconds : 60)));
 
 // This surface's own OAuth endpoints; the application credentials, guild and role ids are the
@@ -167,10 +167,21 @@ builder.Services.AddSingleton(sp =>
 // behind IOptions — without it the real directory cannot be constructed at all, and every test that
 // substitutes the seam would still pass.
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<KgsmAuthOptions>>().Value);
-builder.Services.AddHttpClient<IDiscordDirectory, DiscordDirectory>(
-    c => c.Timeout = TimeSpan.FromSeconds(10));
+// Discord answers both halves of the sign-in here: who someone is, and — from their guild roles —
+// what they may do. They are separate seams so this surface can keep its login while taking authority
+// from elsewhere, or the reverse. Everything stays transient like the typed client it wraps: holding
+// one in a singleton pins a handler for the process lifetime and stops the factory rotating it. The
+// composition resolves the client once so a single sign-in uses one client for both calls.
+builder.Services.AddHttpClient<DiscordDirectory>(c => c.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddTransient<IIdentityProvider>(sp => sp.GetRequiredService<DiscordDirectory>());
+builder.Services.AddTransient<IAuthorityProvider>(sp => sp.GetRequiredService<DiscordDirectory>());
+builder.Services.AddTransient<ISignInService>(sp =>
+{
+    DiscordDirectory discord = sp.GetRequiredService<DiscordDirectory>();
+    return new SignInService(discord, discord);
+});
 
-builder.Services.AddScoped<DiscordAuthService>();
+builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<BearerAuthFilter>();
 builder.Services.AddScoped<AdminOnlyFilter>();
 
@@ -279,7 +290,7 @@ CookieOptions StateCookieOptions() => new()
 // refused outright — bouncing to Discord for a login that cannot be completed wastes the user's
 // consent and turns a config mistake into a confusing dead end at the callback.
 app.MapGet("/auth/discord/start", (
-    HttpContext http, DiscordAuthService auth, [FromQuery] string? prompt, [FromQuery(Name = "return_to")] string? returnTo) =>
+    HttpContext http, AuthService auth, [FromQuery] string? prompt, [FromQuery(Name = "return_to")] string? returnTo) =>
 {
     if (!string.IsNullOrWhiteSpace(returnTo))
     {
@@ -305,7 +316,7 @@ app.MapGet("/auth/discord/start", (
 //   400 forged/stale state or a missing code · 401 bad or expired code · 502 Discord unreachable
 app.MapGet("/auth/discord/callback", async (
     HttpContext http,
-    DiscordAuthService auth,
+    AuthService auth,
     ILoggerFactory loggerFactory,
     [FromQuery] string? code,
     [FromQuery] string? state,
@@ -388,7 +399,7 @@ app.MapGet("/auth/discord/callback", async (
     if (resolved.Tier == KgsmTier.None)
         return Finish(Frag(("error", "denied")), () => Results.Json(
             new AuthSessionResponse("denied", null, null, null, null, null,
-                resolved.Identity.UserId, resolved.Identity.Display),
+                resolved.Identity.Subject, resolved.Identity.Display),
             statusCode: StatusCodes.Status403Forbidden));
 
     string? userAgent = http.Request.Headers.UserAgent.ToString();
@@ -409,7 +420,7 @@ app.MapGet("/auth/discord/callback", async (
 // Trade a refresh token for a fresh pair. Unauthenticated by bearer on purpose — the whole point is
 // to be callable once the access token has lapsed; the refresh token is the credential. A rotated-away
 // or revoked token is refused rather than renewed.
-app.MapPost("/auth/session/refresh", async (RefreshRequest request, DiscordAuthService auth, CancellationToken ct) =>
+app.MapPost("/auth/session/refresh", async (RefreshRequest request, AuthService auth, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.Refresh))
         return Results.BadRequest(new { error = "bad_request", message = "a refresh token is required." });
@@ -502,7 +513,7 @@ secured.MapGet("/events", async (
 });
 
 // Who am I, and may I act right now? Lets the SPA show/hide action affordances.
-secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
+secured.MapGet("/auth/me", async (HttpContext http, AuthService auth, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     // The tier is re-derived, not read off the bearer: a role granted or taken away since sign-in is
@@ -519,7 +530,7 @@ secured.MapGet("/auth/me", async (HttpContext http, DiscordAuthService auth, Can
 // The tools the caller is authorized to use, with names/descriptions/parameters. Fully server-derived
 // — no client input. Lets the SPA populate a tool picker, and backs the /tools chat command.
 static async Task<ToolDto[]> AuthorizedToolsAsync(
-    AuthPrincipal principal, DiscordAuthService auth, IPromptOverrides promptOverrides,
+    AuthPrincipal principal, AuthService auth, IPromptOverrides promptOverrides,
     IOptions<SearchOptions> searchOptions, CancellationToken ct)
 {
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
@@ -538,7 +549,7 @@ static async Task<ToolDto[]> AuthorizedToolsAsync(
             p.Name, p.Description, p.Required, p.Type, p.AllowedValues))]))];
 }
 
-secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IPromptOverrides promptOverrides,
+secured.MapGet("/tools", async (HttpContext http, AuthService auth, IPromptOverrides promptOverrides,
     IOptions<SearchOptions> searchOptions, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
@@ -549,7 +560,7 @@ secured.MapGet("/tools", async (HttpContext http, DiscordAuthService auth, IProm
 // absent rather than listed and refused, so a surface never offers what it would then reject. The
 // shipped manifest the Control Panel renders carries the same catalog UNfiltered: a live surface shows
 // a person what they can type, a descriptive file documents the leaf.
-secured.MapGet("/commands", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
+secured.MapGet("/commands", async (HttpContext http, AuthService auth, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var tier = (await auth.ResolveTierAsync(principal, ct)).OrNone;
@@ -564,7 +575,7 @@ secured.MapPost("/commands/{name}", async (
     string name,
     CommandRequest? request,
     HttpContext http,
-    DiscordAuthService auth,
+    AuthService auth,
     IConversationStore conversations,
     IConversationCompactor compactor,
     IPromptOverrides promptOverrides,
@@ -963,7 +974,7 @@ review.MapGet("/conversations/{id}", (string id, IConversationStore store) =>
 
 // Sign out: revoke the session so the bearer stops working at once, rather than staying
 // cryptographically valid until it expires.
-secured.MapPost("/auth/logout", async (HttpContext http, DiscordAuthService auth, CancellationToken ct) =>
+secured.MapPost("/auth/logout", async (HttpContext http, AuthService auth, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     await auth.LogoutAsync(principal, ct);
@@ -980,7 +991,7 @@ secured.MapPost("/turn", async (
     IServerAssistant assistant,
     IPendingConfirmationStore pending,
     IOptions<AssistantServiceOptions> assistantOptions,
-    DiscordAuthService auth,
+    AuthService auth,
     IInvocationContext invocation,
     IConversationStore conversations,
     ITurnRegistry turns,
@@ -1191,7 +1202,7 @@ secured.MapPost("/confirm", async (
     HttpContext http,
     IServerAssistant assistant,
     IPendingConfirmationStore pending,
-    DiscordAuthService auth,
+    AuthService auth,
     IInvocationContext invocation,
     IOptions<AssistantServiceOptions> assistantOptions,
     CancellationToken ct) =>

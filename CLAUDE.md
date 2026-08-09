@@ -161,11 +161,13 @@ Things that bite if you don't know them:
   `/etc/kgsm/discord-auth.env` and is loaded by every leaf's unit before its own env file. Acting
   needs `operator`; reading another person's conversations needs `admin`. This surface's own callback
   URL and scopes stay local, on `DiscordOAuth`.
-- **Nothing here talks to `discord.com` except `IDiscordDirectory`**, and nothing mints or validates a
+- **Nothing here talks to `discord.com` except `DiscordDirectory`**, and nothing mints or validates a
   session token except `TheKrystalShip.KGSM.Auth.Sessions`. Both come from `kgsm-auth`, shared with
   the API and the bot — a second implementation is how two surfaces come to disagree about who
-  someone is. Authority is re-derived per request (cached briefly), never read off the bearer, so a
-  revoked role takes effect without a new sign-in.
+  someone is. `AuthService` reaches them only through the neutral seams (`ISignInService` for the
+  login, `IAuthorityProvider` for the tier), so it neither knows what a guild role is nor which
+  provider answered. Authority is re-derived per request (cached briefly), never read off the bearer,
+  so a revoked role takes effect without a new sign-in.
 - **`Auth:SigningKey` must be stable on any real host.** Unset means a per-process key: every restart
   invalidates every issued token and signs everyone out.
 - **`Directory.Build.props` carries a scoped NuGet-audit suppression** (one transitive SQLite

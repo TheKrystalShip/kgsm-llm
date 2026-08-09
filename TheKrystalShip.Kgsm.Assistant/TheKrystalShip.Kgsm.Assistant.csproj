@@ -7,7 +7,7 @@
 
     <PackageId>TheKrystalShip.Kgsm.Assistant</PackageId>
     <Authors>Heisenberg</Authors>
-    <Version>1.56.1</Version>
+    <Version>1.57.0</Version>
     <PackageProjectUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
     <RepositoryType>GitHub</RepositoryType>
@@ -33,7 +33,7 @@
     <!-- The chat-command catalog gates each command on the ecosystem's ordered tier, so every surface
          prints the same word that decides the answer. The package has zero dependencies and is
          AOT-safe, which is what lets the brain take it without reaching any consumer's footprint. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="1.0.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="1.1.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />

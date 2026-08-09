@@ -20,6 +20,7 @@ using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
 using Xunit;
+using static TheKrystalShip.Kgsm.Assistant.Service.Tests.AuthStubs;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 
@@ -43,10 +44,9 @@ public class ConversationEventStreamTests : IClassFixture<WebApplicationFactory<
     /// <summary>A host where every named user is an admin, so no test is about the gate.</summary>
     private WebApplicationFactory<Program> Factory(params string[] users)
     {
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         foreach (var user in users)
-            discord.GetGuildRolesAsync(user, Arg.Any<CancellationToken>())
-                .Returns<IReadOnlyList<string>?>([AdminRole]);
+            StubTier(discord, [AdminRole]);
 
         return _factory.WithWebHostBuilder(builder =>
         {
@@ -59,8 +59,12 @@ public class ConversationEventStreamTests : IClassFixture<WebApplicationFactory<
             builder.UseSetting("KgsmAuth:RoleAdminIds", AdminRole);
             builder.ConfigureTestServices(services =>
             {
-                services.RemoveAll<IDiscordDirectory>();
+                services.RemoveAll<ISignInService>();
+                services.RemoveAll<IAuthorityProvider>();
+                // Both halves come off the one substitute, so the authority a test stubs is the
+                // authority the handler resolves.
                 services.AddSingleton(discord);
+                services.AddSingleton((IAuthorityProvider)discord);
             });
         });
     }
@@ -70,7 +74,7 @@ public class ConversationEventStreamTests : IClassFixture<WebApplicationFactory<
         var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
         var registry = factory.Services.GetRequiredService<ISessionRegistry>();
 
-        var identity = new DiscordIdentity(user, user, user, null, ["identify"]);
+        var identity = new KgsmIdentity(KgsmActorProvider.Discord, user, user, user, null, ["identify"]);
         var sessionId = "sid_" + Guid.NewGuid().ToString("N");
         var access = tokens.MintAccess(identity, KgsmTier.Admin, sessionId);
         await registry.CreateAsync(new SessionRegistration(

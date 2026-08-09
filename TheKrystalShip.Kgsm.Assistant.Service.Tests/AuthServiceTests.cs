@@ -22,17 +22,39 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 
 /// <summary>
-/// The login and authority lane, driven against a substituted Discord seam and a REAL SQLite session
+/// The login and authority lane, driven against a substituted sign-in seam and a REAL SQLite session
 /// registry in a temp file — so rotation and revocation are exercised as they actually run, not
 /// against a stand-in that cannot disagree with the real thing.
 /// </summary>
-public class DiscordAuthServiceTests : IDisposable
+public class AuthServiceTests : IDisposable
 {
     private const string OperatorRole = "role-1";
     private const string AdminRole = "role-admin";
 
-    private static readonly DiscordIdentity Alice =
-        new("u1", "alice", "Alice", null, ["identify"]);
+    private static readonly KgsmIdentity Alice =
+        new(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]);
+
+    /// <summary>The role map these tests run against — the same one the service is built with.</summary>
+    private static readonly KgsmRoleMap RoleMap =
+        new KgsmAuthOptions { RoleAdminIds = AdminRole, RoleOperatorIds = OperatorRole }.ToRoleMap();
+
+    /// <summary>
+    /// Stub the authority the way Discord answers it: a roles list run through the REAL role map. The
+    /// cases below turn on the difference between "not a member" (null), "a member holding nothing"
+    /// (empty) and an elevated role, so handing back a tier directly would assert the stub rather than
+    /// the distinction.
+    /// </summary>
+    private static void StubRoles(ISignInService seam, IReadOnlyList<string>? roles) =>
+        ((IAuthorityProvider)seam).ResolveTierAsync(Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>())
+            .Returns(_ => RoleMap.Resolve(roles));
+
+    /// <summary>Stub the authority as unreachable — an outage, never a verdict.</summary>
+    private static void StubUnreachable(ISignInService seam) =>
+        ((IAuthorityProvider)seam).ResolveTierAsync(Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>())
+            .Returns<KgsmTier>(_ => throw new DiscordAuthException("Discord unreachable."));
+
+    /// <summary>How many times the authority was actually asked.</summary>
+    private static IAuthorityProvider Authority(ISignInService seam) => (IAuthorityProvider)seam;
 
     private readonly string _dbDir = Path.Combine(
         Path.GetTempPath(), "kgsm-auth-tests-" + Guid.NewGuid().ToString("N"));
@@ -43,8 +65,8 @@ public class DiscordAuthServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private DiscordAuthService Build(
-        IDiscordDirectory directory,
+    private AuthService Build(
+        ISignInService directory,
         out ISessionRegistry registry,
         out ISessionTokenService tokens,
         bool actionsEnabled = true,
@@ -82,20 +104,21 @@ public class DiscordAuthServiceTests : IDisposable
             RoleOperatorIds = operatorRoleId,
         }.ToRoleMap();
 
-        return new DiscordAuthService(
+        return new AuthService(
             directory,
+            (IAuthorityProvider)directory,
             tokens,
             registry,
             new SessionValidator(registry, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromSeconds(5)),
-            new DiscordTierCache(TimeSpan.FromSeconds(roleCacheTtlSeconds)),
+            new KgsmTierCache(TimeSpan.FromSeconds(roleCacheTtlSeconds)),
             roleMap,
             authOptions,
             assistantOptions,
-            NullLogger<DiscordAuthService>.Instance);
+            NullLogger<AuthService>.Instance);
     }
 
-    private DiscordAuthService BuildWithBlankHostId(
-        IDiscordDirectory directory, out ISessionRegistry registry, out ISessionTokenService tokens)
+    private AuthService BuildWithBlankHostId(
+        ISignInService directory, out ISessionRegistry registry, out ISessionTokenService tokens)
     {
         var authOptions = Options.Create(new AuthOptions
         {
@@ -119,22 +142,22 @@ public class DiscordAuthServiceTests : IDisposable
             ActionsEnabled = true,
         });
 
-        return new DiscordAuthService(
-            directory, tokens, registry,
+        return new AuthService(
+            directory, (IAuthorityProvider)directory, tokens, registry,
             new SessionValidator(registry, new MemoryCache(new MemoryCacheOptions()), TimeSpan.FromSeconds(5)),
-            new DiscordTierCache(TimeSpan.FromSeconds(60)),
+            new KgsmTierCache(TimeSpan.FromSeconds(60)),
             new KgsmAuthOptions { RoleAdminIds = AdminRole, RoleOperatorIds = OperatorRole }.ToRoleMap(),
-            authOptions, assistantOptions, NullLogger<DiscordAuthService>.Instance);
+            authOptions, assistantOptions, NullLogger<AuthService>.Instance);
     }
 
     private static AuthPrincipal Principal(string userId = "u1", string sessionId = "sid_x") =>
-        new(userId, "Alice", sessionId);
+        new(KgsmActorProvider.Discord, userId, "Alice", sessionId);
 
     [Fact]
     public void TheAuthorizeUrlCarriesThisHandshakesChallengeAndNotItsVerifier()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
         var handshake = OAuthHandshake.Create();
 
         service.BuildAuthorizeUrl(handshake, prompt: null);
@@ -147,8 +170,8 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task ALoginMintsAPairAndRecordsARevocableSession()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out ISessionRegistry registry, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out ISessionRegistry registry, out _);
 
         AuthSessionResult session = await service.CreateSessionAsync(
             new ResolvedPrincipal(Alice, KgsmTier.Operator), "a-browser", CancellationToken.None);
@@ -171,8 +194,8 @@ public class DiscordAuthServiceTests : IDisposable
         // One host identity, one spelling. The audience comes from the resolved host (blank config
         // means this machine's name); a row written from the raw setting would say "" instead, and
         // the two would disagree about which host the session belongs to.
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = BuildWithBlankHostId(directory, out ISessionRegistry registry, out ISessionTokenService tokens);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = BuildWithBlankHostId(directory, out ISessionRegistry registry, out ISessionTokenService tokens);
 
         AuthSessionResult session = await service.CreateSessionAsync(
             new ResolvedPrincipal(Alice, KgsmTier.Operator), null, CancellationToken.None);
@@ -188,15 +211,16 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task LoginSeedsTheTierSoTheFirstRequestDoesNotReAskDiscord()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
 
         await service.CreateSessionAsync(
             new ResolvedPrincipal(Alice, KgsmTier.Operator), null, CancellationToken.None);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
 
-        await directory.DidNotReceive().GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await Authority(directory).DidNotReceive().ResolveTierAsync(
+            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -204,8 +228,8 @@ public class DiscordAuthServiceTests : IDisposable
     {
         // Reuse detection: a refresh token is single-use. Presenting a rotated-away one means either a
         // stale client or a stolen token, and there is no way to tell which — so neither is renewed.
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
 
         AuthSessionResult first = await service.CreateSessionAsync(
             new ResolvedPrincipal(Alice, KgsmTier.Operator), null, CancellationToken.None);
@@ -222,8 +246,8 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task AnAccessTokenCannotBeSpentAsARefreshToken()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
 
         AuthSessionResult session = await service.CreateSessionAsync(
             new ResolvedPrincipal(Alice, KgsmTier.Operator), null, CancellationToken.None);
@@ -234,8 +258,8 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task LogoutKillsTheSessionAndItsRefreshToken()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out ISessionRegistry registry, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out ISessionRegistry registry, out _);
 
         AuthSessionResult session = await service.CreateSessionAsync(
             new ResolvedPrincipal(Alice, KgsmTier.Operator), null, CancellationToken.None);
@@ -250,25 +274,24 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task AuthorityIsCachedWithinTheTtl()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([OperatorRole]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubRoles(directory, [OperatorRole]);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
 
-        await directory.Received(1).GetGuildRolesAsync("u1", Arg.Any<CancellationToken>());
+        await Authority(directory).Received(1).ResolveTierAsync(
+            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task NotBeingAGuildMemberDenies()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
         // null is "not a member", which is a different answer from a member holding no roles.
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<string>?)null);
+        StubRoles(directory, null);
 
         // A KNOWN answer, and the answer is no — nothing about this is an outage.
         TierResolution resolved = await service.ResolveTierAsync(Principal());
@@ -280,10 +303,9 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task AMemberHoldingNoRolesFloorsAtViewer()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubRoles(directory, []);
 
         TierResolution resolved = await service.ResolveTierAsync(Principal());
         resolved.Known.Should().BeTrue();
@@ -296,16 +318,14 @@ public class DiscordAuthServiceTests : IDisposable
     {
         // "We could not ask" is not "the answer is no". Caching the failure would turn a brief Discord
         // outage into a full-TTL lockout for someone who really is an operator.
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
 
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(_ => throw new DiscordAuthException("Discord unreachable."));
+        StubUnreachable(directory);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
 
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([OperatorRole]);
+        StubRoles(directory, [OperatorRole]);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
     }
@@ -314,11 +334,10 @@ public class DiscordAuthServiceTests : IDisposable
     public async Task AnUnreachableDiscordResolvesToUnknownRatherThanADenial()
     {
         // The distinction the whole type exists for: an outage must not be reportable as a verdict.
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
 
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(_ => throw new DiscordAuthException("Discord unreachable."));
+        StubUnreachable(directory);
 
         TierResolution resolved = await service.ResolveTierAsync(Principal());
         resolved.Known.Should().BeFalse();
@@ -336,23 +355,23 @@ public class DiscordAuthServiceTests : IDisposable
     {
         // This host's own configuration answering, with Discord never asked. A client must render it as
         // "you don't have access here", never as "we couldn't check".
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _, adminRoleId: "");
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _, adminRoleId: "");
 
         TierResolution resolved = await service.ResolveReviewAuthorityAsync(Principal());
 
         resolved.Known.Should().BeTrue();
         resolved.Tier.Should().Be(KgsmTier.None);
-        await directory.DidNotReceive().GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await Authority(directory).DidNotReceive().ResolveTierAsync(
+            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task AResolvedNonAdminIsAKnownDenial()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([OperatorRole]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubRoles(directory, [OperatorRole]);
 
         TierResolution resolved = await service.ResolveReviewAuthorityAsync(Principal());
 
@@ -367,7 +386,7 @@ public class DiscordAuthServiceTests : IDisposable
     private const string PassedThrough = "handler ran";
 
     /// <summary>Runs AdminOnlyFilter over a session-bearer request and reports what it answered.</summary>
-    private static async Task<object?> RunReviewGateAsync(DiscordAuthService auth)
+    private static async Task<object?> RunReviewGateAsync(AuthService auth)
     {
         var http = new DefaultHttpContext();
         http.Items[BearerAuthFilter.PrincipalKey] = Principal();
@@ -380,10 +399,9 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task ReviewGate_WhenDiscordIsUnreachable_Answers502AndNot403()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(_ => throw new DiscordAuthException("Discord unreachable."));
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubUnreachable(directory);
 
         object? answer = await RunReviewGateAsync(service);
 
@@ -399,10 +417,9 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task ReviewGate_WhenTheCallerIsSimplyNotAnAdmin_Answers403()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([OperatorRole]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubRoles(directory, [OperatorRole]);
 
         object? answer = await RunReviewGateAsync(service);
 
@@ -413,10 +430,9 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task ReviewGate_WhenTheCallerHoldsTheReviewRole_RunsTheHandler()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([AdminRole]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubRoles(directory, [AdminRole]);
 
         (await RunReviewGateAsync(service)).Should().Be(PassedThrough);
     }
@@ -424,10 +440,9 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task ReviewNeedsAdminNotOperator()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([OperatorRole]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubRoles(directory, [OperatorRole]);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
         (await service.IsAdminAsync(Principal())).Should().BeFalse();
@@ -436,10 +451,9 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task AdminCanDoEverythingOperatorCan()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _);
-        directory.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([AdminRole]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _);
+        StubRoles(directory, [AdminRole]);
 
         (await service.IsAdminAsync(Principal())).Should().BeTrue();
         (await service.CanPerformActionsAsync(Principal())).Should().BeTrue();
@@ -448,35 +462,38 @@ public class DiscordAuthServiceTests : IDisposable
     [Fact]
     public async Task NoConfiguredAdminRoleMeansNobodyReviews()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _, adminRoleId: "");
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _, adminRoleId: "");
 
         (await service.IsAdminAsync(Principal())).Should().BeFalse();
-        await directory.DidNotReceive().GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await Authority(directory).DidNotReceive().ResolveTierAsync(
+            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task TheMasterSwitchDeniesWithoutCallingDiscord()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _, actionsEnabled: false);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _, actionsEnabled: false);
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
-        await directory.DidNotReceive().GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await Authority(directory).DidNotReceive().ResolveTierAsync(
+            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task NoConfiguredOperatorRoleDenies()
     {
-        var directory = Substitute.For<IDiscordDirectory>();
-        DiscordAuthService service = Build(directory, out _, out _, operatorRoleId: "", adminRoleId: "");
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        AuthService service = Build(directory, out _, out _, operatorRoleId: "", adminRoleId: "");
 
         (await service.CanPerformActionsAsync(Principal())).Should().BeFalse();
-        await directory.DidNotReceive().GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await Authority(directory).DidNotReceive().ResolveTierAsync(
+            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>The session id a minted refresh token carries, read back the way the service reads it.</summary>
-    private static async Task<string> SessionIdOf(DiscordAuthService service, string refreshToken)
+    private static async Task<string> SessionIdOf(AuthService service, string refreshToken)
     {
         // Rotating and reading back would consume the token, so go through the token service directly.
         var tokens = new SessionTokenService(

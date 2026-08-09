@@ -2,7 +2,6 @@ using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.KGSM.Auth;
-using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
@@ -10,7 +9,12 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// <summary>
 /// A resolved, authenticated caller.
 /// </summary>
-/// <param name="UserId">The verified Discord user id — the identity every memory key is scoped by.</param>
+/// <param name="Provider">Which identity provider verified this caller.</param>
+/// <param name="UserId">
+/// The provider's own id for them, unqualified — the identity every memory key is scoped by. It stays
+/// unqualified because it keys conversation history that is already written; the provider travels
+/// beside it rather than being folded in.
+/// </param>
 /// <param name="DisplayName">For display only. Never authority.</param>
 /// <param name="SessionId">
 /// The session this caller's token belongs to, or empty on the trusted-relay path, which has no
@@ -19,19 +23,31 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// </param>
 /// <param name="TokenTier">
 /// The tier recorded when this session was created. A snapshot for display, <b>never</b> the authority
-/// check — <see cref="DiscordAuthService.ResolveTierAsync"/> re-derives that from Discord, so a role
+/// check — <see cref="AuthService.ResolveTierAsync"/> re-derives that, so a role
 /// taken away stops working within the cache TTL instead of surviving until the token expires.
 /// </param>
 internal sealed record AuthPrincipal(
+    string Provider,
     string UserId,
     string DisplayName,
     string SessionId,
-    KgsmTier TokenTier = KgsmTier.None);
+    KgsmTier TokenTier = KgsmTier.None)
+{
+    /// <summary>
+    /// This caller as an identity, for asking the authority what they may do. The profile fields are
+    /// what the principal carries and no more — an authority resolves on who someone is, never on how
+    /// prettily they are labelled.
+    /// </summary>
+    public KgsmIdentity AsIdentity() => new(Provider, UserId, UserId, DisplayName, null, []);
+
+    /// <summary>The provider-qualified handle — what a per-user cache is keyed by.</summary>
+    public string Handle => KgsmActor.Format(Provider, UserId);
+}
 
 /// <summary>
 /// The answer to an authority question, with <em>"we could not ask"</em> kept apart from <em>"the
 /// answer is no"</em>. <see cref="Tier"/> carries a verdict only when <see cref="Known"/>; an unknown
-/// resolution means Discord could not be reached and this caller's authority is simply not established
+/// resolution means the authority could not be reached and this caller's authority is simply not established
 /// right now.
 /// </summary>
 /// <remarks>
@@ -43,7 +59,7 @@ internal sealed record AuthPrincipal(
 /// </remarks>
 internal readonly record struct TierResolution(bool Known, KgsmTier Tier)
 {
-    /// <summary>Discord could not be asked; no verdict is carried.</summary>
+    /// <summary>The authority could not be asked; no verdict is carried.</summary>
     public static readonly TierResolution Unknown = new(false, KgsmTier.None);
 
     /// <summary>A verdict that was actually established — including a denial.</summary>
@@ -67,48 +83,50 @@ internal sealed record AuthSessionResult(
     string DisplayName);
 
 /// <summary>
-/// Runs the Discord login and answers what a caller may do. Scoped: it depends on the transient typed
-/// <see cref="IDiscordDirectory"/>, so it must never be captured by a singleton (the caches and the
-/// registry it uses ARE singletons and are injected, not owned).
+/// Runs the login and answers what a caller may do. Scoped: it depends on the transient sign-in seam,
+/// so it must never be captured by a singleton (the caches and the registry it uses ARE singletons and
+/// are injected, not owned).
 /// </summary>
 /// <remarks>
 /// <para>
-/// Authority is the ecosystem's ordered tier resolved from the shared role map, so a person gets the
+/// Authority is the ecosystem's ordered tier resolved through the shared seam, so a person gets the
 /// same authority here as through the Control Panel and the Discord bot. It is re-derived fresh
 /// (cached briefly) rather than read off the token, which is what makes a revoked role take effect
 /// without waiting for a re-login.
 /// </para>
 /// <para>
-/// This surface runs standalone: it holds its own Discord application credentials and its own session
+/// This surface runs standalone: it holds its own identity-provider credentials and its own session
 /// registry, and needs no kgsm-api in front of it to authenticate anyone.
 /// </para>
 /// </remarks>
-internal sealed class DiscordAuthService(
-    IDiscordDirectory directory,
+internal sealed class AuthService(
+    ISignInService signIn,
+    IAuthorityProvider authority,
     ISessionTokenService tokens,
     ISessionRegistry sessions,
     ISessionValidator validator,
-    DiscordTierCache tierCache,
+    KgsmTierCache tierCache,
     KgsmRoleMap roleMap,
     IOptions<AuthOptions> authOptions,
     IOptions<AssistantServiceOptions> assistantOptions,
-    ILogger<DiscordAuthService> logger)
+    ILogger<AuthService> logger)
 {
     private readonly AuthOptions _auth = authOptions.Value;
     private readonly AssistantServiceOptions _assistant = assistantOptions.Value;
 
-    /// <summary>The Discord authorize URL for this handshake.</summary>
+    /// <summary>The provider's authorize URL for this handshake.</summary>
     public string BuildAuthorizeUrl(OAuthHandshake handshake, string? prompt) =>
-        directory.BuildAuthorizeUrl(handshake.State, handshake.CodeChallenge, prompt ?? "none");
+        signIn.BuildAuthorizeUrl(handshake.State, handshake.CodeChallenge, prompt ?? "none");
 
     /// <summary>
     /// Exchange an authorization code for a verified identity and the tier this host grants it.
-    /// <see langword="null"/> means the code itself was bad; a <see cref="DiscordAuthException"/> means
-    /// Discord could not be asked, which the caller reports as an upstream failure and never as a
-    /// denial. A returned <see cref="KgsmTier.None"/> is the denial: identity verified, no access here.
+    /// <see langword="null"/> means the code itself was bad; a <see cref="KgsmAuthProviderException"/>
+    /// means the provider could not be asked, which the caller reports as an upstream failure and never
+    /// as a denial. A returned <see cref="KgsmTier.None"/> is the denial: identity verified, no access
+    /// here.
     /// </summary>
     public Task<ResolvedPrincipal?> ResolveAsync(string code, string codeVerifier, CancellationToken ct) =>
-        directory.ResolveAsync(code, codeVerifier, ct);
+        signIn.ResolveAsync(code, codeVerifier, ct);
 
     /// <summary>
     /// Record a login and mint its tokens. The refresh token's <c>jti</c> is stored as the session's
@@ -130,22 +148,23 @@ internal sealed class DiscordAuthService(
                 // setting here would write a row claiming the session belongs to host "" while its
                 // tokens say otherwise — one host identity with two spellings, which is how a later
                 // reconciliation quietly matches nothing.
-                sessionId, resolved.Identity.UserId, _auth.ResolveHostId(),
+                sessionId, resolved.Identity.Subject, _auth.ResolveHostId(),
                 Created: now, Expires: refresh.ExpiresAt,
                 UserAgent: userAgent, CurrentJti: refresh.Jti),
             ct);
 
         // Seed the tier cache from the resolution just made — the first request after login would
-        // otherwise ask Discord the question it was already asked.
-        tierCache.Set(resolved.Identity.UserId, resolved.Tier);
+        // otherwise ask the authority the question it was already asked.
+        tierCache.Set(resolved.Identity.Handle, resolved.Tier);
 
         logger.LogInformation(
-            "Discord login: {Display} ({UserId}) → {Tier}, session {SessionId}",
-            resolved.Identity.Display, resolved.Identity.UserId, KgsmTiers.ToWire(resolved.Tier), sessionId);
+            "{Provider} login: {Display} ({UserId}) → {Tier}, session {SessionId}",
+            resolved.Identity.Provider, resolved.Identity.Display, resolved.Identity.Subject,
+            KgsmTiers.ToWire(resolved.Tier), sessionId);
 
         return new AuthSessionResult(
             access.Token, access.ExpiresAt, refresh.Token, refresh.ExpiresAt,
-            resolved.Tier, resolved.Identity.UserId, resolved.Identity.Display);
+            resolved.Tier, resolved.Identity.Subject, resolved.Identity.Display);
     }
 
     /// <summary>
@@ -176,22 +195,22 @@ internal sealed class DiscordAuthService(
         }
 
         // The tier travels forward from the token rather than being re-resolved: a refresh must not
-        // depend on Discord being reachable. It is a display value anyway — every authority check
+        // depend on the provider being reachable. It is a display value anyway — every authority check
         // re-derives.
         return new AuthSessionResult(
             access.Token, access.ExpiresAt, refresh.Token, refresh.ExpiresAt,
-            claims.Tier, claims.Identity.UserId, claims.Identity.Display);
+            claims.Tier, claims.Identity.Subject, claims.Identity.Display);
     }
 
     /// <summary>
     /// Whether this principal may perform mutating/destructive actions right now. The master
     /// kill-switch (actions enabled + a configured operator role) is checked live; the per-user tier
-    /// comes from the short-TTL cache, else from Discord with the BOT token. No caller token is
-    /// involved, so a re-check never forces a re-login.
+    /// comes from the short-TTL cache, else from the authority. No caller token is involved, so a
+    /// re-check never forces a re-login.
     /// </summary>
     /// <remarks>
     /// An unresolvable authority denies here rather than propagating: this answers whether to OFFER an
-    /// action, and the worst it costs during a Discord outage is that a mutation is staged for
+    /// action, and the worst it costs during an outage is that a mutation is staged for
     /// confirmation instead of running immediately. The review gate reports the outage instead, because
     /// there the alternative is a blank page the operator has to diagnose.
     /// </remarks>
@@ -205,13 +224,13 @@ internal sealed class DiscordAuthService(
 
     /// <summary>
     /// Whether this principal may read OTHER users' conversations (the review surface), as a three-way
-    /// answer: granted, denied, or unknown because Discord could not be asked. Reading someone's chat is
+    /// answer: granted, denied, or unknown because the authority could not be asked. Reading someone's chat is
     /// an administrator's power, the same tier that configures the host from the Control Panel — one
     /// ladder, so a person cannot hold a power on one surface that they lack on another.
     /// </summary>
     /// <remarks>
     /// No configured admin role resolves to a KNOWN denial: that is this host's own configuration
-    /// answering, not Discord, so it is a verdict and never an outage.
+    /// answering, not the provider, so it is a verdict and never an outage.
     /// </remarks>
     public async Task<TierResolution> ResolveReviewAuthorityAsync(
         AuthPrincipal principal, CancellationToken ct = default)
@@ -231,14 +250,14 @@ internal sealed class DiscordAuthService(
         (await ResolveReviewAuthorityAsync(principal, ct)).OrNone >= KgsmTier.Admin;
 
     /// <summary>
-    /// The tier this principal holds, cached for the role-cache TTL. Not being a member of the guild
-    /// resolves to <see cref="KgsmTier.None"/> and is cached like any other answer, so a denial does not
-    /// reach Discord on every call.
+    /// The tier this principal holds, cached for the role-cache TTL. A denial resolves to
+    /// <see cref="KgsmTier.None"/> and is cached like any other answer, so it does not reach the
+    /// authority on every call.
     /// </summary>
     /// <remarks>
-    /// A failure to reach Discord returns an UNKNOWN resolution and is <b>not</b> cached. "We could not
-    /// ask" is a different fact from "the answer is no": storing the first as the second would turn a
-    /// thirty-second Discord outage into a full-TTL lockout for someone who is genuinely an operator,
+    /// A failure to reach the authority returns an UNKNOWN resolution and is <b>not</b> cached. "We
+    /// could not ask" is a different fact from "the answer is no": storing the first as the second would
+    /// turn a thirty-second outage into a full-TTL lockout for someone who is genuinely an operator,
     /// and reporting it as the second tells that person they lost a role they still hold. Each caller
     /// decides what an unknown costs it — see <see cref="CanPerformActionsAsync"/> and
     /// <see cref="ResolveReviewAuthorityAsync"/>. The session itself stays valid throughout — there is
@@ -246,15 +265,15 @@ internal sealed class DiscordAuthService(
     /// </remarks>
     public async Task<TierResolution> ResolveTierAsync(AuthPrincipal principal, CancellationToken ct = default)
     {
-        if (tierCache.TryGet(principal.UserId, out KgsmTier cached))
+        if (tierCache.TryGet(principal.Handle, out KgsmTier cached))
             return TierResolution.Of(cached);
 
-        IReadOnlyList<string>? roles;
+        KgsmTier tier;
         try
         {
-            roles = await directory.GetGuildRolesAsync(principal.UserId, ct);
+            tier = await authority.ResolveTierAsync(principal.AsIdentity(), ct);
         }
-        catch (DiscordAuthException ex)
+        catch (KgsmAuthProviderException ex)
         {
             logger.LogWarning(
                 ex, "Could not resolve authority for {UserId} — reporting it as unavailable, not as a denial.",
@@ -262,8 +281,7 @@ internal sealed class DiscordAuthService(
             return TierResolution.Unknown;
         }
 
-        KgsmTier tier = roleMap.Resolve(roles);
-        tierCache.Set(principal.UserId, tier);
+        tierCache.Set(principal.Handle, tier);
         return TierResolution.Of(tier);
     }
 
@@ -279,6 +297,6 @@ internal sealed class DiscordAuthService(
             validator.Evict(principal.SessionId);
         }
 
-        tierCache.Remove(principal.UserId);
+        tierCache.Remove(principal.Handle);
     }
 }

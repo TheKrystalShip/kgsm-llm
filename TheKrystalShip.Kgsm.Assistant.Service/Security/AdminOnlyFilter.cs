@@ -10,7 +10,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// <item><b>Trusted relay:</b> the caller's verified tier, forwarded as <c>X-Relay-Tier</c> and stashed
 /// as <see cref="BearerAuthFilter.RelayTierKey"/>. Trusted because the relay secret already matched.</item>
 /// <item><b>Session bearer:</b> the caller's own Discord review role
-/// (<see cref="DiscordAuthService.IsAdminAsync"/>), so the leaf's review surface works standalone,
+/// (<see cref="AuthService.IsAdminAsync"/>), so the leaf's review surface works standalone,
 /// with no api in front of it. No configured review role ⇒ nobody.</item>
 /// </list>
 /// Fail-closed on both paths: an unauthenticated request never reaches here (401 already), and an
@@ -48,9 +48,9 @@ internal sealed class AdminOnlyFilter : IEndpointFilter
         },
         statusCode: StatusCodes.Status502BadGateway);
 
-    private readonly DiscordAuthService _auth;
+    private readonly AuthService _auth;
 
-    public AdminOnlyFilter(DiscordAuthService auth) => _auth = auth;
+    public AdminOnlyFilter(AuthService auth) => _auth = auth;
 
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {

@@ -29,6 +29,7 @@ using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 
 using Xunit;
+using static TheKrystalShip.Kgsm.Assistant.Service.Tests.AuthStubs;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 
@@ -44,9 +45,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
     public EndpointSmokeTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
+
     private WebApplicationFactory<Program> Factory(
         IServerAssistant? assistant = null,
-        IDiscordDirectory? discord = null,
+        ISignInService? discord = null,
         Action<IWebHostBuilder>? configure = null,
         Llm.Interfaces.IConversationStore? withStore = null,
         Llm.Interfaces.IConversationCompactor? withCompactor = null) =>
@@ -72,7 +74,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 services.AddSingleton(new SettlementTiming(
                     TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(10)));
                 if (assistant is not null) services.AddSingleton(assistant);
-                if (discord is not null) services.AddSingleton(discord);
+                // Both halves of the sign-in come off the one substitute, so a test that stubs the
+                // authority and a handler that resolves it are talking about the same object.
+                if (discord is not null)
+                {
+                    services.AddSingleton(discord);
+                    services.AddSingleton((IAuthorityProvider)discord);
+                }
                 // Override the real SQLite store with a fake for the reverse-path endpoint tests (last
                 // registration wins for the interface the endpoints resolve).
                 if (withStore is not null)
@@ -103,7 +111,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
         var registry = factory.Services.GetRequiredService<ISessionRegistry>();
 
-        var identity = new DiscordIdentity(userId, userId, "User One", null, ["identify"]);
+        var identity = new KgsmIdentity(KgsmActorProvider.Discord, userId, userId, "User One", null, ["identify"]);
         string sessionId = "sid_" + Guid.NewGuid().ToString("N");
         MintedToken access = tokens.MintAccess(identity, tier, sessionId);
         await registry.CreateAsync(new SessionRegistration(
@@ -219,9 +227,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         });
 
         // canPerformActions is re-derived live from the principal's guild role at confirm time.
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(["role-123"]);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, ["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
         {
@@ -269,9 +276,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 new InstanceRuntimeStatus { InstanceName = "inst", Status = false }),
         });
 
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(["role-123"]);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, ["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
         {
@@ -311,9 +317,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             ["inst"] = Reading<InstanceRuntimeStatus>.Unavailable("the status source is offline", ReadingCode.MonitorOffline),
         });
 
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(["role-123"]);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, ["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
         {
@@ -512,12 +517,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// <summary>A factory whose allowlist contains <paramref name="origin"/>, with a fake Discord.</summary>
     private WebApplicationFactory<Program> ReturnLegFactory(string origin, KgsmTier tier = KgsmTier.Operator)
     {
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new ResolvedPrincipal(
-                new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]), tier));
+                new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]), tier));
 
         return Factory(discord: discord, configure: b => b.UseSetting("Auth:AllowedOrigins:0", origin));
     }
@@ -691,12 +696,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task SignIn_WithAGuildMember_MintsAPair()
     {
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new ResolvedPrincipal(
-                new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
+                new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
 
         var response = await SignInAsync(Factory(discord: discord));
 
@@ -714,7 +719,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // The CSRF gate. Without it an attacker sends the victim a callback link carrying the
         // ATTACKER'S code, and the victim's browser is handed a session for the attacker's identity.
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns("https://discord.test/authorize");
 
@@ -730,7 +735,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // A callback arriving with no cookie is a login that did not start in this browser — the exact
         // request the state check exists to reject, and the reason the state lives in a cookie at all.
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns("https://discord.test/authorize?state=abc");
 
@@ -745,12 +750,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task SignIn_WhenNotAGuildMember_IsATerminalDenialWithNoTokens()
     {
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new ResolvedPrincipal(
-                new DiscordIdentity("u9", "stranger", "Stranger", null, ["identify"]), KgsmTier.None));
+                new KgsmIdentity(KgsmActorProvider.Discord, "u9", "stranger", "Stranger", null, ["identify"]), KgsmTier.None));
 
         var response = await SignInAsync(Factory(discord: discord));
 
@@ -766,7 +771,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // "We could not ask" must never be reported as an answer — collapsing the two either locks out
         // a real admin during an outage or, far worse, admits someone during one.
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -780,7 +785,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task SignIn_WithABadCode_Is401()
     {
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -796,14 +801,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // The whole point of the refresh lane: a lapsed access token is replaced without sending the
         // user back through Discord.
-        var discord = Substitute.For<IDiscordDirectory>();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         discord.BuildAuthorizeUrl(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => $"https://discord.test/authorize?state={ci.ArgAt<string>(0)}");
         discord.ResolveAsync("the-code", Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new ResolvedPrincipal(
-                new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
-        discord.GetGuildRolesAsync("u1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([]);
+                new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]), KgsmTier.Viewer));
+        StubTier(discord, []);
 
         var factory = Factory(discord: discord);
         var signIn = await (await SignInAsync(factory)).Content.ReadFromJsonAsync<AuthSessionResponse>();
@@ -840,9 +844,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // A signed token stays cryptographically valid until it expires, so signing out only means
         // something because the session behind it is checked on every request.
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([]);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, []);
 
         var factory = Factory(discord: discord);
         var client = await AuthedAsync(factory);
@@ -862,7 +865,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var factory = Factory();
         var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
         MintedToken orphan = tokens.MintAccess(
-            new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]),
+            new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]),
             KgsmTier.Admin, "sid_never_recorded");
 
         var client = factory.CreateClient();
@@ -880,7 +883,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
         var registry = factory.Services.GetRequiredService<ISessionRegistry>();
 
-        var identity = new DiscordIdentity("u1", "alice", "Alice", null, ["identify"]);
+        var identity = new KgsmIdentity(KgsmActorProvider.Discord, "u1", "alice", "Alice", null, ["identify"]);
         const string sessionId = "sid_refresh_as_bearer";
         MintedToken refresh = tokens.MintRefresh(identity, KgsmTier.Admin, sessionId);
         await registry.CreateAsync(new SessionRegistration(
@@ -896,9 +899,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Me_ReflectsLiveRoleLookup()
     {
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(["role-123"]);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, ["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
         {
@@ -919,9 +921,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // Authority is re-derived rather than read off the bearer, so a role granted since sign-in is
         // already in effect — reporting the token's stale snapshot would contradict the next request.
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(["role-123"]);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, ["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
             b.UseSetting("KgsmAuth:RoleOperatorIds", "role-123"));
@@ -1308,9 +1309,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 new InstanceRuntimeStatus { InstanceName = "inst", Status = running }),
         });
 
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(["role-123"]);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, ["role-123"]);
 
         var factory = Factory(discord: discord, configure: b =>
         {
@@ -1381,7 +1381,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
 
-        WebApplicationFactory<Program> factory = OperatorTurnFactory(assistant, out IDiscordDirectory directory);
+        WebApplicationFactory<Program> factory = OperatorTurnFactory(assistant, out ISignInService directory);
         HttpClient client = await AuthedAsync(factory, ActionUser, KgsmTier.Admin);
 
         var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
@@ -1397,7 +1397,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             Arg.Any<string>(), "start factorio", true, Arg.Any<bool>(), false,
             Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
         // The tier that mattered was re-derived from Discord, never read off the caller's token.
-        await directory.Received().GetGuildRolesAsync(ActionUser, Arg.Any<CancellationToken>());
+        await ((IAuthorityProvider)directory).Received().ResolveTierAsync(
+            Arg.Any<KgsmIdentity>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -1411,9 +1412,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 Arg.Any<IReadOnlyList<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(AsyncSeq(AssistantStreamEvent.Final("ok")));
 
-        var directory = Substitute.For<IDiscordDirectory>();
-        directory.GetGuildRolesAsync(ActionUser, Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([]);   // in the guild, holding neither role
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(directory, []);   // in the guild, holding neither role
         WebApplicationFactory<Program> factory = Factory(assistant, directory, configure: ConfigureActionRoles);
         HttpClient client = await AuthedAsync(factory, ActionUser, KgsmTier.Admin);
 
@@ -1446,11 +1446,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// <summary>A host where actions are enabled and <see cref="ActionUser"/> holds the OPERATOR role
     /// in the guild — enough to propose, not enough to auto-run.</summary>
     private WebApplicationFactory<Program> OperatorTurnFactory(
-        IServerAssistant assistant, out IDiscordDirectory directory)
+        IServerAssistant assistant, out ISignInService directory)
     {
-        var stub = Substitute.For<IDiscordDirectory>();
-        stub.GetGuildRolesAsync(ActionUser, Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>([ActionOperatorRole]);
+        var stub = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(stub, [ActionOperatorRole]);
         directory = stub;
         return Factory(assistant, stub, configure: ConfigureActionRoles);
     }
@@ -1864,9 +1863,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // The whole round trip a browser makes, with Discord down: a real session bearer, the real
         // gate, and the real response a client has to make sense of. It must not read as 403 — a panel
         // told "forbidden" reports a permissions problem for what is a transient upstream outage.
-        var directory = Substitute.For<IDiscordDirectory>();
-        directory.GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(_ => throw new DiscordAuthException("Discord unreachable."));
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTierUnreachable(directory);
 
         var factory = Factory(
             discord: directory,
@@ -1890,9 +1888,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // The counterpart, and the reason the two are worth telling apart: an answered question with a
         // negative answer stays a plain denial.
-        var directory = Substitute.For<IDiscordDirectory>();
-        directory.GetGuildRolesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(["role-123"]);
+        var directory = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(directory, ["role-123"]);
 
         var factory = Factory(
             discord: directory,

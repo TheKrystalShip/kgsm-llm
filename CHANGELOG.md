@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`DiscordAuthService` is `AuthService`** and runs on the shared sign-in seams: `ISignInService` for
+  the login, `IAuthorityProvider` for the tier. It no longer reads guild roles or knows what a role is
+  — the role→tier map lives with the provider that answers it. An unreachable authority is still an
+  outage and still never a denial.
+- **`AuthPrincipal` names the provider that verified it**, so a per-user tier cache is keyed by the
+  provider-qualified handle. `AuthPrincipal.UserId` stays the bare subject: it keys conversation
+  memory that is already written.
+
 ### Added
 
 - **`instance_upnp_reasserted`** reads as *"UPnP forward restored after the router dropped it"* in the

@@ -290,7 +290,7 @@ internal sealed class TurnRegistry : ITurnRegistry
             }
             else
             {
-                var auth = scope.ServiceProvider.GetRequiredService<DiscordAuthService>();
+                var auth = scope.ServiceProvider.GetRequiredService<AuthService>();
                 canPerform = await auth.CanPerformActionsAsync(principal, session.Token);
                 autoExecute = canPerform && wantsAutoRun && await auth.IsAdminAsync(principal, session.Token);
             }

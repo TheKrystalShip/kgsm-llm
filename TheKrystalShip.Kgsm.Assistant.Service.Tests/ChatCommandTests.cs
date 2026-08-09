@@ -20,6 +20,7 @@ using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
 using Xunit;
+using static TheKrystalShip.Kgsm.Assistant.Service.Tests.AuthStubs;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 
@@ -49,9 +50,8 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
 
     private WebApplicationFactory<Program> Factory(IServerAssistant? assistant, params string[] roles)
     {
-        var discord = Substitute.For<IDiscordDirectory>();
-        discord.GetGuildRolesAsync("user1", Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<string>?>(roles);
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, roles);
 
         return _factory.WithWebHostBuilder(builder =>
         {
@@ -65,8 +65,12 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
             builder.UseSetting("KgsmAuth:RoleAdminIds", AdminRole);
             builder.ConfigureTestServices(services =>
             {
-                services.RemoveAll<IDiscordDirectory>();
+                services.RemoveAll<ISignInService>();
+                services.RemoveAll<IAuthorityProvider>();
+                // Both halves come off the one substitute, so the authority a test stubs is the
+                // authority the handler resolves.
                 services.AddSingleton(discord);
+                services.AddSingleton((IAuthorityProvider)discord);
                 if (assistant is not null)
                     services.AddSingleton(assistant);
             });
@@ -78,7 +82,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
         var tokens = factory.Services.GetRequiredService<ISessionTokenService>();
         var registry = factory.Services.GetRequiredService<ISessionRegistry>();
 
-        var identity = new DiscordIdentity("user1", "user1", "User One", null, ["identify"]);
+        var identity = new KgsmIdentity(KgsmActorProvider.Discord, "user1", "user1", "User One", null, ["identify"]);
         var sessionId = "sid_" + Guid.NewGuid().ToString("N");
         var access = tokens.MintAccess(identity, KgsmTier.Viewer, sessionId);
         await registry.CreateAsync(new SessionRegistration(

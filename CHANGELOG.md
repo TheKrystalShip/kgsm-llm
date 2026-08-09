@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tracks `TheKrystalShip.KGSM.Auth` 3.0.0 / `.Auth.Discord` 4.0.0: the shared `KgsmAuth` section
+  holds a host's OAuth applications keyed by provider, so this service reads
+  `KgsmAuth__Providers__discord__ClientId` and hands `DiscordDirectory` that one application. Its
+  own sign-in surface is unchanged.
+- **The shared credentials file is `/etc/kgsm/kgsm-auth.env`** — it holds a host's sign-in
+  applications, which is what it now says.
 - **Authority comes from the KGSM account store, for everyone.** A Discord login and a password login
   are answered from the same record, so a person holds the same tier here as in the Control Panel
   because both read that record rather than each deriving one. Discord answers only *who* someone is;

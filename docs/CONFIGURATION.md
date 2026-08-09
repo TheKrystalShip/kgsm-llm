@@ -41,7 +41,7 @@ any committed settings file — which declares each of them blank so the Control
 
 | Secret | Used by |
 |--------|---------|
-| `KgsmAuth__ClientSecret` | Service (shared, `/etc/kgsm/discord-auth.env`) |
+| `KgsmAuth__Providers__discord__ClientSecret` | Service (shared, `/etc/kgsm/kgsm-auth.env`) |
 | `Auth__SigningKey` | Service (keep **stable** across restarts) |
 | `Assistant__Webhook__Secret` | Service |
 | `Assistant__Relay__Secret` | Service (optional) |
@@ -255,13 +255,13 @@ Bind address. Default `http://localhost:5180` (loopback). Override with the stan
 
 The **ecosystem's** block, identical across this service and the Control Panel API, so a sign-in goes
 through the same application whichever door somebody knocks on. It lives once per host in
-`/etc/kgsm/discord-auth.env`, which every leaf's unit loads before its own env file. Setting one of
+`/etc/kgsm/kgsm-auth.env`, which every leaf's unit loads before its own env file. Setting one of
 these keys in *this* leaf's env overrides the shared value for this leaf alone.
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `ClientId` | _(empty)_ | `KgsmAuth__ClientId` | OAuth app id |
-| `ClientSecret` | _(empty)_ | `KgsmAuth__ClientSecret` | **Secret.** code→token exchange |
+| `ClientId` | _(empty)_ | `KgsmAuth__Providers__discord__ClientId` | OAuth app id |
+| `ClientSecret` | _(empty)_ | `KgsmAuth__Providers__discord__ClientSecret` | **Secret.** code→token exchange |
 
 The same file carries `GuildId`, `BotToken` and the role id lists. Those are **kgsm-bot's** — a
 person typing a slash command has proved nothing but their Discord account, so the bot maps a guild

@@ -36,7 +36,7 @@ Environment=KGSM__JournalDir=/var/lib/kgsm/events
 # file below can still override a value deliberately; setting one there is how a host ends up
 # granting the same person different authority on different surfaces, so prefer the shared file.
 # Seeded by deploy/setup.sh; optional, so a host that never provisioned it still starts.
-EnvironmentFile=-/etc/kgsm/discord-auth.env
+EnvironmentFile=-/etc/kgsm/kgsm-auth.env
 EnvironmentFile=/etc/kgsm-assistant/service.env
 
 # systemd creates this owned by the service user; the event socket above is bound inside it.

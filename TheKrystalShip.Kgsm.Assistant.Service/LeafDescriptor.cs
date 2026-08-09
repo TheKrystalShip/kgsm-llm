@@ -116,10 +116,10 @@ using TheKrystalShip.KGSM.LeafConfig;
 // and role ids in that same shared file are kgsm-bot's and bind to nothing here. This surface's own
 // callback URL and scopes are not among them either and stay on DiscordOAuth.
 
-[assembly: LeafFrameworkField("authClientId", "KgsmAuth__ClientId", "Discord application id",
+[assembly: LeafFrameworkField("authClientId", "KgsmAuth__Providers__discord__ClientId", "Discord application id",
     Description = "The Discord application users sign in through. The same application as the bot's.",
     Group = "authorization", Risk = LeafRisk.Wiring, NoDefault = true)]
 
-[assembly: LeafFrameworkField("authClientSecret", "KgsmAuth__ClientSecret", "Discord client secret",
+[assembly: LeafFrameworkField("authClientSecret", "KgsmAuth__Providers__discord__ClientSecret", "Discord client secret",
     Description = "Secret for that application, used to complete a sign-in server-side.",
     Group = "authorization", Type = LeafType.Secret, Risk = LeafRisk.Wiring, NoDefault = true)]

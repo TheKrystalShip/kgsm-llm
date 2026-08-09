@@ -33,7 +33,7 @@ from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead 
 | Set this | Required? | Notes |
 |----------|-----------|-------|
 | `KGSM__Path` | **yes** | Absolute path to **this host's** `kgsm.sh`. Without it the assistant has no engine to read or act on. |
-| `KgsmAuth__ClientId` · `ClientSecret` | **yes** for Discord sign-in | The host's shared Discord application, seeded by `setup.sh` in `/etc/kgsm/discord-auth.env` and loaded before this file. `ClientSecret` is a **secret**. Password sign-in needs neither. (The CLI needs none of these.) |
+| `KgsmAuth__Providers__discord__ClientId` · `__ClientSecret` | **yes** for Discord sign-in | The host's shared Discord application, seeded by `setup.sh` in `/etc/kgsm/kgsm-auth.env` and loaded before this file. `ClientSecret` is a **secret**. Password sign-in needs neither. (The CLI needs none of these.) |
 | `Auth__UsersDbPath` | for any sign-in | The host's KGSM account store, which is what says who may do what. Default `/var/lib/kgsm/auth/users.db`; its directory must be readable and writable by this unit's user. |
 | `DiscordOAuth__RedirectUri` | **yes** for web login | This service's own `/auth/discord/callback`, registered on the Discord application exactly. |
 | `Auth__SigningKey` | **yes** for web login | Signs session tokens. `openssl rand -base64 48`, once. Unset ⇒ a per-process key, so every restart signs everyone out. **Secret.** |
@@ -297,8 +297,8 @@ register **this service's** `/auth/discord/callback` as a redirect URI. Then sup
 
 | Env var | Purpose | If unset |
 |---------|---------|----------|
-| `KgsmAuth__ClientId` | OAuth app id | login can't start |
-| `KgsmAuth__ClientSecret` | code→token exchange (**secret**) | login denied |
+| `KgsmAuth__Providers__discord__ClientId` | OAuth app id | login can't start |
+| `KgsmAuth__Providers__discord__ClientSecret` | code→token exchange (**secret**) | login denied |
 | `Auth__UsersDbPath` | the KGSM accounts that decide who may do what | sign-in unavailable |
 | `DiscordOAuth__RedirectUri` | must match the portal exactly | callback rejected |
 | `Auth__SigningKey` | signs session tokens — **keep stable** (**secret**) | everyone signed out on restart |

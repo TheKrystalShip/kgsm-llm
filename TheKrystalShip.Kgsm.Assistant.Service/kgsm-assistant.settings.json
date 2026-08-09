@@ -78,8 +78,12 @@
     }
   },
   "KgsmAuth": {
-    "ClientId": "",
-    "ClientSecret": ""
+    "Providers": {
+      "discord": {
+        "ClientId": "",
+        "ClientSecret": ""
+      }
+    }
   },
   "DiscordOAuth": {
     "RedirectUri": "",

@@ -167,7 +167,8 @@ builder.Services.AddSingleton(sp =>
 // DiscordDirectory takes the options class itself, so the bound value is registered bare as well as
 // behind IOptions — without it the real directory cannot be constructed at all, and every test that
 // substitutes the seam would still pass.
-builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<KgsmAuthOptions>>().Value);
+builder.Services.AddSingleton(sp =>
+    sp.GetRequiredService<IOptions<KgsmAuthOptions>>().Value.For(KgsmActorProvider.Discord));
 // Discord answers ONE half of the sign-in here: who someone is. Transient like the typed client it
 // wraps — holding one in a singleton pins a handler for the process lifetime and stops the factory
 // rotating it.
@@ -244,10 +245,10 @@ app.UseStaticFiles();
             "until it can be read, and every authenticated request answers 502 meanwhile.",
             accounts.UnavailableReason);
 
-    if (string.IsNullOrEmpty(sharedAuth.ClientSecret))
+    if (!sharedAuth.For(KgsmActorProvider.Discord).Configured)
         app.Logger.LogInformation(
             "No Discord application is configured — a KGSM password is the way in. Signing in through " +
-            "Discord needs KgsmAuth:ClientId and KgsmAuth:ClientSecret.");
+            "Discord needs KgsmAuth:Providers:discord:ClientId and :ClientSecret.");
 
     if (opts.ActionsEnabled)
         app.Logger.LogInformation(

@@ -33,8 +33,8 @@ from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead 
 | Set this | Required? | Notes |
 |----------|-----------|-------|
 | `KGSM__Path` | **yes** | Absolute path to **this host's** `kgsm.sh`. Without it the assistant has no engine to read or act on. |
-| `KgsmAuth__ClientId` · `ClientSecret` · `BotToken` · `GuildId` | **yes** for web login | The host's shared Discord block, seeded by `setup.sh` in `/etc/kgsm/discord-auth.env` and loaded before this file. `ClientSecret` + `BotToken` are **secrets**; with `BotToken` empty **all logins are denied**. (The CLI needs none of these.) |
-| `KgsmAuth__RoleOperatorIds` · `RoleAdminIds` | for actions / review | Shared with the Control Panel API and the bot. Operator may act; admin may also read other people's conversations; every guild member can read. |
+| `KgsmAuth__ClientId` · `ClientSecret` | **yes** for Discord sign-in | The host's shared Discord application, seeded by `setup.sh` in `/etc/kgsm/discord-auth.env` and loaded before this file. `ClientSecret` is a **secret**. Password sign-in needs neither. (The CLI needs none of these.) |
+| `Auth__UsersDbPath` | for any sign-in | The host's KGSM account store, which is what says who may do what. Default `/var/lib/kgsm/auth/users.db`; its directory must be readable and writable by this unit's user. |
 | `DiscordOAuth__RedirectUri` | **yes** for web login | This service's own `/auth/discord/callback`, registered on the Discord application exactly. |
 | `Auth__SigningKey` | **yes** for web login | Signs session tokens. `openssl rand -base64 48`, once. Unset ⇒ a per-process key, so every restart signs everyone out. **Secret.** |
 | `Auth__AllowedOrigins__0` | **yes** for the SPA | Your panel origin (scheme + host, no trailing slash). Empty ⇒ browser calls are CORS-blocked. |
@@ -290,19 +290,16 @@ priority prefixes (the app uses `AddSystemdConsole()`).
 
 ### 6.2 Discord OAuth secrets
 
-The Service authenticates web users with Discord OAuth itself — no Control Panel API needed — and
-decides *who may run actions* from the host's shared role→tier map. In the Discord Developer Portal:
-create an app, add a bot, invite it to your guild, and register **this service's**
-`/auth/discord/callback` as a redirect URI. Then supply (env-only — never in appsettings):
+The Service authenticates web users itself — no Control Panel API needed — with a KGSM password or,
+optionally, a Discord account connected to a KGSM account. *Who may run actions* is on that account,
+never on a guild or a role. For the Discord option, in the Discord Developer Portal: create an app and
+register **this service's** `/auth/discord/callback` as a redirect URI. Then supply (env-only — never in appsettings):
 
 | Env var | Purpose | If unset |
 |---------|---------|----------|
 | `KgsmAuth__ClientId` | OAuth app id | login can't start |
 | `KgsmAuth__ClientSecret` | code→token exchange (**secret**) | login denied |
-| `KgsmAuth__BotToken` | reads guild membership + roles (**secret**) | **all logins denied** |
-| `KgsmAuth__GuildId` | the server users must belong to | — |
-| `KgsmAuth__RoleOperatorIds` | roles permitted to run mutating actions | everyone read-only |
-| `KgsmAuth__RoleAdminIds` | roles permitted to review others' conversations | nobody reviews |
+| `Auth__UsersDbPath` | the KGSM accounts that decide who may do what | sign-in unavailable |
 | `DiscordOAuth__RedirectUri` | must match the portal exactly | callback rejected |
 | `Auth__SigningKey` | signs session tokens — **keep stable** (**secret**) | everyone signed out on restart |
 | `Auth__AllowedOrigins__0` | your SPA origin (CORS) | browser calls blocked |

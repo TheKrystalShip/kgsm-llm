@@ -37,7 +37,7 @@
   <ItemGroup>
     <!-- KgsmTier + its canonical wire spelling. The auth model only — this package sends a tier
          someone else already verified and never resolves one, so it takes none of the transport. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="1.1.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="2.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
   </ItemGroup>
 

@@ -42,7 +42,6 @@ any committed settings file — which declares each of them blank so the Control
 | Secret | Used by |
 |--------|---------|
 | `KgsmAuth__ClientSecret` | Service (shared, `/etc/kgsm/discord-auth.env`) |
-| `KgsmAuth__BotToken` | Service (shared, `/etc/kgsm/discord-auth.env`) |
 | `Auth__SigningKey` | Service (keep **stable** across restarts) |
 | `Assistant__Webhook__Secret` | Service |
 | `Assistant__Relay__Secret` | Service (optional) |

@@ -45,6 +45,18 @@ internal static class C
     public static Check CalledTool(Tool tool, string? label = null) =>
         new(Rubric.B_Routing, label ?? $"calls {tool}", (o, _) => o.Tools.Any(t => Eq(t.Name, tool)));
 
+    /// <summary>Rubric B: called the tool AND an argument satisfies a predicate — the enum-argument
+    /// counterpart of <see cref="StagesWith"/>. A noun-scoped tool carries the real routing decision in
+    /// its <c>aspect</c>/<c>scope</c> argument, so "called <c>server_info</c>" alone under-measures it:
+    /// asking for the player roster and getting the backup list is a routing miss the tool name can't
+    /// see. Argument-precise, so it stays a trajectory signal rather than a prose regex.</summary>
+    public static Check CalledToolWith(
+        Tool tool, string argument, string expected, string label) =>
+        new(Rubric.B_Routing, label, (o, _) => o.Tools.Any(t =>
+            Eq(t.Name, tool) &&
+            string.Equals(t.Arguments.GetValueOrDefault(argument)?.Trim(), expected,
+                StringComparison.OrdinalIgnoreCase)));
+
     public static Check DidNotCallTool(Tool tool, Rubric dim, string label) =>
         new(dim, label, (o, _) => !o.Tools.Any(t => Eq(t.Name, tool)));
 

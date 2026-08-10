@@ -107,6 +107,33 @@ public class ChecksTests
     }
 
     [Fact]
+    public void CalledToolWith_requires_the_argument_to_match_not_just_the_tool()
+    {
+        var check = C.CalledToolWith(LlmTools.ServerInfo, "aspect", "players", "x");
+        check.Evaluate(Obs(tools: new[]
+        {
+            Tool(LlmTools.ServerInfo, ("instance_name", "factorio-test"), ("aspect", "players")),
+        }), Fx).Should().BeTrue();
+
+        // The whole point: asking the right noun the WRONG question is a routing miss the tool
+        // name alone can't see.
+        check.Evaluate(Obs(tools: new[]
+        {
+            Tool(LlmTools.ServerInfo, ("instance_name", "factorio-test"), ("aspect", "backups")),
+        }), Fx).Should().BeFalse();
+
+        check.Evaluate(Obs(tools: new[] { Tool(LlmTools.ServerInfo, ("instance_name", "factorio-test")) }), Fx)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void CalledToolWith_is_case_and_whitespace_insensitive_on_the_argument()
+    {
+        var check = C.CalledToolWith(LlmTools.HostInfo, "aspect", "vitals", "x");
+        check.Evaluate(Obs(tools: new[] { Tool(LlmTools.HostInfo, ("aspect", " Vitals ")) }), Fx).Should().BeTrue();
+    }
+
+    [Fact]
     public void AnyOf_passes_if_any_subcheck_passes()
     {
         var check = C.AnyOf(Rubric.B_Routing, "x",

@@ -70,13 +70,16 @@ Multi-turn (clarify → follow-up on one conversation): use the full `new Benchm
 roles, new[]{ new BenchmarkStep("turn 1", checks), new BenchmarkStep("turn 2", checks) })` form — see `M1`.
 
 Roles: `UniqueGame` (the only instance of its game), `Running`, `Stopped`, `AnyInstance`,
-`NeverInstalledGame` (installable but absent), `MultipleInstances` (≥ 2 instances).
+`NeverInstalledGame` (installable but absent), `MultipleInstances` (≥ 2 instances),
+`ModeratableGame` / `NoModerationGame` (a unique-game instance whose blueprint does / doesn't declare
+player-moderation commands).
 
 The check kit (`Checks.cs`, all via `C.`):
 
 | Check | Asserts |
 |-------|---------|
-| `CalledTool(LlmTools.X, "…")` | the model called tool X (`GetStatus`, `RunHealthCheck`, `WebSearch`, `ServerCommand`, `ViewConfigFile`, …) |
+| `CalledTool(LlmTools.X, "…")` | the model called tool X (`ServerInfo`, `RunHealthCheck`, `Search`, `ServerCommand`, `FindFiles`, …) |
+| `CalledToolWith(X, "aspect", "players", "…")` | called X **and** passed that argument — on a noun-scoped tool the routing decision is the enum, so the tool name alone under-measures it |
 | `DidNotCallTool(X, dim, "…")` · `NoToolCalls("…")` | it didn't call X · it called nothing (e.g. declines an off-topic ask) |
 | `ReferencedRole(role, tool?, dim, "…")` | a tool call targeted that role's server |
 | `RoutedThroughStatusOrHealth()` | consulted a status/health tool (didn't invent run-state) |
@@ -215,6 +218,7 @@ filled is **skipped with a reason**, never silently failed.
 | `running` / `stopped` | an instance in that authoritative `is-active` state |
 | `never_game` | an installable blueprint with no instance |
 | `multiple` | ≥ 2 instances exist (precondition for a genuinely ambiguous reference) |
+| `moderatable` / `no_moderation` | a unique-game instance whose blueprint declares / doesn't declare kick-ban-unban commands. Read from live blueprint detail, because which games can moderate is the host catalog's fact; an unreadable blueprint fills neither |
 
 To exercise the run-state and multi-turn-ambiguity cases you want at least two instances, one of
 them running. With a single stopped instance the routing/staging/resolution cases still run fully

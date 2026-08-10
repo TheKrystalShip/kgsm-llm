@@ -53,6 +53,47 @@ public class FixturesResolutionTests
         fx.Has(FixtureRole.UniqueGame).Should().BeFalse();
     }
 
+    private static BlueprintDetail Detail(string name, params string[] moderationVerbs) =>
+        new(name, null, null, Array.Empty<string>(), "native", false, null, null, null, null, moderationVerbs);
+
+    [Fact]
+    public async Task Moderation_roles_split_on_the_blueprints_declared_verbs()
+    {
+        var inv = Inventory(
+            new Dictionary<string, string> { ["mc-1"] = "minecraft.bp", ["sb-1"] = "starbound.bp" },
+            "minecraft", "starbound");
+        inv.GetBlueprintDetailAsync("minecraft.bp", Arg.Any<CancellationToken>())
+            .Returns(Detail("minecraft", "kick", "ban", "unban"));
+        inv.GetBlueprintDetailAsync("starbound.bp", Arg.Any<CancellationToken>())
+            .Returns(Detail("starbound"));
+        var ops = Substitute.For<IServerOperations>();
+        ops.IsActiveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Result<bool>.Success(false));
+
+        var fx = await Fixtures.ResolveAsync(inv, ops, default);
+
+        fx.ModeratableGameInstance.Should().Be("mc-1");
+        fx.ModeratableGameWord.Should().Be("minecraft");
+        fx.NoModerationGameInstance.Should().Be("sb-1");
+        fx.NoModerationGameWord.Should().Be("starbound");
+        fx.Fill("kick Steve from {moderatable_game}, ban him on {no_moderation_game}")
+            .Should().Be("kick Steve from minecraft, ban him on starbound");
+    }
+
+    [Fact]
+    public async Task An_unreadable_blueprint_fills_neither_moderation_role()
+    {
+        // A null detail is "couldn't read it", never "declares no verbs" — filling the no-moderation
+        // role from it would point the negative case at a game that may well support moderation.
+        var inv = Inventory(new Dictionary<string, string> { ["mc-1"] = "minecraft.bp" }, "minecraft");
+        var ops = Substitute.For<IServerOperations>();
+        ops.IsActiveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Result<bool>.Success(false));
+
+        var fx = await Fixtures.ResolveAsync(inv, ops, default);
+
+        fx.Has(FixtureRole.ModeratableGame).Should().BeFalse();
+        fx.Has(FixtureRole.NoModerationGame).Should().BeFalse();
+    }
+
     [Fact]
     public async Task Fill_substitutes_placeholders()
     {

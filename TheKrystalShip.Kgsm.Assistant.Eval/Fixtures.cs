@@ -27,6 +27,14 @@ internal enum FixtureRole
 
     /// <summary>Two or more instances exist — the precondition for a GENUINELY ambiguous reference.</summary>
     MultipleInstances,
+
+    /// <summary>A unique-game instance whose blueprint declares player-moderation commands — the
+    /// positive half of the moderation pair, where staging a kick is the correct trajectory.</summary>
+    ModeratableGame,
+
+    /// <summary>A unique-game instance whose blueprint declares NO moderation commands — the negative
+    /// half, where the only correct trajectory is to stage nothing and say the game can't.</summary>
+    NoModerationGame,
 }
 
 /// <summary>One installed instance with its game type and authoritative run-state.</summary>
@@ -45,7 +53,11 @@ internal sealed record ResolvedFixtures(
     string? RunningInstance,
     string? StoppedInstance,
     string? AnyInstance,
-    string? NeverInstalledGame)
+    string? NeverInstalledGame,
+    string? ModeratableGameWord = null,
+    string? ModeratableGameInstance = null,
+    string? NoModerationGameWord = null,
+    string? NoModerationGameInstance = null)
 {
     public int RunningCount => Instances.Count(i => i.Running);
     public int StoppedCount => Instances.Count(i => !i.Running);
@@ -58,6 +70,8 @@ internal sealed record ResolvedFixtures(
         FixtureRole.AnyInstance => AnyInstance is not null,
         FixtureRole.NeverInstalledGame => NeverInstalledGame is not null,
         FixtureRole.MultipleInstances => Instances.Count >= 2,
+        FixtureRole.ModeratableGame => ModeratableGameInstance is not null,
+        FixtureRole.NoModerationGame => NoModerationGameInstance is not null,
         _ => false,
     };
 
@@ -68,6 +82,8 @@ internal sealed record ResolvedFixtures(
         FixtureRole.Running => RunningInstance,
         FixtureRole.Stopped => StoppedInstance,
         FixtureRole.AnyInstance => AnyInstance,
+        FixtureRole.ModeratableGame => ModeratableGameInstance,
+        FixtureRole.NoModerationGame => NoModerationGameInstance,
         _ => null,
     };
 
@@ -81,7 +97,9 @@ internal sealed record ResolvedFixtures(
     /// <summary>Substitute prompt placeholders (<c>{unique_game}</c>, <c>{never_game}</c>) with resolved words.</summary>
     public string Fill(string prompt) => prompt
         .Replace("{unique_game}", UniqueGameWord ?? "the server")
-        .Replace("{never_game}", NeverInstalledGame ?? "minecraft");
+        .Replace("{never_game}", NeverInstalledGame ?? "minecraft")
+        .Replace("{moderatable_game}", ModeratableGameWord ?? "the server")
+        .Replace("{no_moderation_game}", NoModerationGameWord ?? "the server");
 }
 
 /// <summary>Resolves <see cref="FixtureRole"/>s from the live host and prints a loud preflight.</summary>
@@ -129,6 +147,28 @@ internal static class Fixtures
         var absent = PreferredAbsent.FirstOrDefault(g => blueprints.Contains(g, StringComparer.OrdinalIgnoreCase) && NotInstalled(g))
                      ?? blueprints.FirstOrDefault(NotInstalled);
 
+        // Moderation support is the BLUEPRINT's fact — a game declares each command it has, and an
+        // undeclared one is unsupported. Both halves of the moderation pair are drawn from unique-game
+        // instances so a bare game word still resolves them, and both are read from live blueprint
+        // detail rather than named here: which games can kick is a property of the host's catalog, not
+        // of the corpus. A null detail is "couldn't read it", so it fills neither role.
+        var uniqueGames = facts
+            .GroupBy(f => f.Game, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() == 1)
+            .Select(g => g.Single())
+            .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        InstanceFact? moderatable = null, unmoderatable = null;
+        foreach (var f in uniqueGames)
+        {
+            if (moderatable is not null && unmoderatable is not null) break;
+            var detail = await inventory.GetBlueprintDetailAsync(f.Game, ct);
+            if (detail is null) continue;
+            if (detail.ModerationVerbs.Count > 0) moderatable ??= f;
+            else unmoderatable ??= f;
+        }
+
         return new ResolvedFixtures(
             facts, blueprints,
             UniqueGameWord: Word(unique?.Game),
@@ -136,7 +176,11 @@ internal static class Fixtures
             RunningInstance: running?.Name,
             StoppedInstance: stopped?.Name,
             AnyInstance: any?.Name,
-            NeverInstalledGame: Word(absent));
+            NeverInstalledGame: Word(absent),
+            ModeratableGameWord: Word(moderatable?.Game),
+            ModeratableGameInstance: moderatable?.Name,
+            NoModerationGameWord: Word(unmoderatable?.Game),
+            NoModerationGameInstance: unmoderatable?.Name);
     }
 
     // kgsm blueprint/game types carry a ".bp" suffix (e.g. "factorio.bp"); strip it so the word a user
@@ -173,6 +217,10 @@ internal static class Fixtures
         Role(w, "running", fx.RunningInstance);
         Role(w, "stopped", fx.StoppedInstance);
         Role(w, "never_game", fx.NeverInstalledGame);
+        Role(w, "moderatable", fx.ModeratableGameInstance is null ? null
+            : $"{fx.ModeratableGameWord} → {fx.ModeratableGameInstance}");
+        Role(w, "no_moderation", fx.NoModerationGameInstance is null ? null
+            : $"{fx.NoModerationGameWord} → {fx.NoModerationGameInstance}");
         Role(w, "multiple", fx.Instances.Count >= 2 ? "yes" : null);
         return true;
 

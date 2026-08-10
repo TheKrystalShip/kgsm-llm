@@ -15,7 +15,7 @@ public sealed record RetrievedChunk(string SourcePath, string HeaderPath, string
 /// Local retrieval-augmented grounding — a leaf capability that answers "what do the operator's
 /// indexed docs say about X" by semantic search over a pre-built vector index. The host supplies
 /// the adapter (a Native-AOT <c>TheKrystalShip.Rag</c>-backed one today); the index is produced
-/// out-of-band by the standalone indexer (plan §D6). Deliberately NOT routed through kgsm-lib:
+/// out-of-band by the standalone indexer . Deliberately NOT routed through kgsm-lib:
 /// that chokepoint is for the kgsm engine, and retrieval is a knowledge concern local to the
 /// assistant. Implementations MUST NOT throw — return a failed <see cref="Result"/> instead.
 /// </summary>
@@ -28,7 +28,7 @@ public interface IRetrieval
 /// <summary>
 /// Default <see cref="IRetrieval"/> for hosts that have not enabled RAG: every retrieval fails
 /// closed with a clear reason, so embedding the assistant library never breaks DI just because
-/// retrieval isn't configured (plan §D7 — fail-closed + omit-when-disabled). <c>AddKgsmAssistant</c>
+/// retrieval isn't configured (fail-closed + omit-when-disabled). <c>AddKgsmAssistant</c>
 /// registers this with <c>TryAddSingleton</c>; a host that enables RAG registers a concrete adapter
 /// afterward (<c>AddKgsmAdapters</c> when <c>Rag:Enabled=true</c>) — that later registration wins.
 /// </summary>

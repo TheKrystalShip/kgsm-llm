@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The toolbox is noun-scoped.** Two rules generate it: reads and mutations never share a tool (a
+  tool's authorization tier is decided before it is offered, so a tier that depended on an argument
+  could not be offered honestly), and a tool owns a noun while an enum selects the operation. The
+  enum reaches the model as a JSON-schema `enum`, so it is a whitelist a small local model cannot
+  invent its way past, and `(tool, verb)` stays a static map onto `ConfirmationKind`.
+- **`server_info`** — one per-instance read with an `aspect` enum: `status` (the default, so a bare
+  call behaves exactly as the old status tool), `config`, `version`, `players`, `backups`, `note`,
+  `autostart`. Omitting `instance_name` answers for every server at once.
+- **`host_info`** — the host machine's own uptime, load, memory, disk, external address and pending
+  reboot, plus what is bound on its ports and where two servers want the same one.
+- **`blueprint_info`** — the installable catalog, and one game type's detail: its ports, resource
+  requirements, and which moderation commands its server actually supports.
+- **`backup_command`** (restore/delete/prune) and **`player_command`** (kick/ban/unban), both
+  propose-only. `server_command` gains `enable_autostart`/`disable_autostart`, and `install_server`
+  now passes through the engine's `version` and `port` options.
+- **`read_console`** — the supervisor's captured console output for one server, in the authorized
+  tier beside `read_file`, since console output is content of the same sensitivity.
+- Player presence, backups, versions, the boot-autostart set and the console ring reach the
+  assistant through two new ports (`IServerFacts`, `IHostFacts`) with fail-closed defaults, so an
+  unreachable authority reports as unknown and never as an empty world.
+
+### Changed
+
+- **Tracks `TheKrystalShip.KGSM.Lib` 4.6.0.** The capabilities above already existed in the engine
+  library; this leaf was pinned five minors behind and could not reach them.
+- `get_audit_log` and `get_change_timeline` are one **`events`** tool with a `scope` of `all` or
+  `changes` — the same journal, differing only in which rows they keep. Its card carries the scope
+  in the result's `Section`. `get_status` and `list_blueprints` are subsumed by `server_info` and
+  `blueprint_info`.
+- The system prompt states that anything about the user's own servers or host is answered from the
+  KGSM tools, never the web.
+- `player_command` refuses up front for a game whose blueprint declares no command for the verb,
+  rather than proposing something the confirm step would then fail.
+
 ### Removed
 
 - **The Discord guild, bot token and role→tier map are no longer read.** `KgsmAuth__GuildId`,

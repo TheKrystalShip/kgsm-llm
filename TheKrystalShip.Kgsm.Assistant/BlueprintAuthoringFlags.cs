@@ -1,7 +1,7 @@
 namespace TheKrystalShip.Kgsm.Assistant;
 
 /// <summary>
-/// Availability for the <c>create_blueprint</c> tool — mirrors <see cref="FetchOptions"/>'s §D7 pattern
+/// Availability for the <c>create_blueprint</c> tool — mirrors <see cref="FetchOptions"/>'s omit-when-disabled pattern
 /// (compute-at-composition, offer-only-when-backed). The real pipeline configuration (enabled flag,
 /// stash directory, verify timeouts, self-repair bound) lives in Infrastructure's own
 /// <c>BlueprintAuthoringOptions</c>; this type carries only the COMPUTED <see cref="Available"/> flag

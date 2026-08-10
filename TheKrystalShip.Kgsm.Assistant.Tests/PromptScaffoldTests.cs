@@ -57,7 +57,7 @@ public sealed class PromptScaffoldTests : IDisposable
         // The seeded tools.json, read back by FilePromptOverrides, reproduces the base descriptions
         // (proving the seed shape matches the consumer) — and an edit to it takes effect.
         var json = File.ReadAllText(Path.Combine(_dir, "tools.json"));
-        json.Should().Contain("get_status").And.Contain("instance_name");
+        json.Should().Contain("server_info").And.Contain("instance_name");
 
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { [FilePromptOverrides.DirectoryKey] = _dir })
@@ -65,7 +65,7 @@ public sealed class PromptScaffoldTests : IDisposable
         var overrides = new FilePromptOverrides(config, NullLogger<FilePromptOverrides>.Instance);
 
         var overlaid = overrides.OverlayTools(LlmTools.ReadOnly);
-        var getStatus = overlaid.Single(t => t.Name == "get_status");
-        getStatus.Description.Should().Be(LlmTools.ReadOnly.Single(t => t.Name == "get_status").Description);
+        var serverInfo = overlaid.Single(t => t.Name == "server_info");
+        serverInfo.Description.Should().Be(LlmTools.ReadOnly.Single(t => t.Name == "server_info").Description);
     }
 }

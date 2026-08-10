@@ -1,8 +1,8 @@
 namespace TheKrystalShip.Kgsm.Assistant.Envelope;
 
 /// <summary>
-/// The surface-facing projection of a <see cref="ToolResult{TData}"/> (toolbox-plan §5·c) — the
-/// payload of the §5·a <c>tool.result.result</c> card. Non-generic on purpose: it rides the agent
+/// The surface-facing projection of a <see cref="ToolResult{TData}"/> — the
+/// payload of the <c>tool.result.result</c> card. Non-generic on purpose: it rides the agent
 /// loop's opaque <c>object?</c> data channel from the dispatcher to the SSE boundary without the
 /// generic <c>TheKrystalShip.Llm</c> package ever knowing the card type (<see cref="Data"/> is
 /// boxed and serialised by its runtime type at the Service edge).

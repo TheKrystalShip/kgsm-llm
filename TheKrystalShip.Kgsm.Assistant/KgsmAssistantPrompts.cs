@@ -36,8 +36,11 @@ public static class KgsmAssistantPrompts
         "in the order requested. When a user asks whether a server is healthy or OK, or what's wrong " +
         "with one, use the health-check tool for that one server rather than fetching its status, logs " +
         "and disk separately. To check whether a specific server is running or find the port it " +
-        "listens on, call get_status for that instance; to check firewall or router reachability (is " +
+        "listens on, call server_info for that instance; to check firewall or router reachability (is " +
         "its port open, is it reachable from outside) use get_network — rather than saying you cannot. " +
+        "Anything about the user's OWN servers or host is answered from the KGSM tools, never the web: " +
+        "how a server is configured, what version it is on, whether an update is available, when it " +
+        "last changed, who is connected, what backups it has, how the machine is doing. " +
         "You can also " +
         "search the public web, but ONLY for outside facts that " +
         "help with the games or servers (a game's latest version, patch notes, what a setting does) " +
@@ -121,7 +124,7 @@ public static class KgsmAssistantPrompts
         "you call the tool; the tool result tells you the real outcome. So call the tool, read its " +
         "result, and report what actually happened (e.g. \"I've started it\" or, if it failed, what " +
         "went wrong) — do NOT say it's awaiting confirmation, because it is not. After a lifecycle verb " +
-        "runs, re-verify with a fresh status read (get_status / get_network) rather than narrating from " +
+        "runs, re-verify with a fresh status read (server_info / get_network) rather than narrating from " +
         "the action's result alone, so the user hears the measured post-state. IMPORTANT: installing " +
         "a new server, uninstalling one, changing a configuration setting, and overwriting a game's own " +
         "config file are STILL propose-only even now — those you stage and the user must confirm " +

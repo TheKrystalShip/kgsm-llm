@@ -3,7 +3,7 @@ using TheKrystalShip.Kgsm.Assistant.Blueprints;
 namespace TheKrystalShip.Kgsm.Assistant.Ports;
 
 /// <summary>
-/// One <c>create_blueprint</c> attempt, recorded for admin-only, async-after-the-fact review (plan §"Two
+/// One <c>create_blueprint</c> attempt, recorded for admin-only, async-after-the-fact review ("Two
 /// surfaces") — never shown to the end user. Written on every non-<see cref="BlueprintAuthoringOutcome.AlreadyExists"/>
 /// outcome that didn't end in <see cref="BlueprintAuthoringOutcome.Verified"/>, so a failed/infeasible
 /// attempt is never silently lost. <see cref="DraftYaml"/> is the rendered YAML the pipeline tried (or

@@ -26,10 +26,11 @@ public sealed class KgsmServerOperationsTests
     private readonly IInstanceFiles _files = Substitute.For<IInstanceFiles>();
     private readonly ISystemService _system = Substitute.For<ISystemService>();
     private readonly IWatcherService _watcher = Substitute.For<IWatcherService>();
+    private readonly IWatchdogClient _watchdog = Substitute.For<IWatchdogClient>();
     private readonly AsyncLocalInvocationContext _invocation = new();
 
     private KgsmServerOperations Create() =>
-        new(_instances, _files, _system, _watcher, _invocation, NullLogger<KgsmServerOperations>.Instance);
+        new(_instances, _files, _system, _watcher, _watchdog, _invocation, NullLogger<KgsmServerOperations>.Instance);
 
     // --- provenance: a turn/confirm scope stamps actor (the Discord principal) + origin=assistant ---
 

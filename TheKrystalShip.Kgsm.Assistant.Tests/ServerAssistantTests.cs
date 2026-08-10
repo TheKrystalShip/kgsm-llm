@@ -171,7 +171,7 @@ public class ServerAssistantTests
     public async Task Gate_DoesNotCountReadOnlyToolsAgainstTheCap()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var status = Call(LlmTools.GetStatus);
+        var status = Call(LlmTools.ServerInfo);
 
         // Many read-only calls, all allowed and none consuming the staging budget.
         for (var i = 0; i < 10; i++)
@@ -267,7 +267,7 @@ public class ServerAssistantTests
         // read-only catalog is still offered.
         var turn = await CaptureTurnAsync(canPerformActions: false, search: new SearchOptions());
         turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.Search);
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.GetStatus);
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.ServerInfo);
     }
 
     [Fact]
@@ -299,7 +299,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false, fetch: new FetchOptions { Available = false });
         turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.FetchUrl);
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.GetStatus);
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.ServerInfo);
     }
 
     [Fact]
@@ -367,7 +367,7 @@ public class ServerAssistantTests
         var turn = await CaptureTurnAsync(
             canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = false });
         turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.CreateBlueprint);
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.GetStatus);
+        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.ServerInfo);
     }
 
     [Fact]

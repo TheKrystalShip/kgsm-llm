@@ -18,7 +18,7 @@ public class ChecksTests
     [Fact]
     public void RoutedThroughStatusOrHealth_passes_when_a_status_tool_ran()
     {
-        var obs = Obs(tools: new[] { Tool(LlmTools.GetStatus, ("instance_name", "factorio-test")) });
+        var obs = Obs(tools: new[] { Tool(LlmTools.ServerInfo, ("instance_name", "factorio-test")) });
         C.RoutedThroughStatusOrHealth().Evaluate(obs, Fx).Should().BeTrue();
     }
 
@@ -40,7 +40,7 @@ public class ChecksTests
     public void ReferencedRole_matches_by_game_word_too()
     {
         // The dispatcher resolves fuzzy names — the model passing the game word still counts as acting.
-        var obs = Obs(tools: new[] { Tool(LlmTools.GetStatus, ("instance_name", "factorio")) });
+        var obs = Obs(tools: new[] { Tool(LlmTools.ServerInfo, ("instance_name", "factorio")) });
         C.ReferencedRole(FixtureRole.UniqueGame, null, Rubric.B_Routing, "x").Evaluate(obs, Fx).Should().BeTrue();
     }
 

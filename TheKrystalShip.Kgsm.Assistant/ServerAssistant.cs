@@ -29,7 +29,7 @@ public class ServerAssistant : IServerAssistant
 {
     /// <summary>
     /// Blast-radius limit: at most this many commands may be staged (proposed) per user
-    /// message. Every command is propose-only (§3.5) and needs a per-op human
+    /// message. Every command is propose-only and needs a per-op human
     /// confirmation, but this still stops one prompt from teeing up a fleet-wide shuffle
     /// of confirmation buttons. Tunable; kept small on purpose.
     /// </summary>
@@ -119,7 +119,7 @@ public class ServerAssistant : IServerAssistant
         "contains, answer from the content above.";
 
     /// <summary>
-    /// Two-axis tool selection (§3.2): authorization picks the set the caller MAY
+    /// Two-axis tool selection: authorization picks the set the caller MAY
     /// use (read-only vs all), then client-requested subset may narrow it further,
     /// then the relevance seam may narrow it (no-op today).
     ///
@@ -142,19 +142,19 @@ public class ServerAssistant : IServerAssistant
         if (draftOpen && canPerformActions && _blueprintAuthoringFlags.Available)
             authorized = authorized.Append(LlmTools.ReviseBlueprintTool).ToArray();
 
-        // §D7 omit-when-disabled: the unified `search` tool is offered only when at least one source
+        // Omit-when-disabled: the unified `search` tool is offered only when at least one source
         // backs it (RAG enabled and/or a web provider configured). Removed BEFORE the requested-tool
         // validation below, so a client asking for `search` on a host where it's unavailable gets the
         // honest invalid-tool error — never a dead tool the model would call and watch fail.
         if (!_searchOptions.Available)
             authorized = authorized.Where(t => t.Tool != LlmTools.Search).ToArray();
 
-        // Same §D7 omit-when-disabled rule for fetch_url: offered only when a real IWebFetch adapter
+        // Same omit-when-disabled rule for fetch_url: offered only when a real IWebFetch adapter
         // is enabled on this host (FetchOptions.Available).
         if (!_fetchOptions.Available)
             authorized = authorized.Where(t => t.Tool != LlmTools.FetchUrl).ToArray();
 
-        // Same §D7 omit-when-disabled rule for create_blueprint: offered only when the real authoring
+        // Same omit-when-disabled rule for create_blueprint: offered only when the real authoring
         // pipeline is enabled on this host (BlueprintAuthoringFlags.Available, false everywhere by default).
         if (!_blueprintAuthoringFlags.Available)
             authorized = authorized.Where(t => t.Tool != LlmTools.CreateBlueprint).ToArray();
@@ -449,8 +449,10 @@ public class ServerAssistant : IServerAssistant
         return confirmation.Kind switch
         {
             ConfirmationKind.Uninstall => await ConfirmUninstallAsync(confirmation.Target, cancellationToken),
+            // Install overloads ConfigKey/ConfigValue with the optional version and port overrides.
             ConfirmationKind.Install => await ConfirmInstallAsync(
-                confirmation.Target, confirmation.InstanceName, cancellationToken),
+                confirmation.Target, confirmation.InstanceName, cancellationToken,
+                confirmation.ConfigKey, confirmation.ConfigValue),
             ConfirmationKind.SetConfig => await ConfirmSetConfigAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
             ConfirmationKind.WriteFile => await ConfirmWriteFileAsync(
@@ -465,6 +467,18 @@ public class ServerAssistant : IServerAssistant
             ConfirmationKind.Start or ConfirmationKind.Stop or ConfirmationKind.Restart
                 or ConfirmationKind.Update or ConfirmationKind.Backup
                 => await ConfirmCommandAsync(confirmation.Kind, confirmation.Target, cancellationToken),
+            // These settle against no run-state postcondition — a restored backup, a kicked player and
+            // a boot-autostart change leave the server's run state exactly as it was — so they take the
+            // simple confirm path rather than CommandSettlement.
+            ConfirmationKind.BackupRestore or ConfirmationKind.BackupDelete or ConfirmationKind.BackupPrune
+                => await ConfirmBackupAsync(
+                    confirmation.Kind, confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue,
+                    cancellationToken),
+            ConfirmationKind.PlayerKick or ConfirmationKind.PlayerBan or ConfirmationKind.PlayerUnban
+                => await ConfirmPlayerAsync(
+                    confirmation.Kind, confirmation.Target, confirmation.ConfigKey, cancellationToken),
+            ConfirmationKind.AutostartEnable or ConfirmationKind.AutostartDisable
+                => await ConfirmAutostartAsync(confirmation.Kind, confirmation.Target, cancellationToken),
             _ => ConfirmOutcome.Refused("Unknown action; nothing was done."),
         };
     }
@@ -551,6 +565,107 @@ public class ServerAssistant : IServerAssistant
     }
 
     /// <summary>
+    /// Re-resolves the instance the same way every confirm path does — it was resolved when the
+    /// action was staged, which may have been a while ago, and confirming is a separate, later act.
+    /// Returns the live name, or null with the refusal to hand back.
+    /// </summary>
+    private async Task<(string? Match, ConfirmOutcome? Refusal)> ReResolveAsync(
+        string target, ConfirmationKind kind, CancellationToken cancellationToken)
+    {
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        var match = instances.Keys.FirstOrDefault(
+            k => string.Equals(k, target, StringComparison.OrdinalIgnoreCase));
+        return match is null
+            ? (null, ConfirmOutcome.Refused(
+                $"'{target}' no longer exists — nothing to {ConfirmationKinds.Verb(kind)}."))
+            : (match, null);
+    }
+
+    private async Task<ConfirmOutcome> ConfirmBackupAsync(
+        ConfirmationKind kind, string target, string? backupId, string? keep,
+        CancellationToken cancellationToken)
+    {
+        var verb = ConfirmationKinds.Verb(kind);
+        var (match, refusal) = await ReResolveAsync(target, kind, cancellationToken);
+        if (refusal is not null)
+            return refusal;
+
+        if (kind is ConfirmationKind.BackupRestore or ConfirmationKind.BackupDelete
+            && string.IsNullOrWhiteSpace(backupId))
+            return ConfirmOutcome.Refused("No backup was named — nothing was done.");
+
+        _logger.LogInformation("Confirmed {Verb} of {Instance} ({Backup})", verb, match, backupId ?? keep);
+
+        var result = kind switch
+        {
+            ConfirmationKind.BackupRestore =>
+                await _operations.RestoreBackupAsync(match!, backupId!, cancellationToken),
+            ConfirmationKind.BackupDelete =>
+                await _operations.DeleteBackupAsync(match!, backupId!, cancellationToken),
+            // An absent keep-count means the engine's configured retention, which it applies itself.
+            _ => await _operations.PruneBackupsAsync(
+                match!, int.TryParse(keep, out var n) ? n : DefaultPruneKeep, cancellationToken),
+        };
+
+        var what = kind == ConfirmationKind.BackupPrune ? "old backups" : $"backup '{backupId}'";
+        return result.IsSuccess
+            ? ConfirmOutcome.Accepted($"Done — {what} on '{match}' ({verb}).", verb, match!)
+            : ConfirmOutcome.Failed(
+                $"Could not {verb} '{match}': {result.Error ?? "unknown error"}.", verb, match!);
+    }
+
+    /// <summary>How many backups a prune keeps when the request carried no count.</summary>
+    private const int DefaultPruneKeep = 5;
+
+    private async Task<ConfirmOutcome> ConfirmPlayerAsync(
+        ConfirmationKind kind, string target, string? player, CancellationToken cancellationToken)
+    {
+        var verb = ConfirmationKinds.Verb(kind);
+        var (match, refusal) = await ReResolveAsync(target, kind, cancellationToken);
+        if (refusal is not null)
+            return refusal;
+
+        if (string.IsNullOrWhiteSpace(player))
+            return ConfirmOutcome.Refused("No player was named — nothing was done.");
+
+        _logger.LogInformation("Confirmed {Verb} of {Player} on {Instance}", verb, player, match);
+
+        var result = kind switch
+        {
+            ConfirmationKind.PlayerKick => await _operations.KickPlayerAsync(match!, player, cancellationToken),
+            ConfirmationKind.PlayerBan => await _operations.BanPlayerAsync(match!, player, cancellationToken),
+            _ => await _operations.UnbanPlayerAsync(match!, player, cancellationToken),
+        };
+
+        return result.IsSuccess
+            ? ConfirmOutcome.Accepted($"Done — {player} on '{match}' ({verb}).", verb, match!)
+            : ConfirmOutcome.Failed(
+                $"Could not {verb} '{match}': {result.Error ?? "unknown error"}.", verb, match!);
+    }
+
+    private async Task<ConfirmOutcome> ConfirmAutostartAsync(
+        ConfirmationKind kind, string target, CancellationToken cancellationToken)
+    {
+        var verb = ConfirmationKinds.Verb(kind);
+        var (match, refusal) = await ReResolveAsync(target, kind, cancellationToken);
+        if (refusal is not null)
+            return refusal;
+
+        var enable = kind == ConfirmationKind.AutostartEnable;
+        _logger.LogInformation("Confirmed autostart {State} for {Instance}", enable ? "on" : "off", match);
+
+        var result = await _operations.SetAutostartAsync(match!, enable, cancellationToken);
+        return result.IsSuccess
+            ? ConfirmOutcome.Accepted(
+                enable
+                    ? $"'{match}' will now start when the host boots. Its current run state is unchanged."
+                    : $"'{match}' will no longer start when the host boots. Its current run state is unchanged.",
+                verb, match!)
+            : ConfirmOutcome.Failed(
+                $"Could not {verb} '{match}': {result.Error ?? "unknown error"}.", verb, match!);
+    }
+
+    /// <summary>
     /// Re-validates the target still exists (it was resolved at staging time, which may
     /// have been a while ago, and confirming is a separate, later act),
     /// then uninstalls it.
@@ -578,7 +693,8 @@ public class ServerAssistant : IServerAssistant
     /// collide (replay/race-safe), then installs.
     /// </summary>
     private async Task<ConfirmOutcome> ConfirmInstallAsync(
-        string blueprint, string? instanceName, CancellationToken cancellationToken)
+        string blueprint, string? instanceName, CancellationToken cancellationToken,
+        string? version = null, string? port = null)
     {
         var verb = ConfirmationKinds.Verb(ConfirmationKind.Install);
         var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
@@ -601,7 +717,13 @@ public class ServerAssistant : IServerAssistant
 
         _logger.LogInformation("Confirmed install of {Blueprint} (name={Name})", match, instanceName ?? "(default)");
 
-        var result = await _operations.InstallAsync(match, instanceName, cancellationToken);
+        // A port that no longer parses is dropped rather than guessed at: the engine then uses the
+        // blueprint's own port, which the outcome text reports honestly.
+        var parsedPort = int.TryParse(port, out var p) && p is > 0 and <= 65535 ? p : (int?)null;
+        var result = await _operations.InstallAsync(
+            match, instanceName, cancellationToken,
+            version: string.IsNullOrWhiteSpace(version) ? null : version,
+            port: parsedPort);
         var named = instanceName is null ? "" : $" (named '{instanceName}')";
         return result.IsSuccess
             ? ConfirmOutcome.Accepted($"Installed a new '{match}' server{named}.", verb, instanceName ?? match)
@@ -681,7 +803,7 @@ public class ServerAssistant : IServerAssistant
     ///  - Authorized reads (read_file / list_files): refused for unauthorized callers, but not capped.
     ///  - Commands (start/stop/restart/update/backup/install/uninstall): refused for unauthorized
     ///    callers; otherwise allowed through to the dispatcher, which only STAGES them (it never
-    ///    executes). Every command is propose-only (§3.5), so there is one cap — the count of ops
+    ///    executes). Every command is propose-only, so there is one cap — the count of ops
     ///    proposed this message — at <see cref="MaxStagedCommandsPerMessage"/>.
     /// The closure holds the per-message staging counter.
     /// </summary>

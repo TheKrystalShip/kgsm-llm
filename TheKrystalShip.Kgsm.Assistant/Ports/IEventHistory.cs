@@ -8,14 +8,14 @@ namespace TheKrystalShip.Kgsm.Assistant.Ports;
 /// (<see cref="AuditReadState.Available"/> with rows — possibly none — or
 /// <see cref="AuditReadState.JournalUnavailable"/> with an empty list); failure is data, never an
 /// exception. <see cref="Events"/> is ts-DESC (most-recent-first), unfiltered by event type — the
-/// caller (the <c>get_audit_log</c> / <c>get_change_timeline</c> composers) decides what subset it needs.
+/// caller (the <c>events</c> composers) decides what subset it needs.
 /// </summary>
 public sealed record EventHistoryReading(AuditReadState State, IReadOnlyList<AuditEventRow> Events);
 
 /// <summary>
 /// Reads KGSM <em>engine</em> event history from the engine's own event journal — the record of what
-/// happened — never via kgsm-api or another leaf. Backs the model-facing <c>get_audit_log</c>,
-/// <c>get_change_timeline</c> and <c>trace_root_cause</c> tools.
+/// happened — never via kgsm-api or another leaf. Backs the model-facing <c>events</c> and
+/// <c>trace_root_cause</c> tools.
 /// <para>
 /// Because the journal is a file the engine writes, this needs nothing else running: the audit tools
 /// answer on a host with no other leaf installed, which is not true of the metrics tools beside them.

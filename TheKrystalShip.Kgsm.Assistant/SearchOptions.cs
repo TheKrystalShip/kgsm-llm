@@ -3,11 +3,11 @@ using TheKrystalShip.KGSM.LeafConfig;
 namespace TheKrystalShip.Kgsm.Assistant;
 
 /// <summary>
-/// Tuning + availability for the unified <c>search</c> tool (the §3.4 aggregator). The operator-tunable
+/// Tuning + availability for the unified <c>search</c> tool. The operator-tunable
 /// thresholds bind from the "Rag" config section (the same section <c>RagOptions</c>/<c>RagEmbeddingOptions</c>
 /// read — each picks up its own keys). The two <c>*Enabled</c> flags are COMPUTED by the host wiring, not
 /// read from config: Infrastructure knows both whether RAG is on and whether a web provider is configured,
-/// so it decides — once, at composition — whether <c>search</c> is offered at all (plan §D7: a tool with no
+/// so it decides — once, at composition — whether <c>search</c> is offered at all (a tool with no
 /// real source behind it is omitted, never shown as a dead option).
 /// </summary>
 [LeafSection(Section)]
@@ -45,7 +45,7 @@ public sealed class SearchOptions
     [LeafIgnore]
     public bool WebEnabled { get; set; }
 
-    /// <summary>The <c>search</c> tool is offered iff at least one real source backs it (plan §D7).</summary>
+    /// <summary>The <c>search</c> tool is offered iff at least one real source backs it .</summary>
     [LeafIgnore]
     public bool Available => LocalEnabled || WebEnabled;
 }

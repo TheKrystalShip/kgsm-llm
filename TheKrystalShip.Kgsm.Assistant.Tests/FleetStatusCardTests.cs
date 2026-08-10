@@ -35,7 +35,7 @@ public class FleetStatusCardTests
         });
 
         // The card kind + host-scoped subject (architecture.html "primary" convention; §7 sign-off).
-        card.Tool.Should().Be(LlmTools.GetStatus);
+        card.Tool.Should().Be(LlmTools.ServerInfo);
         card.Confidence.Should().Be(Confidence.Confirmed);
         card.Subject.Should().Be(new ResultRef(ResourceKind.Host, "primary"));
 

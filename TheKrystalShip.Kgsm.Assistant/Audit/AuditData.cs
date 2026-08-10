@@ -42,10 +42,10 @@ public sealed record AuditEventRow(
     string? Blueprint = null);
 
 /// <summary>
-/// The shared structured card payload for both <c>get_audit_log</c> and <c>get_change_timeline</c>
-/// (toolbox-plan §4.1): the two tools read the same engine-event source and differ only in filtering
+/// The shared structured card payload for both scopes of <c>events</c>
+///: the two tools read the same engine-event source and differ only in filtering
 /// and framing, so they share one card shape and are told apart by the producing
-/// <see cref="Envelope.ToolResult{TData}.Tool"/> (<c>"get_audit_log"</c> vs <c>"get_change_timeline"</c>).
+/// <see cref="Envelope.ToolResult{TData}.Tool"/> (its <c>Section</c> is <c>"all"</c> vs <c>"changes"</c>).
 /// <see cref="Events"/> is already ts-DESC (most-recent-first) and, for the timeline tool, already
 /// filtered to the state-changing subset (see <c>ChangeTimelineReport</c>) — the surface renders
 /// whatever it's given, no further filtering. An honest empty list ("no events recorded" / "no

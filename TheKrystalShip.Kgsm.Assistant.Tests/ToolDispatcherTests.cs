@@ -65,12 +65,17 @@ public class ToolDispatcherTests
     /// A settlement window short enough that an unsettled auto-run closes in milliseconds. The real
     /// window is 90 seconds, which is right in production and useless in a suite.
     /// </summary>
+    // The fail-closed defaults: these tests cover routing and staging, not the facts aspects, so an
+    // honest "authority unavailable" is the right stand-in rather than a fabricated reading.
+    private readonly IServerFacts _serverFacts = new UnavailableServerFacts();
+    private readonly IHostFacts _hostFacts = new UnavailableHostFacts();
+
     private readonly SettlementTiming _settlement =
         new(TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(10));
 
     private ToolDispatcher Create() =>
         new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp,
-            _blueprintAuthoring, _settlement, NullLogger<ToolDispatcher>.Instance);
+            _serverFacts, _hostFacts, _blueprintAuthoring, _settlement, NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -121,7 +126,7 @@ public class ToolDispatcherTests
         _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Success("running, pid 123"));
 
-        var result = await Summary(Call(LlmTools.GetStatus, "minecraft"));
+        var result = await Summary(Call(LlmTools.ServerInfo, "minecraft"));
 
         result.Should().Contain("Status for minecraft");
         await _operations.Received(1).GetStatusAsync("minecraft", Arg.Any<CancellationToken>());
@@ -134,7 +139,7 @@ public class ToolDispatcherTests
             .Returns(Result.Success("stopped"));
 
         // "pvp" is a substring of exactly one instance.
-        await Summary(Call(LlmTools.GetStatus, "pvp"));
+        await Summary(Call(LlmTools.ServerInfo, "pvp"));
 
         await _operations.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
     }
@@ -143,7 +148,7 @@ public class ToolDispatcherTests
     public async Task AmbiguousName_AsksUser_AndDoesNotExecute()
     {
         // "terraria" matches two instances by game type / substring.
-        var result = await Summary(Call(LlmTools.GetStatus, "terraria"));
+        var result = await Summary(Call(LlmTools.ServerInfo, "terraria"));
 
         result.Should().Contain("Ambiguous")
             .And.Contain("terraria-pvp")
@@ -154,7 +159,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task UnknownName_ReturnsMiss_WithKnownList()
     {
-        var result = await Summary(Call(LlmTools.GetStatus, "doesnotexist"));
+        var result = await Summary(Call(LlmTools.ServerInfo, "doesnotexist"));
 
         result.Should().Contain("no instance named").And.Contain("minecraft");
         await _operations.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -171,7 +176,7 @@ public class ToolDispatcherTests
             }));
 
         var result = await Summary(
-            new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
+            new LlmToolCall(LlmTools.ServerInfo, new Dictionary<string, string?>()));
 
         result.Should().Contain("minecraft: running").And.Contain("terraria-pvp: stopped");
 
@@ -194,11 +199,11 @@ public class ToolDispatcherTests
             }));
 
         var output = await Create().ExecuteAsync(
-            new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
+            new LlmToolCall(LlmTools.ServerInfo, new Dictionary<string, string?>()));
 
         output.Summary.Should().Contain("minecraft: running").And.Contain("broken: status unavailable");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.GetStatus.Name);
+        card.Tool.Should().Be(LlmTools.ServerInfo.Name);
         card.Subject.Should().Be(new ResultRef(ResourceKind.Host, "primary"));
         var data = card.Data.Should().BeOfType<FleetStatusData>().Subject;
         data.Running.Should().Be(1);
@@ -216,7 +221,7 @@ public class ToolDispatcherTests
         _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Success("running, pid 123"));
 
-        var output = await Create().ExecuteAsync(Call(LlmTools.GetStatus, "minecraft"));
+        var output = await Create().ExecuteAsync(Call(LlmTools.ServerInfo, "minecraft"));
 
         output.Summary.Should().Contain("Status for minecraft");
         output.Data.Should().BeNull();
@@ -233,7 +238,7 @@ public class ToolDispatcherTests
             }));
 
         var result = await Summary(
-            new LlmToolCall(LlmTools.GetStatus, new Dictionary<string, string?>()));
+            new LlmToolCall(LlmTools.ServerInfo, new Dictionary<string, string?>()));
 
         // The §3.7 guard: a could-not-read instance must not masquerade as stopped.
         result.Should().Contain("status unavailable").And.Contain("regenerated");
@@ -759,17 +764,22 @@ public class ToolDispatcherTests
     // card (an empty/unavailable result is still a real, honestly-worded answer worth showing).
 
     private static LlmToolCall AuditLogCall(string? instance = null, string? window = null) =>
-        new(LlmTools.GetAuditLog, new Dictionary<string, string?>
+        new(LlmTools.Events, new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["window"] = window,
         });
 
-    private static LlmToolCall ChangeTimelineCall(string? instance = null, string? range = null) =>
-        new(LlmTools.GetChangeTimeline, new Dictionary<string, string?>
+    /// <summary>
+    /// The change-scoped read. One <c>events</c> tool serves both scopes, so the narrowing that used
+    /// to be a separate tool is now this argument — which is exactly what these tests must exercise.
+    /// </summary>
+    private static LlmToolCall ChangeTimelineCall(string? instance = null, string? window = null) =>
+        new(LlmTools.Events, new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
-            ["range"] = range,
+            ["scope"] = "changes",
+            ["window"] = window,
         });
 
     private static readonly AuditEventRow SampleStart =
@@ -786,7 +796,7 @@ public class ToolDispatcherTests
         await _events.Received(1).GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
         output.Summary.Should().Contain("all servers");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.GetAuditLog.Name);
+        card.Tool.Should().Be(LlmTools.Events.Name);
         var data = card.Data.Should().BeOfType<AuditData>().Subject;
         data.Instance.Should().BeNull();
         data.Events.Should().ContainSingle();
@@ -849,7 +859,7 @@ public class ToolDispatcherTests
         await _events.Received(1).GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
         output.Summary.Should().Contain("1 change for all servers");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.GetChangeTimeline.Name);
+        card.Tool.Should().Be(LlmTools.Events.Name);
     }
 
     [Fact]

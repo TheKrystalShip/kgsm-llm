@@ -24,7 +24,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// cached <see cref="IServerInventory"/>; live status reads go through
 /// <see cref="IServerOperations"/>. Every COMMAND — the merged lifecycle
 /// <c>server_command</c> (start/stop/restart/update/backup), plus install/uninstall and
-/// set_config — is propose-only (§3.5): the dispatcher resolves and STAGES it into the
+/// set_config — is propose-only: the dispatcher resolves and STAGES it into the
 /// <see cref="IConfirmationContext"/> — it is never executed here. The matching op runs
 /// later, from <see cref="ServerAssistant.ConfirmAsync"/>, only after a human confirms.
 /// <para>
@@ -45,6 +45,8 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IEventHistory _events;
     private readonly INetworkInfo _network;
     private readonly IUpnpInfo _upnp;
+    private readonly IServerFacts _serverFacts;
+    private readonly IHostFacts _hostFacts;
     private readonly IBlueprintAuthoring _blueprintAuthoring;
     private readonly SettlementTiming _settlement;
     private readonly ILogger<ToolDispatcher> _logger;
@@ -59,6 +61,8 @@ public class ToolDispatcher : IToolDispatcher
         IEventHistory events,
         INetworkInfo network,
         IUpnpInfo upnp,
+        IServerFacts serverFacts,
+        IHostFacts hostFacts,
         IBlueprintAuthoring blueprintAuthoring,
         SettlementTiming settlement,
         ILogger<ToolDispatcher> logger)
@@ -72,6 +76,8 @@ public class ToolDispatcher : IToolDispatcher
         _events = events;
         _network = network;
         _upnp = upnp;
+        _serverFacts = serverFacts;
+        _hostFacts = hostFacts;
         _blueprintAuthoring = blueprintAuthoring;
         _settlement = settlement;
         _logger = logger;
@@ -84,20 +90,20 @@ public class ToolDispatcher : IToolDispatcher
 
         try
         {
-            if (call.Name == LlmTools.GetStatus)
-                return await GetStatusAsync(call, cancellationToken);
-            if (call.Name == LlmTools.ListBlueprints)
-                return await ListBlueprintsAsync(cancellationToken);
+            if (call.Name == LlmTools.ServerInfo)
+                return await ServerInfoAsync(call, cancellationToken);
+            if (call.Name == LlmTools.HostInfo)
+                return await HostInfoAsync(call, cancellationToken);
+            if (call.Name == LlmTools.BlueprintInfo)
+                return await BlueprintInfoAsync(call, cancellationToken);
             if (call.Name == LlmTools.RunHealthCheck)
                 return await RunHealthCheckAsync(call, cancellationToken);
             if (call.Name == LlmTools.GetPerformance)
                 return await GetPerformanceAsync(call, cancellationToken);
             if (call.Name == LlmTools.GetNetwork)
                 return await GetNetworkAsync(call, cancellationToken);
-            if (call.Name == LlmTools.GetAuditLog)
-                return await GetAuditLogAsync(call, cancellationToken);
-            if (call.Name == LlmTools.GetChangeTimeline)
-                return await GetChangeTimelineAsync(call, cancellationToken);
+            if (call.Name == LlmTools.Events)
+                return await EventsAsync(call, cancellationToken);
             if (call.Name == LlmTools.TraceRootCause)
                 return await TraceRootCauseAsync(call, cancellationToken);
             if (call.Name == LlmTools.Search)
@@ -112,8 +118,14 @@ public class ToolDispatcher : IToolDispatcher
                 return await ReadFileAsync(call, cancellationToken);
             if (call.Name == LlmTools.ListFiles)
                 return await ListFilesAsync(call, cancellationToken);
+            if (call.Name == LlmTools.ReadConsole)
+                return await ReadConsoleAsync(call, cancellationToken);
             if (call.Name == LlmTools.ServerCommand)
                 return await StageServerCommandAsync(call, cancellationToken);
+            if (call.Name == LlmTools.BackupCommand)
+                return await StageBackupCommandAsync(call, cancellationToken);
+            if (call.Name == LlmTools.PlayerCommand)
+                return await StagePlayerCommandAsync(call, cancellationToken);
             if (call.Name == LlmTools.UninstallServer)
                 return await StageUninstallAsync(call, cancellationToken);
             if (call.Name == LlmTools.InstallServer)
@@ -132,18 +144,8 @@ public class ToolDispatcher : IToolDispatcher
         }
     }
 
-    private async Task<string> ListBlueprintsAsync(CancellationToken cancellationToken)
-    {
-        var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
-        if (blueprints.Count == 0)
-            return "There are no installable blueprints.";
-
-        var names = blueprints.OrderBy(k => k);
-        return "Installable game types:\n" + string.Join("\n", names.Select(n => $"- {n}"));
-    }
-
     /// <summary>
-    /// The unified knowledge lookup via the <see cref="ISearch"/> aggregator (plan §3.4): local
+    /// The unified knowledge lookup via the <see cref="ISearch"/> aggregator: local
     /// indexed docs first, public web fallback. The aggregator returns ready-to-use grounding text
     /// (and honest "nothing found" / "couldn't search" messages) and never throws, so this handler
     /// only guards the blank query and relays. The per-message call cap is enforced upstream in the
@@ -211,11 +213,11 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// The <c>create_blueprint</c> authoring pipeline (plan §"Pipeline"), run entirely by
+    /// The <c>create_blueprint</c> authoring pipeline , run entirely by
     /// <see cref="IBlueprintAuthoring"/> — this handler only validates the argument and relays. Unlike
-    /// every command tool, this is NOT staged: it is authorized-and-autonomous (§LlmTools.AuthorizedActions),
+    /// every command tool, this is NOT staged: it is authorized-and-autonomous (see <see cref="LlmTools.AuthorizedActions"/>),
     /// so it runs to completion here and returns the real outcome. Always carries a card (even a
-    /// "couldn't do this one" outcome is worth showing — mirrors <see cref="GetAuditLogAsync"/>).
+    /// "couldn't do this one" outcome is worth showing — mirrors <see cref="EventsAsync"/>).
     /// </summary>
     private async Task<ToolOutput> CreateBlueprintAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
@@ -336,35 +338,316 @@ public class ToolDispatcher : IToolDispatcher
         : $"{bytes} B";
 
     /// <summary>
-    /// Merged status read (toolbox catalog §4.1): no instance_name → a single
+    /// Merged status read: no instance_name → a single
     /// fleet-wide summary (the one-shot replacement for fanning a per-instance
     /// liveness loop, which is the agent-loop iteration-cap cause); an
     /// instance_name → detailed status for that one server.
     /// <para>
-    /// Only the fleet mode carries a structured card (Phase 2 §5·b): it has structured data
+    /// Only the fleet mode carries a structured card: it has structured data
     /// (<see cref="FleetStatusEntry"/>[]). The single-server mode returns kgsm's opaque status
     /// string — no structured source — so it stays summary-only (a card would be fabricated).
     /// </para>
     /// </summary>
-    private async Task<ToolOutput> GetStatusAsync(LlmToolCall call, CancellationToken cancellationToken)
+    /// <summary>
+    /// The per-instance read. <c>aspect</c> defaults to <c>status</c>, so a bare
+    /// <c>server_info(instance)</c> behaves exactly as the old single-purpose status tool did — the
+    /// enum is opt-in, which is what keeps the most-called tool's routing intact while the other
+    /// aspects replace tools the model used to have to choose between.
+    /// </summary>
+    private async Task<ToolOutput> ServerInfoAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
+        var aspect = call.Arg("aspect")?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(aspect))
+            aspect = "status";
+
+        if (!LlmTools.ServerInfoAspects.Contains(aspect))
+            return $"Error: '{aspect}' is not a known aspect. "
+                 + $"Valid aspects: {string.Join(", ", LlmTools.ServerInfoAspects)}.";
+
         var name = call.Arg("instance_name")?.Trim();
+
+        // The whole-host reads answer for every instance in one call, so they run before any
+        // per-instance resolution — asking them per instance would be N round-trips for one map.
         if (string.IsNullOrWhiteSpace(name))
-            return await GetFleetStatusAsync(cancellationToken);
+        {
+            return aspect switch
+            {
+                "status" => await GetFleetStatusAsync(cancellationToken),
+                "players" => await PresenceAsync(null, cancellationToken),
+                "autostart" => await AutostartAsync(null, cancellationToken),
+                _ => $"Error: '{aspect}' needs an instance_name — it reports on one server.",
+            };
+        }
 
         var (resolved, error) = await ResolveInstanceAsync(name, cancellationToken);
         if (error is not null)
             return error;
 
-        var result = await _operations.GetStatusAsync(resolved!, cancellationToken);
+        return aspect switch
+        {
+            "status" => await SingleStatusAsync(resolved!, cancellationToken),
+            // The engine's configuration SUMMARY, never the raw .config.ini. server_info is offered to
+            // every caller, and reading a server's files is gated to authorized ones — routing this at
+            // read_file would hand the open tier a capability the gate exists to withhold.
+            "config" => await ConfigSummaryAsync(resolved!, cancellationToken),
+            "version" => await VersionAsync(resolved!, cancellationToken),
+            "players" => await PresenceAsync(resolved, cancellationToken),
+            "backups" => await BackupsAsync(resolved!, cancellationToken),
+            "note" => await NoteAsync(resolved!, cancellationToken),
+            "autostart" => await AutostartAsync(resolved, cancellationToken),
+            _ => $"Error: '{aspect}' is not a known aspect.",
+        };
+    }
+
+    private async Task<ToolOutput> SingleStatusAsync(string resolved, CancellationToken cancellationToken)
+    {
+        var result = await _operations.GetStatusAsync(resolved, cancellationToken);
         if (!result.IsSuccess)
             return $"Error: could not get status for '{resolved}' ({result.Error ?? "unknown error"}).";
 
         return $"Status for {resolved}:\n{result.Value}";
     }
 
+    private async Task<ToolOutput> VersionAsync(string resolved, CancellationToken cancellationToken)
+    {
+        var facts = await _serverFacts.GetVersionAsync(resolved, cancellationToken);
+        if (facts.State == FactsState.Unavailable)
+            return $"Couldn't read {resolved}'s version — the engine didn't answer. "
+                 + "That isn't the same as it being up to date.";
+
+        var installed = facts.Installed ?? "unknown";
+        var update = facts.UpdateAvailable switch
+        {
+            true => $"An update IS available (latest: {facts.Latest ?? "unknown"}).",
+            false => "It is up to date.",
+            // The engine did not manage a comparison; saying "up to date" here would invent one.
+            null => "Whether an update is available could not be checked.",
+        };
+        var when = facts.CheckedAt is { } at ? $" Checked {at:yyyy-MM-dd HH:mm} UTC." : string.Empty;
+        return $"{resolved} is running version {installed}. {update}{when}";
+    }
+
     /// <summary>
-    /// One-shot fleet status (Phase 2 §5·b): fetches the neutral entries and returns a
+    /// Player presence, for one instance or every one. The detection qualifier travels with the
+    /// roster: an empty list only means "nobody is connected" when the supervisor can actually
+    /// observe this game, and rendering the other case as "0 online" would state something the host
+    /// does not know.
+    /// </summary>
+    private async Task<ToolOutput> PresenceAsync(string? resolved, CancellationToken cancellationToken)
+    {
+        var reading = await _serverFacts.GetPresenceAsync(cancellationToken);
+        if (reading.State == FactsState.Unavailable)
+            return "Couldn't read who's online — the supervisor didn't answer. "
+                 + "That isn't the same as nobody being connected.";
+
+        var rows = resolved is null
+            ? reading.Instances
+            : reading.Instances
+                .Where(i => string.Equals(i.Instance, resolved, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+        if (rows.Count == 0)
+            return resolved is null
+                ? "The supervisor is tracking no servers, so there is nobody to report."
+                : $"The supervisor isn't tracking '{resolved}', so who's connected is unknown.";
+
+        var lines = rows.Select(r =>
+        {
+            if (!r.IsMeasured)
+                return $"- {r.Instance}: this game doesn't report connected players, so who's on it is unknown.";
+            if (r.Players.Count == 0)
+                return $"- {r.Instance}: nobody connected.";
+            var who = r.Players.Select(p => p.Name ?? p.Id ?? "(unnamed)");
+            return $"- {r.Instance}: {r.Players.Count} connected — {string.Join(", ", who)}.";
+        });
+
+        return "Connected players:\n" + string.Join("\n", lines);
+    }
+
+    private async Task<ToolOutput> BackupsAsync(string resolved, CancellationToken cancellationToken)
+    {
+        var listing = await _serverFacts.GetBackupsAsync(resolved, cancellationToken);
+        if (listing.State == FactsState.Unavailable)
+            return $"Couldn't list {resolved}'s backups — the engine didn't answer. "
+                 + "That isn't the same as it having none.";
+
+        if (listing.Backups.Count == 0)
+            return $"{resolved} has no backups.";
+
+        var lines = listing.Backups.Select(b =>
+        {
+            var when = b.CreatedAt is { } at ? at.ToString("yyyy-MM-dd HH:mm") : "date unknown";
+            var version = b.Version is null ? string.Empty : $", version {b.Version}";
+            var size = b.SizeBytes > 0 ? $", {b.SizeBytes / (1024.0 * 1024.0):F1} MB" : string.Empty;
+            return $"- {b.Id} ({when}{version}{size})";
+        });
+
+        return $"Backups for {resolved}, most recent first:\n" + string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// The engine's own view of an instance's configuration. Deliberately the status read rather than
+    /// the <c>.config.ini</c> itself: this aspect is reachable by every caller, and file contents stay
+    /// behind the authorized <c>read_file</c>.
+    /// </summary>
+    private async Task<ToolOutput> ConfigSummaryAsync(string resolved, CancellationToken cancellationToken)
+    {
+        var result = await _operations.GetStatusAsync(resolved, cancellationToken);
+        return result.IsSuccess
+            ? $"Configuration for {resolved}:\n{result.Value}"
+            : $"Couldn't read {resolved}'s configuration ({result.Error ?? "unknown error"}).";
+    }
+
+    private async Task<ToolOutput> NoteAsync(string resolved, CancellationToken cancellationToken)
+    {
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        if (!instances.ContainsKey(resolved))
+            return $"Error: '{resolved}' is not a known server.";
+
+        var result = await _operations.GetStatusAsync(resolved, cancellationToken);
+        return result.IsSuccess
+            ? $"Status for {resolved} (its note, if set, appears here):\n{result.Value}"
+            : $"Couldn't read {resolved}'s note ({result.Error ?? "unknown error"}).";
+    }
+
+    private async Task<ToolOutput> AutostartAsync(string? resolved, CancellationToken cancellationToken)
+    {
+        var reading = await _serverFacts.GetAutostartAsync(cancellationToken);
+        if (reading.State == FactsState.Unavailable)
+            return "Couldn't read which servers start at boot — the supervisor didn't answer.";
+
+        if (resolved is not null)
+        {
+            var on = reading.EnabledInstances.Any(
+                n => string.Equals(n, resolved, StringComparison.OrdinalIgnoreCase));
+            return on
+                ? $"{resolved} IS set to start when the host boots."
+                : $"{resolved} is NOT set to start when the host boots.";
+        }
+
+        return reading.EnabledInstances.Count == 0
+            ? "No servers are set to start when the host boots."
+            : "Set to start at boot:\n" + string.Join("\n", reading.EnabledInstances.Select(n => $"- {n}"));
+    }
+
+    /// <summary>The host machine's own vitals and port usage — never any one server's.</summary>
+    private async Task<ToolOutput> HostInfoAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var aspect = call.Arg("aspect")?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(aspect))
+            aspect = "vitals";
+
+        if (aspect is "ports" or "conflicts")
+        {
+            var usage = await _hostFacts.GetPortUsageAsync(cancellationToken);
+            if (usage.State == FactsState.Unavailable)
+                return "Couldn't read the host's port usage — the engine didn't answer. "
+                     + "That isn't the same as nothing being bound.";
+
+            if (aspect == "conflicts")
+                return usage.Conflicts.Count == 0
+                    ? "No port conflicts between the configured servers."
+                    : "Port conflicts:\n" + string.Join("\n", usage.Conflicts.Select(c => $"- {c}"));
+
+            return usage.UsedPorts.Count == 0
+                ? "Nothing is currently bound on the host's ports."
+                : "Ports in use on the host:\n" + string.Join("\n", usage.UsedPorts.Select(p => $"- {p}"));
+        }
+
+        if (aspect != "vitals")
+            return $"Error: '{aspect}' is not a known aspect. "
+                 + $"Valid aspects: {string.Join(", ", LlmTools.HostInfoAspects)}.";
+
+        var facts = await _hostFacts.GetAsync(cancellationToken);
+        if (facts.State == FactsState.Unavailable)
+            return "Couldn't read the host's vitals — the engine didn't answer.";
+
+        var parts = new List<string>();
+        if (facts.Uptime is not null) parts.Add($"Uptime: {facts.Uptime}");
+        if (facts.Load is not null)
+            parts.Add($"Load (1/5/15 min): {facts.Load.OneMin} / {facts.Load.FiveMin} / {facts.Load.FifteenMin}");
+        if (facts.Memory is not null)
+            parts.Add($"Memory: {facts.Memory.Used} used of {facts.Memory.Total} ({facts.Memory.Available} available)");
+        if (facts.Disk is not null)
+        {
+            var pct = facts.Disk.UsedPercent is { } p ? $"{p}% used" : "usage unknown";
+            parts.Add($"Disk{(facts.Disk.Mount is null ? "" : $" ({facts.Disk.Mount})")}: "
+                    + $"{pct}, {facts.Disk.Available ?? "unknown"} free of {facts.Disk.Size ?? "unknown"}");
+        }
+        if (facts.ExternalIp is not null) parts.Add($"External IP: {facts.ExternalIp}");
+        if (facts.RebootRequired is { } reboot)
+            parts.Add(reboot ? "A reboot is pending." : "No reboot pending.");
+
+        return parts.Count == 0
+            ? "The host reported no vitals."
+            : "Host:\n" + string.Join("\n", parts.Select(p => $"- {p}"));
+    }
+
+    /// <summary>
+    /// The catalog read: every installable game type, or one game type's detail. Replaces a bare
+    /// name list — "what does this game need?" was previously unanswerable without a web search.
+    /// </summary>
+    private async Task<ToolOutput> BlueprintInfoAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var name = call.Arg("blueprint_name")?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
+            if (blueprints.Count == 0)
+                return "There are no installable blueprints.";
+
+            return "Installable game types:\n"
+                 + string.Join("\n", blueprints.OrderBy(k => k).Select(n => $"- {n}"));
+        }
+
+        var detail = await _inventory.GetBlueprintDetailAsync(name, cancellationToken);
+        if (detail is null)
+            return $"'{name}' is not a known game type. Use blueprint_info with no name to list them.";
+
+        var parts = new List<string> { $"Game type: {detail.DisplayName ?? detail.Name} ({detail.Kind})" };
+        if (detail.Description is not null) parts.Add(detail.Description);
+        if (detail.Ports.Count > 0) parts.Add($"Ports: {string.Join(", ", detail.Ports)}");
+        if (detail.MaxPlayers is { } players) parts.Add($"Max players: {players}");
+        if (detail.MinRamMb is { } min) parts.Add($"Minimum RAM: {min} MB");
+        if (detail.RecommendedRamMb is { } rec) parts.Add($"Recommended RAM: {rec} MB");
+        if (detail.BaseDiskMb is { } disk) parts.Add($"Base disk: {disk} MB");
+        if (detail.SteamAccountRequired) parts.Add("Requires a Steam account to install.");
+        parts.Add(detail.ModerationVerbs.Count == 0
+            ? "This game's server supports no player moderation commands."
+            : $"Player moderation supported: {string.Join(", ", detail.ModerationVerbs)}.");
+
+        return string.Join("\n", parts);
+    }
+
+    /// <summary>Reads the supervisor's captured console output for one instance.</summary>
+    private async Task<ToolOutput> ReadConsoleAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var lines = int.TryParse(call.Arg("lines")?.Trim(), out var n) && n > 0
+            ? Math.Min(n, MaxConsoleLines)
+            : DefaultConsoleLines;
+
+        var tail = await _serverFacts.GetConsoleTailAsync(resolved!, lines, cancellationToken);
+        if (tail.State == FactsState.Unavailable)
+            return $"Couldn't read {resolved}'s console — the supervisor didn't answer. "
+                 + "That isn't the same as it having produced no output.";
+
+        return tail.Lines.Count == 0
+            ? $"{resolved} has produced no console output (it may not be running)."
+            : $"Recent console output for {resolved}:\n" + string.Join("\n", tail.Lines);
+    }
+
+    private const int DefaultConsoleLines = 50;
+    private const int MaxConsoleLines = 500;
+
+    private static string? NullIfBlank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// One-shot fleet status: fetches the neutral entries and returns a
     /// <see cref="ToolOutput"/> whose <c>Summary</c> is the model's grounding text AND whose
     /// <c>Data</c> carries the <see cref="FleetStatusCard"/>. An instance whose status could not be
     /// read surfaces as "status unavailable (reason)"/<see cref="ServerRunState.Unknown"/>, never
@@ -383,11 +666,11 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// The first aggregator (toolbox-plan §3.4): resolves the instance, fetches the
+    /// The first aggregator: resolves the instance, fetches the
     /// neutral health inputs via the port, and runs the deterministic
     /// <see cref="HealthCheckAggregator"/>. Returns a <see cref="ToolOutput"/> whose
-    /// <c>Summary</c> is the model's grounding text (§3.6) AND whose <c>Data</c> carries the
-    /// structured <see cref="ToolResultCard"/> (toolbox-plan §5·c) for a streaming surface — the
+    /// <c>Summary</c> is the model's grounding text AND whose <c>Data</c> carries the
+    /// structured <see cref="ToolResultCard"/> for a streaming surface — the
     /// only tool that has a real card today (Phase 2). The model still sees only the Summary; the
     /// card never re-enters the conversation. All judgment lives in the aggregator, so this
     /// handler only orchestrates. The error paths return a bare string (implicitly a summary-only
@@ -474,42 +757,38 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// The unfiltered engine-event read (toolbox-plan §4.1): resolves an OPTIONAL instance (blank →
+    /// The unfiltered engine-event read: resolves an OPTIONAL instance (blank →
     /// every server on this host), maps the model's <c>window</c> to a <c>since</c> bound, reads the
     /// engine's raw event journal via <see cref="IEventHistory"/> directly (never via kgsm-api),
     /// and runs the pure <see cref="AuditReport"/>. Always carries a card: an empty/unavailable result
     /// is still a real, honestly-worded answer worth showing, unlike a not-running metrics snapshot.
     /// </summary>
-    private async Task<ToolOutput> GetAuditLogAsync(LlmToolCall call, CancellationToken cancellationToken)
-    {
-        var (resolved, error) = await ResolveOptionalInstanceAsync(call.Arg("instance_name"), cancellationToken);
-        if (error is not null)
-            return error;
-
-        var (window, sinceMs) = AuditWindow.Resolve(call.Arg("window"), AuditWindow.DefaultAuditWindow, DateTimeOffset.UtcNow);
-        var reading = await _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
-        var result = AuditReport.Build(reading, resolved, window);
-        return new ToolOutput(result.Summary, ToolResultCard.From(result));
-    }
-
     /// <summary>
-    /// Same source as <see cref="GetAuditLogAsync"/>, narrowed to the state-changing subset and framed
-    /// as "what changed" (see <see cref="AuditReport.ChangeEventTypes"/> for the exact set and why).
+    /// The engine's event history. One tool over both scopes: the unfiltered feed and the
+    /// state-changing subset read the SAME journal and differ only in which rows they keep (see
+    /// <see cref="AuditReport.ChangeEventTypes"/>) and how far back they default to. They were two
+    /// tools whose descriptions both plausibly matched "when was X updated?", which is exactly the
+    /// overlap a small model routes badly — the scope enum makes it one decision instead of two.
     /// </summary>
-    private async Task<ToolOutput> GetChangeTimelineAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<ToolOutput> EventsAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var (resolved, error) = await ResolveOptionalInstanceAsync(call.Arg("instance_name"), cancellationToken);
         if (error is not null)
             return error;
 
-        var (range, sinceMs) = AuditWindow.Resolve(call.Arg("range"), AuditWindow.DefaultChangeRange, DateTimeOffset.UtcNow);
+        var changes = string.Equals(call.Arg("scope")?.Trim(), "changes", StringComparison.OrdinalIgnoreCase);
+        var fallback = changes ? AuditWindow.DefaultChangeRange : AuditWindow.DefaultAuditWindow;
+        var (window, sinceMs) = AuditWindow.Resolve(call.Arg("window"), fallback, DateTimeOffset.UtcNow);
+
         var reading = await _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
-        var result = AuditReport.BuildChangeTimeline(reading, resolved, range);
+        var result = changes
+            ? AuditReport.BuildChangeTimeline(reading, resolved, window)
+            : AuditReport.Build(reading, resolved, window);
         return new ToolOutput(result.Summary, ToolResultCard.From(result));
     }
 
     /// <summary>
-    /// The capstone aggregator (toolbox-plan §3.4/§7·Q1): resolves the REQUIRED instance (root cause
+    /// The capstone aggregator: resolves the REQUIRED instance (root cause
     /// is always about one server), then fetches the three sources <see cref="RootCauseAggregator"/>
     /// composes — the event timeline (<see cref="IEventHistory"/>), a metrics window
     /// (<see cref="IServerMetrics"/>), and the health snapshot (<see cref="IServerOperations.GetHealthSnapshotAsync"/>,
@@ -519,7 +798,7 @@ public class ToolDispatcher : IToolDispatcher
     /// whole call; the aggregator's rules table then simply can't evaluate the rules that need it. No
     /// nested model call happens anywhere in this path — <see cref="RootCauseAggregator.Run"/> is pure.
     /// Always attaches a card: even a "nothing matched" correlation or a fully-degraded read is a real,
-    /// honestly-worded answer worth showing (mirrors <see cref="GetAuditLogAsync"/>).
+    /// honestly-worded answer worth showing (mirrors <see cref="EventsAsync"/>).
     /// </summary>
     private async Task<ToolOutput> TraceRootCauseAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
@@ -544,7 +823,7 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// The merged lifecycle command (§4.1): maps the model-supplied <c>verb</c>
+    /// The merged lifecycle command: maps the model-supplied <c>verb</c>
     /// (start/stop/restart/update/backup) onto its <see cref="ConfirmationKind"/> and
     /// stages it. An unknown or missing verb is refused before anything is staged and the
     /// valid verbs are listed back so the model can self-correct — defense-in-depth behind
@@ -562,7 +841,89 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// The lifecycle command (§4.1). Default is propose-only (§3.5): resolves the instance, then
+    /// Acting on an instance's EXISTING backups. Restore and delete name a specific archive; prune
+    /// takes a keep-count instead. The archive id is NOT resolved against a listing here — the engine
+    /// owns which ids exist, and inventing a "closest match" to a mistyped id is how the wrong backup
+    /// gets restored over live data.
+    /// </summary>
+    private async Task<string> StageBackupCommandAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var verb = call.Arg("verb");
+        var kind = LlmTools.BackupCommandKind(verb);
+        if (kind is null)
+            return $"Error: '{verb ?? "(none)"}' is not a valid backup action. " +
+                   $"Valid actions: {string.Join(", ", LlmTools.BackupCommandVerbs)}.";
+
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var backupName = call.Arg("backup_name")?.Trim();
+        if (kind is ConfirmationKind.BackupRestore or ConfirmationKind.BackupDelete
+            && string.IsNullOrWhiteSpace(backupName))
+            return $"Error: a {verb} needs 'backup_name' — the id of the backup to act on. " +
+                   "List them with server_info(aspect=backups) first.";
+
+        var keep = call.Arg("keep")?.Trim();
+        if (kind is ConfirmationKind.BackupPrune
+            && !string.IsNullOrWhiteSpace(keep)
+            && (!int.TryParse(keep, out var parsed) || parsed < 1))
+            return "Error: 'keep' must be a whole number of backups to keep, at least 1.";
+
+        _confirmations.Stage(new PendingConfirmation(
+            kind.Value, resolved!, ConfigKey: backupName, ConfigValue: keep));
+
+        return $"Staged a request to {ConfirmationKinds.Verb(kind.Value)} '{resolved}' for confirmation. " +
+               "A confirmation prompt with a button has been shown to the user. This is NOT done yet and " +
+               "will only run if a permitted human clicks Confirm — tell the user it's awaiting their " +
+               "confirmation.";
+    }
+
+    /// <summary>
+    /// Player moderation. Refused up front for a game whose blueprint declares no command for the
+    /// requested verb: the assistant saying "I've proposed a ban" on a game that cannot ban is a
+    /// promise the confirm step would then break.
+    /// </summary>
+    private async Task<string> StagePlayerCommandAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var verb = call.Arg("verb")?.Trim().ToLowerInvariant();
+        var kind = LlmTools.PlayerCommandKind(verb);
+        if (kind is null)
+            return $"Error: '{verb ?? "(none)"}' is not a valid moderation action. " +
+                   $"Valid actions: {string.Join(", ", LlmTools.PlayerCommandVerbs)}.";
+
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var target = call.Arg("target")?.Trim();
+        if (string.IsNullOrWhiteSpace(target))
+            return "Error: player moderation needs a 'target' — which player to act on.";
+
+        // Whether this game supports the verb is the blueprint's fact, so ask it rather than staging
+        // something the engine will refuse later.
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        if (instances.TryGetValue(resolved!, out var blueprint))
+        {
+            var detail = await _inventory.GetBlueprintDetailAsync(blueprint, cancellationToken);
+            if (detail is not null && !detail.ModerationVerbs.Contains(verb!))
+                return detail.ModerationVerbs.Count == 0
+                    ? $"'{resolved}' runs {blueprint}, whose server supports no player moderation " +
+                      "commands at all. Tell the user rather than proposing one."
+                    : $"'{resolved}' runs {blueprint}, whose server cannot {verb}. It supports: " +
+                      $"{string.Join(", ", detail.ModerationVerbs)}. Tell the user rather than proposing one.";
+        }
+
+        _confirmations.Stage(new PendingConfirmation(kind.Value, resolved!, ConfigKey: target));
+
+        return $"Staged a request to {ConfirmationKinds.Verb(kind.Value)} '{resolved}' for confirmation. " +
+               "A confirmation prompt with a button has been shown to the user. This is NOT done yet and " +
+               "will only run if a permitted human clicks Confirm — tell the user it's awaiting their " +
+               "confirmation.";
+    }
+
+    /// <summary>
+    /// The lifecycle command. Default is propose-only: resolves the instance, then
     /// STAGES the command for human confirmation instead of executing it — the same path
     /// uninstall/install take. Resolution problems (ambiguous / unknown) short-circuit to the model
     /// so it asks the user, and nothing is staged for an unresolved target.
@@ -613,7 +974,10 @@ public class ToolDispatcher : IToolDispatcher
             ConfirmationKind.Restart => _operations.RestartAsync,
             ConfirmationKind.Update => _operations.UpdateAsync,
             ConfirmationKind.Backup => _operations.CreateBackupAsync,
-            _ => null,   // not a lifecycle verb → fall back to staging (defense in depth; server_command never maps here)
+            // Not a lifecycle verb → fall back to staging. server_command's autostart verbs land here
+            // deliberately: the auto-accept toggle covers acting on a running server, and changing what
+            // happens at the next boot is a different intent that keeps its human confirmation.
+            _ => null,
         };
 
         if (op is null)
@@ -679,16 +1043,28 @@ public class ToolDispatcher : IToolDispatcher
             instanceName = null;
         }
 
-        _confirmations.Stage(new PendingConfirmation(ConfirmationKind.Install, blueprint!, instanceName));
+        // Optional install overrides. A port that isn't a number is refused rather than dropped: an
+        // install silently landing on the blueprint's default port is not what was asked for.
+        var version = call.Arg("version")?.Trim();
+        var port = call.Arg("port")?.Trim();
+        if (!string.IsNullOrWhiteSpace(port)
+            && (!int.TryParse(port, out var parsedPort) || parsedPort is < 1 or > 65535))
+            return $"Error: '{port}' is not a valid port number.";
+
+        _confirmations.Stage(new PendingConfirmation(
+            ConfirmationKind.Install, blueprint!, instanceName,
+            ConfigKey: NullIfBlank(version), ConfigValue: NullIfBlank(port)));
 
         var named = instanceName is null ? "" : $" named '{instanceName}'";
-        return $"Staged an install of a new '{blueprint}' server{named} for confirmation. A confirmation " +
+        var at = string.IsNullOrWhiteSpace(port) ? "" : $" on port {port}";
+        var ver = string.IsNullOrWhiteSpace(version) ? "" : $" at version {version}";
+        return $"Staged an install of a new '{blueprint}' server{named}{ver}{at} for confirmation. A confirmation " +
                "prompt with a button has been shown to the user. This is NOT done yet and will only run " +
                "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
     }
 
     /// <summary>
-    /// Propose-only (§3.8): resolves the instance and validates a non-empty key, then
+    /// Propose-only: resolves the instance and validates a non-empty key, then
     /// STAGES a set-config for human confirmation — it is never written here. kgsm owns
     /// the key-safety policy (denylist); this stage does not pre-judge the key, so a
     /// refusal surfaces only at confirm time. An empty value is allowed (clears the
@@ -862,14 +1238,14 @@ public class ToolDispatcher : IToolDispatcher
     /// "every server" (fleet-wide), returned as <see langword="null"/> with no error. A NON-blank
     /// name still goes through full resolution (exact/substring/game-type, ambiguity refused), so a
     /// typo'd instance_name is caught rather than silently falling back to the whole fleet. Used by
-    /// <c>get_audit_log</c>/<c>get_change_timeline</c>, whose <c>instance_name</c> is optional.
+    /// <c>events</c>, whose <c>instance_name</c> is optional.
     /// </summary>
     private Task<(string? resolved, string? error)> ResolveOptionalInstanceAsync(string? name, CancellationToken cancellationToken) =>
         string.IsNullOrWhiteSpace(name)
             ? Task.FromResult<(string?, string?)>((null, null))
             : ResolveInstanceAsync(name, cancellationToken);
 
-    /// <summary>Server-side cap on rows fetched per <c>get_audit_log</c>/<c>get_change_timeline</c>
+    /// <summary>Server-side cap on rows fetched per <c>events</c>
     /// call — generous enough to cover a week of normal activity; the reader's own cap (1000) is the
     /// hard ceiling. Filtering (change-timeline) happens client-side on top of this fetch.</summary>
     private const int EventFetchLimit = 200;

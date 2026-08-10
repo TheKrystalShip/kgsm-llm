@@ -13,7 +13,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 public sealed record ToolSelectionContext(string UserPrompt, bool CanPerformActions);
 
 /// <summary>
-/// The second, orthogonal tool-subsetting axis (toolbox plan §3.2): after
+/// The second, orthogonal tool-subsetting axis: after
 /// <em>authorization</em> picks the tools a caller MAY use, <em>relevance</em> may
 /// narrow them to those pertinent to the request before the prompt reaches the
 /// (small, local) model — small-model selection accuracy, not context size, is the
@@ -21,7 +21,7 @@ public sealed record ToolSelectionContext(string UserPrompt, bool CanPerformActi
 /// <para>
 /// This is the SEAM, not a filter. The shipped default (<see cref="NoopToolRelevanceFilter"/>)
 /// is a deliberate no-op: the current answer to small-model reliability is coarse,
-/// bulk tools (e.g. the merged fleet <c>get_status</c>), not relevance filtering —
+/// bulk tools (e.g. the merged fleet <c>server_info</c>), not relevance filtering —
 /// keyword routing fails silently on unanticipated phrasing and a second embedding
 /// model would fight game servers for VRAM. The seam exists so a filter can be
 /// slotted in later WITHOUT the rest of the pipeline having assumed "all authorized

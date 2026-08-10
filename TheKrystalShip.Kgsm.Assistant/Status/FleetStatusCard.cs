@@ -33,7 +33,7 @@ public sealed record FleetServerStatus(
     string Instance, ServerRunState State, Severity Severity, string? Reason);
 
 /// <summary>
-/// The structured card payload for the fleet mode of <c>get_status</c> (no instance_name → a
+/// The structured card payload for the fleet mode of <c>server_info</c> (no instance_name → a
 /// one-shot summary of every server). The <c>D</c> in <see cref="ToolResult{TData}"/>. Counts are
 /// honest: an unreadable instance lands in <see cref="Unavailable"/>, never inflating
 /// <see cref="Stopped"/>.
@@ -51,7 +51,7 @@ public sealed record FleetStatusData(
     int Unavailable);
 
 /// <summary>
-/// The deterministic <c>get_status</c> fleet-mode card builder (toolbox-plan §5·b): projects the
+/// The deterministic <c>server_info</c> fleet-mode card builder: projects the
 /// neutral <see cref="FleetStatusEntry"/> list into a ranked <see cref="FleetStatusData"/> card plus
 /// a model-grounding <see cref="ToolResult{TData}.Summary"/>. Pure and I/O-free (the fetch happens in
 /// the port impl), so it's the single home for the projection and is unit-testable without mocks.
@@ -60,8 +60,7 @@ public sealed record FleetStatusData(
 /// inline string so the model's grounding text does not change. The <see cref="ToolResult{TData}.Subject"/>
 /// is host-scoped (the card is about every server on this host, not one instance); the host id uses
 /// the <c>architecture.html</c> self-reference convention <c>"primary"</c> — informational, since the
-/// per-host Control Panel already knows which host it's connected to (pending frontend sign-off; see
-/// the M7 spec §7).
+/// per-host Control Panel already knows which host it's connected to.
 /// </para>
 /// </summary>
 public static class FleetStatusCard
@@ -86,7 +85,7 @@ public static class FleetStatusCard
             Unavailable: servers.Count(s => s.State == ServerRunState.Unknown));
 
         return new ToolResult<FleetStatusData>(
-            Tool: LlmTools.GetStatus,
+            Tool: LlmTools.ServerInfo,
             Confidence: Confidence.Confirmed, // a deterministic read of measured facts (incl. honest "couldn't read")
             Subject: new ResultRef(ResourceKind.Host, HostSubjectId),
             Summary: BuildSummary(entries),
@@ -104,7 +103,7 @@ public static class FleetStatusCard
     /// <summary>
     /// The model's grounding text — kept byte-identical to the dispatcher's prior inline output so
     /// the model's narration doesn't change when the card lights up. An unreadable instance is
-    /// reported as "status unavailable (reason)", never collapsed to "stopped" (the §3.7 guard).
+    /// reported as "status unavailable (reason)", never collapsed to "stopped".
     /// </summary>
     private static string BuildSummary(IReadOnlyList<FleetStatusEntry> entries)
     {

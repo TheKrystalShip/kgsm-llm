@@ -75,7 +75,11 @@ public static class ServiceCollectionExtensions
         // names the real actor instead of the service account.
         services.AddSingleton<IEventManagementService, EventManagementService>();
         services.AddSingleton<IBlueprintFiles, BlueprintFiles>(); // create_blueprint's write-side authority — no socket dep
-        services.AddSingleton<ISystemService, SystemService>();   // host disk for run_health_check
+        // The two host-fact authorities behind host_info (and run_health_check's disk read):
+        // ISystemService answers uptime/load/memory/disk, INetworkService answers the host's used
+        // ports, port conflicts, and its addresses. Both shell out like the rest of this graph.
+        services.AddSingleton<ISystemService, SystemService>();
+        services.AddSingleton<INetworkService, NetworkService>();
         // Reading the event journal back, for the audit/timeline/root-cause tools. Unlike the listener
         // above this starts nothing and holds no position — it opens segments per query — so it belongs
         // in the shared graph rather than behind the per-host opt-in.
@@ -132,7 +136,7 @@ public static class ServiceCollectionExtensions
         });
 
         // --- Engine event history -------------------------------------------------------------
-        // Backs get_audit_log / get_change_timeline / trace_root_cause by reading the engine's event
+        // Backs events / trace_root_cause by reading the engine's event
         // journal through kgsm-lib — the record itself, so history needs no other service running and
         // works on a host with no leaves installed. Registered AFTER AddKgsmAssistant so this concrete
         // IEventHistory wins over the library's fail-closed UnavailableEventHistory default.
@@ -165,6 +169,14 @@ public static class ServiceCollectionExtensions
             : watchdog.SocketPath;
         services.AddKgsmWatchdogClient(watchdogSocketPath);
         services.AddSingleton<IUpnpInfo, KgsmUpnpInfo>();
+
+        // --- Server + host facts (the read half of the engine seam) ----------------------------
+        // Registered here because the per-instance reads span both authorities: backups and versions
+        // come from the engine, while player presence, the boot-autostart set and the console ring
+        // come from the watchdog above. Both adapters win over the library's fail-closed defaults and
+        // report an unreachable authority as unavailable, so a host with no supervisor still answers.
+        services.AddSingleton<IServerFacts, KgsmServerFacts>();
+        services.AddSingleton<IHostFacts, KgsmHostFacts>();
 
         // --- Web search (Tavily) ---------------------------------------------------------------
         // The assistant's web_search port. The API key is ENV-ONLY (WebSearch__ApiKey) and travels
@@ -210,19 +222,19 @@ public static class ServiceCollectionExtensions
 
         // The fetch_url TOOL is offered iff WebFetch:Enabled is true — computed here (the one place
         // that knows the adapter's config) into the assistant-facing FetchOptions.Available, mirroring
-        // SearchOptions §D7. PostConfigure alone is enough to make IOptions<FetchOptions> resolvable
+        // SearchOptions. PostConfigure alone is enough to make IOptions<FetchOptions> resolvable
         // even though nothing binds it from config directly (there is nothing to bind — Available is
         // purely computed).
         services.PostConfigure<FetchOptions>(o => o.Available = webFetch.Enabled);
 
         // --- Local RAG retrieval ---------------------------------------------------------------
-        // Off by default and fails closed (plan §D7): only when Rag:Enabled is true do we wire the
+        // Off by default and fails closed : only when Rag:Enabled is true do we wire the
         // concrete IRetrieval, which — because this runs AFTER AddKgsmAssistant — wins over the
         // library's DisabledRetrieval default. When disabled we register nothing, so the capability
         // is simply absent. The embedder + versioned index reader come from the Native-AOT
         // TheKrystalShip.Rag core; both RagOptions (host half) and RagEmbeddingOptions (embedder
         // half) bind the same "Rag" section, each reading its own keys. The index file is produced
-        // out-of-band by the standalone indexer (plan §D6); the provider only reads it.
+        // out-of-band by the standalone indexer ; the provider only reads it.
         services.Configure<RagOptions>(config.GetSection(RagOptions.Section));
         var rag = config.GetSection(RagOptions.Section).Get<RagOptions>() ?? new RagOptions();
         if (rag.Enabled)
@@ -233,11 +245,11 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IRetrieval, RagRetrieval>();
         }
 
-        // --- Unified `search` tool (§3.4 aggregator) -------------------------------------------
+        // --- Unified `search` tool -------------------------------------------
         // The aggregator's tunable thresholds (LocalMinScore/MaxContextChars) bind from the same
         // "Rag" section; the availability flags are COMPUTED here — the one place that knows BOTH
         // whether RAG is on and whether a web provider is configured — and decide whether the
-        // `search` tool is offered at all (§D7). Both being off → the tool is omitted everywhere.
+        // `search` tool is offered at all. Both being off → the tool is omitted everywhere.
         var webSearch = config.GetSection(WebSearchOptions.Section).Get<WebSearchOptions>() ?? new WebSearchOptions();
         services.Configure<SearchOptions>(config.GetSection(SearchOptions.Section));
         services.PostConfigure<SearchOptions>(o =>

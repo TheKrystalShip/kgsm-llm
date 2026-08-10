@@ -103,7 +103,14 @@ public interface IServerOperations
     /// <param name="blueprint">The resolved blueprint name to install from.</param>
     /// <param name="instanceName">Optional custom instance name; null lets kgsm name it.</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
-    Task<Result> InstallAsync(string blueprint, string? instanceName, CancellationToken cancellationToken = default);
+    /// <param name="version">Optional specific version; null installs the latest.</param>
+    /// <param name="port">Optional override of the blueprint's primary game port; null keeps it.</param>
+    Task<Result> InstallAsync(
+        string blueprint,
+        string? instanceName,
+        CancellationToken cancellationToken = default,
+        string? version = null,
+        int? port = null);
 
     /// <summary>
     /// PERMANENTLY uninstalls an instance and all its data. Called only by
@@ -144,6 +151,51 @@ public interface IServerOperations
     /// </summary>
     Task<Result> WriteInstanceFileAsync(
         string instance, string relativePath, string content, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Restores <paramref name="backupId"/> over the instance's current data. Called only by
+    /// <see cref="IServerAssistant.ConfirmAsync"/> after a human confirms — never from the agent
+    /// loop. This REPLACES what is there now; the engine owns whatever safety it applies.
+    /// </summary>
+    Task<Result> RestoreBackupAsync(string instance, string backupId, CancellationToken cancellationToken = default);
+
+    /// <summary>Permanently deletes one of the instance's backups. Confirm-path only.</summary>
+    Task<Result> DeleteBackupAsync(string instance, string backupId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes the instance's oldest backups, keeping the <paramref name="keep"/> most recent.
+    /// Confirm-path only.
+    /// </summary>
+    Task<Result> PruneBackupsAsync(string instance, int keep, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Disconnects <paramref name="target"/> from the instance. Confirm-path only.
+    /// <para>
+    /// The <b>form</b> of <paramref name="target"/> — a player name or an account id — is a fact the
+    /// game's blueprint declares, and the engine applies it. Nothing above this seam converts between
+    /// the two: a converted identifier is one the game will not recognise, and the failure reads like
+    /// a permissions problem rather than a wrong-shaped name.
+    /// </para>
+    /// </summary>
+    Task<Result> KickPlayerAsync(string instance, string target, CancellationToken cancellationToken = default);
+
+    /// <summary>Disconnects and blocks <paramref name="target"/>. Confirm-path only. Same target-form
+    /// rule as <see cref="KickPlayerAsync"/>.</summary>
+    Task<Result> BanPlayerAsync(string instance, string target, CancellationToken cancellationToken = default);
+
+    /// <summary>Lifts a ban on <paramref name="target"/>. Confirm-path only. Same target-form rule as
+    /// <see cref="KickPlayerAsync"/>.</summary>
+    Task<Result> UnbanPlayerAsync(string instance, string target, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets whether the instance starts when the host boots. Confirm-path only.
+    /// <para>
+    /// This is the supervisor's persisted intent, not a lifecycle action: it changes what happens at
+    /// the NEXT boot and does nothing to the running server. That is why it settles against no
+    /// run-state postcondition — there is none to observe.
+    /// </para>
+    /// </summary>
+    Task<Result> SetAutostartAsync(string instance, bool enabled, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

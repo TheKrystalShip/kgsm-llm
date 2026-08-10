@@ -3,7 +3,7 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Kgsm.Assistant.Envelope;
 
 /// <summary>
-/// Trust in an <em>inference</em> a tool result asserts (toolbox-plan §5). Orthogonal
+/// Trust in an <em>inference</em> a tool result asserts. Orthogonal
 /// to <see cref="CheckState"/> (a check's pass/fail judgment) and to a field's
 /// measured-vs-unknown presence: a fact can be measured while the verdict is only
 /// <see cref="Possible"/>, and vice versa. A purely deterministic read of measured
@@ -23,7 +23,7 @@ public enum Confidence
 
 /// <summary>
 /// The visual/semantic weight a surface renders for a result or a single check
-/// (toolbox-plan §5). Distinct from <see cref="CheckState"/>: a check can be
+///. Distinct from <see cref="CheckState"/>: a check can be
 /// <see cref="CheckState.Pass"/> yet carry <see cref="Severity.Info"/> (e.g. a
 /// server that is deliberately stopped).
 /// </summary>
@@ -46,7 +46,7 @@ public enum Severity
 }
 
 /// <summary>
-/// The judgment of one aggregator check (toolbox-plan §3.4/§5). <see cref="Skip"/>
+/// The judgment of one aggregator check. <see cref="Skip"/>
 /// means the check was not assessed (its source was unavailable or not applicable) —
 /// it is NOT a pass, and must never be collapsed into one (the "never fabricate"
 /// rule). An aggregate over checks ignores <see cref="Skip"/> when ranking severity.
@@ -66,7 +66,7 @@ public enum CheckState
     Skip,
 }
 
-/// <summary>The kind of resource a <see cref="ResultRef"/> points at (toolbox-plan §5).</summary>
+/// <summary>The kind of resource a <see cref="ResultRef"/> points at.</summary>
 public enum ResourceKind
 {
     /// <summary>A game-server instance.</summary>
@@ -98,8 +98,7 @@ public enum ResourceKind
 }
 
 /// <summary>
-/// A typed reference to a resource a result is about or links to (toolbox-plan §5's
-/// <c>Ref</c>). A surface builds its route/URL from this; the model never sees it.
+/// A typed reference to a resource a result is about or links to (/// <c>Ref</c>). A surface builds its route/URL from this; the model never sees it.
 /// </summary>
 /// <param name="Resource">The kind of resource.</param>
 /// <param name="Id">Its identifier (e.g. the instance name).</param>
@@ -108,8 +107,8 @@ public sealed record ResultRef(ResourceKind Resource, string Id, string? Section
 
 /// <summary>
 /// The central, versioned tool-result envelope shared by every aggregator and read
-/// (toolbox-plan §5/§6). It serves two readers from one shape: the <b>model</b> gets
-/// <see cref="Summary"/> (its grounding text — §3.6), and a <b>surface</b> gets the
+///. It serves two readers from one shape: the <b>model</b> gets
+/// <see cref="Summary"/> (its grounding text), and a <b>surface</b> gets the
 /// structured <see cref="Data"/> card. The model never sees <see cref="Data"/>.
 /// <para>
 /// This lives in the assistant library (the KGSM domain layer), not the generic LLM

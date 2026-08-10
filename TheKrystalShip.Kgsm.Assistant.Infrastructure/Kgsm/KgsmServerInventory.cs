@@ -127,4 +127,47 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
     private static bool IsFresh<T>(T? cache, DateTime fetchedUtc, bool dirty, int ttlSeconds)
         where T : class =>
         cache is not null && !dirty && DateTime.UtcNow - fetchedUtc < TimeSpan.FromSeconds(ttlSeconds);
+
+    /// <summary>
+    /// Reads one blueprint's detail straight from the engine — uncached, unlike the name list: a
+    /// detail read happens once per question, so the cache would only add staleness.
+    /// </summary>
+    public async Task<BlueprintDetail?> GetBlueprintDetailAsync(
+        string blueprintName, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var bp = await Task.Run(() => _blueprints.GetInfo(blueprintName), cancellationToken);
+            if (bp is null)
+                return null;
+
+            // Only the moderation commands the blueprint actually declares. An undeclared command is
+            // one the game cannot do, which is what keeps the assistant from offering it.
+            var moderation = new List<string>(3);
+            if (!string.IsNullOrWhiteSpace(bp.KickCommand)) moderation.Add("kick");
+            if (!string.IsNullOrWhiteSpace(bp.BanCommand)) moderation.Add("ban");
+            if (!string.IsNullOrWhiteSpace(bp.UnbanCommand)) moderation.Add("unban");
+
+            return new BlueprintDetail(
+                Name: bp.Name,
+                DisplayName: NullIfBlank(bp.Metadata?.DisplayName),
+                Description: NullIfBlank(bp.Metadata?.Description),
+                Ports: bp.Ports.Select(p => p.ToString()).ToArray(),
+                Kind: bp.BlueprintType.ToString().ToLowerInvariant(),
+                SteamAccountRequired: bp.IsSteamAccountRequired,
+                MaxPlayers: bp.Metadata?.MaxPlayers,
+                MinRamMb: bp.Metadata?.MinRamMb,
+                RecommendedRamMb: bp.Metadata?.RecommendedRamMb,
+                BaseDiskMb: bp.Metadata?.BaseDiskMb,
+                ModerationVerbs: moderation);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Blueprint detail read failed for {Blueprint}", blueprintName);
+            return null;
+        }
+    }
+
+    private static string? NullIfBlank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 }

@@ -1,7 +1,7 @@
 namespace TheKrystalShip.Kgsm.Assistant.Blueprints;
 
 /// <summary>
-/// How a <c>create_blueprint</c> run concluded (toolbox-plan §"Pipeline"/step 11). Every value maps to
+/// How a <c>create_blueprint</c> run concluded . Every value maps to
 /// one honest outcome the tool reports — never a fabricated "it worked" or a silent partial state.
 /// </summary>
 public enum BlueprintAuthoringOutcome

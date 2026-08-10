@@ -7,7 +7,7 @@ using TheKrystalShip.Kgsm.Assistant.Ports;
 namespace TheKrystalShip.Kgsm.Assistant.RootCause;
 
 /// <summary>
-/// The deterministic <c>trace_root_cause</c> synthesis (toolbox-plan §3.4/§7·Q1 — locked
+/// The deterministic <c>trace_root_cause</c> synthesis (locked
 /// 2026-06-11): composes the recent engine-event timeline, a metrics window, and a health/status
 /// snapshot for ONE instance, and runs a fixed rules table of known KGSM failure signatures over
 /// them. Pure and I/O-free — every fetch happens in the dispatcher (in parallel, one call per
@@ -15,7 +15,7 @@ namespace TheKrystalShip.Kgsm.Assistant.RootCause;
 /// ever narrates a finding this class already computed, exactly like <see cref="Health.HealthCheckAggregator"/>
 /// and <see cref="Metrics.PerformanceReport"/>.
 /// <para>
-/// **Governing rule (§3.0):** the model is a router + narrator, never a reasoner. Causal inference
+/// **Governing rule:** the model is a router + narrator, never a reasoner. Causal inference
 /// on a small local model is exactly the plausible-but-wrong failure the old kgsm-api was scrapped
 /// for (ecosystem "never fabricate" rule) — so every finding here is either a mechanical pattern
 /// match over measured facts, or an honest "nothing matched" correlation at

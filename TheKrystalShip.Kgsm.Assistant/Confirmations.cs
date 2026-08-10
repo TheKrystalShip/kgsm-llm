@@ -2,7 +2,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 
 /// <summary>
 /// The kind of command awaiting confirmation. Every server command is propose-only
-/// (§3.5): the model never executes one, it only stages it here; a human confirms
+///: the model never executes one, it only stages it here; a human confirms
 /// before it runs.
 /// <para>
 /// <b>Every member's number is written out and is permanent.</b> The Service persists
@@ -19,13 +19,13 @@ public enum ConfirmationKind
     // Original destructive tier.
     Uninstall = 0,
     Install = 1,
-    // §3.5 generalisation: the formerly-inline commands, now propose-only too.
+    // Every lifecycle verb is propose-only.
     Start = 2,
     Stop = 3,
     Restart = 4,
     Update = 5,
     Backup = 6,
-    // §3.8: set a single key=value in an instance's .config.ini. Propose-only like the
+    // Set a single key=value in an instance's .config.ini. Propose-only like the
     // rest; carries a key/value payload and has its own confirm path (like Install).
     SetConfig = 7,
     //
@@ -44,7 +44,25 @@ public enum ConfirmationKind
     // has its own confirm entrypoint that returns a BlueprintAuthoringData rather than ConfirmAsync's text.
     // Carries the resolved slug on Target, the game display name on InstanceName, and the DRAFT YAML on
     // ConfigValue (the fallback body; the user's Save sends the possibly-edited YAML alongside the token).
-    Blueprint = 10
+    Blueprint = 10,
+    //
+    // Acting on an instance's EXISTING backups. Restore replaces the server's current data and Delete
+    // is permanent, so both are Destructive; Prune deletes only what retention already marks as
+    // surplus. The backup id rides on ConfigKey, and Prune's keep-count on ConfigValue.
+    BackupRestore = 11,
+    BackupDelete = 12,
+    BackupPrune = 13,
+    //
+    // Player moderation. The target rides on ConfigKey; the engine decides whether the game addresses
+    // a name or an id, so nothing here converts between the two.
+    PlayerKick = 14,
+    PlayerBan = 15,
+    PlayerUnban = 16,
+    //
+    // Boot autostart intent, held by the supervisor rather than in the instance's .config.ini. Distinct
+    // from Start/Stop: these change what happens at the NEXT boot and touch the running server not at all.
+    AutostartEnable = 17,
+    AutostartDisable = 18
 }
 
 /// <summary>
@@ -75,6 +93,10 @@ public static class ConfirmationKinds
     public static readonly IReadOnlySet<ConfirmationKind> Destructive = new HashSet<ConfirmationKind>
     {
         ConfirmationKind.Uninstall,
+        // Restoring overwrites the server's live data with an older copy, and deleting a backup is
+        // gone-for-good. Both destroy something a person cannot get back, which is what this set means.
+        ConfirmationKind.BackupRestore,
+        ConfirmationKind.BackupDelete,
     };
 
     public static bool IsDestructive(ConfirmationKind kind) => Destructive.Contains(kind);
@@ -92,6 +114,14 @@ public static class ConfirmationKinds
         ConfirmationKind.SetConfig => "set config on",
         ConfirmationKind.WriteFile => "write to a file on",
         ConfirmationKind.Blueprint => "test-install and add",
+        ConfirmationKind.BackupRestore => "restore a backup onto",
+        ConfirmationKind.BackupDelete => "delete a backup of",
+        ConfirmationKind.BackupPrune => "prune old backups of",
+        ConfirmationKind.PlayerKick => "kick a player from",
+        ConfirmationKind.PlayerBan => "ban a player from",
+        ConfirmationKind.PlayerUnban => "unban a player on",
+        ConfirmationKind.AutostartEnable => "enable boot autostart for",
+        ConfirmationKind.AutostartDisable => "disable boot autostart for",
         _ => kind.ToString().ToLowerInvariant(),
     };
 
@@ -108,6 +138,14 @@ public static class ConfirmationKinds
         ConfirmationKind.SetConfig => "reconfigured",
         ConfirmationKind.WriteFile => "had a file updated",
         ConfirmationKind.Blueprint => "added to the catalog",
+        ConfirmationKind.BackupRestore => "restored from a backup",
+        ConfirmationKind.BackupDelete => "had a backup deleted",
+        ConfirmationKind.BackupPrune => "had its old backups pruned",
+        ConfirmationKind.PlayerKick => "had a player kicked",
+        ConfirmationKind.PlayerBan => "had a player banned",
+        ConfirmationKind.PlayerUnban => "had a player unbanned",
+        ConfirmationKind.AutostartEnable => "set to start at boot",
+        ConfirmationKind.AutostartDisable => "set not to start at boot",
         _ => kind.ToString().ToLowerInvariant(),
     };
 }

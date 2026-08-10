@@ -1021,8 +1021,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
-                AssistantStreamEvent.ToolStart(LlmTools.GetStatus, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
-                AssistantStreamEvent.ToolResult(LlmTools.GetStatus, "factorio: stopped", "tc_0"),
+                AssistantStreamEvent.ToolStart(LlmTools.ServerInfo, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
+                AssistantStreamEvent.ToolResult(LlmTools.ServerInfo, "factorio: stopped", "tc_0"),
                 AssistantStreamEvent.Token("Stopped."),
                 AssistantStreamEvent.Final("Stopped.")));
 
@@ -1033,7 +1033,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         body.Should().Contain("\"type\":\"tool.start\"");
         // §5·a correlation id — the SAME id rides tool.start and tool.result so a renderer pairs them.
         body.Should().Contain("\"id\":\"tc_0\"");
-        body.Should().Contain("\"tool\":\"get_status\"");
+        body.Should().Contain("\"tool\":\"server_info\"");
         body.Should().Contain("\"instance_name\":\"factorio\"");
         body.Should().Contain("event: tool.result");
         body.Should().Contain("\"summary\":\"factorio: stopped\"");
@@ -1690,7 +1690,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                     Tools = new[]
                     {
                         new Llm.Models.RecordedToolCall(
-                            new Llm.Models.Tool("get_status"),
+                            new Llm.Models.Tool("server_info"),
                             new Dictionary<string, string?> { ["instance"] = "factorio" },
                             "factorio is running", 12, null),
                     },
@@ -1712,7 +1712,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         body.Should().Contain("\"final\":\"Yes, it's running.\"");
         body.Should().Contain("\"think\":true");
         body.Should().Contain("\"thinking\":\"let me check\"");
-        body.Should().Contain("\"tool\":\"get_status\"");       // §5·a field name reused
+        body.Should().Contain("\"tool\":\"server_info\"");       // §5·a field name reused
         body.Should().Contain("\"summary\":\"factorio is running\"");
         body.Should().Contain("\"outcome\":\"ok\"");
     }
@@ -2189,7 +2189,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 Tools = new[]
                 {
-                    new Llm.Models.ToolStat { Name = "get_status", Calls = 20, MedianMs = 222, MaxMs = 1041, FailedCalls = 1 },
+                    new Llm.Models.ToolStat { Name = "server_info", Calls = 20, MedianMs = 222, MaxMs = 1041, FailedCalls = 1 },
                     new Llm.Models.ToolStat { Name = "google_search", Calls = 1, MedianMs = 0, MaxMs = 0, FailedCalls = 1 },
                 },
             },
@@ -2201,7 +2201,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
 
         var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("\"name\":\"get_status\",\"known\":true");
+        body.Should().Contain("\"name\":\"server_info\",\"known\":true");
         body.Should().Contain("\"name\":\"google_search\",\"known\":false");
     }
 

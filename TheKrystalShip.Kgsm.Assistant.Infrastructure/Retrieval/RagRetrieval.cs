@@ -14,7 +14,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 /// query with the configured Ollama embedder, then brute-force cosine top-k over the on-disk index
 /// (<see cref="RagIndexProvider"/>). Never throws — every failure (no/incompatible index, embedder
 /// down, dimension mismatch) is a <see cref="Result.Failure{T}(string)"/>, matching the port's
-/// contract and the §D7 fail-closed posture. The <c>Rag.Models.Result</c> the embedder returns is
+/// contract and the fail-closed posture. The <c>Rag.Models.Result</c> the embedder returns is
 /// translated to the assistant's <c>Llm.Models.Result</c> at this seam (the two cores share no
 /// types — that is what keeps the embed core AOT-clean).
 /// </summary>

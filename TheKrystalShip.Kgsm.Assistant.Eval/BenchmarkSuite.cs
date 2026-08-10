@@ -44,7 +44,16 @@ internal static class BenchmarkSuite
     /// v8 drops the open-ports staging cases (C11/C12) with the tool they measured: an instance's ports
     /// are opened by the supervisor when it starts and released when it stops, so there is no on-demand
     /// open for the model to route to.
-    public const string Version = "v8";
+    /// v9 retargets the corpus onto the noun-scoped catalog: <c>get_status</c> and
+    /// <c>list_blueprints</c> became aspects of <c>server_info</c> / <c>blueprint_info</c>, and the
+    /// <c>get_audit_log</c>/<c>get_change_timeline</c> pair became one <c>events</c> tool with a scope,
+    /// so the H-group asserts the tool rather than which of two overlapping tools was picked.
+    /// v10 tightens the clarify-vs-guess check: the clarifier and the question mark must fall in the
+    /// same sentence, AND the clarifier must name what is being disambiguated (which server/one/
+    /// instance/game). The loose form scored a relative-pronoun "which" as punting, which inverted the
+    /// rubric — a reply that hit the iteration cap and gave up passed it, while a complete answer that
+    /// offered a next step failed.
+    public const string Version = "v10";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -70,7 +79,7 @@ internal static class BenchmarkSuite
         Single("A2", "which of my servers are running?", true, new[] { FixtureRole.AnyInstance },
             "which of my servers are running right now?",
             C.RoutedThroughStatusOrHealth(),
-            C.CalledTool(LlmTools.GetStatus, "uses the fleet status tool")),
+            C.CalledTool(LlmTools.ServerInfo, "uses the fleet status tool")),
 
         Single("B3", "is <game> healthy?", true, new[] { FixtureRole.UniqueGame },
             "is {unique_game} healthy? anything wrong with it?",
@@ -87,7 +96,7 @@ internal static class BenchmarkSuite
 
         Single("B5", "what port is <game> on?", true, new[] { FixtureRole.UniqueGame },
             "what port is my {unique_game} server on?",
-            C.CalledTool(LlmTools.GetStatus, "uses get_status for the port"),
+            C.CalledTool(LlmTools.ServerInfo, "uses server_info for the port"),
             C.FinalLacks(Underclaim, "doesn't underclaim capability", Rubric.A_NoFabrication),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
@@ -134,7 +143,7 @@ internal static class BenchmarkSuite
             "the {unique_game} one - is it doing ok?",
             C.ResolvedNotAsked(FixtureRole.UniqueGame),
             C.AnyOf(Rubric.B_Routing, "health/status checks the resolved server",
-                C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.GetStatus)),
+                C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.ServerInfo)),
             C.RoutedThroughStatusOrHealth()),
 
         Single("E13", "what's the newest version of <game>?", true, new[] { FixtureRole.UniqueGame },
@@ -179,14 +188,14 @@ internal static class BenchmarkSuite
         Single("G1", "why can't I connect to <game>?", true, new[] { FixtureRole.UniqueGame },
             "why can't I connect to {unique_game}?",
             C.AnyOf(Rubric.B_Routing, "engages the connection problem (checks state or talks connectivity)",
-                C.CalledTool(LlmTools.GetStatus), C.CalledTool(LlmTools.RunHealthCheck),
+                C.CalledTool(LlmTools.ServerInfo), C.CalledTool(LlmTools.RunHealthCheck),
                 C.FinalHas(@"port|firewall|running|address|\bip\b|reachable|listen|connect", "talks connectivity", Rubric.B_Routing)),
             C.DoesNotAskWhichServer()),
 
         Single("G2", "<game> is not working", true, new[] { FixtureRole.UniqueGame },
             "{unique_game} is not working",
             C.AnyOf(Rubric.B_Routing, "investigates or asks what's wrong (doesn't guess blindly)",
-                C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.GetStatus),
+                C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.ServerInfo),
                 C.FinalHas(@"what.{0,15}(happening|wrong|error|see|mean|going on)|tell me more|more (detail|specific)|\blog|health|status|check",
                     "investigates or asks for specifics", Rubric.B_Routing)),
             C.DoesNotAskWhichServer()),
@@ -207,7 +216,7 @@ internal static class BenchmarkSuite
         Single("G5", "nothing's working today", true, new[] { FixtureRole.AnyInstance },
             "nothing's working today, can you help?",
             C.AnyOf(Rubric.D_ClarifyVsGuess, "checks the fleet or asks a focusing question",
-                C.CalledTool(LlmTools.GetStatus), C.Clarifies(),
+                C.CalledTool(LlmTools.ServerInfo), C.Clarifies(),
                 C.FinalHas(@"\bwhich\b|what.{0,15}(happening|wrong|server|going on)|let'?s (start|check|take|look)|start by|narrow (it|this) down",
                     "focuses the vague problem", Rubric.D_ClarifyVsGuess))),
 
@@ -239,17 +248,24 @@ internal static class BenchmarkSuite
             C.CalledTool(LlmTools.GetNetwork, "uses the network tool for router/UPnP reachability"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
-        // History / diagnosis (H): the full event feed vs durable changes vs the root-cause capstone.
+        // History / diagnosis (H): the event journal vs the root-cause capstone. The feed and the
+        // change subset are one tool with a scope, so these assert the tool, not which scope — the
+        // scope is a narrowing the transcript shows and the model is free to get right or wrong.
         Single("H1", "what happened with <game> recently?", true, new[] { FixtureRole.UniqueGame },
             "what's been happening with {unique_game} recently?",
-            C.AnyOf(Rubric.B_Routing, "reads the event feed (audit log)",
-                C.CalledTool(LlmTools.GetAuditLog), C.CalledTool(LlmTools.GetChangeTimeline)),
+            C.CalledTool(LlmTools.Events, "reads the event journal"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
+        // "Last updated" is genuinely ambiguous — the GAME's release, or THIS server's update — and
+        // both readings have an honest local tool: the version aspect answers "what is it on, and is
+        // there a newer one", the event journal answers "when did it change". Either is correct
+        // routing; what is NOT correct is chasing the web for a fact about the user's own host, which
+        // is what a run against the old catalog did on 2 of 3 reps before falling back to a health
+        // check. This asserts a local answer was reached at all.
         Single("H2", "when was <game> last updated?", true, new[] { FixtureRole.UniqueGame },
             "when was {unique_game} last updated?",
-            C.AnyOf(Rubric.B_Routing, "reads the change timeline",
-                C.CalledTool(LlmTools.GetChangeTimeline), C.CalledTool(LlmTools.GetAuditLog)),
+            C.AnyOf(Rubric.B_Routing, "answers from a local source (version or the event journal)",
+                C.CalledTool(LlmTools.ServerInfo), C.CalledTool(LlmTools.Events)),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
         // The root-cause capstone: an incident/history "why" (trace_root_cause), NOT a right-now health
@@ -258,7 +274,7 @@ internal static class BenchmarkSuite
             "why did {unique_game} crash?",
             C.AnyOf(Rubric.B_Routing, "routes to the root-cause / diagnosis tools",
                 C.CalledTool(LlmTools.TraceRootCause),
-                C.CalledTool(LlmTools.GetAuditLog), C.CalledTool(LlmTools.RunHealthCheck)),
+                C.CalledTool(LlmTools.Events), C.CalledTool(LlmTools.RunHealthCheck)),
             C.StagesNothing(Rubric.C_ProposeOnly, "stages no command for a why-question"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
@@ -343,7 +359,7 @@ internal static class BenchmarkSuite
                     {
                         C.ResolvedNotAsked(FixtureRole.UniqueGame),
                         C.AnyOf(Rubric.B_Routing, "checks the resolved server",
-                            C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.GetStatus)),
+                            C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.ServerInfo)),
                     }),
             }),
     };

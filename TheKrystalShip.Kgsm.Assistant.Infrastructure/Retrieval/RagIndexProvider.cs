@@ -9,8 +9,8 @@ using TheKrystalShip.Rag.Ollama;
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 
 /// <summary>
-/// Loads the on-disk RAG index and caches it (plan §D8 reader idiom: load fully, then close).
-/// The index is a regenerable artifact written atomically by the standalone indexer (plan §D6);
+/// Loads the on-disk RAG index and caches it (reader idiom: load fully, then close).
+/// The index is a regenerable artifact written atomically by the standalone indexer ;
 /// this provider only ever reads it.
 /// <para>
 /// Lazy-loads on first use and caches the load, re-attempting on every call while the file is still
@@ -22,7 +22,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 /// read once, not re-read on every query, while a subsequent good build still self-heals.
 /// </para>
 /// <para>
-/// Enforces the §D9 decoupling contract between the two independently-deployed binaries: a stamped
+/// Enforces the decoupling contract between the two independently-deployed binaries: a stamped
 /// <see cref="RagIndex.EmbeddingModel"/> that disagrees with the configured embedder means a
 /// different vector space, so the vectors are meaningless — reject the index (rebuild, never
 /// migrate). Never throws; every unavailable state is a failed <see cref="Result"/>.
@@ -143,7 +143,7 @@ internal sealed class RagIndexProvider
             return Result.Failure<RagIndex>("the retrieval index is corrupt and must be rebuilt");
         }
 
-        // §D9: a different embedding model means a different vector space — reject, don't query it.
+        // A different embedding model means a different vector space — reject, don't query it.
         if (!string.Equals(index.EmbeddingModel, _expectedModel, StringComparison.Ordinal))
         {
             _logger.LogWarning(

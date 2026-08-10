@@ -10,7 +10,7 @@ using TheKrystalShip.Kgsm.Assistant.Search;
 namespace TheKrystalShip.Kgsm.Assistant;
 
 /// <summary>
-/// The deterministic <c>search</c> composer (plan §3.4): the operator's local indexed docs first,
+/// The deterministic <c>search</c> composer: the operator's local indexed docs first,
 /// the public web as a fallback. Pure routing over <see cref="IRetrieval"/> + <see cref="IWebSearch"/>
 /// with NO nested model calls. The ladder:
 /// <list type="number">

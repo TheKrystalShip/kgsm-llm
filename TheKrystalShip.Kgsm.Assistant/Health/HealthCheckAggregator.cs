@@ -4,14 +4,14 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 namespace TheKrystalShip.Kgsm.Assistant.Health;
 
 /// <summary>
-/// The deterministic <c>run_health_check</c> synthesis (toolbox-plan §3.4): turns a
+/// The deterministic <c>run_health_check</c> synthesis: turns a
 /// neutral <see cref="InstanceHealthSnapshot"/> into a ranked <see cref="HealthData"/>
 /// card plus a model-grounding <see cref="ToolResult{TData}.Summary"/>. Pure and
 /// I/O-free — every fetch happens in the surface's port impl, so this is unit-testable
 /// without mocks and is the single home for "what counts as healthy" (no surface
 /// duplicates the judgment).
 /// <para>
-/// Key rule (§D5): KGSM is stateless — there is no desired-state — so a deliberately
+/// Key rule: KGSM is stateless — there is no desired-state — so a deliberately
 /// <em>stopped</em> server is reported as info, never as a failure. The log scan only
 /// runs when the instance is running (otherwise the logs are stale). An unknown update
 /// status or an unreadable host disk <see cref="CheckState.Skip"/>s — it is never
@@ -184,7 +184,7 @@ public static class HealthCheckAggregator
     };
 
     /// <summary>
-    /// Authors the deterministic grounding summary (§3.6): a headline conveying the
+    /// Authors the deterministic grounding summary: a headline conveying the
     /// overall verdict + liveness, then the other checks' one-liners. The model
     /// paraphrases this; it never invents facts.
     /// </summary>
@@ -220,7 +220,7 @@ public static class HealthCheckAggregator
         return (count, first);
     }
 
-    // Coarse V1 severity scan (toolbox-plan: format-aware tally is a later upgrade).
+    // Coarse V1 severity scan (a format-aware tally is a later upgrade).
     private static bool LooksLikeError(string line) =>
         line.Contains("ERROR", StringComparison.OrdinalIgnoreCase)
         || line.Contains("FATAL", StringComparison.OrdinalIgnoreCase)

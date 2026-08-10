@@ -39,9 +39,9 @@ public class AuditReportTests
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
 
-        result.Tool.Should().Be(LlmTools.GetAuditLog);
+        result.Tool.Should().Be(LlmTools.Events);
         result.Confidence.Should().Be(Confidence.Confirmed);
-        result.Subject.Should().Be(new ResultRef(ResourceKind.Audit, "factorio-test"));
+        result.Subject.Should().Be(new ResultRef(ResourceKind.Audit, "factorio-test", "all"));
         result.Data.State.Should().Be(AuditReadState.Available);
         result.Data.Events.Should().HaveCount(4);
 
@@ -179,7 +179,7 @@ public class AuditReportTests
 
         var result = AuditReport.Build(reading, null, "24h");
 
-        result.Subject.Should().Be(new ResultRef(ResourceKind.Audit, "primary"));
+        result.Subject.Should().Be(new ResultRef(ResourceKind.Audit, "primary", "all"));
         result.Summary.Should().Contain("all servers");
         result.Data.Instance.Should().BeNull();
     }
@@ -282,7 +282,7 @@ public class AuditReportTests
 
         var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
 
-        result.Tool.Should().Be(LlmTools.GetChangeTimeline);
+        result.Tool.Should().Be(LlmTools.Events);
         var keptTypes = result.Data.Events.Select(e => e.Type).ToHashSet();
         keptTypes.Should().BeEquivalentTo(new[]
         {

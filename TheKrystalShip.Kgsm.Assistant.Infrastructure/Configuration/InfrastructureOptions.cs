@@ -265,7 +265,7 @@ public sealed class BlueprintAuthoringOptions
 /// Local RAG retrieval settings. Bound from the "Rag" section — the SAME section the core's
 /// <c>RagEmbeddingOptions</c> reads (each picks up its own keys); this is the retrieval/host half
 /// (enable switch, where the index lives, how much to return), that is the embedder half. Retrieval
-/// is off by default and fails closed (plan §D7): with <see cref="Enabled"/> false the host wires
+/// is off by default and fails closed : with <see cref="Enabled"/> false the host wires
 /// no adapter, so <c>DisabledRetrieval</c> stays and the capability is simply omitted.
 /// </summary>
 [LeafSection(Section)]
@@ -307,7 +307,7 @@ public sealed class RagOptions
 
     // --- Index-time settings (the `kgsm-assistant index` verb / standalone indexer) ----------------
     // The retrieval path above ignores these; they configure how the index is BUILT, kept in the same
-    // "Rag" block so an operator tunes one section (plan §4). The standalone indexer takes them as CLI
+    // "Rag" block so an operator tunes one section. The standalone indexer takes them as CLI
     // flags instead — it shares no config with the assistant, only the on-disk index (D6/D9).
 
     /// <summary>Docs to index — files and/or directories (walked recursively). Default = none (D2: operator-configured).</summary>

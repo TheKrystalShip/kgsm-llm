@@ -1,7 +1,7 @@
 namespace TheKrystalShip.Kgsm.Assistant;
 
 /// <summary>
-/// Availability for the <c>fetch_url</c> tool — mirrors <see cref="SearchOptions"/>'s §D7 pattern
+/// Availability for the <c>fetch_url</c> tool — mirrors <see cref="SearchOptions"/>'s omit-when-disabled pattern
 /// (compute-at-composition, offer-only-when-backed). The real adapter configuration (timeout, size
 /// cap, redirect count, host allow/denylist, daily budget) lives in Infrastructure's own
 /// <c>WebFetchOptions</c>; this type carries only the COMPUTED <see cref="Available"/> flag

@@ -28,6 +28,7 @@ internal sealed class KgsmServerOperations : IServerOperations
     private readonly IInstanceFiles _files;
     private readonly ISystemService _system;
     private readonly IWatcherService _watcher;
+    private readonly IWatchdogClient _watchdog;
     private readonly IInvocationContext _invocation;
     private readonly ILogger<KgsmServerOperations> _logger;
 
@@ -37,12 +38,13 @@ internal sealed class KgsmServerOperations : IServerOperations
 
     public KgsmServerOperations(
         IInstanceService instances, IInstanceFiles files, ISystemService system, IWatcherService watcher,
-        IInvocationContext invocation, ILogger<KgsmServerOperations> logger)
+        IWatchdogClient watchdog, IInvocationContext invocation, ILogger<KgsmServerOperations> logger)
     {
         _instances = instances;
         _files = files;
         _system = system;
         _watcher = watcher;
+        _watchdog = watchdog;
         _invocation = invocation;
         _logger = logger;
     }
@@ -379,14 +381,23 @@ internal sealed class KgsmServerOperations : IServerOperations
     private static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
 
-    public async Task<Result> InstallAsync(string blueprint, string? instanceName, CancellationToken cancellationToken = default)
+    public async Task<Result> InstallAsync(
+        string blueprint,
+        string? instanceName,
+        CancellationToken cancellationToken = default,
+        string? version = null,
+        int? port = null)
     {
         try
         {
             // Long-running; completion is also broadcast via events. Mirror the bot: run it
             // and report queued-successfully unless it throws synchronously.
             var (actor, origin) = Provenance();
-            await Task.Run(() => _instances.Install(blueprint, null, null, instanceName, actor, origin), cancellationToken);
+            await Task.Run(
+                () => _instances.Install(
+                    blueprint, installDir: null, version: version, name: instanceName,
+                    actor: actor, origin: origin, port: port),
+                cancellationToken);
             return Result.Success();
         }
         catch (Exception ex)
@@ -421,8 +432,85 @@ internal sealed class KgsmServerOperations : IServerOperations
             () => _instances.SetInstanceConfigValue(instance, key, value, actor, origin), cancellationToken);
     }
 
+    public Task<Result> RestoreBackupAsync(
+        string instance, string backupId, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(RestoreBackupAsync), instance,
+            () => _instances.RestoreBackup(instance, backupId, actor, origin), cancellationToken);
+    }
+
+    public Task<Result> DeleteBackupAsync(
+        string instance, string backupId, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(DeleteBackupAsync), instance,
+            () => _instances.DeleteBackup(instance, backupId, actor, origin), cancellationToken);
+    }
+
+    public Task<Result> PruneBackupsAsync(
+        string instance, int keep, CancellationToken cancellationToken = default)
+    {
+        // kgsm-lib throws below 1 rather than treating it as "keep nothing"; refuse it here so the
+        // confirm path reports a reason instead of an exception.
+        if (keep < 1)
+            return Task.FromResult(Result.Failure("A prune must keep at least one backup."));
+
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(PruneBackupsAsync), instance,
+            () => _instances.PruneBackups(instance, keep, actor, origin), cancellationToken);
+    }
+
+    public Task<Result> KickPlayerAsync(
+        string instance, string target, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(KickPlayerAsync), instance,
+            () => _instances.Kick(instance, target, actor, origin), cancellationToken);
+    }
+
+    public Task<Result> BanPlayerAsync(
+        string instance, string target, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(BanPlayerAsync), instance,
+            () => _instances.Ban(instance, target, actor, origin), cancellationToken);
+    }
+
+    public Task<Result> UnbanPlayerAsync(
+        string instance, string target, CancellationToken cancellationToken = default)
+    {
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(UnbanPlayerAsync), instance,
+            () => _instances.Unban(instance, target, actor, origin), cancellationToken);
+    }
+
+    /// <summary>
+    /// Sets the supervisor's persisted boot-autostart intent. Goes to the watchdog rather than the
+    /// engine because the watchdog is what owns that set and acts on it at boot.
+    /// </summary>
+    public async Task<Result> SetAutostartAsync(
+        string instance, bool enabled, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var result = enabled
+                ? await _watchdog.EnableAsync(instance, cancellationToken)
+                : await _watchdog.DisableAsync(instance, cancellationToken);
+
+            return result.Ok
+                ? Result.Success()
+                : Result.Failure(NullIfEmpty(result.Message) ?? "the supervisor refused the change");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Autostart change failed for {Instance} (enabled={Enabled})", instance, enabled);
+            return Result.Failure($"the supervisor could not be reached ({ex.Message})");
+        }
+    }
+
     /// <summary>Generous size cap for a whole-file overwrite — headroom for future non-config
-    /// uses, not a target (see plan §"Resolved decisions" 2).</summary>
+    /// uses, not a target.</summary>
     private const int MaxWriteBytes = 10 * 1024 * 1024;
 
     /// <summary>

@@ -25,7 +25,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddKgsmAssistant(this IServiceCollection services)
     {
         services.AddSingleton<IConfirmationContext, ConfirmationContext>();
-        // The per-turn progress narration sink (§ITurnProgress) — same ambient-scope shape as
+        // The per-turn progress narration sink  — same ambient-scope shape as
         // IConfirmationContext above, registered here so it's visible to both ServerAssistant (this
         // project) and the Infrastructure aggregators that report through it (e.g.
         // BlueprintAuthoringAggregator), without Infrastructure needing anything beyond the reference
@@ -40,7 +40,7 @@ public static class ServiceCollectionExtensions
         // by the prompt builder (segments) and the assistant (tool-description overlay).
         services.TryAddSingleton<IPromptOverrides, FilePromptOverrides>();
         services.AddSingleton<ISystemPromptBuilder, SystemPromptBuilder>();
-        // The §3.2 relevance seam: a deliberate no-op today (coarse/bulk tools are the
+        // The relevance seam: a deliberate no-op today (coarse/bulk tools are the
         // small-model fix). A host can override with its own filter before this call.
         services.TryAddSingleton<IToolRelevanceFilter, NoopToolRelevanceFilter>();
         // web_search degrades closed if no provider is wired: a host that wants real search
@@ -57,7 +57,7 @@ public static class ServiceCollectionExtensions
         // AddKgsmAdapters (with Rag:Enabled=true), which registers a concrete IRetrieval that
         // wins over this default. Without it, retrieval fails cleanly rather than breaking DI.
         services.TryAddSingleton<IRetrieval, DisabledRetrieval>();
-        // The unified `search` capability the model sees (§3.4): a deterministic composer over the two
+        // The unified `search` capability the model sees: a deterministic composer over the two
         // ports above (local docs first → web fallback). Always registered; whether the `search` TOOL
         // is offered is a separate, config-driven decision (SearchOptions.Available, set by the host).
         services.AddSingleton<ISearch, SearchAggregator>();
@@ -78,11 +78,18 @@ public static class ServiceCollectionExtensions
         // get_network honestly reports router forwarding as unknown and an opted-in open_ports router leg
         // honestly reports the watchdog unavailable — never breaking DI.
         services.TryAddSingleton<IUpnpInfo, UnavailableUpnpInfo>();
-        // Engine event history (get_audit_log / get_change_timeline) degrades closed the same way: a
+        // Engine event history (the events tool) degrades closed the same way: a
         // host that wires an engine calls AddKgsmAdapters, which registers a concrete
         // IEventHistory that wins over this default. Without it, both tools honestly report the
         // journal as unreadable rather than breaking DI.
         services.TryAddSingleton<IEventHistory, UnavailableEventHistory>();
+        // Per-instance facts (backups, versions, player presence, the autostart set, the console ring)
+        // and host facts (uptime/load/memory/disk/ports) degrade closed the same way: a host that wires
+        // an engine calls AddKgsmAdapters, which registers concrete adapters that win over these
+        // defaults. Without them the reads honestly report their authority as unavailable rather than
+        // breaking DI — and an empty reading is never mistaken for an idle host.
+        services.TryAddSingleton<IServerFacts, UnavailableServerFacts>();
+        services.TryAddSingleton<IHostFacts, UnavailableHostFacts>();
         // Blueprint field synthesis: the LLM reads the fetched research pages and extracts the native
         // server fields (the capable path the deterministic regex extractor is the fallback from). Needs
         // ILlmClient, which AddLocalLlm — required by this method, same as ServerAssistant below —

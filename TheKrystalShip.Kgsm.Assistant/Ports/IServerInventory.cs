@@ -12,4 +12,34 @@ public interface IServerInventory
 
     /// <summary>Names of the installable blueprints (game types).</summary>
     Task<IReadOnlyCollection<string>> GetBlueprintNamesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// One blueprint's detail, or <see langword="null"/> when no such blueprint exists. Null is
+    /// "unknown game type", not "the read failed" — implementations must not throw.
+    /// </summary>
+    Task<BlueprintDetail?> GetBlueprintDetailAsync(
+        string blueprintName, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// What a game type is and needs, for answering "what can I run?" and "what does this game want?"
+/// before an install is proposed. Every capacity figure is nullable because a blueprint may simply
+/// not declare it — an absent figure is unknown, never a zero.
+/// <para>
+/// <see cref="ModerationVerbs"/> lists only the moderation actions this game's server actually
+/// supports (a blueprint declares each command, and an undeclared one is unsupported). It is what
+/// stops the assistant offering to ban somebody on a game that cannot.
+/// </para>
+/// </summary>
+public sealed record BlueprintDetail(
+    string Name,
+    string? DisplayName,
+    string? Description,
+    IReadOnlyList<string> Ports,
+    string Kind,
+    bool SteamAccountRequired,
+    int? MaxPlayers,
+    int? MinRamMb,
+    int? RecommendedRamMb,
+    int? BaseDiskMb,
+    IReadOnlyList<string> ModerationVerbs);

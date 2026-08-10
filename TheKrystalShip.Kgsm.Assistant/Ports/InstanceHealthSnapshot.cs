@@ -1,9 +1,10 @@
 namespace TheKrystalShip.Kgsm.Assistant.Ports;
 
 /// <summary>
-/// Root-filesystem disk usage for the host, in the neutral form the health check
-/// needs. The surface parses KGSM's <c>df -h</c> strings (e.g. <c>"26%"</c>,
-/// <c>"649G"</c>) into this; the aggregator thresholds <see cref="UsedPercent"/>.
+/// Root-filesystem disk usage for the host — the one shape both the health check and the
+/// <c>host_info</c> read use, so the two can never describe the same disk differently. The surface
+/// parses KGSM's <c>df -h</c> strings (e.g. <c>"26%"</c>, <c>"649G"</c>) into this; the aggregator
+/// thresholds <see cref="UsedPercent"/>.
 /// </summary>
 /// <param name="UsedPercent">
 /// Disk used percentage as an integer (0–100), parsed from <c>use_percent</c>. Null
@@ -12,7 +13,16 @@ namespace TheKrystalShip.Kgsm.Assistant.Ports;
 /// </param>
 /// <param name="Size">Total size as a human string (e.g. "916G"), for the detail text.</param>
 /// <param name="Available">Free space as a human string (e.g. "649G"), for the detail text.</param>
-public sealed record HostDisk(int? UsedPercent, string? Size, string? Available);
+/// <param name="Filesystem">The device backing the mount, when reported.</param>
+/// <param name="Used">Space in use as a human string, when reported.</param>
+/// <param name="Mount">The mount point, when reported.</param>
+public sealed record HostDisk(
+    int? UsedPercent,
+    string? Size,
+    string? Available,
+    string? Filesystem = null,
+    string? Used = null,
+    string? Mount = null);
 
 /// <summary>
 /// The raw inputs <see cref="Health.HealthCheckAggregator"/> needs for one instance,

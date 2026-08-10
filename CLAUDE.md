@@ -141,9 +141,12 @@ Things that bite if you don't know them:
 ## Repo-specific invariants
 
 - **Never shell out to `kgsm.sh` (or open the watchdog socket) from C#.** All engine access goes
-  through **kgsm-lib** — a *project reference* to a sibling checkout at
-  `../kgsm-lib/kgsm-lib/kgsm-lib.csproj` (must be checked out alongside this repo to build). Need
-  more kgsm data? Extend a kgsm-lib method or an assistant port.
+  through **kgsm-lib**, consumed as a versioned `PackageReference`
+  (`TheKrystalShip.KGSM.Lib`) resolved from the local folder feed `/home/heisen/local-nuget` —
+  the same pattern kgsm-api, kgsm-bot and kgsm-monitor use. **The pinned version is what this repo
+  compiles against, not the sibling checkout**: a capability added to kgsm-lib is invisible here
+  until it is packed and the pin is bumped. Need more kgsm data? Extend a kgsm-lib method (then
+  repack + bump) or an assistant port.
 - **Never fabricate a status or metric.** Measured, or explicitly "unknown" — never invented. The
   ecosystem-wide rule; it's also why the eval scores *trajectory* (which tool was called), never a
   world fact (`TheKrystalShip.Kgsm.Assistant.Eval/CLAUDE.md` invariant #1).

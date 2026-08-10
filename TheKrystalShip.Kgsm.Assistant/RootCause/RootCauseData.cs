@@ -7,9 +7,9 @@ namespace TheKrystalShip.Kgsm.Assistant.RootCause;
 
 /// <summary>
 /// Which known KGSM failure pattern <see cref="RootCauseAggregator"/> matched, drawn from the
-/// locked rules table (toolbox-plan §3.4/§7·Q1). <see cref="None"/> means no rule matched — the
+/// locked rules table. <see cref="None"/> means no rule matched — the
 /// aggregator falls back to an honest correlation of the most salient recent events, never a
-/// guessed cause (§3.0).
+/// guessed cause.
 /// </summary>
 public enum RootCauseSignature
 {
@@ -54,7 +54,7 @@ public sealed record MetricFact(string Metric, string Detail);
 /// with its evidence chain, or (when <see cref="Signature"/> is <see cref="RootCauseSignature.None"/>)
 /// an honest correlation of recent activity. <see cref="Events"/>/<see cref="Metrics"/>/
 /// <see cref="HealthChecks"/> are the concrete evidence the deterministic rule read — the model
-/// narrates <see cref="Explanation"/>, it never invents it (§3.0).
+/// narrates <see cref="Explanation"/>, it never invents it.
 /// </summary>
 /// <param name="Signature">The matched pattern, or <see cref="RootCauseSignature.None"/> for a correlation.</param>
 /// <param name="Label">A short display name for the finding (e.g. "Update-mid-run crash loop").</param>
@@ -76,7 +76,7 @@ public sealed record RootCauseFinding(
     IReadOnlyList<HealthCheck> HealthChecks);
 
 /// <summary>
-/// The <c>trace_root_cause</c> tool's structured card payload (toolbox-plan §3.4's capstone
+/// The <c>trace_root_cause</c> tool's structured card payload (the capstone
 /// aggregator): a ranked list of <see cref="RootCauseFinding"/>s composed deterministically from
 /// three sources — the engine event timeline, a metrics window, and a health/status snapshot — for
 /// one instance. <see cref="Findings"/>[0] is the best (highest-confidence) finding; when nothing

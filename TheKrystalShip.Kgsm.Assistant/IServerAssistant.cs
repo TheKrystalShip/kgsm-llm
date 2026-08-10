@@ -39,7 +39,7 @@ public enum AssistantEventKind
     /// <summary>A tool is about to be dispatched; carries its name + arguments.</summary>
     ToolStart,
 
-    /// <summary>A tool finished; carries its name, a summary, and an optional structured card (§5·a result).</summary>
+    /// <summary>A tool finished; carries its name, a summary, and an optional structured card.</summary>
     ToolResult,
 
     /// <summary>
@@ -88,7 +88,7 @@ public sealed record AssistantStreamEvent(
     public static AssistantStreamEvent Thinking(string delta) => new(AssistantEventKind.Thinking, Text: delta);
     public static AssistantStreamEvent ToolStart(Tool tool, IReadOnlyDictionary<string, string?> arguments, string? id = null) =>
         new(AssistantEventKind.ToolStart, ToolName: tool, ToolArguments: arguments, ToolCallId: id);
-    // `data` is the dispatcher's optional surface-facing card (§5·a tool.result.result), carried opaquely.
+    // `data` is the dispatcher's optional surface-facing card, carried opaquely.
     public static AssistantStreamEvent ToolResult(Tool tool, string summary, string? id = null, object? data = null) =>
         new(AssistantEventKind.ToolResult, ToolName: tool, ToolSummary: summary, ToolCallId: id, ToolData: data);
     // No tool-call `id`: unlike ToolStart/ToolResult (minted by the generic agent loop right where it

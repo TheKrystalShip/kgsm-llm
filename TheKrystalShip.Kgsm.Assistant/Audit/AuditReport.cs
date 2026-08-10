@@ -45,7 +45,7 @@ public static class AuditWindow
 }
 
 /// <summary>
-/// The deterministic <c>get_audit_log</c> / <c>get_change_timeline</c> composer (mirrors
+/// The deterministic <c>events</c> composer (mirrors
 /// <see cref="Metrics.PerformanceReport"/>): turns a neutral <see cref="Ports.EventHistoryReading"/>
 /// into an <see cref="AuditData"/> card plus a model-grounding <see cref="ToolResult{TData}.Summary"/>.
 /// Pure and I/O-free (the socket fetch happens in the port impl), so it's unit-testable without mocks
@@ -68,14 +68,14 @@ public static class AuditWindow
 public static class AuditReport
 {
     /// <summary>
-    /// The state-changing subset <c>get_change_timeline</c> filters to — durable changes to a
+    /// The state-changing subset the <c>changes</c> scope filters to — durable changes to a
     /// server's existence, version, or exposed configuration. Deliberately EXCLUDES:
     /// <c>instance_started</c>/<c>instance_stopped</c> (routine run-state flips, not a change to the
-    /// server itself — <c>get_audit_log</c>/<c>get_status</c> are the right tools for those),
+    /// server itself — <c>events</c>/<c>server_info</c> are the right tools for those),
     /// <c>instance_crashed</c> (a fault/operational event for root-cause tracing, not a deliberate
     /// change), and <c>instance_player_joined</c>/<c>instance_player_left</c> (player activity, not
     /// server state). An event type this host has never seen (a future kgsm event) is honestly left
-    /// OUT of the timeline rather than guessed at — it still shows up in <c>get_audit_log</c>.
+    /// OUT of the timeline rather than guessed at — it still shows up in the unfiltered scope.
     /// </summary>
     public static readonly IReadOnlySet<string> ChangeEventTypes = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -145,7 +145,7 @@ public static class AuditReport
         };
 
     /// <summary>
-    /// Builds the <c>get_audit_log</c> result: every event in the window, unfiltered by type.
+    /// Builds the unfiltered <c>events</c> result: every event in the window, unfiltered by type.
     /// </summary>
     public static ToolResult<AuditData> Build(EventHistoryReading reading, string? instance, string window)
     {
@@ -163,15 +163,15 @@ public static class AuditReport
         };
 
         return new ToolResult<AuditData>(
-            Tool: LlmTools.GetAuditLog,
+            Tool: LlmTools.Events,
             Confidence: confidence,
-            Subject: new ResultRef(ResourceKind.Audit, subject),
+            Subject: new ResultRef(ResourceKind.Audit, subject, "all"),
             Summary: summary,
             Data: data);
     }
 
     /// <summary>
-    /// Builds the <c>get_change_timeline</c> result: the same source, filtered to
+    /// Builds the change-scoped <c>events</c> result: the same source, filtered to
     /// <see cref="ChangeEventTypes"/> and framed as "what changed" rather than "what happened".
     /// </summary>
     public static ToolResult<AuditData> BuildChangeTimeline(EventHistoryReading reading, string? instance, string range)
@@ -194,10 +194,12 @@ public static class AuditReport
                 "event journal couldn't be read. That isn't a sign nothing changed; the timeline just couldn't be read."),
         };
 
+        // Same tool and same journal as the unfiltered read; the Section is what tells a surface which
+        // scope produced this card, now that one tool serves both.
         return new ToolResult<AuditData>(
-            Tool: LlmTools.GetChangeTimeline,
+            Tool: LlmTools.Events,
             Confidence: confidence,
-            Subject: new ResultRef(ResourceKind.Audit, subject),
+            Subject: new ResultRef(ResourceKind.Audit, subject, "changes"),
             Summary: summary,
             Data: data);
     }

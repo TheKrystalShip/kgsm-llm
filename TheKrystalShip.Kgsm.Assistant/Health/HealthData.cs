@@ -3,7 +3,7 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 namespace TheKrystalShip.Kgsm.Assistant.Health;
 
 /// <summary>
-/// One health check's outcome (toolbox-plan §3.4). <see cref="State"/> is the pass/fail
+/// One health check's outcome. <see cref="State"/> is the pass/fail
 /// judgment; <see cref="Severity"/> is how a surface weights it (e.g. a stopped server
 /// is <see cref="CheckState.Pass"/> + <see cref="Severity.Info"/>, never a failure).
 /// </summary>
@@ -15,7 +15,7 @@ public sealed record HealthCheck(string Name, CheckState State, Severity Severit
 
 /// <summary>
 /// The structured card payload for <c>run_health_check</c> — the deterministic sweep's
-/// result (toolbox-plan §3.4). <see cref="Overall"/> is the worst <em>non-skip</em>
+/// result. <see cref="Overall"/> is the worst <em>non-skip</em>
 /// check; skipped checks are reported honestly (<see cref="Skipped"/>) and never inflate
 /// the pass count. This is the <c>D</c> in <see cref="ToolResult{TData}"/>.
 /// </summary>

@@ -205,6 +205,82 @@ internal sealed class KgsmServerOperations : IServerOperations
         }
     }
 
+    /// <summary>How many matches a single find returns before it reports truncation.</summary>
+    private const int MaxFindMatches = 60;
+
+    public async Task<Result<InstanceFileMatches>> FindInstanceFilesAsync(
+        string instance, string pattern, string? relativeSubdir = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var result = await Task.Run(
+                () => _files.Find(instance, pattern, relativeSubdir, new FindOptions(MaxResults: MaxFindMatches)),
+                cancellationToken);
+
+            return result.Outcome switch
+            {
+                FileOpOutcome.Ok => Result.Success(new InstanceFileMatches(
+                    result.Value!.Matches.Select(m => m.Path).ToList(),
+                    result.Value!.Truncated,
+                    result.Value!.ScanLimitHit)),
+                FileOpOutcome.InvalidArgument => Result.Failure<InstanceFileMatches>(
+                    "That isn't a usable search pattern."),
+                FileOpOutcome.NotFound or FileOpOutcome.NotADirectory => Result.Failure<InstanceFileMatches>(
+                    "That isn't a directory in the server's folder (omit the subdirectory to search from the top)."),
+                FileOpOutcome.OutOfJail => Result.Failure<InstanceFileMatches>(
+                    "Refused: that path is outside the instance directory."),
+                FileOpOutcome.InstanceUnavailable => Result.Failure<InstanceFileMatches>(
+                    $"'{instance}' is not a known instance."),
+                _ => Result.Failure<InstanceFileMatches>(result.Message ?? "could not search the directory."),
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "FindInstanceFiles failed for {Instance} ({Pattern})", instance, pattern);
+            return Result.Failure<InstanceFileMatches>(ex.Message);
+        }
+    }
+
+    /// <summary>How many matching lines a single content search returns before reporting truncation.</summary>
+    private const int MaxSearchHits = 40;
+
+    public async Task<Result<InstanceContentMatches>> SearchInstanceFilesAsync(
+        string instance, string pattern, string? relativeSubdir = null, bool ignoreCase = true,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var result = await Task.Run(
+                () => _files.Search(
+                    instance, pattern, relativeSubdir,
+                    new FileSearchOptions(MaxHits: MaxSearchHits, IgnoreCase: ignoreCase)),
+                cancellationToken);
+
+            return result.Outcome switch
+            {
+                FileOpOutcome.Ok => Result.Success(new InstanceContentMatches(
+                    result.Value!.Hits.Select(h => new InstanceContentMatch(h.Path, h.LineNumber, h.Line)).ToList(),
+                    result.Value!.Truncated,
+                    result.Value!.ScanLimitHit)),
+                FileOpOutcome.InvalidArgument => Result.Failure<InstanceContentMatches>(
+                    "That isn't a valid search expression."),
+                FileOpOutcome.NotFound or FileOpOutcome.NotADirectory => Result.Failure<InstanceContentMatches>(
+                    "That isn't a directory in the server's folder (omit the subdirectory to search from the top)."),
+                FileOpOutcome.OutOfJail => Result.Failure<InstanceContentMatches>(
+                    "Refused: that path is outside the instance directory."),
+                FileOpOutcome.InstanceUnavailable => Result.Failure<InstanceContentMatches>(
+                    $"'{instance}' is not a known instance."),
+                _ => Result.Failure<InstanceContentMatches>(result.Message ?? "could not search the files."),
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SearchInstanceFiles failed for {Instance} ({Pattern})", instance, pattern);
+            return Result.Failure<InstanceContentMatches>(ex.Message);
+        }
+    }
+
     private static InstanceDirEntry MapDirEntry(FileEntry entry) =>
         new(entry.Name, entry.Kind == FileKind.Dir, entry.SizeBytes ?? 0);
 

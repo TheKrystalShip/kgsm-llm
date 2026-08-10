@@ -118,6 +118,10 @@ public class ToolDispatcher : IToolDispatcher
                 return await ReadFileAsync(call, cancellationToken);
             if (call.Name == LlmTools.ListFiles)
                 return await ListFilesAsync(call, cancellationToken);
+            if (call.Name == LlmTools.FindFiles)
+                return await FindFilesAsync(call, cancellationToken);
+            if (call.Name == LlmTools.SearchFiles)
+                return await SearchFilesAsync(call, cancellationToken);
             if (call.Name == LlmTools.ReadConsole)
                 return await ReadConsoleAsync(call, cancellationToken);
             if (call.Name == LlmTools.ServerCommand)
@@ -617,6 +621,96 @@ public class ToolDispatcher : IToolDispatcher
             : $"Player moderation supported: {string.Join(", ", detail.ModerationVerbs)}.");
 
         return string.Join("\n", parts);
+    }
+
+    /// <summary>
+    /// Locates files by glob anywhere under the instance's directory, so the model can reach a config
+    /// that sits several levels down in one call instead of descending a directory at a time.
+    /// <para>
+    /// The two bounded outcomes are worded differently on purpose. Truncation invites a narrower
+    /// pattern; an incomplete walk is stated as "I stopped looking", because letting the model narrate
+    /// that as "there is no such file" is the fabrication this whole surface exists to avoid.
+    /// </para>
+    /// </summary>
+    private async Task<ToolOutput> FindFilesAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var pattern = call.Arg("pattern")?.Trim();
+        if (string.IsNullOrWhiteSpace(pattern))
+            return "Error: find_files needs a 'pattern' — the file name or glob to look for.";
+
+        var result = await _operations.FindInstanceFilesAsync(
+            resolved!, pattern, NullIfBlank(call.Arg("subdir")), cancellationToken);
+        if (!result.IsSuccess)
+            return $"Couldn't search '{resolved}' ({result.Error ?? "unknown error"}).";
+
+        var matches = result.Value!;
+        if (matches.Paths.Count == 0)
+        {
+            return matches.Incomplete
+                ? $"No match for '{pattern}' in the part of {resolved} that was searched — the search " +
+                  "stopped before covering everything, so this does NOT mean the file isn't there. " +
+                  "Try a subdir to narrow where to look."
+                : $"No file matching '{pattern}' in {resolved}.";
+        }
+
+        var lines = string.Join("\n", matches.Paths.Select(p => $"- {p}"));
+        var note = matches.Truncated
+            ? $"\n(More files matched than are shown — narrow the pattern if none of these is right.)"
+            : matches.Incomplete
+                ? "\n(The search stopped before covering the whole folder, so there may be more.)"
+                : string.Empty;
+
+        return $"Files in {resolved} matching '{pattern}':\n{lines}{note}";
+    }
+
+    /// <summary>
+    /// Searches file contents for a pattern — the counterpart to <see cref="FindFilesAsync"/> for when
+    /// the model knows the setting but not the file. Same honesty rule on the two bounded outcomes:
+    /// truncation invites a narrower pattern, an incomplete walk is never "there is no such setting".
+    /// </summary>
+    private async Task<ToolOutput> SearchFilesAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var pattern = call.Arg("pattern")?.Trim();
+        if (string.IsNullOrWhiteSpace(pattern))
+            return "Error: search_files needs a 'pattern' — the text to look for inside the files.";
+
+        var result = await _operations.SearchInstanceFilesAsync(
+            resolved!, pattern, NullIfBlank(call.Arg("subdir")), ignoreCase: true, cancellationToken);
+        if (!result.IsSuccess)
+            return $"Couldn't search '{resolved}' ({result.Error ?? "unknown error"}).";
+
+        var matches = result.Value!;
+        if (matches.Matches.Count == 0)
+        {
+            return matches.Incomplete
+                ? $"No match for '{pattern}' in the part of {resolved} that was searched — the search " +
+                  "stopped before covering everything, so this does NOT mean the setting isn't there."
+                : $"Nothing in {resolved}'s files matches '{pattern}'.";
+        }
+
+        var lines = string.Join("\n", matches.Matches.Select(m => $"- {m.Path}:{m.Line}: {Clip(m.Text)}"));
+        var note = matches.Truncated
+            ? "\n(More lines matched than are shown — narrow the pattern if none of these is right.)"
+            : matches.Incomplete
+                ? "\n(The search stopped before covering the whole folder, so there may be more.)"
+                : string.Empty;
+
+        return $"Matches for '{pattern}' in {resolved}:\n{lines}{note}";
+    }
+
+    /// <summary>Keeps one matched line short enough that a wide result set still fits the model's context.</summary>
+    private static string Clip(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.Length <= 200 ? trimmed : trimmed[..200] + "…";
     }
 
     /// <summary>Reads the supervisor's captured console output for one instance.</summary>

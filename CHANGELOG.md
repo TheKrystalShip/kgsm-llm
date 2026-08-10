@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`find_files` and `search_files`** — locate a file by name glob, or find which file contains a
+  setting, anywhere under a server's directory in one call. `list_files` is one level deep, so
+  reaching Palworld's `install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini` cost five
+  sequential listings and exhausted the turn's iteration budget before an edit could be proposed.
+  Measured on the routing benchmark: propose-only 0.810 → 0.889, overall 0.9545 → 0.9735, and
+  capped-out turns 8 → 0.
+- Neither tool exposes a binary. `find(1)` carries `-delete`/`-exec`/`-fprintf`, which would put
+  execution and deletion inside an authorized *read*; and for `grep` as much as `find`, the jail is
+  enforced on the path argument, so a model that composes that argument has no jail at all. Both are
+  structured parameters over kgsm-lib's jailed walk, which never descends into a symlinked directory.
+  Truncation ("more matched than I showed") and an incomplete walk ("I stopped looking") reach the
+  model as different sentences, because the second must never be narrated as "there is no such file".
+
 - **The toolbox is noun-scoped.** Two rules generate it: reads and mutations never share a tool (a
   tool's authorization tier is decided before it is offered, so a tier that depended on an argument
   could not be offered honestly), and a tool owns a noun while an enum selects the operation. The

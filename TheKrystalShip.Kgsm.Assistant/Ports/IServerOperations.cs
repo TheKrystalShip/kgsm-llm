@@ -66,6 +66,35 @@ public interface IServerOperations
         string instance, string? relativeSubdir = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Finds files anywhere under the instance's directory whose name matches a glob
+    /// (<c>*</c>/<c>?</c>), or whose path does when the pattern contains a <c>/</c>. Path-bound
+    /// exactly like the reads above, and the walk never follows a symlinked directory out.
+    /// <para>
+    /// This exists because a game's own config lives at a game-specific depth — Palworld's is five
+    /// levels down — and discovering it one directory listing at a time costs more agent iterations
+    /// than the turn has. Archived copies under a <c>backups</c> directory are excluded: an archived
+    /// config is not the file a question about the live server is about.
+    /// </para>
+    /// </summary>
+    Task<Result<InstanceFileMatches>> FindInstanceFilesAsync(
+        string instance, string pattern, string? relativeSubdir = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Searches the contents of the instance's text files for a regular expression, returning the
+    /// matching lines with their paths. Same path-binding and same never-follow-a-symlink walk as
+    /// <see cref="FindInstanceFilesAsync"/>; binaries and oversized files are skipped, and archived
+    /// copies under a <c>backups</c> directory are excluded.
+    /// <para>
+    /// The counterpart to finding by name: a caller often knows the SETTING it wants to change but not
+    /// which file holds it.
+    /// </para>
+    /// </summary>
+    Task<Result<InstanceContentMatches>> SearchInstanceFilesAsync(
+        string instance, string pattern, string? relativeSubdir = null, bool ignoreCase = true,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Live status of the whole fleet in a single kgsm invocation — the bulk read
     /// that replaces fanning a per-instance check across N instances (the cause of
     /// the agent-loop iteration cap on "which servers are running?"). An instance
@@ -204,3 +233,28 @@ public interface IServerOperations
 /// (0 for directories). Neutral data — the dispatcher formats it for the model.
 /// </summary>
 public sealed record InstanceDirEntry(string Name, bool IsDirectory, long Size);
+
+/// <summary>
+/// What a file search found (<see cref="IServerOperations.FindInstanceFilesAsync"/>).
+/// <para>
+/// <see cref="Truncated"/> and <see cref="Incomplete"/> stay separate all the way to the model, which
+/// is the point of carrying both: "more matched than I showed" invites a narrower pattern, while
+/// "I stopped looking" must never be narrated as "there is no such file".
+/// </para>
+/// </summary>
+/// <param name="Paths">Matching paths, relative to the instance's own directory.</param>
+/// <param name="Truncated">More files matched than were returned.</param>
+/// <param name="Incomplete">The walk stopped on its budget before covering the tree.</param>
+public sealed record InstanceFileMatches(
+    IReadOnlyList<string> Paths, bool Truncated, bool Incomplete);
+
+/// <summary>One matching line found by a content search: its file, its 1-based line number, and the
+/// line itself.</summary>
+public sealed record InstanceContentMatch(string Path, int Line, string Text);
+
+/// <summary>
+/// What a content search found (<see cref="IServerOperations.SearchInstanceFilesAsync"/>). Carries the
+/// same two distinct truncation signals as <see cref="InstanceFileMatches"/>, for the same reason.
+/// </summary>
+public sealed record InstanceContentMatches(
+    IReadOnlyList<InstanceContentMatch> Matches, bool Truncated, bool Incomplete);

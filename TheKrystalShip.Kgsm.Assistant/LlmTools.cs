@@ -101,6 +101,15 @@ public static class LlmTools
     public static readonly Tool ReadFile = new("read_file");
     public static readonly Tool ListFiles = new("list_files");
 
+    // Locates a file by name pattern anywhere under the server's directory. A game's own config sits
+    // at a game-specific depth (Palworld's is five levels down), and discovering it one listing at a
+    // time costs more agent iterations than a turn has — which is what left file edits unproposed.
+    public static readonly Tool FindFiles = new("find_files");
+
+    // The content counterpart to find_files: a caller often knows the SETTING it wants to change but
+    // not which file holds it, which no amount of name matching answers.
+    public static readonly Tool SearchFiles = new("search_files");
+
     // The supervisor's captured console output for one instance. Its own tool rather than a
     // server_info aspect: console output is file-like content and belongs in this tier, and a tool is
     // offered wholly or not at all — riding it on an open-tier read would expose it to callers who
@@ -355,6 +364,25 @@ public static class LlmTools
         "or \"install\". OMIT it to list the server's top level.",
         Required: false);
 
+    private static readonly LlmToolParameter FindPattern = new(
+        "pattern",
+        "The file name to look for, as a glob — e.g. \"PalWorldSettings.ini\", \"*.ini\", " +
+        "\"server.properties\", or \"*Settings*\". Include a \"/\" to match on the path instead of " +
+        "just the name (e.g. \"*/Config/*.ini\"). Prefer the most specific pattern you can: a broad " +
+        "one can match hundreds of files.");
+
+    private static readonly LlmToolParameter FindSubdir = new(
+        "subdir",
+        "Optional. Search only inside this subdirectory of the server's folder. OMIT it to search the " +
+        "whole server directory, which is usually what you want.",
+        Required: false);
+
+    private static readonly LlmToolParameter SearchFilesPattern = new(
+        "pattern",
+        "The text to look for inside the files — a setting name like \"MaxPlayers\" or " +
+        "\"DayTimeSpeedRate\", or a regular expression. Matching ignores case. Prefer a distinctive " +
+        "string: a common word can match hundreds of lines.");
+
     private static readonly LlmToolParameter ConsoleLines = new(
         "lines",
         "Optional. How many of the most recent console lines to read. Defaults to a recent tail.",
@@ -503,6 +531,24 @@ public static class LlmTools
             "to read with read_file. Optionally pass a subdirectory (e.g. \"logs\") to look inside it; " +
             "omit it for the server's top level.",
             InstanceName, ListSubdir),
+
+        LlmToolDefinition.Create(FindFiles,
+            "Find a file inside a game server's folder by name, searching every subdirectory at once. " +
+            "USE THIS INSTEAD OF list_files when you know roughly what the file is called — a game's " +
+            "own config is often several directories deep, and stepping down one directory at a time " +
+            "wastes the turn. Give a glob like \"PalWorldSettings.ini\", \"*.ini\" or " +
+            "\"server.properties\"; it returns matching paths ready to hand to read_file. Archived " +
+            "copies under a backups folder are excluded, so what you get is the live file.",
+            InstanceName, FindPattern, FindSubdir),
+
+        LlmToolDefinition.Create(SearchFiles,
+            "Search INSIDE a game server's files for text, across every subdirectory at once — use " +
+            "this when you know the SETTING you want but not which file holds it (e.g. " +
+            "\"MaxPlayers\", \"DayTimeSpeedRate\"). Returns each matching file with the line number " +
+            "and the line itself, ready to hand to read_file. Use find_files instead when you know " +
+            "the file's NAME. Archived copies under a backups folder are excluded, and binary files " +
+            "are skipped.",
+            InstanceName, SearchFilesPattern, FindSubdir),
 
         LlmToolDefinition.Create(ReadConsole,
             "Read the most recent console output a running server has produced — what the game itself " +

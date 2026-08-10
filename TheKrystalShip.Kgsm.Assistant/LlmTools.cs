@@ -377,11 +377,15 @@ public static class LlmTools
         "whole server directory, which is usually what you want.",
         Required: false);
 
-    private static readonly LlmToolParameter SearchFilesPattern = new(
-        "pattern",
+    // Named "text", not "pattern", because find_files takes a "pattern" that is a filename GLOB: one
+    // argument name across two tools carrying two syntaxes had the model feeding "*Player*" to the
+    // content searcher, where a leading quantifier is not a valid expression at all.
+    private static readonly LlmToolParameter SearchFilesText = new(
+        "text",
         "The text to look for inside the files — a setting name like \"MaxPlayers\" or " +
-        "\"DayTimeSpeedRate\", or a regular expression. Matching ignores case. Prefer a distinctive " +
-        "string: a common word can match hundreds of lines.");
+        "\"DayTimeSpeedRate\". Matching ignores case. This is text, NOT a filename pattern: do not " +
+        "wrap it in \"*\". A regular expression works too. Prefer a distinctive string: a common word " +
+        "can match hundreds of lines.");
 
     private static readonly LlmToolParameter ConsoleLines = new(
         "lines",
@@ -548,7 +552,7 @@ public static class LlmTools
             "and the line itself, ready to hand to read_file. Use find_files instead when you know " +
             "the file's NAME. Archived copies under a backups folder are excluded, and binary files " +
             "are skipped.",
-            InstanceName, SearchFilesPattern, FindSubdir),
+            InstanceName, SearchFilesText, FindSubdir),
 
         LlmToolDefinition.Create(ReadConsole,
             "Read the most recent console output a running server has produced — what the game itself " +

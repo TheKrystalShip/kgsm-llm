@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
@@ -678,9 +680,20 @@ public class ToolDispatcher : IToolDispatcher
         if (error is not null)
             return error;
 
-        var pattern = call.Arg("pattern")?.Trim();
+        // Accept "pattern" as well: it is find_files' argument name, and a model that has just used
+        // that tool reaches for the same word. Taking it costs nothing and saves a whole turn.
+        var pattern = (call.Arg("text") ?? call.Arg("pattern"))?.Trim();
         if (string.IsNullOrWhiteSpace(pattern))
-            return "Error: search_files needs a 'pattern' — the text to look for inside the files.";
+            return "Error: search_files needs 'text' — the text to look for inside the files.";
+
+        // A glob here is a routing slip, not a search that found nothing: "*Player*" is a valid
+        // FILENAME pattern and an invalid expression, so relaying the regex parser's complaint sends
+        // the model round again with another glob. Name the mistake and the fix instead.
+        if (InvalidExpression(pattern) is { } why)
+            return $"Error: '{pattern}' isn't valid here — {why} 'text' is the text to find INSIDE " +
+                   "the files, not a filename pattern, so it takes no \"*\" wildcards. Search for the " +
+                   $"bare string (e.g. \"{pattern.Trim('*', '?', '.')}\"), or use find_files if you " +
+                   "are looking for a file by NAME.";
 
         var result = await _operations.SearchInstanceFilesAsync(
             resolved!, pattern, NullIfBlank(call.Arg("subdir")), ignoreCase: true, cancellationToken);
@@ -690,10 +703,17 @@ public class ToolDispatcher : IToolDispatcher
         var matches = result.Value!;
         if (matches.Matches.Count == 0)
         {
+            // A search covering everything and matching nothing means this game does not spell the
+            // setting that way — so re-running a near-identical spelling burns the turn without ever
+            // changing the answer. Say what actually works: a shorter fragment, since games name the
+            // same knob differently ("max players" can be stored as ServerPlayerMaxNum).
             return matches.Incomplete
                 ? $"No match for '{pattern}' in the part of {resolved} that was searched — the search " +
                   "stopped before covering everything, so this does NOT mean the setting isn't there."
-                : $"Nothing in {resolved}'s files matches '{pattern}'.";
+                : $"Nothing in {resolved}'s files matches '{pattern}'. The whole folder was searched, " +
+                  "so a near-identical spelling will not match either — this game names it something " +
+                  "else. Search a SHORTER distinctive fragment of the word instead, or locate the " +
+                  "config with find_files and read it.";
         }
 
         var lines = string.Join("\n", matches.Matches.Select(m => $"- {m.Path}:{m.Line}: {Clip(m.Text)}"));
@@ -704,6 +724,25 @@ public class ToolDispatcher : IToolDispatcher
                 : string.Empty;
 
         return $"Matches for '{pattern}' in {resolved}:\n{lines}{note}";
+    }
+
+    /// <summary>
+    /// Why this expression won't compile, or <see langword="null"/> when it will. Checked here rather
+    /// than left to the search itself so the model gets one message naming the argument it confused,
+    /// instead of the regex parser's "Quantifier '*' is not preceded by a valid expression" — which
+    /// reads as a failed search and earns a retry with the same mistake.
+    /// </summary>
+    private static string? InvalidExpression(string pattern)
+    {
+        try
+        {
+            _ = new Regex(pattern, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+            return null;
+        }
+        catch (ArgumentException ex)
+        {
+            return ex.Message.TrimEnd('.') + ".";
+        }
     }
 
     /// <summary>Keeps one matched line short enough that a wide result set still fits the model's context.</summary>

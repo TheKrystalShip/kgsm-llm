@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The routing benchmark covers the whole catalog** (corpus v11, 37 → 53 cases). Seven tools
+  (`host_info`, `blueprint_info`, `backup_command`, `player_command`, `read_console`, `find_files`,
+  `search_files`) and eight staged kinds — every backup operation, every moderation verb, autostart,
+  stop and update — had no case, so the headline scored the catalog's older half while the newer half
+  rode along uncounted. Three of the additions are disambiguation pairs, because a verb enum fails by
+  picking the wrong verb: prune-vs-delete (both destructive, on different targets), stop-vs-restart,
+  and autostart-vs-start.
+- `C.CalledToolWith` asserts a tool's *argument*, not just its name: on a noun-scoped tool the routing
+  decision is the `aspect`/`verb` enum, so "called `server_info`" does not distinguish asking for the
+  player roster from asking for the backup list.
+- The `ModeratableGame` / `NoModerationGame` fixture roles, resolved from live blueprint detail —
+  which games can kick is the host catalog's fact, not the corpus's. A blueprint that cannot be read
+  fills neither role, since treating "couldn't read it" as "declares nothing" would aim the
+  negative case at a game that may well support moderation.
+
+### Fixed
+
+- **`search_files` took a glob and looped.** Its argument is named `text`, not `pattern`: one
+  argument name across two tools carrying two syntaxes (`find_files` takes a filename glob) had the
+  model searching for `*Player*`, where a leading quantifier is not a valid expression at all — and
+  the regex parser's complaint reads as a failed search, so it retried with another glob until the
+  turn was gone. A glob is now rejected by naming the mistake, `pattern` is accepted as an alias, and
+  a search that covered everything and matched nothing says so — a near-identical spelling cannot
+  match either, so the useful move is a shorter fragment or `find_files`. Measured on the benchmark
+  case: 8 tool calls and a capped-out turn → 3 calls and a complete answer.
+
 - **`find_files` and `search_files`** — locate a file by name glob, or find which file contains a
   setting, anywhere under a server's directory in one call. `list_files` is one level deep, so
   reaching Palworld's `install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini` cost five

@@ -1344,4 +1344,38 @@ public class ToolDispatcherTests
             _confirmations.Staged.Should().BeEmpty();
         }
     }
+
+    private static LlmToolCall SearchFilesCall(string instance, string argument, string value) =>
+        new(LlmTools.SearchFiles, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            [argument] = value,
+        });
+
+    [Fact]
+    public async Task SearchFiles_GlobArgument_IsNamedAsTheMistake_AndNeverSearched()
+    {
+        // "*Player*" is a valid FILENAME glob and an invalid expression. Relaying the regex parser's
+        // complaint reads as "the search failed", which earns a retry with another glob — the loop
+        // that cost this case its whole turn.
+        var result = await Summary(SearchFilesCall("minecraft", "text", "*Player*"));
+
+        result.Should().Contain("not a filename pattern");
+        result.Should().Contain("find_files");
+        await _operations.DidNotReceiveWithAnyArgs()
+            .SearchInstanceFilesAsync(default!, default!, default, default, default);
+    }
+
+    [Fact]
+    public async Task SearchFiles_AcceptsPattern_AsAnAliasForText()
+    {
+        // find_files' argument is named "pattern"; a model that just used it reaches for the same word.
+        _operations.SearchInstanceFilesAsync("minecraft", "MaxPlayers", null, true, Arg.Any<CancellationToken>())
+            .Returns(Result<InstanceContentMatches>.Success(
+                new InstanceContentMatches(new[] { new InstanceContentMatch("server.properties", 12, "MaxPlayers=20") }, false, false)));
+
+        var result = await Summary(SearchFilesCall("minecraft", "pattern", "MaxPlayers"));
+
+        result.Should().Contain("server.properties");
+    }
 }

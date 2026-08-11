@@ -78,6 +78,15 @@ try
     Console.Error.WriteLine($"Compare later with:  kgsm-assistant-eval compare {outPath} <newer-run.json>");
     return ExitOk;
 }
+// The endpoint went away mid-run. Deliberately writes NO result file and renders no scorecard: a
+// partial run scores low for want of answers, and a number on disk is what someone compares later.
+catch (EvalEndpointDownException ex)
+{
+    Console.Error.WriteLine();
+    Console.Error.WriteLine($"kgsm-assistant-eval: ABORTED — {ex.Message}");
+    Console.Error.WriteLine("No result was written; there is nothing here worth comparing.");
+    return ExitRuntime;
+}
 catch (OperationCanceledException)
 {
     Console.Error.WriteLine();

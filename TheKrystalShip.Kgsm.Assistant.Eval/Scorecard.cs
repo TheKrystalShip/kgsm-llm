@@ -51,6 +51,26 @@ internal static class Scorecard
         w.WriteLine();
         w.WriteLine($"Overall: {Rate(run.OverallRate)}  ({coveredPass}/{coveredTotal} checks)");
 
+        // Printed next to the score, not in a footnote: the number above is only a measurement of the
+        // assistant for the turns that reached it, and a reader comparing two runs has no other way to
+        // know part of one never did.
+        if (run.Health is { TurnsErrored: > 0 } h)
+        {
+            w.WriteLine();
+            if (h.Degraded)
+            {
+                w.WriteLine($"⚠  DEGRADED RUN — {h.TurnsErrored} of {h.TurnsRun} turns ({h.ErrorRate:P0}) failed outright.");
+                w.WriteLine("   Those turns reached no model, so their checks failed for want of an answer");
+                w.WriteLine("   rather than a wrong one. Do NOT read this score as the assistant's behaviour,");
+                w.WriteLine("   and do not compare it against a clean run. Check the endpoint and run again.");
+            }
+            else
+            {
+                w.WriteLine($"note: {h.TurnsErrored} of {h.TurnsRun} turns errored ({h.ErrorRate:P1}) — "
+                            + "their checks failed for want of a reply.");
+            }
+        }
+
         // The checks worth reading: anything that didn't pass every rep.
         var weak = run.Cases.Where(c => !c.Skipped)
             .SelectMany(c => c.Checks.Where(x => x.Rate < 1.0).Select(x => (c.Id, x)))

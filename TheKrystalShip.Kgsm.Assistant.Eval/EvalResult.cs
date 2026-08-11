@@ -40,6 +40,14 @@ internal sealed record HostInfoDto(
 internal sealed record DimensionSummaryDto(string Dimension, int Passed, int Total, double Rate, bool Covered);
 
 /// <summary>
+/// How much of the run actually reached the model. Carried in the result because a score says nothing
+/// about whether it was measured: an endpoint that dropped part-way produces errored turns whose
+/// checks all fail, which is indistinguishable from a regression once the number is on its own.
+/// Optional so result files written before it existed still load.
+/// </summary>
+internal sealed record RunHealthDto(int TurnsRun, int TurnsErrored, double ErrorRate, bool Degraded);
+
+/// <summary>
 /// A whole benchmark run, stamped with everything needed to compare it against another run honestly:
 /// the model, sampling temp + seed regime, rep count, the corpus version, and the system-prompt
 /// template hash (so a tuning edit is attributable). This is the durable artifact the user keeps.
@@ -57,7 +65,8 @@ internal sealed record EvalRun(
     HostInfoDto Host,
     IReadOnlyList<CaseResultDto> Cases,
     IReadOnlyList<DimensionSummaryDto> Summary,
-    double OverallRate)
+    double OverallRate,
+    RunHealthDto? Health = null)
 {
     public const string CurrentSchema = "kgsm-assistant-eval/v1";
 

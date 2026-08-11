@@ -92,6 +92,19 @@ The check kit (`Checks.cs`, all via `C.`):
 | `FinalHas(regex, "…", dim)` · `FinalLacks(regex, "…", dim)` | the reply matches / doesn't match a pattern |
 | `AnyOf(dim, "…", checkA, checkB, …)` | passes if any sub-check passes (multiple acceptable trajectories) |
 
+### When the model endpoint dies mid-run
+
+A dead endpoint and a catastrophically regressed model render the *same* scorecard — every check red.
+The harness separates them: five errored turns in a row **aborts** the run and writes no result file
+(a partial score on disk is what somebody compares next week), and any errored turns at all are
+carried into the result and printed under the score. Above 2% *and* at least 3 of them, the run is
+flagged `DEGRADED` and should not be compared against a clean one.
+
+A single errored turn is deliberately only a note: an empty reply after tool calls is a known local-
+model flake, and a banner that fires on it is a banner readers learn to skip. The tell in the raw
+data, if you ever see it again, is that scores collapse **while iterations collapse too** — a model
+behaving badly does more work, not less.
+
 Two rules: **score routing/staging, never a world fact** (the kgsm run-state bug would peg it red), and
 if you change an **existing** case's checks, **bump `BenchmarkSuite.Version`** so old result files
 compare honestly (adding a new case already does this when you mean to).

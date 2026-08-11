@@ -104,6 +104,7 @@ internal sealed class Harness
         using var scope = invocation.Begin(Invocation.ForCli(Environment.UserName));
 
         var caseResults = new List<CaseResultDto>();
+        var health = new RunHealth();
         string? sysHash = null;
 
         foreach (var bench in cases)
@@ -123,7 +124,7 @@ internal sealed class Harness
             {
                 ct.ThrowIfCancellationRequested();
                 Console.Error.Write($"  · {bench.Id,-4} rep {rep}/{_options.Reps} … ");
-                var (repResult, hash) = await RunRepAsync(assistant, bench, fx, rep, ct);
+                var (repResult, hash) = await RunRepAsync(assistant, bench, fx, rep, health, ct);
                 sysHash ??= hash;
                 reps.Add(repResult);
                 Console.Error.WriteLine(SummariseRep(repResult));
@@ -146,11 +147,13 @@ internal sealed class Harness
                 ["stopped"] = fx.StoppedInstance,
                 ["never_game"] = fx.NeverInstalledGame,
             }),
-            caseResults, summary, overall);
+            caseResults, summary, overall,
+            new RunHealthDto(health.TurnsRun, health.TurnsErrored, health.ErrorRate, health.IsDegraded));
     }
 
     private async Task<(RepResultDto, string? sysHash)> RunRepAsync(
-        IServerAssistant assistant, BenchmarkCase bench, ResolvedFixtures fx, int rep, CancellationToken ct)
+        IServerAssistant assistant, BenchmarkCase bench, ResolvedFixtures fx, int rep, RunHealth health,
+        CancellationToken ct)
     {
         // Fresh conversation per rep so context never bleeds between reps or cases (order-independence).
         var conversationId = $"eval:{bench.Id}:r{rep}:{Guid.NewGuid():N}";
@@ -178,6 +181,10 @@ internal sealed class Harness
                 record?.Iterations ?? 0,
                 record?.Outcome ?? TurnOutcome.Error,
                 result.IsSuccess ? result.Text : record?.Final ?? "");
+
+            // Before scoring: a turn that errored outright measured nothing, and enough of them in a
+            // row means the endpoint is gone rather than the model being wrong.
+            health.Record(obs.Outcome);
 
             var checks = step.Checks
                 .Select(c => new CheckResultDto(c.Label, c.Dimension.ToString(), c.Evaluate(obs, fx)))

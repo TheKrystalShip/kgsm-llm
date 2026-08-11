@@ -12,11 +12,11 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
-/// The <c>trace_root_cause</c> capstone aggregator (toolbox-plan §3.4/§7·Q1) is a pure, deterministic
-/// function over three fixture-friendly inputs — an event timeline, a metrics window, and a health
-/// snapshot — so these run without mocks. One test per rules-table entry, plus the two honesty
-/// guarantees the plan locks: no signature matched still produces a ranked correlation (never a
-/// guessed cause), and a source that could not be read degrades gracefully (never a fabricated pass).
+/// The <c>trace_root_cause</c> capstone aggregator is a pure, deterministic function over three
+/// fixture-friendly inputs — an event timeline, a metrics window, and a health snapshot — so these
+/// run without mocks. One test per rules-table entry, plus the two honesty guarantees: no signature
+/// matched still produces a ranked correlation (never a guessed cause), and a source that could not
+/// be read degrades gracefully (never a fabricated pass).
 /// </summary>
 public class RootCauseAggregatorTests
 {

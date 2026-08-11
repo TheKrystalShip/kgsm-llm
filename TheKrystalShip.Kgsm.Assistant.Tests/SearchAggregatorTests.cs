@@ -13,7 +13,7 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
-/// The §3.4 deterministic composer: local indexed docs first, public web fallback. Covers the whole
+/// The deterministic composer: local indexed docs first, public web fallback. Covers the whole
 /// ladder — strong local answers without touching the web; weak/empty/disabled local falls back;
 /// a weak local hit beats an empty web; the context cap keeps the strongest chunk; and a web
 /// FAILURE is reported as "couldn't search", never as "nothing exists" (the measured-or-unknown rule).

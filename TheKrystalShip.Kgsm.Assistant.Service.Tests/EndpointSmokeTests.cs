@@ -1154,9 +1154,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Turn_StreamAccept_GeneralisedCommand_ProposedEventCarriesVerbAndSubject()
     {
-        // §3.5 + §5·a: a generalised command (start) is propose-only and surfaces as command.proposed
-        // in the §5·a shape — `verb` (the normalised API token), `subject {resource,id}`, and a human
-        // `confirm` prompt. The host-minted `token` is retained (additive) for the /confirm surfaces.
+        // A generalised command (start) is propose-only and surfaces as command.proposed carrying
+        // `verb` (the normalised API token), `subject {resource,id}`, and a human `confirm` prompt.
+        // The host-minted `token` rides alongside them for the /confirm surfaces.
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("web:user1", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(

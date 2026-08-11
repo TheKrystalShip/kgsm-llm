@@ -17,7 +17,7 @@ using Xunit.Abstractions;
 namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 
 /// <summary>
-/// Live end-to-end coverage for the <c>.config.ini</c> editing lane (§3.8), booting the REAL
+/// Live end-to-end coverage for the <c>.config.ini</c> editing lane, booting the REAL
 /// composition root (real KGSM.Lib → dev-checkout kgsm, real Ollama) via
 /// <see cref="WebApplicationFactory{T}"/>.
 ///

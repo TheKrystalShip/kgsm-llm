@@ -17,7 +17,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
 /// Verifies <see cref="ServerAssistant.ConfirmAsync"/> — the model-independent execution
-/// gate for staged commands (§3.5: every command is propose-only): authority is re-checked,
+/// gate for staged commands (every command is propose-only): authority is re-checked,
 /// the target is re-validated against live inventory (which also blunts token replay), and
 /// only then does it execute.
 /// </summary>
@@ -164,7 +164,7 @@ public class ServerAssistantConfirmTests
         result.Summary.Should().Contain("kgsm exploded");
     }
 
-    // --- §3.8 set-config (key=value) -------------------------------------------------------
+    // --- set-config (key=value) ------------------------------------------------------------
 
     [Fact]
     public async Task SetConfig_HappyPath_ExecutesAndReportsOutcome()
@@ -311,7 +311,7 @@ public class ServerAssistantConfirmTests
         result.Summary.Should().Contain("protected key");
     }
 
-    // --- §3.5 generalised commands (start/stop/restart/update/backup) -----------------------
+    // --- generalised commands (start/stop/restart/update/backup) ----------------------------
 
     public static IEnumerable<object[]> CommandKinds() => new[]
     {

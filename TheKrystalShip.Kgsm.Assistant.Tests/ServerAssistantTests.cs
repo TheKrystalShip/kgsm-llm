@@ -17,7 +17,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 /// <summary>
 /// Verifies the kgsm authorization policy that <see cref="ServerAssistant"/>
 /// supplies to the (library) agent loop: which tools are offered per caller, the
-/// single per-message staging cap (every command is propose-only, §3.5), and the
+/// single per-message staging cap (every command is propose-only), and the
 /// unauthorized-caller refusal. The loop itself is the library's concern (and is
 /// tested there); here we capture the <see cref="AgentTurn"/> the assistant builds
 /// and exercise its gate directly.
@@ -142,8 +142,8 @@ public class ServerAssistantTests
     [Fact]
     public async Task Gate_OneCap_SpansEveryCommandKind()
     {
-        // §3.5: ordinary commands and the formerly-"destructive" ops now share ONE staging
-        // cap — a mix of kinds counts together, with no separate budget per tier.
+        // Every staged kind shares ONE cap — a mix of them counts together, with no
+        // separate budget per tier.
         var turn = await CaptureTurnAsync(canPerformActions: true);
 
         turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();

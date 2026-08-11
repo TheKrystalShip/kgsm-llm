@@ -585,10 +585,9 @@ public sealed record ToolStartEvent(string Id, string Tool, IReadOnlyDictionary<
 /// <summary>
 /// `tool.result` — a tool finished. <see cref="Id"/> pairs it with its <see cref="ToolStartEvent"/>.
 /// <see cref="Summary"/> is the model's grounding text (the dispatcher's string output), always
-/// present. <see cref="Result"/> is the §5·a structured card (toolbox-plan §5·c, a
-/// <c>ToolResultCard</c> projected from the tool's <c>ToolResult&lt;K,D&gt;</c>) — Phase 2, present
-/// only for the tools that have a real card (today: <c>run_health_check</c>); omitted from the
-/// frame entirely (not <c>null</c>) for summary-only tools, so a thin client is unaffected.
+/// present. <see cref="Result"/> is the structured card — a <c>ToolResultCard</c> projected from
+/// the tool's <c>ToolResult&lt;K,D&gt;</c> — present only for the tools that produce one; omitted
+/// from the frame entirely (not <c>null</c>) for summary-only tools, so a thin client is unaffected.
 /// </summary>
 public sealed record ToolResultEvent(
     string Id,

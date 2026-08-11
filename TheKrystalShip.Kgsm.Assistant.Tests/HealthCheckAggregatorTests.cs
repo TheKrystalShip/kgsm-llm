@@ -9,10 +9,9 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
-/// The deterministic health synthesis (toolbox-plan §3.4/§3.6) is a pure function, so
-/// these run without mocks. They pin the load-bearing rule (§D5): a deliberately
-/// stopped server is never a failure, and an unreadable source <c>Skip</c>s rather than
-/// fabricating a pass.
+/// The deterministic health synthesis is a pure function, so these run without mocks.
+/// They pin the load-bearing rule: a deliberately stopped server is never a failure, and
+/// an unreadable source <c>Skip</c>s rather than fabricating a pass.
 /// </summary>
 public class HealthCheckAggregatorTests
 {

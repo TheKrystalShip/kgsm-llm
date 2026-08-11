@@ -15,7 +15,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Cli;
 /// chat backend — it never resolves <c>IServerAssistant</c> or the kgsm-lib graph, so a box with
 /// Ollama but no kgsm can still index. The standalone <c>kgsm-rag-indexer</c> binary is the
 /// daemon-grade alternative (and the only one with <c>--watch</c>); this verb is the "already have
-/// the CLI, index without shipping a second binary" convenience (plan §3.1).
+/// the CLI, index without shipping a second binary" convenience.
 /// </summary>
 internal static class IndexCommand
 {

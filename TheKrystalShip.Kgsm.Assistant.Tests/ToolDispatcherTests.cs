@@ -208,7 +208,7 @@ public class ToolDispatcherTests
         var data = card.Data.Should().BeOfType<FleetStatusData>().Subject;
         data.Running.Should().Be(1);
         data.Unavailable.Should().Be(1);
-        // The §3.7 guard carried into the card: the unreadable instance is Unknown, never Stopped.
+        // Measured-or-unknown carried into the card: the unreadable instance is Unknown, never Stopped.
         data.Servers.Single(s => s.Instance == "broken").State.Should().Be(ServerRunState.Unknown);
         data.Stopped.Should().Be(0);
     }
@@ -240,7 +240,7 @@ public class ToolDispatcherTests
         var result = await Summary(
             new LlmToolCall(LlmTools.ServerInfo, new Dictionary<string, string?>()));
 
-        // The §3.7 guard: a could-not-read instance must not masquerade as stopped.
+        // Measured-or-unknown: a could-not-read instance must not masquerade as stopped.
         result.Should().Contain("status unavailable").And.Contain("regenerated");
         result.Should().NotContain("stopped");
     }
@@ -976,8 +976,8 @@ public class ToolDispatcherTests
     [MemberData(nameof(StagedCommandCases))]
     public async Task ServerCommand_StagesConfirmation_AndDoesNotExecuteInline(string verb, ConfirmationKind kind)
     {
-        // §3.5 + §4.1: the merged server_command routes its `verb` to the matching kind and
-        // STAGES it; the single-instance op runs later (from ConfirmAsync), never inline.
+        // server_command routes its `verb` to the matching kind and STAGES it; the
+        // single-instance op runs later (from ConfirmAsync), never inline.
         string result;
         using (_confirmations.BeginTurn())
         {

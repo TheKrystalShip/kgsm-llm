@@ -141,11 +141,11 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     /// <summary>
-    /// §3.5/§4.1 command path — an authorized lifecycle prompt must PROPOSE, not execute: the
+    /// The command path — an authorized lifecycle prompt must PROPOSE, not execute: the
     /// turn stages the matching confirmation for the resolved instance (drained into
-    /// <see cref="AssistantResult.Confirmations"/>) and proposes via the merged
+    /// <see cref="AssistantResult.Confirmations"/>) and proposes via the noun-scoped
     /// <c>server_command</c> tool with the right <c>verb</c>. Two verbs across both models check
-    /// the §3.2 thesis that consolidation keeps model SELECTION reliable (not just routing).
+    /// that one tool with a verb enum keeps model SELECTION reliable, not just routing.
     /// factorio-test must be installed (and is stopped), so the prompt has a real, unambiguous
     /// target — staging is propose-only, so "stop/restart" on a stopped server still only stages.
     /// (The "never executes inline" guarantee itself is unit-proven in ToolDispatcherTests via

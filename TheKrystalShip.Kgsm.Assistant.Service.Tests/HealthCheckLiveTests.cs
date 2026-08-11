@@ -19,7 +19,7 @@ using Xunit.Abstractions;
 namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 
 /// <summary>
-/// Live end-to-end coverage for the <c>run_health_check</c> aggregator (toolbox-plan §3.4),
+/// Live end-to-end coverage for the <c>run_health_check</c> aggregator,
 /// booting the REAL composition root (real KGSM.Lib → dev-checkout kgsm, real Ollama).
 ///
 /// Two layers, deliberately separated (mirrors <see cref="ConfigEditLiveTests"/>):

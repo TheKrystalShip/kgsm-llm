@@ -44,7 +44,7 @@ if (!indexMode && cli.Help)
     return ExitOk;
 }
 
-// --- Config resolution (§3.2): a single layered surface, low → high precedence:
+// --- Config resolution: a single layered surface, low → high precedence:
 //     embedded defaults → sidecar appsettings.json (next to the binary) → operator's file →
 //     environment → --model flag. No defaults are hardcoded in C#; every knob lives in the one
 //     canonical appsettings.json (embedded for self-sufficiency, copied beside the binary to edit).
@@ -117,7 +117,7 @@ if (cli.DumpPrompts)
     }
 }
 
-// --- Logging (§3.1): quiet by DEFAULT (floor at Warning), everything to stderr so stdout is the reply.
+// --- Logging: quiet by DEFAULT (floor at Warning), everything to stderr so stdout is the reply.
 var noColor = cli.NoColor || Environment.GetEnvironmentVariable("NO_COLOR") is not null;
 builder.Logging.ClearProviders();
 builder.Logging.SetMinimumLevel(cli.Verbose ? LogLevel.Debug : LogLevel.Warning);
@@ -145,7 +145,7 @@ if (!File.Exists(kgsmPath))
     return ExitUsage;
 }
 
-// --- Backend wiring: the entire host is three calls (§3.1). -----------------------------------
+// --- Backend wiring: the entire host is three calls. ------------------------------------------
 builder.Services.AddLocalLlm(builder.Configuration);     // Ollama client, conversation store, agent loop
 builder.Services.AddKgsmAssistant();                     // prompt builder, dispatcher, policy, IServerAssistant
 builder.Services.AddKgsmAdapters(builder.Configuration); // kgsm-lib graph + ports + Tavily (socket-safe)

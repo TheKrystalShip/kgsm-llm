@@ -395,7 +395,7 @@ public sealed class KgsmServerOperationsTests
         byName["down"].Availability.Should().Be(FleetStatusAvailability.Read);
         byName["down"].Running.Should().BeFalse();
 
-        // The §3.7 guard at the Service boundary: a could-not-read instance is
+        // Measured-or-unknown at the Service boundary: a could-not-read instance is
         // Unavailable with Running=null — never a fabricated "stopped" (false).
         byName["broken"].Availability.Should().Be(FleetStatusAvailability.Unavailable);
         byName["broken"].Running.Should().BeNull();

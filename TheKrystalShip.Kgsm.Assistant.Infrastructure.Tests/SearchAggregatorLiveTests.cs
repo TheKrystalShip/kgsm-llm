@@ -14,12 +14,12 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 /// <summary>
-/// End-to-end of the Phase 4 local-first path against a REAL embedder: build an index from a doc,
+/// End-to-end of the local-first path against a REAL embedder: build an index from a doc,
 /// then resolve it through the real <see cref="RagRetrieval"/> and the <see cref="SearchAggregator"/>
 /// — exactly the production wiring, minus the model deciding to call the tool. Gated on
-/// <c>KGSM_LIVE_OLLAMA=1</c> (mirrors the Phase 1/3a smokes). Also logs the real cosine top score so
-/// the §3.4 <c>LocalMinScore</c> default (0.35) can be sanity-checked against real embeddings —
-/// tuning it is Phase 5's job, so this asserts the path works (threshold 0) rather than the value.
+/// <c>KGSM_LIVE_OLLAMA=1</c>, like the other live smokes. Also logs the real cosine top score so the
+/// <c>LocalMinScore</c> default (0.35) can be sanity-checked against real embeddings; the assertion
+/// is that the path works (threshold 0), not that the default is the right value.
 /// </summary>
 public sealed class SearchAggregatorLiveTests : IDisposable
 {

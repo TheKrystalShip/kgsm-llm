@@ -98,7 +98,7 @@ public sealed class RagRetrievalTests : IDisposable
             Options.Create(new RagOptions { Enabled = true, IndexPath = Path.Combine(_dir, "absent.krag") }),
             embeddings, NullLogger<RagIndexProvider>.Instance);
         var retrieval = new RagRetrieval(
-            embeddings, provider,
+            embeddings, provider, TestInventories.NoGames(),
             Options.Create(new RagOptions { TopK = 5 }), NullLogger<RagRetrieval>.Instance);
 
         var result = await retrieval.RetrieveAsync("anything");
@@ -139,7 +139,7 @@ public sealed class RagRetrievalTests : IDisposable
             Options.Create(new RagOptions { Enabled = true, IndexPath = path }),
             embeddings, NullLogger<RagIndexProvider>.Instance);
         return new RagRetrieval(
-            embeddings, provider,
+            embeddings, provider, TestInventories.NoGames(),
             Options.Create(new RagOptions { TopK = topK, MinScore = minScore }),
             NullLogger<RagRetrieval>.Instance);
     }

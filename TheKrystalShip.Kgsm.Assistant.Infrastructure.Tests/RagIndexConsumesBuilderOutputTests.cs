@@ -47,7 +47,7 @@ public sealed class RagIndexConsumesBuilderOutputTests : IDisposable
             Options.Create(new RagOptions { Enabled = true, IndexPath = indexPath }),
             embedder, NullLogger<RagIndexProvider>.Instance);
         var retrieval = new RagRetrieval(
-            embedder, provider,
+            embedder, provider, TestInventories.NoGames(),
             Options.Create(new RagOptions { TopK = 5 }), NullLogger<RagRetrieval>.Instance);
 
         // Querying with a produced chunk's exact text → identical vector → that chunk is the top hit.

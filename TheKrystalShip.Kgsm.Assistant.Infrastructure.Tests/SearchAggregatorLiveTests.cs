@@ -57,7 +57,7 @@ public sealed class SearchAggregatorLiveTests : IDisposable
             Options.Create(new RagOptions { Enabled = true, IndexPath = indexPath }),
             embedder, NullLogger<RagIndexProvider>.Instance);
         var retrieval = new RagRetrieval(
-            embedder, provider, Options.Create(new RagOptions { TopK = 5 }),
+            embedder, provider, TestInventories.NoGames(), Options.Create(new RagOptions { TopK = 5 }),
             NullLogger<RagRetrieval>.Instance);
 
         // Log the real top similarity for a clearly-relevant query (a Phase 5 tuning signal).

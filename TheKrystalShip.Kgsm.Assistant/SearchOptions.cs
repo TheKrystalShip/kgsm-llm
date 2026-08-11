@@ -18,14 +18,20 @@ public sealed class SearchOptions
     /// <summary>
     /// Cosine floor at which a LOCAL hit is "good enough" to answer without falling back to the web.
     /// Deliberately distinct from <c>RagOptions.MinScore</c> (the retrieval hard floor, kept permissive
-    /// at 0 so this aggregator sees the real top score): below this, a web lookup is preferred. Tuning
-    /// this is Phase 5's job; 0.35 is a starting guess.
+    /// at 0 so this aggregator sees the real top score): below this, a web lookup is preferred.
+    /// <para>
+    /// The floor sits between the two measured bands: against the shipped corpus a question the docs
+    /// genuinely answer scores well above it, while generic phrasing that merely resembles the corpus
+    /// ("best cpu for a game server") lands below and is left to the web. It matters that this is not
+    /// set lower — a local hit at or above it suppresses the web fallback entirely and is reported as
+    /// confirmed, so a weak match here is not a slightly worse answer but a confident wrong one.
+    /// </para>
     /// </summary>
     /// <panel>How good the best local passage has to be for the assistant to trust it. Below this it
     /// searches the web instead.</panel>
     [LeafField("ragLocalMinScore", "Fall-back-to-web threshold", Group = "rag", Min = 0, Max = 1,
         DependsOn = "ragEnabled")]
-    public double LocalMinScore { get; set; } = 0.35;
+    public double LocalMinScore { get; set; } = 0.45;
 
     /// <summary>
     /// Cap on the grounding text injected from local chunks, to protect the lean model's context window.

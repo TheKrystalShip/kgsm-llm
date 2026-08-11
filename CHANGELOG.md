@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Local retrieval is scoped to the game a query names.** The docs corpus is organised per game
+  (`.../games/<game>/`), but cosine similarity is game-blind: generic operator phrasing ("my server
+  is lagging", "nobody can join") matches any game's troubleshooting prose. A query naming exactly
+  one known game — resolved against the live blueprint list, whole-word — now competes only against
+  that game's documents plus the game-neutral ones, so a question about an undocumented game finds
+  nothing locally and falls through to the web. Naming no game, or several, leaves the whole corpus
+  eligible. An unreadable blueprint list scopes nothing rather than failing, so a search never
+  depends on the engine being reachable.
+
+- **`Rag:LocalMinScore` is `0.45`.** A local hit at or above it answers from the docs and suppresses
+  the web fallback entirely, reported as confirmed — so a floor set too low does not produce a
+  slightly worse answer, it produces a confident wrong one. Measured against the shipped corpus with
+  `embeddinggemma`, questions the docs genuinely answer score 0.62–0.71, while generic phrasing that
+  merely resembles them ("what is the best cpu for a game server") lands below 0.40.
+
 ### Known limitation
 
 - **Under a confident contradiction, an unmeasurable roster is reported as `0`.** Asked who is on a

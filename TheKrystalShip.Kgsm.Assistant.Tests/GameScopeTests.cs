@@ -11,7 +11,8 @@ namespace TheKrystalShip.Kgsm.Assistant.Tests;
 public sealed class GameScopeTests
 {
     private static readonly string[] Games =
-        ["factorio", "valheim", "palworld", "killingfloor", "killingfloor2", "7dtd"];
+        ["factorio", "valheim", "palworld", "killingfloor", "killingfloor2", "7dtd",
+         "projectzomboid", "theforest"];
 
     [Theory]
     [InlineData("my factorio server is down", "factorio")]
@@ -31,6 +32,27 @@ public sealed class GameScopeTests
     [Fact]
     public void Matches_whole_words_so_a_longer_name_is_not_matched_by_its_prefix() =>
         GameScope.Resolve("killingfloor2 admin setup", Games).Should().Be("killingfloor2");
+
+    /// <summary>
+    /// A blueprint name is one concatenated token; people type the words apart. Both spellings have
+    /// to resolve, or scoping is silently inert for every game whose name reads as several words.
+    /// </summary>
+    [Theory]
+    [InlineData("how do I set up a project zomboid server", "projectzomboid")]
+    [InlineData("projectzomboid ports", "projectzomboid")]
+    [InlineData("Project Zomboid admin password", "projectzomboid")]
+    [InlineData("project-zomboid mods", "projectzomboid")]
+    [InlineData("my the forest server won't start", "theforest")]
+    public void Resolves_a_name_whose_words_are_written_apart(string query, string expected) =>
+        GameScope.Resolve(query, Games).Should().Be(expected);
+
+    [Fact]
+    public void Separator_tolerance_does_not_let_a_prefix_swallow_a_longer_name() =>
+        GameScope.Resolve("killing floor 2 admin setup", Games).Should().Be("killingfloor2");
+
+    [Fact]
+    public void Two_spellings_of_the_same_game_are_not_ambiguous() =>
+        GameScope.Resolve("project zomboid and projectzomboid", Games).Should().Be("projectzomboid");
 
     [Fact]
     public void Resolves_nothing_without_a_vocabulary() =>

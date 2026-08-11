@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Game scoping resolves a name whose words are written apart.** A blueprint name is one
+  concatenated token — `projectzomboid`, `theforest`, `dontstarvetogether` — and the matcher required
+  that exact token, so "how do I set up a project zomboid server" resolved no game at all. Scoping
+  was therefore inert for roughly half the catalog: the query named a game, nothing resolved, and the
+  whole corpus stayed eligible, which is the situation scoping exists to prevent. A name now matches
+  with separators tolerated between its characters, so both spellings resolve.
+
+  Ambiguity is judged on distinct mentions rather than distinct names. "killing floor 2" matches
+  both `killingfloor` and `killingfloor2` over the same stretch of text, and reading one mention as
+  two games named would make every name that extends another unresolvable; a match contained inside
+  a wider one is the same mention, and the wider name is the one meant. Two genuinely separate
+  mentions still scope nothing, as before.
+
 ### Changed
 
 - **The indexer's corpus is kgsm's knowledge base, and only that** —

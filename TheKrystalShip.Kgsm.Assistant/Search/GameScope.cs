@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace TheKrystalShip.Kgsm.Assistant.Search;
@@ -23,6 +25,12 @@ public static class GameScope
     /// <summary>Path segment marking the per-game subtree of the corpus.</summary>
     private const string GamesSegment = "games";
 
+    /// <summary>Separators tolerated between the characters of a game name.</summary>
+    private const string NameSeparators = @"[\s._-]*";
+
+    /// <summary>Compiled matcher per game name; the vocabulary is small and long-lived.</summary>
+    private static readonly ConcurrentDictionary<string, Regex> Matchers = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// The single game named in <paramref name="query"/>, or <see langword="null"/> when it names
     /// none, more than one, or the vocabulary is unavailable. Matching is whole-word and
@@ -33,24 +41,64 @@ public static class GameScope
         if (string.IsNullOrWhiteSpace(query) || gameNames.Count == 0)
             return null;
 
-        string? found = null;
+        var mentions = new List<(string Name, int Start, int End)>();
         foreach (var name in gameNames)
         {
             if (string.IsNullOrWhiteSpace(name))
                 continue;
 
-            if (!Regex.IsMatch(query, $@"\b{Regex.Escape(name)}\b",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)))
+            foreach (Match m in Matchers.GetOrAdd(name, BuildMatcher).Matches(query))
+                mentions.Add((name, m.Index, m.Index + m.Length));
+        }
+
+        string? found = null;
+        foreach (var mention in mentions)
+        {
+            // One stretch of text is one mention, however many names match it: "killing floor 2"
+            // matches both `killingfloor` and `killingfloor2`, and reading that as two games named
+            // would make every longer name unresolvable. The widest match is the one meant.
+            if (mentions.Any(other => !NameEquals(other.Name, mention.Name)
+                    && other.Start <= mention.Start && other.End >= mention.End
+                    && other.End - other.Start > mention.End - mention.Start))
                 continue;
 
             // A second, different game makes the query ambiguous — scope nothing rather than guess.
-            if (found is not null && !string.Equals(found, name, StringComparison.OrdinalIgnoreCase))
+            if (found is not null && !NameEquals(found, mention.Name))
                 return null;
 
-            found = name;
+            found = mention.Name;
         }
 
         return found;
+    }
+
+    private static bool NameEquals(string a, string b) =>
+        string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A matcher for one game name that tolerates separators between its characters, because a
+    /// blueprint name is one concatenated token (<c>projectzomboid</c>, <c>theforest</c>) while a
+    /// person types the words apart. Requiring the exact token leaves scoping inert for every such
+    /// game — the query names a game, nothing resolves, and the whole corpus stays eligible.
+    /// <para>
+    /// The word boundaries are what keep this precise: after matching <c>killingfloor</c> the
+    /// trailing <c>\b</c> fails against the <c>2</c> of <c>killingfloor2</c>, so the shorter name
+    /// still does not swallow the longer one.
+    /// </para>
+    /// </summary>
+    private static Regex BuildMatcher(string name)
+    {
+        var pattern = new StringBuilder(@"\b");
+        for (var i = 0; i < name.Length; i++)
+        {
+            if (i > 0)
+                pattern.Append(NameSeparators);
+            pattern.Append(Regex.Escape(name[i].ToString()));
+        }
+
+        pattern.Append(@"\b");
+        return new Regex(pattern.ToString(),
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     }
 
     /// <summary>

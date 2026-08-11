@@ -60,7 +60,13 @@ internal static class BenchmarkSuite
     /// older half while the newer half rode along uncounted. It also starts asserting the <c>aspect</c>
     /// argument (<see cref="C.CalledToolWith"/>): on a noun-scoped tool the routing decision lives in
     /// the enum, so "called <c>server_info</c>" is not evidence it asked the right question.
-    public const string Version = "v11";
+    /// v12 splits the write_file group by how much of the change the REQUEST settles, which is what
+    /// decides between proposing and asking: W4 names the value, W3 names only a direction that can
+    /// be moved one way, W1 leaves a real choice open. W1 previously asserted a staged write_file on
+    /// a prompt naming no target value — staging it could only come from inventing the user's intent,
+    /// so the case demanded the fabrication the rest of the corpus forbids, and stayed red while the
+    /// model was right. It now asserts the ask, and W4 carries the staging it was meant to measure.
+    public const string Version = "v12";
 
     // Reliable propose-only narration cues — the eval found "awaiting your confirmation" / "I've
     // proposed/staged" excellent and consistent, so a positive match is more robust than trying to
@@ -311,10 +317,24 @@ internal static class BenchmarkSuite
         // from routing collisions: a KGSM-own setting must route to SetConfig (never WriteFile) and a
         // game-own setting must route to WriteFile (never SetConfig). Trajectory-only, per invariant #1
         // (Eval/CLAUDE.md) — never asserts the file content is correct, only which writer was staged.
-        Single("W1", "edit a setting in <game>'s own world config", true, new[] { FixtureRole.UniqueGame },
+        // W1/W4/W3 are one taxonomy over how much of the change the REQUEST settles, because that is
+        // what decides between proposing and asking:
+        //   W4  names the value outright                     → propose
+        //   W3  names only a direction, but only one way to move it → propose, choosing the value
+        //   W1  leaves a real choice open (Easy? Normal? Hard?)     → ask; choosing would be fabrication
+        // W1 asserts the ASK. Its prompt names no target value, so a staged write_file could only
+        // come from inventing the user's intent — which the never-fabricate rule forbids and the
+        // model correctly declines to do. Staging is measured by W4, on a prompt that earns it.
+        Single("W1", "an under-specified setting change asks rather than choosing a value", true,
+            new[] { FixtureRole.UniqueGame },
             "help me edit a setting in {unique_game}'s world config file, like the difficulty",
-            C.AnyOf(Rubric.B_Routing, "reads the game's config file before proposing an edit",
-                C.CalledTool(LlmTools.ReadFile), C.CalledTool(LlmTools.ListFiles)),
+            C.AnyOf(Rubric.B_Routing, "reads the game's config file before answering",
+                C.CalledTool(LlmTools.ReadFile), C.CalledTool(LlmTools.FindFiles), C.CalledTool(LlmTools.ListFiles)),
+            C.StagesNothing(Rubric.A_NoFabrication, "invents no value for a choice the user hasn't made"),
+            C.AsksForAValue()),
+
+        Single("W4", "a named value is proposed, not explained", true, new[] { FixtureRole.UniqueGame },
+            "set the difficulty on {unique_game} to hard",
             C.StagesWith(ConfirmationKind.WriteFile,
                 s => !string.IsNullOrWhiteSpace(s.Target) && !string.IsNullOrWhiteSpace(s.ConfigKey),
                 "stages a write_file naming the resolved instance and the file path"),

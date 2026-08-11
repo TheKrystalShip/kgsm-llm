@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
 using Microsoft.Extensions.Logging;
@@ -236,7 +237,8 @@ public class ServerAssistant : IServerAssistant
 
         return result.IsSuccess
             ? AssistantResult.Ok(
-                CorrectUnbackedClaim(result.Value!.Text, scope, conversationId),
+                NotePendingConfirmation(
+                    CorrectUnbackedClaim(result.Value!.Text, scope, conversationId), scope, conversationId),
                 confirmations,
                 result.Value!.Usage)
             : AssistantResult.Fail(result.Error!);
@@ -399,6 +401,17 @@ public class ServerAssistant : IServerAssistant
                     finalText = corrected;
                 }
 
+                // Same reasoning in the other direction: a client rendering live tokens must see the
+                // sentence naming what those confirmation prompts are for, not only the final text.
+                var noted = NotePendingConfirmation(finalText, scope, turn.ConversationId);
+                if (!ReferenceEquals(noted, finalText))
+                {
+                    await writer.WriteAsync(
+                        AssistantStreamEvent.Token(PendingConfirmationNote.For(scope.Staged.Count)),
+                        cancellationToken);
+                    finalText = noted;
+                }
+
                 await writer.WriteAsync(
                     AssistantStreamEvent.Final(finalText, finalUsage, finalTurnId), cancellationToken);
             }
@@ -434,6 +447,26 @@ public class ServerAssistant : IServerAssistant
             + "Conversation {ConversationId}", conversationId);
 
         return text + UnbackedActionClaim.Correction;
+    }
+
+    /// <summary>
+    /// The complement of <see cref="CorrectUnbackedClaim"/>: names a staged action the reply left
+    /// unmentioned. Runs ONLY on a turn that staged something, so the sentence it appends is backed by
+    /// the same record the confirmation prompts come from and cannot itself be a fabricated claim.
+    /// </summary>
+    private string NotePendingConfirmation(string text, IConfirmationScope scope, string conversationId)
+    {
+        if (scope.Staged.Count == 0 || scope.ActionPerformed)
+            return text;
+
+        if (PendingConfirmationNote.IsPresentIn(text))
+            return text;
+
+        _logger.LogWarning(
+            "Reply left {Count} staged action(s) unmentioned; pending-confirmation note appended. "
+            + "Conversation {ConversationId}", scope.Staged.Count, conversationId);
+
+        return text + PendingConfirmationNote.For(scope.Staged.Count);
     }
 
     public async Task<ConfirmOutcome> ConfirmAsync(
@@ -798,6 +831,29 @@ public class ServerAssistant : IServerAssistant
     }
 
     /// <summary>
+    /// A search query reduced to its content words, so a repeat survives cosmetic variation: case,
+    /// punctuation, filler words and word order all move between a model's retries while the question
+    /// does not. "Difficulty option values" and "values, Difficulty option?" are one search.
+    /// <para>
+    /// This catches a REPEAT, not a near-miss: "Difficulty option values" and "Difficulty options" stay
+    /// distinct, so a model rewording its way around the same question is not fully stopped. That is
+    /// deliberate — the cost of the two errors is not symmetric. A missed duplicate wastes one search
+    /// from a budget of five; a false match refuses a question the model has not actually asked yet,
+    /// and no similarity threshold distinguishes those reliably enough to risk it.
+    /// </para>
+    /// </summary>
+    private static string Normalize(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return string.Empty;
+        var words = Regex.Matches(query.ToLowerInvariant(), @"[a-z0-9.]+")
+            .Select(m => m.Value)
+            .Where(w => w is not ("the" or "a" or "an" or "of" or "for" or "to" or "in" or "on" or "and" or "or"))
+            .Distinct()
+            .Order(StringComparer.Ordinal);
+        return string.Join(' ', words);
+    }
+
+    /// <summary>
     /// Per-turn gate closure.
     ///  - Read-only tools always pass.
     ///  - Authorized reads (read_file / list_files): refused for unauthorized callers, but not capped.
@@ -813,6 +869,7 @@ public class ServerAssistant : IServerAssistant
         var searches = 0;
         var fetches = 0;
         var authored = 0;
+        var searched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         return call =>
         {
             // create_blueprint is authorized-and-autonomous (LlmTools.AuthorizedActions): refused for an
@@ -848,6 +905,17 @@ public class ServerAssistant : IServerAssistant
             // read-only pass-through below.
             if (call.Name == LlmTools.Search)
             {
+                // A query already run this message cannot return anything new, so re-running it only
+                // spends the budget and the turn's iterations on an answer already in context. Refused
+                // WITHOUT counting against the cap: the call was free of information, so charging for
+                // it would punish the model twice for one mistake and leave less room to recover.
+                var query = Normalize(call.Arg("query"));
+                if (query.Length > 0 && !searched.Add(query))
+                    return ToolGate.Refuse(
+                        "Refused: you already searched for that this message and the result is above. " +
+                        "Repeating a search returns the same thing — use what you have, ask the user, " +
+                        "or say you couldn't find it.");
+
                 if (searches >= MaxSearchesPerMessage)
                     return ToolGate.Refuse(
                         $"Refused: at most {MaxSearchesPerMessage} searches per message. " +

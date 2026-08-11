@@ -107,6 +107,19 @@ public class ChecksTests
     }
 
     [Fact]
+    public void AsksForAValue_does_not_require_a_question_mark()
+    {
+        // The live phrasing that exposed the punctuation-based version of this check: a request for
+        // input, worded as a statement.
+        C.AsksForAValue().Evaluate(
+            Obs(final: "I'll need to know what level you'd like to set it to (e.g., Easy, Normal, Hard)."), Fx)
+            .Should().BeTrue();
+        C.AsksForAValue().Evaluate(Obs(final: "Which difficulty would you like me to set it to?"), Fx)
+            .Should().BeTrue();
+        C.AsksForAValue().Evaluate(Obs(final: "I've set the difficulty to Hard."), Fx).Should().BeFalse();
+    }
+
+    [Fact]
     public void CalledToolWith_requires_the_argument_to_match_not_just_the_tool()
     {
         var check = C.CalledToolWith(LlmTools.ServerInfo, "aspect", "players", "x");

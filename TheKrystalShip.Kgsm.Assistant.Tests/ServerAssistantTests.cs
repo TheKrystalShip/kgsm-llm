@@ -234,6 +234,55 @@ public class ServerAssistantTests
         sixth.RefusalMessage.Should().Contain("searches per message");
     }
 
+    private static LlmToolCall SearchFor(string query) =>
+        new(LlmTools.Search, new Dictionary<string, string?> { ["query"] = query });
+
+    [Fact]
+    public async Task Gate_RefusesARepeatedSearch_WithoutSpendingTheCap()
+    {
+        // A query already run this message cannot return anything new. Refusing it without charging
+        // the cap leaves the budget for searches that could still answer something.
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        turn.Gate!(SearchFor("PalWorld Difficulty option values")).Allowed.Should().BeTrue();
+
+        var repeat = turn.Gate!(SearchFor("PalWorld Difficulty option values"));
+        repeat.Allowed.Should().BeFalse();
+        repeat.RefusalMessage.Should().Contain("already searched");
+
+        // Four more distinct queries still fit: the duplicate cost nothing.
+        for (var i = 0; i < 4; i++)
+            turn.Gate!(SearchFor($"distinct query {i}")).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Gate_SeesThroughCosmeticVariation_ButNotRewording()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        turn.Gate!(SearchFor("PalWorld Difficulty option values")).Allowed.Should().BeTrue();
+
+        // Same words, reordered and repunctuated — one search.
+        turn.Gate!(SearchFor("values for the Difficulty option in PalWorld?")).Allowed.Should().BeFalse();
+
+        // A different word set is allowed through even though it asks much the same thing. Refusing a
+        // question the model hasn't actually asked is the worse error, so the guard stays literal.
+        turn.Gate!(SearchFor("PalWorld Difficulty options")).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Gate_DistinctSearches_StillHitTheCap()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        for (var i = 0; i < 5; i++)
+            turn.Gate!(SearchFor($"query number {i}")).Allowed.Should().BeTrue();
+
+        var sixth = turn.Gate!(SearchFor("a sixth different question"));
+        sixth.Allowed.Should().BeFalse();
+        sixth.RefusalMessage.Should().Contain("searches per message");
+    }
+
     [Fact]
     public async Task Gate_SearchCap_IsSeparateFromTheStagingCap()
     {

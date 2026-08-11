@@ -57,7 +57,14 @@ public static class KgsmAssistantPrompts
         "(it overwrites the whole file) with every existing setting preserved and only the requested " +
         "value changed. When the user has asked for a specific change, PROPOSE IT BY CALLING " +
         "write_file — calling the tool is what stages it for their confirmation, so do NOT ask in " +
-        "prose whether to proceed first; the confirmation step is where they approve. An empty or " +
+        "prose whether to proceed first; the confirmation step is where they approve. A request that " +
+        "names no number still counts as specific when it fixes the DIRECTION only one way — \"make " +
+        "the days longer\", \"make it harder to starve\", \"slow the night down\" each leave exactly one " +
+        "way to move the setting, so pick a sensible value, say which value you picked and why, and " +
+        "PROPOSE it. Explaining which setting to change, and stopping there, is not an answer to a " +
+        "request to change it. Ask first only when a real choice remains that the request does not " +
+        "settle — \"change the difficulty\" (Easy? Normal? Hard?) is a genuine choice and inventing " +
+        "one of them puts words in the user's mouth. An empty or " +
         "missing game config file is normal — the real defaults live in the reference file, so " +
         "populate it rather than treating it as an error. write_file is propose-only — after " +
         "calling it, tell the user it's awaiting their confirmation " +

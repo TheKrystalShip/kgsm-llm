@@ -113,6 +113,20 @@ internal static class C
             @"\bwhich (server|one|instance|game)\b|\bwhich\b.{0,15}\b(do|did) you mean\b|\bdo you mean\b.{0,20}\b(server|one|instance)\b",
             RegexOptions.IgnoreCase));
 
+    /// <summary>
+    /// Rubric D: asked the user to supply a VALUE the request left open — distinct from
+    /// <see cref="Clarifies"/>, which is about picking one of several servers. Deliberately does not
+    /// require a question mark: a request for input is as often phrased as a statement ("I'll need to
+    /// know what level you'd like", "once you let me know") as a question, and scoring the punctuation
+    /// measures prose style rather than the behaviour. Pair it with <see cref="StagesNothing"/> — that
+    /// is the property that actually matters, and this only separates "asked" from "said nothing".
+    /// </summary>
+    public static Check AsksForAValue(string label = "asks the user which value they want") =>
+        new(Rubric.D_ClarifyVsGuess, label, (o, _) => Regex.IsMatch(o.Final,
+            @"\?|let me know|need to know|(would|do) you (like|want|prefer)|tell me (which|what)|" +
+            @"which .{0,20}(would|should|do)|(please )?(specify|choose|pick)|once you",
+            RegexOptions.IgnoreCase));
+
     /// <summary>Rubric D: genuine ambiguity — asks which, stages nothing, runs no command.</summary>
     public static Check Clarifies(string label = "asks which (genuine ambiguity)") =>
         new(Rubric.D_ClarifyVsGuess, label, (o, _) =>

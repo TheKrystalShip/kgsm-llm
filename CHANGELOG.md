@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A staged action is never left unmentioned** (`PendingConfirmationNote`). The mirror of
+  `UnbackedActionClaim`: that one catches a reply claiming an action the turn never took, this one
+  catches the opposite, which misinforms just as badly. A turn that stages on its last iteration ends
+  with the loop's own step-limit reply, so the user reads "I wasn't able to finish that" next to a
+  Confirm button, and has to guess what pressing it does. It runs only on a turn that staged
+  something, so the sentence it appends is backed by the same record the prompts come from.
+- The gate refuses a **search already run this message**, without charging it to the per-message cap —
+  the call carried no information, so charging for it would leave less room to recover. Queries
+  compare on their content words, so case, punctuation, filler and word order do not hide a repeat.
+  The guard stays literal rather than fuzzy: a missed duplicate wastes one search out of five, while
+  a false match refuses a question the model has not actually asked, and the two costs are not
+  symmetric.
+- The system prompt settles the middle of three cases, not two. A request naming no value is still
+  specific when it fixes the DIRECTION only one way ("make the days longer") — choose a value, say
+  which and why, and propose. Ask only when a real choice remains ("change the difficulty" —
+  Easy? Normal? Hard?), where choosing would put words in the user's mouth.
+- Corpus v12 splits the `write_file` group along that same line: W4 names the value, W3 names only a
+  direction, W1 leaves a real choice open. W1 previously asserted a staged `write_file` on a prompt
+  naming no target value — staging it could only come from inventing the user's intent, so the case
+  demanded the fabrication the rest of the corpus forbids, and stayed red while the model was right.
+- `C.AsksForAValue` scores a request for input without requiring a question mark, which the live
+  phrasing ("I'll need to know what level you'd like") does not use.
+
 - **The routing benchmark covers the whole catalog** (corpus v11, 37 → 53 cases). Seven tools
   (`host_info`, `blueprint_info`, `backup_command`, `player_command`, `read_console`, `find_files`,
   `search_files`) and eight staged kinds — every backup operation, every moderation verb, autostart,

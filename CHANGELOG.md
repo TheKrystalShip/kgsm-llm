@@ -25,11 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eligible. An unreadable blueprint list scopes nothing rather than failing, so a search never
   depends on the engine being reachable.
 
-- **`Rag:LocalMinScore` is `0.45`.** A local hit at or above it answers from the docs and suppresses
+- **`Rag:LocalMinScore` is `0.50`.** A local hit at or above it answers from the docs and suppresses
   the web fallback entirely, reported as confirmed — so a floor set too low does not produce a
   slightly worse answer, it produces a confident wrong one. Measured against the shipped corpus with
-  `embeddinggemma`, questions the docs genuinely answer score 0.62–0.71, while generic phrasing that
-  merely resembles them ("what is the best cpu for a game server") lands below 0.40.
+  `embeddinggemma`, questions the docs genuinely answer score 0.54–0.75, while phrasing that merely
+  resembles them lands below: a generic "what is the best cpu for a game server" at 0.45, and a real
+  question about a documented game that the documents do not cover at 0.47–0.49.
+  The two bands narrow as the corpus grows, because more documents mean more chances for something
+  to resemble a question nothing answers — re-measure both when adding a game rather than assuming
+  the value still separates them.
 
 ### Known limitation
 

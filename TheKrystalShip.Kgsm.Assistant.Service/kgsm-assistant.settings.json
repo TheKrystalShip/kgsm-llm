@@ -139,7 +139,7 @@
     "IndexPath": "",
     "TopK": 5,
     "MinScore": 0.0,
-    "LocalMinScore": 0.45,
+    "LocalMinScore": 0.50,
     "MaxContextChars": 6000,
     "EmbeddingModel": "embeddinggemma",
     "Endpoint": "http://localhost:11434",

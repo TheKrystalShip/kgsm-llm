@@ -761,7 +761,7 @@
       "description": "How good the best local passage has to be for the assistant to trust it. Below this it searches the web instead.",
       "group": "rag",
       "type": "float",
-      "default": "0.45",
+      "default": "0.50",
       "min": 0,
       "max": 1,
       "risk": "safe",

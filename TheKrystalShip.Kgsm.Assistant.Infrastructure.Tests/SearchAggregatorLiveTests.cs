@@ -18,7 +18,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 /// then resolve it through the real <see cref="RagRetrieval"/> and the <see cref="SearchAggregator"/>
 /// — exactly the production wiring, minus the model deciding to call the tool. Gated on
 /// <c>KGSM_LIVE_OLLAMA=1</c>, like the other live smokes. Also logs the real cosine top score so the
-/// <c>LocalMinScore</c> default (0.35) can be sanity-checked against real embeddings; the assertion
+/// <c>LocalMinScore</c> default can be sanity-checked against real embeddings; the assertion
 /// is that the path works (threshold 0), not that the default is the right value.
 /// </summary>
 public sealed class SearchAggregatorLiveTests : IDisposable
@@ -64,7 +64,7 @@ public sealed class SearchAggregatorLiveTests : IDisposable
         var probe = await retrieval.RetrieveAsync("how does kgsm manage game servers?");
         probe.IsSuccess.Should().BeTrue(because: probe.Error);
         var topScore = probe.Value!.Count > 0 ? probe.Value![0].Score : 0;
-        Console.WriteLine($"[live] top cosine score for a relevant query = {topScore:F3} (LocalMinScore default = 0.35)");
+        Console.WriteLine($"[live] top cosine score for a relevant query = {topScore:F3}");
 
         // Assert the PATH (threshold 0 → any hit is "strong"); the web is never reached.
         var aggregator = new SearchAggregator(

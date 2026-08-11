@@ -21,17 +21,24 @@ public sealed class SearchOptions
     /// at 0 so this aggregator sees the real top score): below this, a web lookup is preferred.
     /// <para>
     /// The floor sits between the two measured bands: against the shipped corpus a question the docs
-    /// genuinely answer scores well above it, while generic phrasing that merely resembles the corpus
-    /// ("best cpu for a game server") lands below and is left to the web. It matters that this is not
-    /// set lower — a local hit at or above it suppresses the web fallback entirely and is reported as
-    /// confirmed, so a weak match here is not a slightly worse answer but a confident wrong one.
+    /// genuinely answer scores well above it, while phrasing that merely resembles the corpus — a
+    /// generic "best cpu for a game server", or a real question about a documented game that the
+    /// documents happen not to cover — lands below and is left to the web. It matters that this is
+    /// not set lower: a local hit at or above it suppresses the web fallback entirely and is
+    /// reported as confirmed, so a weak match is not a slightly worse answer but a confident wrong
+    /// one.
+    /// </para>
+    /// <para>
+    /// The two bands narrow as the corpus grows, because more documents mean more chances for
+    /// something to resemble a question nothing actually answers. Re-measure both when adding a
+    /// game, rather than assuming the current value still separates them.
     /// </para>
     /// </summary>
     /// <panel>How good the best local passage has to be for the assistant to trust it. Below this it
     /// searches the web instead.</panel>
     [LeafField("ragLocalMinScore", "Fall-back-to-web threshold", Group = "rag", Min = 0, Max = 1,
         DependsOn = "ragEnabled")]
-    public double LocalMinScore { get; set; } = 0.45;
+    public double LocalMinScore { get; set; } = 0.50;
 
     /// <summary>
     /// Cap on the grounding text injected from local chunks, to protect the lean model's context window.

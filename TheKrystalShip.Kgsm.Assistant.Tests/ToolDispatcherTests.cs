@@ -254,6 +254,7 @@ public class ToolDispatcherTests
             .Returns(Result.Success(new InstanceHealthSnapshot(
                 Running: true,
                 RecentLogLines: Array.Empty<string>(),
+                RecentLogLinesRequested: 200,
                 UpdatesAvailable: false,
                 CurrentVersion: "1.0.0",
                 LatestVersion: null,
@@ -298,6 +299,7 @@ public class ToolDispatcherTests
             .Returns(Result.Success(new InstanceHealthSnapshot(
                 Running: true,
                 RecentLogLines: new[] { "INFO all good" },
+                RecentLogLinesRequested: 200,
                 UpdatesAvailable: true,
                 CurrentVersion: "1.0.0",
                 LatestVersion: "1.1.0",
@@ -908,7 +910,7 @@ public class ToolDispatcherTests
                 new Dictionary<string, IReadOnlyList<MetricPoint>>()));
         _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Success(new InstanceHealthSnapshot(
-                true, new[] { "INFO ok" }, false, "1.0.0", null, new HostDisk(20, "100G", "80G"), null)));
+                true, new[] { "INFO ok" }, 200, false, "1.0.0", null, new HostDisk(20, "100G", "80G"), null)));
 
         var output = await Create().ExecuteAsync(RootCauseCall("minecraft"));
 

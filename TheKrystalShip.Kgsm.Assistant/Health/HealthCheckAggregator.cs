@@ -17,6 +17,12 @@ namespace TheKrystalShip.Kgsm.Assistant.Health;
 /// status or an unreadable host disk <see cref="CheckState.Skip"/>s — it is never
 /// fabricated into a pass.
 /// </para>
+/// <para>
+/// That rule extends to the SIZE of a sample, not just its absence: a verdict needs enough evidence
+/// to be worth stating, so the log scan skips when the surface sampled fewer than
+/// <see cref="MinLogLinesForVerdict"/> lines. A clean read of a keyhole is not a clean run, and the
+/// pass it would otherwise produce reads to a person as "we looked and it was fine".
+/// </para>
 /// </summary>
 public static class HealthCheckAggregator
 {
@@ -25,6 +31,14 @@ public static class HealthCheckAggregator
     private const int DiskFailPercent = 95;
 
     private const int MaxSampleErrorLength = 100;
+
+    /// <summary>
+    /// The smallest log sample a "no errors" verdict may rest on, counted in lines REQUESTED. Below
+    /// this the logs check skips: a clean read of a few trailing lines is not evidence of a clean
+    /// run, and reporting it as a pass is the difference between "we found nothing" and "there is
+    /// nothing to find".
+    /// </summary>
+    private const int MinLogLinesForVerdict = 25;
 
     /// <summary>
     /// Runs the deterministic sweep. Always returns a result — partial inputs degrade to
@@ -71,6 +85,17 @@ public static class HealthCheckAggregator
         if (!s.Running)
             return new HealthCheck(
                 "logs", CheckState.Skip, Severity.Info, "Log scan skipped — instance not running.");
+
+        // Honesty: a probe that only ASKED for a handful of lines cannot support "no errors",
+        // however clean it reads — it is a keyhole, not a scan, and a server that has been up for
+        // hours prints many screens of routine output after whatever went wrong. Judged on the
+        // request rather than the yield: a large request answered with few lines IS the whole log,
+        // and reading that clean is real evidence.
+        if (s.RecentLogLinesRequested < MinLogLinesForVerdict)
+            return new HealthCheck(
+                "logs", CheckState.Skip, Severity.Info,
+                $"Log scan skipped — only {s.RecentLogLinesRequested} line(s) of output were sampled, "
+                + "too few to judge.");
 
         // Honesty: with NO recent log lines there is nothing to scan, so we cannot claim
         // "no errors" — that would assert a clean bill from zero evidence. Report an honest

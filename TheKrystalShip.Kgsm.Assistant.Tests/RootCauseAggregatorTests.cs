@@ -46,6 +46,7 @@ public class RootCauseAggregatorTests
         new(
             Running: running,
             RecentLogLines: running ? new[] { "INFO nominal" } : Array.Empty<string>(),
+            RecentLogLinesRequested: 200,
             UpdatesAvailable: false,
             CurrentVersion: "1.0.0",
             LatestVersion: null,

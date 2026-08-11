@@ -19,6 +19,7 @@ public class HealthCheckAggregatorTests
     private static InstanceHealthSnapshot Healthy(
         bool running = true,
         IReadOnlyList<string>? logs = null,
+        int logsRequested = 200,
         bool? updatesAvailable = false,
         string? current = "1.0.0",
         string? latest = null,
@@ -32,6 +33,8 @@ public class HealthCheckAggregatorTests
             // A healthy running server HAS clean log output; the logs check now Skips on an
             // empty read (honest "nothing to scan"), so the baseline must carry a real line.
             RecentLogLines: logs ?? new[] { "2026-06-14 10:00:00 INFO server running" },
+            // A diagnostic-grade request by default; the small-sample cases pass their own.
+            RecentLogLinesRequested: logsRequested,
             UpdatesAvailable: updatesAvailable,
             CurrentVersion: current,
             LatestVersion: latest,
@@ -93,6 +96,59 @@ public class HealthCheckAggregatorTests
         Check(r, "logs").Detail.Should().Contain("1 error line").And.Contain("failed to bind");
         r.Data.Overall.Should().Be(CheckState.Warn);
         r.Summary.Should().Contain("warnings");
+    }
+
+    [Fact]
+    public void RunningWithATinySample_SkipsHonestly_NeverFakesClean()
+    {
+        // The romestead case: the server aborted on an unhandled exception, the watchdog restarted
+        // it, and the health check sampled three lines of the FRESH run — clean, because the crash
+        // was in the previous one. Three clean lines is not evidence of a clean run, so the check
+        // must skip. Reporting "No errors in recent logs" here is what made a wrong answer sound
+        // measured.
+        var lines = new[] { "Server ready...", "Gingera is trying to connect", "player id 1" };
+
+        var r = HealthCheckAggregator.Run(
+            Healthy(logs: lines, logsRequested: 3), "romestead");
+
+        var logs = Check(r, "logs");
+        logs.State.Should().Be(CheckState.Skip);
+        logs.State.Should().NotBe(CheckState.Pass);
+        logs.Detail.Should().Contain("3 line").And.Contain("too few");
+        r.Summary.Should().NotContain("No errors in recent logs");
+        r.Data.Overall.Should().Be(CheckState.Pass);   // a skip never fails the overall
+        r.Data.Skipped.Should().Be(1);
+    }
+
+    [Fact]
+    public void ALargeRequestAnsweredWithFewLines_IsTheWholeLog_AndStillPasses()
+    {
+        // The counterpart: asking for a diagnostic-grade sample and getting a short answer means
+        // the server has only printed that much. That IS the whole log, so reading it clean is
+        // real evidence and must not be downgraded to a skip alongside the keyhole case.
+        var lines = new[] { "Starting server", "Loading world 'tks'", "Server ready..." };
+
+        var r = HealthCheckAggregator.Run(
+            Healthy(logs: lines, logsRequested: 200), "romestead");
+
+        var logs = Check(r, "logs");
+        logs.State.Should().Be(CheckState.Pass);
+        logs.Detail.Should().Contain("No errors in recent logs");
+    }
+
+    [Fact]
+    public void ATinySampleContainingAnError_StillSkips_RatherThanWarnOnAKeyhole()
+    {
+        // Symmetry: the sample is too small to conclude anything, in EITHER direction. A three-line
+        // probe that happens to catch an ERROR says nothing about how many there were, and the
+        // tally's "1 error line" would be a number the sample cannot support.
+        var lines = new[] { "INFO ok", "ERROR failed to bind port 25565", "INFO ok" };
+
+        var r = HealthCheckAggregator.Run(
+            Healthy(logs: lines, logsRequested: 3), "minecraft");
+
+        Check(r, "logs").State.Should().Be(CheckState.Skip);
+        r.Data.Overall.Should().Be(CheckState.Pass);
     }
 
     [Fact]

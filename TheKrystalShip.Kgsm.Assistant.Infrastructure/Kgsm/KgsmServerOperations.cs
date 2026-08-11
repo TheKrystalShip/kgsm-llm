@@ -347,9 +347,10 @@ internal sealed class KgsmServerOperations : IServerOperations
     /// <summary>
     /// Fetches the neutral health inputs for one instance (fetch + map only — the
     /// health judgment lives in <c>HealthCheckAggregator</c>). One non-fast status read
-    /// supplies running-state, recent logs and the real update check; host disk comes
-    /// from <c>system info</c>. A failed host read maps to a null disk + reason (the
-    /// aggregator then skips the disk check) — never a fabricated <c>0%</c>.
+    /// supplies running-state and the real update check; the log sample comes from the
+    /// supervisor's console and host disk from <c>system info</c>. A failed host read maps to a
+    /// null disk + reason (the aggregator then skips the disk check) — never a fabricated
+    /// <c>0%</c>.
     /// </summary>
     public async Task<Result<InstanceHealthSnapshot>> GetHealthSnapshotAsync(
         string instance, CancellationToken cancellationToken = default)
@@ -363,7 +364,8 @@ internal sealed class KgsmServerOperations : IServerOperations
                 return Result.Failure<InstanceHealthSnapshot>(
                     $"'{instance}' did not return a status (it may need its management file regenerated).");
 
-            var logLines = SplitLogLines(status.RecentLogs);
+            var (logLines, logLinesRequested) = await ReadHealthLogSampleAsync(
+                instance, status.RecentLogs, cancellationToken);
 
             // Host disk is best-effort: its absence skips the disk check, it never fails the read.
             HostDisk? hostDisk = null;
@@ -395,6 +397,7 @@ internal sealed class KgsmServerOperations : IServerOperations
             var snapshot = new InstanceHealthSnapshot(
                 Running: status.Status,
                 RecentLogLines: logLines,
+                RecentLogLinesRequested: logLinesRequested,
                 UpdatesAvailable: status.Version.UpdatesAvailable,
                 CurrentVersion: NullIfEmpty(status.Version.Current),
                 LatestVersion: status.Version.Latest,
@@ -437,6 +440,39 @@ internal sealed class KgsmServerOperations : IServerOperations
     }
 
     /// <summary>Splits KGSM's newline-joined <c>recent_logs</c> tail into non-empty lines.</summary>
+    /// <summary>How many console lines the health scan asks for — enough to be evidence.</summary>
+    private const int HealthLogSampleLines = 200;
+
+    /// <summary>
+    /// Reads the log sample the health verdict is judged on, and reports how many lines were ASKED
+    /// for so the aggregator can tell an adequate scan from a keyhole.
+    /// <para>
+    /// The supervisor's console is the source. KGSM's status carries a three-line tail — sized to
+    /// display, not to conclude from — so a verdict resting on it says "no errors" from a sample
+    /// that could not have held one. A container's stdout belongs to Docker and an unreachable
+    /// supervisor answers nothing, so both fall back to that status tail with its real (tiny) size
+    /// attached, and the aggregator honestly skips instead of reading a clean bill out of it.
+    /// </para>
+    /// </summary>
+    private async Task<(IReadOnlyList<string> Lines, int Requested)> ReadHealthLogSampleAsync(
+        string instance, string? statusRecentLogs, CancellationToken cancellationToken)
+    {
+        var fallback = SplitLogLines(statusRecentLogs);
+        try
+        {
+            var console = await _watchdog.GetConsoleTailAsync(
+                instance, HealthLogSampleLines, cancellationToken);
+            if (console.Count > 0)
+                return (console, HealthLogSampleLines);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Console read for the health check of {Instance} failed", instance);
+        }
+
+        return (fallback, fallback.Count);
+    }
+
     private static IReadOnlyList<string> SplitLogLines(string? recentLogs) =>
         string.IsNullOrEmpty(recentLogs)
             ? Array.Empty<string>()

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`run_health_check` no longer reports "No errors in recent logs" from a sample too small to hold
+  one.** The log verdict rested on KGSM's `instances status`, which carries a three-line tail — sized
+  to display, not to conclude from. A romestead crash showed what that produces: the server aborted
+  on an unhandled exception, the watchdog restarted it, and the check sampled three clean lines of
+  the *fresh* run and called the instance healthy. The omission was not the damage; the positive
+  claim was, because it reads to a person as "we looked and it was fine".
+
+  The health snapshot now reads its sample from the supervisor's console (200 lines) and carries how
+  many lines were **asked for**, which is what the aggregator judges adequacy on — a large request
+  answered with few lines is the whole log and a clean read of it is real evidence, while a
+  three-line probe is a keyhole whatever it contains. Below the minimum the logs check `Skip`s,
+  stating the sample size, in both directions: a small sample that happens to catch an `ERROR` also
+  skips rather than reporting a count it cannot support.
+
+  A container's stdout belongs to Docker and an unreachable supervisor answers nothing, so both keep
+  the status tail with its real size attached and skip honestly rather than passing.
+
 - **Game scoping resolves a name whose words are written apart.** A blueprint name is one
   concatenated token — `projectzomboid`, `theforest`, `dontstarvetogether` — and the matcher required
   that exact token, so "how do I set up a project zomboid server" resolved no game at all. Scoping

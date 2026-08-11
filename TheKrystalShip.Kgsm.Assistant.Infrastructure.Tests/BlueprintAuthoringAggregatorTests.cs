@@ -71,17 +71,17 @@ public sealed class BlueprintAuthoringAggregatorTests
         ["https://example.com/setup"], "found a native Linux server");
 
     private static InstanceHealthSnapshot RunningAndListening() =>
-        new(Running: true, RecentLogLines: [], UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
+        new(Running: true, RecentLogLines: [], RecentLogLinesRequested: 200, UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
             HostDisk: null, HostDiskUnavailableReason: null, PortsReachable: true, PortsDetail: null);
 
     private static InstanceHealthSnapshot NeverBoots() =>
-        new(Running: false, RecentLogLines: [], UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
+        new(Running: false, RecentLogLines: [], RecentLogLinesRequested: 200, UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
             HostDisk: null, HostDiskUnavailableReason: null, PortsReachable: null, PortsDetail: null);
 
     /// <summary>Running, but no detectable local port (a relay/NAT-punch server) — readiness can only come
     /// from a log line, exercising the full-log match and the generic-ready fallback.</summary>
     private static InstanceHealthSnapshot RunningNoPorts() =>
-        new(Running: true, RecentLogLines: [], UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
+        new(Running: true, RecentLogLines: [], RecentLogLinesRequested: 200, UpdatesAvailable: null, CurrentVersion: null, LatestVersion: null,
             HostDisk: null, HostDiskUnavailableReason: null, PortsReachable: null, PortsDetail: null);
 
     private static BlueprintResearchFindings FeasibleFindingsWithRegex(string regex) => new(

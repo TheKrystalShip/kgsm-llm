@@ -36,6 +36,14 @@ public sealed record HostDisk(
 /// Recent log lines (a tail). The aggregator scans these for error severity — it does
 /// the tally so the two surface implementations never have to.
 /// </param>
+/// <param name="RecentLogLinesRequested">
+/// How many trailing lines the surface ASKED for when it read <paramref name="RecentLogLines"/>.
+/// The aggregator judges whether the sample can support a verdict on this, not on the returned
+/// count: a three-line probe cannot say "no errors" however clean it reads, while a 200-line
+/// request answered with twelve lines IS the whole log and reading it clean is real evidence.
+/// Without it the two cases are indistinguishable, and the aggregator would have to assume the
+/// generous one — which is how a keyhole becomes a clean bill of health.
+/// </param>
 /// <param name="UpdatesAvailable">
 /// Whether an update is available: <c>true</c>/<c>false</c> when checked, <c>null</c>
 /// when KGSM did not check (honest unknown — the update check then skips).
@@ -63,6 +71,7 @@ public sealed record HostDisk(
 public sealed record InstanceHealthSnapshot(
     bool Running,
     IReadOnlyList<string> RecentLogLines,
+    int RecentLogLinesRequested,
     bool? UpdatesAvailable,
     string? CurrentVersion,
     string? LatestVersion,

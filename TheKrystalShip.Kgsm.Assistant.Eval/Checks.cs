@@ -17,6 +17,7 @@ internal enum Rubric
     D_ClarifyVsGuess,   // ask only on genuine ambiguity; resolve a unique match directly
     E_Scope,            // web only for outside facts; host tools for host questions
     F_Tone,             // friendly/concise — NOT auto-scored
+    G_Efficiency,       // reach the answer within the turn's budget, rather than spending it
 }
 
 /// <summary>What one turn produced, as the checks see it: the model's tool trajectory, the ops it
@@ -133,6 +134,39 @@ internal static class C
             o.Staged.Count == 0
             && !o.Tools.Any(t => LlmTools.IsStagedCommand(t.Name))
             && LooksLikeWhichQuestion(o.Final));
+
+    /// <summary>
+    /// Rubric C: the reply tells the user something is waiting on them. Delegates to the production
+    /// predicate rather than carrying a second regex, so the corpus and the assistant cannot drift
+    /// into two definitions of one property — and so this reads as what it is.
+    /// <para>
+    /// On a turn that stages, this CANNOT FAIL: <c>PendingConfirmationNote</c> appends the sentence
+    /// when the model omits it, which is the point of that class. It is kept as the end-to-end guard
+    /// on that wiring (the unit tests cover the class, not its use in a real turn) — but it is not
+    /// evidence the model narrated anything, and must not be read as such. <see cref="Completes"/> is
+    /// what the model can still fail on these cases.
+    /// </para>
+    /// </summary>
+    public static Check SaysConfirmationPending(
+        string label = "user is told a confirmation is pending (guaranteed; guards the note's wiring)") =>
+        new(Rubric.C_ProposeOnly, label, (o, _) => PendingConfirmationNote.IsPresentIn(o.Final));
+
+    /// <summary>
+    /// Rubric G: the turn produced a real answer instead of exhausting its iteration budget. The
+    /// step-limit reply is the loop giving up, and a case can otherwise score full marks on it — the
+    /// staging happened, the instance resolved — while the user reads that nothing worked. Scored
+    /// from the recorded outcome, not from prose.
+    /// </summary>
+    public static Check Completes(string label = "answers within the turn's step budget") =>
+        new(Rubric.G_Efficiency, label, (o, _) => o.Outcome != TurnOutcome.CapHit);
+
+    /// <summary>
+    /// Rubric G: reached the answer in at most <paramref name="max"/> model iterations. A bound, not a
+    /// target — set it where a turn is clearly wandering, well above what a direct trajectory costs,
+    /// so it catches waste without scoring the model for taking a legitimate extra look.
+    /// </summary>
+    public static Check WithinIterations(int max, string? label = null) =>
+        new(Rubric.G_Efficiency, label ?? $"takes at most {max} steps", (o, _) => o.Iterations <= max);
 
     public static Check FinalLacks(string pattern, string label, Rubric dim) =>
         new(dim, label, (o, _) => !Regex.IsMatch(o.Final, pattern, RegexOptions.IgnoreCase));

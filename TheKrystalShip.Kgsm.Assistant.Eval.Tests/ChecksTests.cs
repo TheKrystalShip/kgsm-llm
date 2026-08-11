@@ -1,5 +1,7 @@
 using FluentAssertions;
 
+using TheKrystalShip.Llm.Models;
+
 using static TheKrystalShip.Kgsm.Assistant.Eval.Tests.Build;
 
 namespace TheKrystalShip.Kgsm.Assistant.Eval.Tests;
@@ -153,5 +155,33 @@ public class ChecksTests
             C.CalledTool(LlmTools.Search), C.CalledTool(LlmTools.RunHealthCheck));
         check.Evaluate(Obs(tools: new[] { Tool(LlmTools.RunHealthCheck, ("instance_name", "factorio-test")) }), Fx).Should().BeTrue();
         check.Evaluate(Obs(), Fx).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Completes_fails_only_when_the_turn_exhausted_its_steps()
+    {
+        C.Completes().Evaluate(Obs(final: "Done."), Fx).Should().BeTrue();
+        C.Completes().Evaluate(Obs(final: "gave up", outcome: TurnOutcome.CapHit), Fx).Should().BeFalse();
+    }
+
+    [Fact]
+    public void SaysConfirmationPending_uses_the_assistants_own_predicate()
+    {
+        // Not a copy of it: the corpus and the assistant must not hold two definitions of one
+        // property, free to disagree about a reply that says "please approve".
+        C.SaysConfirmationPending().Evaluate(Obs(final: "Staged — awaiting your confirmation."), Fx)
+            .Should().BeTrue();
+        C.SaysConfirmationPending().Evaluate(Obs(final: "Please approve when ready."), Fx)
+            .Should().BeTrue();
+        C.SaysConfirmationPending().Evaluate(Obs(final: "The difficulty lives in that file."), Fx)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void WithinIterations_is_a_bound_not_a_target()
+    {
+        C.WithinIterations(6).Evaluate(Obs(iterations: 4), Fx).Should().BeTrue();
+        C.WithinIterations(6).Evaluate(Obs(iterations: 6), Fx).Should().BeTrue();
+        C.WithinIterations(6).Evaluate(Obs(iterations: 8), Fx).Should().BeFalse();
     }
 }

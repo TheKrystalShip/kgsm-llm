@@ -26,7 +26,9 @@ internal static class Build
     public static TurnObservation Obs(
         string final = "",
         RecordedToolCall[]? tools = null,
-        PendingConfirmation[]? staged = null) =>
+        PendingConfirmation[]? staged = null,
+        int iterations = 1,
+        TurnOutcome outcome = TurnOutcome.Ok) =>
         new("prompt", tools ?? Array.Empty<RecordedToolCall>(), staged ?? Array.Empty<PendingConfirmation>(),
-            Iterations: 1, TurnOutcome.Ok, final);
+            iterations, outcome, final);
 }

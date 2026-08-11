@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The benchmark scores whether a turn finished** (`G_Efficiency`, `C.Completes`, corpus v13).
+  Staging can succeed on a turn's last iteration, so a case could score full marks while the user
+  read "I wasn't able to finish that" beside a Confirm button. Reaching the answer within the step
+  budget is a separate axis from routing, and no dimension was watching it.
+- "The reply says a confirmation is pending" now has ONE definition — the assistant's
+  `PendingConfirmationNote` — reached from the corpus through `C.SaysConfirmationPending`. The two
+  earlier definitions disagreed: a reply saying "please approve" satisfied the assistant, so no note
+  was appended, and failed the corpus's own pattern, which matched only "your approval". The check is
+  labelled as the wiring guard it is: on a turn that stages, it cannot fail, so it is never evidence
+  the model narrated anything.
+
 - **A staged action is never left unmentioned** (`PendingConfirmationNote`). The mirror of
   `UnbackedActionClaim`: that one catches a reply claiming an action the turn never took, this one
   catches the opposite, which misinforms just as badly. A turn that stages on its last iteration ends

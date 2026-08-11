@@ -84,6 +84,8 @@ The check kit (`Checks.cs`, all via `C.`):
 | `ReferencedRole(role, tool?, dim, "…")` | a tool call targeted that role's server |
 | `RoutedThroughStatusOrHealth()` | consulted a status/health tool (didn't invent run-state) |
 | `Stages(ConfirmationKind.X)` · `StagesNothing(dim, "…")` | staged X for confirmation (`Restart`/`Backup`/`Install`/`SetConfig`/…) · staged nothing |
+| `SaysConfirmationPending()` | the reply tells the user something is waiting on them. Delegates to the assistant's own `PendingConfirmationNote` so there is one definition of the property. **On a staging turn this cannot fail** — the assistant appends the sentence when the model omits it — so it guards that wiring, and is never evidence the model narrated anything. Pair it with `Completes()` |
+| `Completes()` · `WithinIterations(n)` | the turn answered instead of exhausting its step budget · it took at most `n` steps. The failable half of a staging case: staging can succeed on the last iteration and still leave the user reading "I couldn't finish that" |
 | `ResolvedNotAsked(role)` | acted on the unique match without asking which |
 | `DoesNotAskWhich()` · `DoesNotAskWhichServer()` | didn't ask any "which?" · didn't re-ask which *server* (diagnostic follow-ups still allowed) |
 | `Clarifies()` | asked which, took no action (for a *genuinely* ambiguous prompt) |

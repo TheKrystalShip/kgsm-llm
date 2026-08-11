@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The indexer's corpus is kgsm's knowledge base, and only that** —
+  `--source /opt/kgsm/docs/knowledge`, the blueprint-authoring references plus the per-game operator
+  guides. That is what people ask this assistant about. A wider corpus makes answers worse rather
+  than better: a local hit suppresses the web fallback outright, so indexing design and planning
+  prose puts architecture writing in front of someone asking how to run a server. The corpus now
+  sits entirely under `/opt`, so the daemon's `ProtectHome=true` costs nothing.
+
 - **Local retrieval is scoped to the game a query names.** The docs corpus is organised per game
   (`.../games/<game>/`), but cosine similarity is game-blind: generic operator phrasing ("my server
   is lagging", "nobody can join") matches any game's troubleshooting prose. A query naming exactly

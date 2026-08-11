@@ -18,9 +18,15 @@ Group=kgsm
 # --watch builds once, then re-indexes (incrementally) on any change under --source until stopped.
 # The --index file's DIRECTORY must share a filesystem with the index (atomic temp→rename swap),
 # and must be the SAME path the Service reads via Rag:IndexPath.
+#
+# The corpus is kgsm's own knowledge base: the blueprint-authoring references and the per-game
+# operator guides, which are what a person asks this assistant about. It is deliberately the ONLY
+# source. Indexing the ecosystem's design and planning documents instead puts architecture prose
+# in front of someone asking how to run a server, and a local hit suppresses the web fallback
+# outright — so a wider corpus here makes answers worse, not better.
 ExecStart=/opt/kgsm-assistant/indexer/kgsm-rag-indexer \
     --watch \
-    --source /opt/kgsm-assistant/docs \
+    --source /opt/kgsm/docs/knowledge \
     --index /var/lib/kgsm-assistant/rag-index.krag \
     --model embeddinggemma \
     --debounce-ms 750
@@ -40,6 +46,7 @@ NoNewPrivileges=true
 # The index dir is the only thing it writes to.
 ReadWritePaths=/var/lib/kgsm-assistant
 ProtectSystem=strict
+# The corpus lives under /opt, so the daemon never needs a home directory.
 ProtectHome=true
 
 [Install]

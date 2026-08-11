@@ -103,6 +103,22 @@ public sealed record AutostartReading(FactsState State, IReadOnlyList<string> En
 public sealed record ConsoleTail(FactsState State, IReadOnlyList<string> Lines);
 
 /// <summary>
+/// One run of an instance's console — a single stretch of output between a start and the exit after
+/// it. The supervisor rotates the log on every fresh start, so a server that crashed and was
+/// restarted has its cause in one run and a clean boot in the next.
+/// </summary>
+/// <param name="Index">Newest-first position; 0 is the most recent run.</param>
+/// <param name="Current">Whether the run is still in progress.</param>
+/// <param name="EndedAt">
+/// When the run stopped printing, or null while it is <paramref name="Current"/>. This is what a
+/// crash is matched against — the run that ended at the crash is the one that holds it.
+/// </param>
+public sealed record ConsoleRunInfo(int Index, bool Current, DateTimeOffset? EndedAt);
+
+/// <summary>The runs of an instance's console, newest first.</summary>
+public sealed record ConsoleRuns(FactsState State, IReadOnlyList<ConsoleRunInfo> Runs);
+
+/// <summary>
 /// Per-instance facts the assistant reads but never changes — the read half of the engine seam, beside
 /// <see cref="IServerOperations"/>'s mutations. Reads and mutations are separated here for the same
 /// reason they are separated in the tool catalog: authorization is decided before a call is offered,
@@ -129,8 +145,22 @@ public interface IServerFacts
     /// <summary>Reads the set of instances enabled to start at boot.</summary>
     Task<AutostartReading> GetAutostartAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Reads the last <paramref name="lines"/> lines of an instance's console output.</summary>
+    /// <summary>
+    /// Reads the last <paramref name="lines"/> lines of an instance's MOST RECENT run of console
+    /// output. After a crash-restart that is the run that came after the crash — see
+    /// <see cref="GetConsoleRunsAsync"/> for reaching the one that holds it.
+    /// </summary>
     Task<ConsoleTail> GetConsoleTailAsync(string instance, int lines, CancellationToken cancellationToken = default);
+
+    /// <summary>Lists the runs of an instance's console, newest first.</summary>
+    Task<ConsoleRuns> GetConsoleRunsAsync(string instance, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads the last <paramref name="lines"/> lines of ONE run, addressed by its
+    /// <see cref="ConsoleRunInfo.Index"/> in the listing it came from.
+    /// </summary>
+    Task<ConsoleTail> GetConsoleRunTailAsync(
+        string instance, int lines, int run, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -154,5 +184,12 @@ public sealed class UnavailableServerFacts : IServerFacts
         Task.FromResult(new AutostartReading(FactsState.Unavailable, []));
 
     public Task<ConsoleTail> GetConsoleTailAsync(string instance, int lines, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ConsoleTail(FactsState.Unavailable, []));
+
+    public Task<ConsoleRuns> GetConsoleRunsAsync(string instance, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ConsoleRuns(FactsState.Unavailable, []));
+
+    public Task<ConsoleTail> GetConsoleRunTailAsync(
+        string instance, int lines, int run, CancellationToken cancellationToken = default) =>
         Task.FromResult(new ConsoleTail(FactsState.Unavailable, []));
 }

@@ -944,16 +944,71 @@ public class ToolDispatcher : IToolDispatcher
         var eventsTask = _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
         var metricsTask = _metrics.GetHistoryAsync(resolved!, range, cancellationToken);
         var healthTask = _operations.GetHealthSnapshotAsync(resolved!, cancellationToken);
-        await Task.WhenAll(eventsTask, metricsTask, healthTask);
+        // The run list doesn't depend on the timeline, so it rides along with the other three; only
+        // choosing WHICH run to read has to wait for the crash's timestamp.
+        var runsTask = _serverFacts.GetConsoleRunsAsync(resolved!, cancellationToken);
+        await Task.WhenAll(eventsTask, metricsTask, healthTask, runsTask);
+
+        var crashConsole = await ReadCrashConsoleAsync(
+            resolved!, eventsTask.Result, runsTask.Result, cancellationToken);
 
         var healthResult = healthTask.Result;
         var result = RootCauseAggregator.Run(
             resolved!, range, eventsTask.Result, metricsTask.Result,
             health: healthResult.IsSuccess ? healthResult.Value : null,
-            healthUnavailableReason: healthResult.IsSuccess ? null : healthResult.Error);
+            healthUnavailableReason: healthResult.IsSuccess ? null : healthResult.Error,
+            crashConsole: crashConsole);
 
         return new ToolOutput(result.Summary, ToolResultCard.From(result));
     }
+
+    /// <summary>
+    /// Reads what the crashed run printed — the source that answers "why" when the others only say
+    /// "when". The log rotates on every fresh start, so after a crash-restart the live console holds
+    /// a clean boot and the cause sits in the run that ended; this fetches that one.
+    /// <para>
+    /// Orchestration only. Which run belongs to the crash is decided by the pure
+    /// <see cref="CrashRunSelector"/>, so the pairing rule lives beside the rules that consume it
+    /// instead of in the code that happens to do the I/O.
+    /// </para>
+    /// <para>
+    /// Degrades like every other source: no crash in the window, no run matching it, or an
+    /// unavailable supervisor each produce an honest empty rather than failing the trace — and the
+    /// last of those is reported as unavailable, never as the run having printed nothing.
+    /// </para>
+    /// </summary>
+    private async Task<CrashConsole> ReadCrashConsoleAsync(
+        string instance, EventHistoryReading events, ConsoleRuns runs, CancellationToken cancellationToken)
+    {
+        // The most recent crash: the one a person asking "why did it crash" means.
+        var crash = events.Events
+            .Where(e => e.Type is "instance_crashed")
+            .OrderByDescending(e => e.Ts)
+            .FirstOrDefault();
+
+        if (crash is null)
+            return CrashConsole.NoCrash;
+
+        if (runs.State == FactsState.Unavailable)
+            return new CrashConsole(crash, [], FactsState.Unavailable);
+
+        var index = CrashRunSelector.Select(runs.Runs, crash.Ts);
+        if (index is null)
+            // The runs were listed and none of them ended near the crash — a real answer (the output
+            // has aged out, or this instance's console isn't the supervisor's to keep), not a failure.
+            return new CrashConsole(crash, [], FactsState.Available);
+
+        var tail = await _serverFacts.GetConsoleRunTailAsync(
+            instance, CrashConsoleLines, index.Value, cancellationToken);
+
+        return new CrashConsole(crash, tail.Lines, tail.State);
+    }
+
+    /// <summary>
+    /// How much of the crashed run to read. Deep enough that a stack trace's origin is still in view
+    /// after the frames below it; the aggregator quotes a bounded excerpt of what comes back.
+    /// </summary>
+    private const int CrashConsoleLines = 120;
 
     /// <summary>
     /// The merged lifecycle command: maps the model-supplied <c>verb</c>

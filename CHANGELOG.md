@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`trace_root_cause` reads what the crashed run printed.** It composed the event timeline, a
+  metrics window and a health snapshot — three sources that between them say *when* a server died
+  and nothing about *why*. The one source that answers why is the failing process's own last output,
+  and it was unreachable: the supervisor rotates an instance's log on every fresh start, so a server
+  that aborted and was restarted has a clean boot in its live console and the cause in the run that
+  ended. Asked why romestead crashed, the trace answered "no known failure signature matched" while
+  the stack trace sat on disk seven seconds before the restart.
+
+  The trace now lists the console's runs, matches the crash against when each ended, and reads that
+  one. A `FatalConsoleOutput` finding quotes the run's last lines at `Confirmed` — the strength is
+  honest because the finding is a **quote, not a diagnosis**: the claim is that these were the
+  process's last words and one of them says it was dying, all of which is measured. What they mean
+  is left to the reader.
+
+  The recognised-signature list is deliberately narrow — phrases a runtime emits only while
+  terminating. A plain `ERROR` line is not one; games log those all day while healthy, and matching
+  them would stamp `Confirmed` onto noise. Unrecognised output is still surfaced, as the
+  correlation's excerpt at correlation strength, because a game's own wording for dying is something
+  a reader recognises better than a table does. The scan runs backwards, so a long-lived server that
+  logged something alarming and carried on for hours is reported by what it said **last**.
+
+  Every step degrades on its own: no crash in the window, no run matching one, or a supervisor that
+  does not answer each produce an honest empty. The last of those says the console could not be read
+  — never that the run printed nothing.
+
 ### Fixed
 
 - **`run_health_check` no longer reports "No errors in recent logs" from a sample too small to hold

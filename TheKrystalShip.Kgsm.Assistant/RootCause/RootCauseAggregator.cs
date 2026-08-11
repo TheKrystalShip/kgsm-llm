@@ -59,6 +59,15 @@ public static class RootCauseAggregator
     private const int MaxEvidenceEventsPerFinding = 5;
 
     /// <summary>
+    /// How much of a crashed run's tail is quoted. Enough for a stack trace with the line that threw
+    /// still attached; bounded because the excerpt goes into the model's context verbatim.
+    /// </summary>
+    private const int MaxConsoleExcerptLines = 18;
+
+    /// <summary>Per-line cap inside an excerpt — a single enormous line must not crowd out the rest.</summary>
+    private const int MaxConsoleLineLength = 220;
+
+    /// <summary>
     /// Runs the deterministic sweep. Always returns a result — <see cref="RootCauseData.Findings"/>
     /// is never empty: a source-unavailable or nothing-matched outcome still produces exactly one
     /// honest correlation/unavailable finding at <see cref="Confidence.Possible"/>.
@@ -77,8 +86,10 @@ public static class RootCauseAggregator
         EventHistoryReading events,
         ServerMetricsHistory metrics,
         InstanceHealthSnapshot? health,
-        string? healthUnavailableReason = null)
+        string? healthUnavailableReason = null,
+        CrashConsole? crashConsole = null)
     {
+        var console = crashConsole ?? CrashConsole.NoCrash;
         var metricFacts = BuildMetricFacts(metrics);
         var healthChecks = health is not null
             ? HealthCheckAggregator.Run(health, instance).Data.Checks
@@ -86,14 +97,15 @@ public static class RootCauseAggregator
 
         var findings = events.State == AuditReadState.JournalUnavailable
             ? new[] { UnavailableFinding(instance, metricFacts, healthChecks) }
-            : EvaluateRules(instance, events.Events, health, healthChecks, metricFacts);
+            : EvaluateRules(instance, events.Events, health, healthChecks, metricFacts, console);
 
         var data = new RootCauseData(
             instance, range, events.State, metrics.State,
             HealthAvailable: health is not null,
             HealthUnavailableReason: health is null ? healthUnavailableReason : null,
             Findings: findings,
-            EventsConsidered: events.Events.Count);
+            EventsConsidered: events.Events.Count,
+            CrashConsoleState: console.State);
 
         var best = findings[0];
         return new ToolResult<RootCauseData>(
@@ -111,12 +123,16 @@ public static class RootCauseAggregator
         IReadOnlyList<AuditEventRow> events,
         InstanceHealthSnapshot? health,
         IReadOnlyList<HealthCheck> healthChecks,
-        IReadOnlyList<MetricFact> metricFacts)
+        IReadOnlyList<MetricFact> metricFacts,
+        CrashConsole console)
     {
         // Rules read most-recent-first input ts-ascending, since "shortly after" pairing scans forward.
         var ascending = events.OrderBy(e => e.Ts).ToList();
 
         var matched = new List<RootCauseFinding>();
+
+        if (MatchFatalConsoleOutput(instance, console, metricFacts, healthChecks) is { } fatal)
+            matched.Add(fatal);
 
         if (MatchPortConflict(instance, ascending, metricFacts, healthChecks) is { } portConflict)
             matched.Add(portConflict);
@@ -133,7 +149,117 @@ public static class RootCauseAggregator
         if (matched.Count > 0)
             return Rank(matched);
 
-        return new[] { BuildCorrelation(instance, events, metricFacts, healthChecks) };
+        return new[] { BuildCorrelation(instance, events, metricFacts, healthChecks, console) };
+    }
+
+    /// <summary>
+    /// What the crashed run printed last. The strongest evidence available for a crash and the only
+    /// rule reading the failing process's own words rather than the supervisor's account of it.
+    /// <para>
+    /// <b>This reports, it does not diagnose.</b> The claim is "these are the last lines the process
+    /// printed before it exited, and one of them says it was dying" — every part of which is
+    /// measured, which is why it carries <see cref="Confidence.Confirmed"/> where the inferential
+    /// rules cannot. It never says the quoted line CAUSED the crash; a reader draws that, with the
+    /// text in front of them.
+    /// </para>
+    /// <para>
+    /// A recognised signature is what separates this from the correlation fallback, and the list is
+    /// deliberately narrow: phrases a runtime emits only while terminating. A plain <c>ERROR</c> line
+    /// is not one — games log those all day while perfectly healthy, and matching them would attach
+    /// <see cref="Confidence.Confirmed"/> to noise. Unrecognised output is still surfaced, as the
+    /// correlation's excerpt, at correlation strength.
+    /// </para>
+    /// </summary>
+    private static RootCauseFinding? MatchFatalConsoleOutput(
+        string instance, CrashConsole console,
+        IReadOnlyList<MetricFact> metricFacts, IReadOnlyList<HealthCheck> healthChecks)
+    {
+        if (!console.HasOutput)
+            return null;
+
+        var hit = FindFatalSignature(console.Lines);
+        if (hit is null)
+            return null;
+
+        var excerpt = TailExcerpt(console.Lines);
+        var crash = console.Crash!;
+        var explanation =
+            $"{instance} crashed at {crash.Ts.ToString("u")}, and the run that ended there signed off with "
+            + $"{hit.Value.Description}: \"{Clip(hit.Value.Line)}\". These are the last lines that run "
+            + $"printed before it exited:\n{string.Join("\n", excerpt)}";
+
+        return new RootCauseFinding(
+            RootCauseSignature.FatalConsoleOutput, "Fatal error in the crashed run's output",
+            Confidence.Confirmed, explanation, new[] { crash }, metricFacts, healthChecks, excerpt);
+    }
+
+    /// <summary>A recognised way a process announces it is dying, and the line that said so.</summary>
+    private readonly record struct FatalHit(string Description, string Line);
+
+    /// <summary>
+    /// Phrases a runtime prints only on the way out, each with how to describe it. Matched
+    /// case-insensitively against whole lines. Kept narrow on purpose — see
+    /// <see cref="MatchFatalConsoleOutput"/> for why breadth here would be actively harmful.
+    /// </summary>
+    private static readonly (string Needle, string Description)[] FatalSignatures =
+    [
+        ("unhandled exception", "an unhandled exception"),
+        ("unhandled error", "an unhandled error"),
+        ("exception in thread", "an exception that killed a thread"),
+        ("terminate called after throwing", "an uncaught C++ exception"),
+        ("segmentation fault", "a segmentation fault"),
+        ("segfault", "a segmentation fault"),
+        ("core dumped", "a core dump"),
+        ("out of memory", "an out-of-memory condition"),
+        ("outofmemoryerror", "an out-of-memory condition"),
+        ("stack overflow", "a stack overflow"),
+        ("stackoverflowexception", "a stack overflow"),
+        ("panic:", "a panic"),
+        ("fatal error", "a fatal error"),
+        ("fatal exception", "a fatal exception"),
+    ];
+
+    /// <summary>
+    /// The LAST recognised fatal line in the run. Scanned from the end because a long-lived server
+    /// may have survived something earlier in the same run; what killed it is what it said last.
+    /// </summary>
+    private static FatalHit? FindFatalSignature(IReadOnlyList<string> lines)
+    {
+        for (var i = lines.Count - 1; i >= 0; i--)
+        {
+            foreach (var (needle, description) in FatalSignatures)
+            {
+                if (lines[i].Contains(needle, StringComparison.OrdinalIgnoreCase))
+                    return new FatalHit(description, lines[i]);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The tail of a run's output, bounded so a stack trace fits without a runaway log filling the
+    /// model's context. Trailing blank lines are dropped so the excerpt ends on something readable.
+    /// </summary>
+    private static IReadOnlyList<string> TailExcerpt(IReadOnlyList<string> lines)
+    {
+        var end = lines.Count;
+        while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1]))
+            end--;
+
+        var start = Math.Max(0, end - MaxConsoleExcerptLines);
+        var excerpt = new List<string>(end - start);
+        for (var i = start; i < end; i++)
+            excerpt.Add(Clip(lines[i]));
+
+        return excerpt;
+    }
+
+    /// <summary>Keeps one quoted console line from crowding out the rest of the excerpt.</summary>
+    private static string Clip(string line)
+    {
+        var trimmed = line.TrimEnd();
+        return trimmed.Length <= MaxConsoleLineLength ? trimmed : trimmed[..MaxConsoleLineLength] + "…";
     }
 
     /// <summary>Best (lowest <see cref="Confidence"/> value = highest trust) first; ties keep the
@@ -312,7 +438,8 @@ public static class RootCauseAggregator
 
     private static RootCauseFinding BuildCorrelation(
         string instance, IReadOnlyList<AuditEventRow> events,
-        IReadOnlyList<MetricFact> metricFacts, IReadOnlyList<HealthCheck> healthChecks)
+        IReadOnlyList<MetricFact> metricFacts, IReadOnlyList<HealthCheck> healthChecks,
+        CrashConsole console)
     {
         // events is already ts-DESC (most-recent-first). Prefer non-routine activity (skip player
         // join/leave noise); fall back to whatever there is, even routine events, rather than an
@@ -328,9 +455,29 @@ public static class RootCauseAggregator
             : $"No known failure signature matched for {instance}. Most notable recent activity: " +
               string.Join(", ", salient.Select(e => $"{FriendlyType(e.Type)} at {e.Ts:u}")) + ".";
 
+        // A crash whose output matched no known signature is still the best evidence in the window —
+        // the process's own last words. Attaching them here rather than raising a finding keeps the
+        // strength honest: unrecognised output is a lead to read, not a diagnosis, and the reader is
+        // better placed to recognise a game's own wording than this table is.
+        IReadOnlyList<string>? excerpt = null;
+        if (console.HasOutput)
+        {
+            excerpt = TailExcerpt(console.Lines);
+            explanation +=
+                $" Nothing in the crashed run's output matched a known fatal signature either, but these "
+                + $"are the last lines it printed before exiting at {console.Crash!.Ts.ToString("u")}:\n"
+                + string.Join("\n", excerpt);
+        }
+        else if (console.State == FactsState.Unavailable)
+        {
+            explanation +=
+                " The crashed run's own console couldn't be read, so what the server printed on its way "
+                + "out is unknown — that's a gap in the evidence, not an absence of errors.";
+        }
+
         return new RootCauseFinding(
             RootCauseSignature.None, "No signature matched — correlation only",
-            Confidence.Possible, explanation, salient, metricFacts, healthChecks);
+            Confidence.Possible, explanation, salient, metricFacts, healthChecks, excerpt);
     }
 
     private static RootCauseFinding UnavailableFinding(

@@ -169,6 +169,43 @@ internal sealed class KgsmServerFacts : IServerFacts
         }
     }
 
+    public async Task<ConsoleRuns> GetConsoleRunsAsync(
+        string instance, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var runs = await _watchdog.GetConsoleRunsAsync(instance, cancellationToken);
+            return new ConsoleRuns(FactsState.Available, runs
+                .Select(r => new ConsoleRunInfo(
+                    r.Index,
+                    r.Current,
+                    // The supervisor reports UTC; carrying the offset explicitly keeps the
+                    // comparison against an event's timestamp from depending on this host's zone.
+                    r.EndedAt is null ? null : new DateTimeOffset(r.EndedAt.Value, TimeSpan.Zero)))
+                .ToList());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Console run list read failed for {Instance}", instance);
+            return new ConsoleRuns(FactsState.Unavailable, []);
+        }
+    }
+
+    public async Task<ConsoleTail> GetConsoleRunTailAsync(
+        string instance, int lines, int run, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var tail = await _watchdog.GetConsoleRunTailAsync(instance, lines, run, cancellationToken);
+            return new ConsoleTail(FactsState.Available, tail);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Console run {Run} read failed for {Instance}", run, instance);
+            return new ConsoleTail(FactsState.Unavailable, []);
+        }
+    }
+
     /// <summary>
     /// Maps the supervisor's detection token. An unrecognised token is
     /// <see cref="PresenceDetection.Unknown"/> rather than a guess — a token this build does not know

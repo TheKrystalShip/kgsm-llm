@@ -32,6 +32,13 @@ public enum RootCauseSignature
     /// window — the failure is consistent with running out of disk space.</summary>
     DiskFull,
 
+    /// <summary>The run that ended at a crash finished by printing something the process reports
+    /// only when it is dying — an unhandled exception, a fatal error, a segfault. Reported at
+    /// <see cref="Confidence.Confirmed"/> because the finding is a QUOTE, not an inference: the
+    /// claim is that these were the process's last words, which is measured. What they mean is left
+    /// to the reader.</summary>
+    FatalConsoleOutput,
+
     /// <summary>The most recent run-state event says the instance started/restarted/became ready,
     /// but the live health snapshot reads it as not running — the event log and the measured live
     /// state disagree. A direct, deterministic contradiction between two authoritative sources, so
@@ -66,6 +73,13 @@ public sealed record MetricFact(string Metric, string Detail);
 /// <param name="Events">The specific engine events that produced this finding (most-recent-first).</param>
 /// <param name="Metrics">Metrics-window facts attached as supporting context.</param>
 /// <param name="HealthChecks">Health-snapshot checks attached as supporting context (liveness/logs/updates/disk).</param>
+/// <param name="ConsoleExcerpt">
+/// The last lines the crashed run printed, when this finding read them. Null means the rule consulted
+/// no console — not that a console was read and found empty. The same lines also appear inside
+/// <paramref name="Explanation"/>, because the model is shown only the summary and would otherwise be
+/// asked to narrate evidence it cannot see; this field is the structured copy for a surface that
+/// renders the card.
+/// </param>
 public sealed record RootCauseFinding(
     RootCauseSignature Signature,
     string Label,
@@ -73,7 +87,8 @@ public sealed record RootCauseFinding(
     string Explanation,
     IReadOnlyList<AuditEventRow> Events,
     IReadOnlyList<MetricFact> Metrics,
-    IReadOnlyList<HealthCheck> HealthChecks);
+    IReadOnlyList<HealthCheck> HealthChecks,
+    IReadOnlyList<string>? ConsoleExcerpt = null);
 
 /// <summary>
 /// The <c>trace_root_cause</c> tool's structured card payload (the capstone
@@ -94,6 +109,11 @@ public sealed record RootCauseFinding(
 /// <param name="EventState">Whether the engine event timeline could be read.</param>
 /// <param name="MetricsState">Whether the metrics window could be read.</param>
 /// <param name="HealthAvailable">Whether the health/status snapshot could be read.</param>
+/// <param name="CrashConsoleState">
+/// Whether the crashed run's console could be read. <see cref="Ports.FactsState.Unavailable"/> means
+/// the supervisor did not answer — which is why a trace can say nothing about what the process
+/// printed, and is never the same as it having printed nothing.
+/// </param>
 /// <param name="HealthUnavailableReason">Why the health snapshot is absent; non-null only when
 /// <paramref name="HealthAvailable"/> is <see langword="false"/>.</param>
 /// <param name="Findings">Ranked findings, best (highest-confidence) first — never empty.</param>
@@ -106,4 +126,5 @@ public sealed record RootCauseData(
     bool HealthAvailable,
     string? HealthUnavailableReason,
     IReadOnlyList<RootCauseFinding> Findings,
-    int EventsConsidered);
+    int EventsConsidered,
+    Ports.FactsState CrashConsoleState = Ports.FactsState.Available);

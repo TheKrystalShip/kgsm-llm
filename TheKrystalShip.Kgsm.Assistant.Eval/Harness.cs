@@ -92,7 +92,7 @@ internal sealed class Harness
     {
         var inventory = _provider.GetRequiredService<IServerInventory>();
         var ops = _provider.GetRequiredService<IServerOperations>();
-        var fx = await Fixtures.ResolveAsync(inventory, ops, ct);
+        var fx = await Fixtures.ResolveAsync(inventory, ops, _provider.GetService<IServerFacts>(), ct);
         return Fixtures.Preflight(fx, Console.Error) ? fx : null;
     }
 

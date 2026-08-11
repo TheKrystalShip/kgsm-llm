@@ -27,7 +27,7 @@ public class FixturesResolutionTests
         ops.IsActiveAsync("factorio-test", Arg.Any<CancellationToken>()).Returns(Result<bool>.Success(true));
         ops.IsActiveAsync("mc-1", Arg.Any<CancellationToken>()).Returns(Result<bool>.Success(false));
 
-        var fx = await Fixtures.ResolveAsync(inv, ops, default);
+        var fx = await Fixtures.ResolveAsync(inv, ops, null, default);
 
         fx.Instances.Should().HaveCount(2);
         fx.RunningCount.Should().Be(1);
@@ -47,7 +47,7 @@ public class FixturesResolutionTests
         var inv = Inventory(new Dictionary<string, string>(), "factorio");
         var ops = Substitute.For<IServerOperations>();
 
-        var fx = await Fixtures.ResolveAsync(inv, ops, default);
+        var fx = await Fixtures.ResolveAsync(inv, ops, null, default);
 
         Fixtures.Preflight(fx, new StringWriter()).Should().BeFalse();
         fx.Has(FixtureRole.UniqueGame).Should().BeFalse();
@@ -69,7 +69,7 @@ public class FixturesResolutionTests
         var ops = Substitute.For<IServerOperations>();
         ops.IsActiveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Result<bool>.Success(false));
 
-        var fx = await Fixtures.ResolveAsync(inv, ops, default);
+        var fx = await Fixtures.ResolveAsync(inv, ops, null, default);
 
         fx.ModeratableGameInstance.Should().Be("mc-1");
         fx.ModeratableGameWord.Should().Be("minecraft");
@@ -88,7 +88,7 @@ public class FixturesResolutionTests
         var ops = Substitute.For<IServerOperations>();
         ops.IsActiveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Result<bool>.Success(false));
 
-        var fx = await Fixtures.ResolveAsync(inv, ops, default);
+        var fx = await Fixtures.ResolveAsync(inv, ops, null, default);
 
         fx.Has(FixtureRole.ModeratableGame).Should().BeFalse();
         fx.Has(FixtureRole.NoModerationGame).Should().BeFalse();
@@ -101,7 +101,7 @@ public class FixturesResolutionTests
         var ops = Substitute.For<IServerOperations>();
         ops.IsActiveAsync("factorio-test", Arg.Any<CancellationToken>()).Returns(Result<bool>.Success(true));
 
-        var fx = await Fixtures.ResolveAsync(inv, ops, default);
+        var fx = await Fixtures.ResolveAsync(inv, ops, null, default);
 
         fx.Fill("is my {unique_game} server up? set up {never_game}")
             .Should().Be("is my factorio server up? set up minecraft");

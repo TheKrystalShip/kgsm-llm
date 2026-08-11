@@ -9,11 +9,12 @@ public class LlmAgentOptions
     public const string Section = "LlmAgent";
 
     /// <summary>
-    /// Safety cap on model↔tool round-trips within a single user turn. Prevents a
-    /// runaway loop. Set high enough to allow several sequential tool calls plus a
-    /// final reply.
+    /// Safety cap on model↔tool round-trips within a single user turn. It exists to stop a runaway
+    /// loop, not to ration work: a turn that is still calling tools is still working, and cutting it
+    /// off mid-task spends everything already done and returns nothing. Set it well above what a
+    /// direct trajectory costs, so only a genuine loop reaches it.
     /// </summary>
-    public int MaxIterations { get; set; } = 8;
+    public int MaxIterations { get; set; } = 25;
 
     /// <summary>
     /// Tool outputs are truncated to this many characters before being fed back to

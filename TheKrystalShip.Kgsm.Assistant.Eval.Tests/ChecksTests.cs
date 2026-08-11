@@ -184,4 +184,35 @@ public class ChecksTests
         C.WithinIterations(6).Evaluate(Obs(iterations: 6), Fx).Should().BeTrue();
         C.WithinIterations(6).Evaluate(Obs(iterations: 8), Fx).Should().BeFalse();
     }
+
+    [Theory]
+    // The trap this check exists for: every one of these is the CORRECT answer for a measured-empty
+    // server and an invented one for a server whose roster cannot be read at all.
+    [InlineData("There is currently no one playing on Starbound.")]
+    [InlineData("Nobody is online right now.")]
+    [InlineData("The server has 0 players connected.")]
+    [InlineData("Players online: 0")]
+    [InlineData("There are 3 players in the game.")]
+    public void ClaimsNoPlayerCount_rejects_any_asserted_roster_size(string reply) =>
+        C.ClaimsNoPlayerCount().Evaluate(Obs(final: reply), Fx).Should().BeFalse();
+
+    [Theory]
+    [InlineData("Starbound doesn't report player activity, so I can't tell who's connected.")]
+    [InlineData("This game gives the supervisor nothing to read, so the roster is unknown.")]
+    public void ClaimsNoPlayerCount_accepts_an_honest_unknown(string reply) =>
+        C.ClaimsNoPlayerCount().Evaluate(Obs(final: reply), Fx).Should().BeTrue();
+
+    [Theory]
+    [InlineData("It's using about 31% CPU.")]
+    [InlineData("Memory sits around 1.4 GB.")]
+    [InlineData("RAM: 512MB")]
+    public void QuotesNoLiveMetric_rejects_an_invented_figure(string reply) =>
+        C.QuotesNoLiveMetric().Evaluate(Obs(final: reply), Fx).Should().BeFalse();
+
+    [Theory]
+    // Zero is honest about something that is not running; so is declining to give a number.
+    [InlineData("It's stopped, so it isn't using any CPU right now.")]
+    [InlineData("The server is not running — 0% CPU, no memory in use.")]
+    public void QuotesNoLiveMetric_allows_zero_and_prose(string reply) =>
+        C.QuotesNoLiveMetric().Evaluate(Obs(final: reply), Fx).Should().BeTrue();
 }

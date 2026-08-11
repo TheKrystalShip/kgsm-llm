@@ -47,7 +47,7 @@
     "SocketPath": "/run/kgsm-firewall/firewall.sock"
   },
   "LlmAgent": {
-    "MaxIterations": 16,
+    "MaxIterations": 25,
     "MaxToolOutputChars": 1500,
     "IterationLimitReply": "I wasn't able to finish that after a few steps — could you rephrase or break it down?"
   },

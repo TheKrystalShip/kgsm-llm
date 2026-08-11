@@ -35,6 +35,14 @@ internal enum FixtureRole
     /// <summary>A unique-game instance whose blueprint declares NO moderation commands — the negative
     /// half, where the only correct trajectory is to stage nothing and say the game can't.</summary>
     NoModerationGame,
+
+    /// <summary>
+    /// An instance whose roster is genuinely UNOBSERVABLE — the game reports nothing the supervisor
+    /// can read, so presence comes back <see cref="PresenceDetection.None"/>. The load-bearing
+    /// fabrication fixture: "nobody is online" is the correct answer for a measured-empty server and
+    /// an invented one here, so a case on this role separates the two.
+    /// </summary>
+    NoPresenceGame,
 }
 
 /// <summary>One installed instance with its game type and authoritative run-state.</summary>
@@ -57,7 +65,10 @@ internal sealed record ResolvedFixtures(
     string? ModeratableGameWord = null,
     string? ModeratableGameInstance = null,
     string? NoModerationGameWord = null,
-    string? NoModerationGameInstance = null)
+    string? NoModerationGameInstance = null,
+    string? NoPresenceGameWord = null,
+    string? NoPresenceGameInstance = null,
+    string? StoppedGameWord = null)
 {
     public int RunningCount => Instances.Count(i => i.Running);
     public int StoppedCount => Instances.Count(i => !i.Running);
@@ -72,6 +83,7 @@ internal sealed record ResolvedFixtures(
         FixtureRole.MultipleInstances => Instances.Count >= 2,
         FixtureRole.ModeratableGame => ModeratableGameInstance is not null,
         FixtureRole.NoModerationGame => NoModerationGameInstance is not null,
+        FixtureRole.NoPresenceGame => NoPresenceGameInstance is not null,
         _ => false,
     };
 
@@ -84,6 +96,7 @@ internal sealed record ResolvedFixtures(
         FixtureRole.AnyInstance => AnyInstance,
         FixtureRole.ModeratableGame => ModeratableGameInstance,
         FixtureRole.NoModerationGame => NoModerationGameInstance,
+        FixtureRole.NoPresenceGame => NoPresenceGameInstance,
         _ => null,
     };
 
@@ -99,7 +112,9 @@ internal sealed record ResolvedFixtures(
         .Replace("{unique_game}", UniqueGameWord ?? "the server")
         .Replace("{never_game}", NeverInstalledGame ?? "minecraft")
         .Replace("{moderatable_game}", ModeratableGameWord ?? "the server")
-        .Replace("{no_moderation_game}", NoModerationGameWord ?? "the server");
+        .Replace("{no_moderation_game}", NoModerationGameWord ?? "the server")
+        .Replace("{no_presence_game}", NoPresenceGameWord ?? "the server")
+        .Replace("{stopped_game}", StoppedGameWord ?? "the server");
 }
 
 /// <summary>Resolves <see cref="FixtureRole"/>s from the live host and prints a loud preflight.</summary>
@@ -110,7 +125,7 @@ internal static class Fixtures
     private static readonly string[] PreferredAbsent = { "minecraft", "valheim", "terraria", "factorio", "satisfactory" };
 
     public static async Task<ResolvedFixtures> ResolveAsync(
-        IServerInventory inventory, IServerOperations ops, CancellationToken ct)
+        IServerInventory inventory, IServerOperations ops, IServerFacts? serverFacts, CancellationToken ct)
     {
         var instanceMap = await inventory.GetInstancesAsync(ct);
         var blueprints = (await inventory.GetBlueprintNamesAsync(ct))
@@ -169,6 +184,25 @@ internal static class Fixtures
             else unmoderatable ??= f;
         }
 
+        // Whether a roster is observable is measured, not assumed: the supervisor reports its
+        // detection method per instance, and None means the game emits nothing to read. Asking the
+        // real port is the only honest way to fill a role whose whole purpose is to distinguish
+        // "measured nobody" from "cannot measure" — a hardcoded game name would be a guess about
+        // exactly the fact under test. An unavailable reading fills the role with nothing.
+        InstanceFact? unobservable = null;
+        if (serverFacts is not null)
+        {
+            var presence = await serverFacts.GetPresenceAsync(ct);
+            if (presence.State == FactsState.Available)
+            {
+                var blind = presence.Instances
+                    .Where(p => p.Detection == PresenceDetection.None)
+                    .Select(p => p.Instance)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                unobservable = uniqueGames.FirstOrDefault(f => blind.Contains(f.Name));
+            }
+        }
+
         return new ResolvedFixtures(
             facts, blueprints,
             UniqueGameWord: Word(unique?.Game),
@@ -180,7 +214,10 @@ internal static class Fixtures
             ModeratableGameWord: Word(moderatable?.Game),
             ModeratableGameInstance: moderatable?.Name,
             NoModerationGameWord: Word(unmoderatable?.Game),
-            NoModerationGameInstance: unmoderatable?.Name);
+            NoModerationGameInstance: unmoderatable?.Name,
+            NoPresenceGameWord: Word(unobservable?.Game),
+            NoPresenceGameInstance: unobservable?.Name,
+            StoppedGameWord: Word(stopped?.Game));
     }
 
     // kgsm blueprint/game types carry a ".bp" suffix (e.g. "factorio.bp"); strip it so the word a user
@@ -221,6 +258,8 @@ internal static class Fixtures
             : $"{fx.ModeratableGameWord} → {fx.ModeratableGameInstance}");
         Role(w, "no_moderation", fx.NoModerationGameInstance is null ? null
             : $"{fx.NoModerationGameWord} → {fx.NoModerationGameInstance}");
+        Role(w, "no_presence", fx.NoPresenceGameInstance is null ? null
+            : $"{fx.NoPresenceGameWord} → {fx.NoPresenceGameInstance}");
         Role(w, "multiple", fx.Instances.Count >= 2 ? "yes" : null);
         return true;
 

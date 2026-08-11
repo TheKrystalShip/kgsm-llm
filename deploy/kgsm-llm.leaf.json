@@ -213,7 +213,7 @@
       "description": "How many times the assistant may call a tool while working on one message before it has to answer with what it has.",
       "group": "agent",
       "type": "int",
-      "default": "16",
+      "default": "25",
       "min": 1,
       "risk": "safe"
     },

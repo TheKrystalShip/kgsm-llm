@@ -7,7 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The agent's step cap is 25** (was a library default of 8, with the surfaces setting 16 and the
+  benchmark setting nothing, so it measured the assistant under half of production's budget). The cap
+  exists to stop a runaway loop, not to ration work: a turn still calling tools is still working, and
+  cutting it off spends everything already done and returns nothing. Cost is bounded where it belongs
+  — the per-message search cap and the duplicate-query guard. The eval pins the value explicitly so
+  the benchmark cannot silently diverge from what ships.
+
 ### Added
+
+- **The benchmark stress-tests fabrication** (corpus v14), the failure a small local model is
+  likeliest to produce and the one the corpus covered thinnest. Cases grade by how much of the
+  question is answerable: a false premise the user asserts (weighted heaviest, since every tool
+  answers a well-formed question about a state the server is not in), a fact that genuinely cannot be
+  measured, and an answer that is part measurable and part not. Every prompt is built so no specific
+  answer exists, which is what keeps them inside the score-the-trajectory rule — asserting that no
+  confident claim is possible is a statement about the turn, not about the world.
+- `C.ClaimsNoPlayerCount` rejects any asserted roster size **including zero**: "nobody is online" is
+  correct for a measured-empty server and invented for one whose presence cannot be read, and telling
+  those apart is the whole of the rule that absence of a measurement is not a measurement of absence.
+  `C.QuotesNoLiveMetric` rejects a non-zero resource figure while allowing zero, which is honest about
+  something that is not running.
+- The `NoPresenceGame` fixture role is measured, not named — the resolver asks the presence port for
+  an instance reporting `PresenceDetection.None`. Hardcoding a game would be a guess about the exact
+  fact under test.
 
 - **The benchmark scores whether a turn finished** (`G_Efficiency`, `C.Completes`, corpus v13).
   Staging can succeed on a turn's last iteration, so a case could score full marks while the user

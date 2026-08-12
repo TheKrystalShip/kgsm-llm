@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The window is one hour, deliberately not the supervisor's 300s `RestartStabilitySeconds`, which
   answers a different question — whether to reset a failure streak.
 
+  The warning also carries **what the crashed run said on its way out**, so a report that names a
+  crash does not withhold the line explaining it. A recognised fatal line is quoted; output that
+  matched nothing is not, because the last thing a server printed before being killed is routine
+  chatter and quoting it beside a crash invites it to be read as the cause — saying it announced
+  nothing points away from an application fault, which is the real signal. One line, not the excerpt
+  `trace_root_cause` quotes: a stack trace pasted into a five-line health summary would bury every
+  other check.
+
+  The fatal-signature table and the excerpt bounds now live in one shared `CrashOutput`, so the
+  health check and `trace_root_cause` cannot disagree about what counts as fatal.
+
 ### Changed
 
 - **The log scan says what it actually read.** "No errors in recent logs" reads as a statement about

@@ -44,7 +44,20 @@ public sealed record HostDisk(
 /// unknown and never warned on — not knowing how a run ended is not evidence that it failed.
 /// </param>
 /// <param name="PreviousExitCode">The exit code the supervisor read for that run, where it could.</param>
-public sealed record InstanceRestart(DateTimeOffset At, string PreviousOutcome, int? PreviousExitCode);
+/// <param name="PreviousLines">
+/// The tail of the previous run's console — what the server printed on its way out. Empty when the
+/// previous run did not fail, when its output could not be read, or when it printed nothing.
+/// <para>
+/// It is carried so a health check that reports a crash can also say what the crash <em>was</em>.
+/// The alternative is a report that names a problem and withholds the one line explaining it, which
+/// costs the reader a second question to learn something they were already asking about.
+/// </para>
+/// </param>
+public sealed record InstanceRestart(
+    DateTimeOffset At,
+    string PreviousOutcome,
+    int? PreviousExitCode,
+    IReadOnlyList<string>? PreviousLines = null);
 
 /// <summary>
 /// The raw inputs <see cref="Health.HealthCheckAggregator"/> needs for one instance,

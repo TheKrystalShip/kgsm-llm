@@ -498,10 +498,24 @@ internal sealed class KgsmServerOperations : IServerOperations
             if (runs.Count < 2 || !runs[0].Current || runs[1].EndedAt is not { } endedAt)
                 return null;
 
+            // Only a run the supervisor says FAILED is worth reading — a deliberate stop has no last
+            // words to report, and fetching every previous run's tail on every health check would be
+            // a socket read spent on output nothing will quote. Gated on a measured classification
+            // rather than on whether the crash is recent: how recent is the aggregator's judgment to
+            // make, and duplicating it here is how two answers to one question start to disagree.
+            IReadOnlyList<string>? previousLines = null;
+            if (runs[1].Outcome is "crashed" or "gave-up")
+                previousLines = await ReadRunTailAsync(instance, run: 1, cancellationToken);
+
+            _logger.LogDebug(
+                "{Instance}'s previous run ended {EndedAt:o} as {Outcome} (exit {Exit}); read {Lines} line(s) of it",
+                instance, endedAt, runs[1].Outcome, runs[1].ExitCode, previousLines?.Count ?? 0);
+
             return new InstanceRestart(
                 new DateTimeOffset(endedAt, TimeSpan.Zero),
                 runs[1].Outcome,
-                runs[1].ExitCode);
+                runs[1].ExitCode,
+                previousLines);
         }
         catch (Exception ex)
         {
@@ -509,6 +523,30 @@ internal sealed class KgsmServerOperations : IServerOperations
             return null;
         }
     }
+
+    /// <summary>
+    /// The tail of one earlier run, or null when it could not be read. Deep enough that a fatal line
+    /// is still in view behind the stack frames a runtime prints under it, and no deeper — the
+    /// aggregator quotes at most one line of what comes back.
+    /// </summary>
+    private async Task<IReadOnlyList<string>?> ReadRunTailAsync(
+        string instance, int run, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var lines = await _watchdog.GetConsoleRunTailAsync(
+                instance, CrashedRunSampleLines, run, cancellationToken);
+            return lines.Count > 0 ? lines : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Crashed-run console read for {Instance} failed", instance);
+            return null;
+        }
+    }
+
+    /// <summary>How much of a crashed run's tail the health check reads to find its last words.</summary>
+    private const int CrashedRunSampleLines = 60;
 
     private static IReadOnlyList<string> SplitLogLines(string? recentLogs) =>
         string.IsNullOrEmpty(recentLogs)

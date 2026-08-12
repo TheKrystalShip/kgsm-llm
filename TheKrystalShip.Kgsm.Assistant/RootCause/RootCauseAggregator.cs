@@ -1,4 +1,5 @@
 using TheKrystalShip.Kgsm.Assistant.Audit;
+using TheKrystalShip.Kgsm.Assistant.Consoles;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Metrics;
@@ -57,15 +58,6 @@ public static class RootCauseAggregator
 
     private const int MaxSalientCorrelation = 5;
     private const int MaxEvidenceEventsPerFinding = 5;
-
-    /// <summary>
-    /// How much of a crashed run's tail is quoted. Enough for a stack trace with the line that threw
-    /// still attached; bounded because the excerpt goes into the model's context verbatim.
-    /// </summary>
-    private const int MaxConsoleExcerptLines = 18;
-
-    /// <summary>Per-line cap inside an excerpt — a single enormous line must not crowd out the rest.</summary>
-    private const int MaxConsoleLineLength = 220;
 
     /// <summary>
     /// Runs the deterministic sweep. Always returns a result — <see cref="RootCauseData.Findings"/>
@@ -180,89 +172,20 @@ public static class RootCauseAggregator
         if (!console.HasOutput)
             return null;
 
-        var hit = FindFatalSignature(console.Lines);
+        var hit = CrashOutput.FindFatalSignature(console.Lines);
         if (hit is null)
             return null;
 
-        var excerpt = TailExcerpt(console.Lines);
+        var excerpt = CrashOutput.TailExcerpt(console.Lines);
         var crash = console.Crash!;
         var explanation =
             $"{instance} crashed at {crash.Ts.ToString("u")}, and the run that ended there signed off with "
-            + $"{hit.Value.Description}: \"{Clip(hit.Value.Line)}\". These are the last lines that run "
+            + $"{hit.Value.Description}: \"{CrashOutput.Clip(hit.Value.Line)}\". These are the last lines that run "
             + $"printed before it exited:\n{string.Join("\n", excerpt)}";
 
         return new RootCauseFinding(
             RootCauseSignature.FatalConsoleOutput, "Fatal error in the crashed run's output",
             Confidence.Confirmed, explanation, new[] { crash }, metricFacts, healthChecks, excerpt);
-    }
-
-    /// <summary>A recognised way a process announces it is dying, and the line that said so.</summary>
-    private readonly record struct FatalHit(string Description, string Line);
-
-    /// <summary>
-    /// Phrases a runtime prints only on the way out, each with how to describe it. Matched
-    /// case-insensitively against whole lines. Kept narrow on purpose — see
-    /// <see cref="MatchFatalConsoleOutput"/> for why breadth here would be actively harmful.
-    /// </summary>
-    private static readonly (string Needle, string Description)[] FatalSignatures =
-    [
-        ("unhandled exception", "an unhandled exception"),
-        ("unhandled error", "an unhandled error"),
-        ("exception in thread", "an exception that killed a thread"),
-        ("terminate called after throwing", "an uncaught C++ exception"),
-        ("segmentation fault", "a segmentation fault"),
-        ("segfault", "a segmentation fault"),
-        ("core dumped", "a core dump"),
-        ("out of memory", "an out-of-memory condition"),
-        ("outofmemoryerror", "an out-of-memory condition"),
-        ("stack overflow", "a stack overflow"),
-        ("stackoverflowexception", "a stack overflow"),
-        ("panic:", "a panic"),
-        ("fatal error", "a fatal error"),
-        ("fatal exception", "a fatal exception"),
-    ];
-
-    /// <summary>
-    /// The LAST recognised fatal line in the run. Scanned from the end because a long-lived server
-    /// may have survived something earlier in the same run; what killed it is what it said last.
-    /// </summary>
-    private static FatalHit? FindFatalSignature(IReadOnlyList<string> lines)
-    {
-        for (var i = lines.Count - 1; i >= 0; i--)
-        {
-            foreach (var (needle, description) in FatalSignatures)
-            {
-                if (lines[i].Contains(needle, StringComparison.OrdinalIgnoreCase))
-                    return new FatalHit(description, lines[i]);
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// The tail of a run's output, bounded so a stack trace fits without a runaway log filling the
-    /// model's context. Trailing blank lines are dropped so the excerpt ends on something readable.
-    /// </summary>
-    private static IReadOnlyList<string> TailExcerpt(IReadOnlyList<string> lines)
-    {
-        var end = lines.Count;
-        while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1]))
-            end--;
-
-        var start = Math.Max(0, end - MaxConsoleExcerptLines);
-        var excerpt = new List<string>(end - start);
-        for (var i = start; i < end; i++)
-            excerpt.Add(Clip(lines[i]));
-
-        return excerpt;
-    }
-
-    /// <summary>Keeps one quoted console line from crowding out the rest of the excerpt.</summary>
-    private static string Clip(string line)
-    {
-        var trimmed = line.TrimEnd();
-        return trimmed.Length <= MaxConsoleLineLength ? trimmed : trimmed[..MaxConsoleLineLength] + "…";
     }
 
     /// <summary>Best (lowest <see cref="Confidence"/> value = highest trust) first; ties keep the
@@ -465,7 +388,7 @@ public static class RootCauseAggregator
         IReadOnlyList<string>? excerpt = null;
         if (console.HasOutput)
         {
-            excerpt = TailExcerpt(console.Lines);
+            excerpt = CrashOutput.TailExcerpt(console.Lines);
             explanation +=
                 $" Nothing in the crashed run's output matched a known fatal signature either, but these "
                 + $"are the last lines it printed before exiting at {console.Crash!.Ts.ToString("u")}:\n"

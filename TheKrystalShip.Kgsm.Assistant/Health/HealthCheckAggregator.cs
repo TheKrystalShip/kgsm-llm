@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant.Consoles;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 
@@ -133,7 +134,7 @@ public static class HealthCheckAggregator
             ConsoleRunInfo.CrashedOutcome or ConsoleRunInfo.GaveUpOutcome => new HealthCheck(
                 "stability", CheckState.Warn, Severity.Warn,
                 $"Restarted {uptime} ago after a crash{exit} — this run's logs begin after it, so a "
-                + "clean scan here says nothing about what went wrong."),
+                + $"clean scan here says nothing about what went wrong. {LastWords(restart)}"),
 
             "stopped" or "exited" => new HealthCheck(
                 "stability", CheckState.Pass, Severity.Info,
@@ -144,6 +145,33 @@ public static class HealthCheckAggregator
                 $"Up {uptime}. How the previous run ended was never recorded, which is not the same as "
                 + "it having ended cleanly."),
         };
+    }
+
+    /// <summary>
+    /// What the crashed run said on its way out, in one sentence — so a report that names a crash
+    /// also explains it, instead of costing the reader a second question about something they were
+    /// already asking.
+    /// <para>
+    /// A recognised fatal line is quoted, because that line IS the answer. Output that matched
+    /// nothing is not quoted: the last thing a server printed before being killed is routine
+    /// chatter, and presenting it beside a crash invites it to be read as the cause. Saying it
+    /// announced nothing is itself informative — combined with a signal exit code it points away
+    /// from an application fault entirely.
+    /// </para>
+    /// <para>
+    /// Deliberately one line, not the excerpt <c>trace_root_cause</c> quotes. This is a five-line
+    /// health summary; a stack trace pasted into it would bury every other check.
+    /// </para>
+    /// </summary>
+    private static string LastWords(InstanceRestart restart)
+    {
+        if (restart.PreviousLines is not { Count: > 0 } lines)
+            return "What that run printed on its way out could not be read.";
+
+        return CrashOutput.FindFatalSignature(lines) is { } hit
+            ? $"That run signed off with {hit.Description}: \"{CrashOutput.Clip(hit.Line)}\"."
+            : "That run printed nothing that announces a crash, so whatever ended it did not come "
+              + "from the server's own error handling.";
     }
 
     /// <summary>

@@ -306,8 +306,8 @@ public class HealthCheckAggregatorTests
     // --- Stability: a server that is up again is not the same as a server that is well ------------
 
     private static InstanceHealthSnapshot AfterRestart(
-        TimeSpan ago, string previousOutcome, int? exit = null) =>
-        Healthy(restart: new InstanceRestart(Now - ago, previousOutcome, exit));
+        TimeSpan ago, string previousOutcome, int? exit = null, IReadOnlyList<string>? previousLines = null) =>
+        Healthy(restart: new InstanceRestart(Now - ago, previousOutcome, exit, previousLines));
 
     [Fact]
     public void ARecentCrashRestart_IsNotReportedAsHealthy()
@@ -400,5 +400,85 @@ public class HealthCheckAggregatorTests
         var r = Run(AfterRestart(TimeSpan.FromMinutes(2), ConsoleRunInfo.GaveUpOutcome, exit: 1), "romestead");
 
         Check(r, "stability").State.Should().Be(CheckState.Warn);
+    }
+
+    [Fact]
+    public void ARecentCrashQuotesWhatTheCrashedRunSaid()
+    {
+        // The point of carrying the previous run's output at all: a report that names a crash and
+        // withholds the line explaining it costs the reader a second question about the very thing
+        // they were already asking.
+        string[] lastWords =
+        [
+            "Character 'Gingera' logged in with player id 4",
+            "Unhandled exception. System.NullReferenceException: Object reference not set to an instance of an object.",
+            "   at CandideServer.Entities.ServerEntitySystemManager.UpdateLoadInAndOutOfOpenWorld(Single dt)",
+        ];
+
+        var r = Run(AfterRestart(
+            TimeSpan.FromMinutes(4), ConsoleRunInfo.CrashedOutcome, exit: 134, previousLines: lastWords), "romestead");
+
+        r.Data.Overall.Should().Be(CheckState.Warn);
+        r.Summary.Should().Contain("signed off with an unhandled exception")
+            .And.Contain("System.NullReferenceException");
+    }
+
+    [Fact]
+    public void OutputThatAnnouncesNothing_IsNotQuotedAsIfItWereTheCause()
+    {
+        // A server killed from outside prints routine chatter and then stops. Quoting its last line
+        // beside a crash invites it to be read as the cause — "Server ready..." is not why it died.
+        // Saying it announced nothing points away from an application fault, which is the real signal.
+        string[] routine = ["Server ready...", "Saving game...", "HostServer_WorldSaved"];
+
+        var r = Run(AfterRestart(
+            TimeSpan.FromMinutes(1), ConsoleRunInfo.CrashedOutcome, exit: 137, previousLines: routine), "romestead");
+
+        r.Summary.Should().Contain("printed nothing that announces a crash");
+        r.Summary.Should().NotContain("HostServer_WorldSaved").And.NotContain("Server ready");
+    }
+
+    [Fact]
+    public void AnUnreadableCrashedRun_SaysSo_RatherThanImplyingItWasSilent()
+    {
+        // A read that failed and a run that printed nothing are different facts, and the second is
+        // evidence while the first is a gap.
+        var r = Run(AfterRestart(TimeSpan.FromMinutes(2), ConsoleRunInfo.CrashedOutcome, exit: 1), "romestead");
+
+        r.Summary.Should().Contain("could not be read");
+        r.Summary.Should().NotContain("printed nothing that announces a crash");
+    }
+
+    [Fact]
+    public void TheQuoteIsTheLastFatalLine_NotAnEarlierSurvivedOne()
+    {
+        // A long-lived server logs something alarming and carries on for hours. What killed it is
+        // what it said last, so the scan runs backwards — the same rule trace_root_cause uses,
+        // because they now share one table.
+        string[] lines =
+        [
+            "Fatal error: could not load optional plugin 'foo' (continuing)",
+            "Server ready...",
+            "Unhandled exception. System.NullReferenceException: boom",
+        ];
+
+        var r = Run(AfterRestart(
+            TimeSpan.FromMinutes(2), ConsoleRunInfo.CrashedOutcome, previousLines: lines), "romestead");
+
+        r.Summary.Should().Contain("signed off with an unhandled exception");
+        r.Summary.Should().NotContain("signed off with a fatal error");
+    }
+
+    [Fact]
+    public void AnOldCrashQuotesNothing_BecauseItIsNoLongerTheAnswer()
+    {
+        // Past the window the check does not warn, so there is nothing for last words to qualify.
+        string[] lastWords = ["Unhandled exception. System.NullReferenceException: boom"];
+
+        var r = Run(AfterRestart(
+            TimeSpan.FromHours(9), ConsoleRunInfo.CrashedOutcome, previousLines: lastWords), "romestead");
+
+        r.Data.Overall.Should().Be(CheckState.Pass);
+        r.Summary.Should().NotContain("NullReferenceException");
     }
 }

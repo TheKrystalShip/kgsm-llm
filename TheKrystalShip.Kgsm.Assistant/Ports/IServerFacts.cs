@@ -111,9 +111,39 @@ public sealed record ConsoleTail(FactsState State, IReadOnlyList<string> Lines);
 /// <param name="Current">Whether the run is still in progress.</param>
 /// <param name="EndedAt">
 /// When the run stopped printing, or null while it is <paramref name="Current"/>. This is what a
-/// crash is matched against — the run that ended at the crash is the one that holds it.
+/// crash is matched against when <paramref name="Outcome"/> cannot name the run outright.
 /// </param>
-public sealed record ConsoleRunInfo(int Index, bool Current, DateTimeOffset? EndedAt);
+/// <param name="Outcome">
+/// How the supervisor classified this run's ending: <c>crashed</c>, <c>gave-up</c>, <c>exited</c>,
+/// <c>stopped</c>, <c>running</c>, or <c>unknown</c>.
+/// <para>
+/// <b><c>unknown</c> means the ending was never recorded</b> — not that the run ended cleanly. A run
+/// that predates the supervisor's ledger, or that ended while the daemon was down, reports it.
+/// </para>
+/// </param>
+/// <param name="ExitCode">
+/// The exit code the supervisor read, where it could. Null is an honest unknown. Never a verdict on
+/// its own: game servers exit 0 on a fatal error often enough that the code alone proves nothing.
+/// </param>
+public sealed record ConsoleRunInfo(
+    int Index,
+    bool Current,
+    DateTimeOffset? EndedAt,
+    string Outcome = ConsoleRunInfo.UnknownOutcome,
+    int? ExitCode = null)
+{
+    /// <summary>The supervisor saw this run exit while it was wanted running.</summary>
+    public const string CrashedOutcome = "crashed";
+
+    /// <summary>It crashed, and the supervisor stopped trying to bring it back.</summary>
+    public const string GaveUpOutcome = "gave-up";
+
+    /// <summary>Nothing recorded how this run ended. An absence of knowledge, never a clean ending.</summary>
+    public const string UnknownOutcome = "unknown";
+
+    /// <summary>Whether the supervisor itself saw this run fail, however the retries then went.</summary>
+    public bool Crashed => Outcome is CrashedOutcome or GaveUpOutcome;
+}
 
 /// <summary>The runs of an instance's console, newest first.</summary>
 public sealed record ConsoleRuns(FactsState State, IReadOnlyList<ConsoleRunInfo> Runs);

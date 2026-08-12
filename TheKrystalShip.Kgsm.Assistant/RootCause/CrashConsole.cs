@@ -23,10 +23,17 @@ namespace TheKrystalShip.Kgsm.Assistant.RootCause;
 /// Whether the supervisor answered. <see cref="FactsState.Unavailable"/> means the console could not
 /// be read at all, which is never reported as the run having printed nothing.
 /// </param>
+/// <param name="ExitCode">
+/// The code the crashed run's leader exited with, as the supervisor read it, or null where it could
+/// not be read. It is evidence and never a verdict on its own — game servers routinely exit 0 on a
+/// fatal error — but a signal code says something the console cannot: that the process was killed
+/// from outside rather than failing on its own terms.
+/// </param>
 public sealed record CrashConsole(
     AuditEventRow? Crash,
     IReadOnlyList<string> Lines,
-    FactsState State)
+    FactsState State,
+    int? ExitCode = null)
 {
     /// <summary>No crash in the window, so nothing to read — distinct from a failed read.</summary>
     public static readonly CrashConsole NoCrash = new(null, [], FactsState.Available);
@@ -40,11 +47,24 @@ public sealed record CrashConsole(
 /// lives beside the rules that consume it, rather than in the adapter that does the fetching.
 /// </summary>
 /// <remarks>
-/// The match is by time, because that is the only thing the two sources share: the supervisor stamps
-/// a run with when it stopped printing, and the engine stamps the crash with when the exit was
-/// observed. Those are close but never equal — a process prints its last line, then the supervisor
-/// notices the cgroup emptied on its next tick — so the run is matched to the crash by proximity
-/// inside a bounded window rather than by equality.
+/// <para>
+/// <b>A run the supervisor marked crashed is preferred over one that merely ended nearby.</b> The
+/// supervisor is the only thing that watched the process exit and can tell that exit from a
+/// deliberate stop, and it records that verdict against the run. Time is still what pairs a marked
+/// run with a particular crash — two crashes in a loop are both marked — but it no longer has to
+/// carry the question of whether a crash happened at all.
+/// </para>
+/// <para>
+/// <b>Time-only matching remains, for every run the supervisor never classified.</b> A run that
+/// predates the ledger, or one that ended while the daemon was down, reports its outcome as unknown
+/// — and unknown is not "did not crash". Falling back to proximity keeps those readable instead of
+/// making an absent record look like an absent crash.
+/// </para>
+/// <para>
+/// The timestamps are close but never equal — a process prints its last line, then the supervisor
+/// notices the cgroup emptied on its next tick — so a run is paired with a crash by proximity inside
+/// a bounded window, never by equality.
+/// </para>
 /// </remarks>
 public static class CrashRunSelector
 {
@@ -71,8 +91,9 @@ public static class CrashRunSelector
     /// </summary>
     /// <remarks>
     /// A run still in progress is never a candidate: it has not ended, so it cannot be the run that
-    /// ended at the crash. Among the rest the latest-ending one inside the window wins — under a
-    /// crash loop the runs are seconds apart, and the nearest is the one that crash belongs to.
+    /// ended at the crash. Among the rest, a run the supervisor marked as crashed wins over one it
+    /// did not, and within either group the latest-ending one inside the window wins — under a crash
+    /// loop the runs are seconds apart, and the nearest is the one that crash belongs to.
     /// </remarks>
     public static int? Select(IReadOnlyList<ConsoleRunInfo> runs, DateTimeOffset crashAt)
     {
@@ -88,10 +109,24 @@ public static class CrashRunSelector
             if (crashAt - endedAt > MaxDetectionLag)
                 continue; // too long before the crash to be evidence of it
 
-            if (best is null || endedAt > best.EndedAt)
+            if (best is null || Beats(run, best))
                 best = run;
         }
 
         return best?.Index;
     }
+
+    /// <summary>
+    /// Whether <paramref name="candidate"/> is the better answer than <paramref name="incumbent"/>.
+    /// <para>
+    /// A run the supervisor watched fail outranks one that only happens to have ended nearby, whatever
+    /// their timestamps say — that is a measured verdict against a coincidence. This is what stops a
+    /// server stopped and restarted moments before an unrelated crash from donating its console to it.
+    /// Between two runs of equal standing, the later one wins: it is the one nearer the crash.
+    /// </para>
+    /// </summary>
+    private static bool Beats(ConsoleRunInfo candidate, ConsoleRunInfo incumbent) =>
+        candidate.Crashed != incumbent.Crashed
+            ? candidate.Crashed
+            : candidate.EndedAt > incumbent.EndedAt;
 }

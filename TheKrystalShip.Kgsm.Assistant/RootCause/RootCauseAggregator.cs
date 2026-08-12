@@ -80,6 +80,9 @@ public static class RootCauseAggregator
     /// snapshot could not be read (see <paramref name="healthUnavailableReason"/>).</param>
     /// <param name="healthUnavailableReason">Why the health snapshot is absent; ignored when
     /// <paramref name="health"/> is non-null.</param>
+    /// <param name="crashConsole">What the run that ended at the crash printed, and how it exited.
+    /// Null is the same as <see cref="CrashConsole.NoCrash"/> — nothing to read for, which is distinct
+    /// from a read that failed.</param>
     public static ToolResult<RootCauseData> Run(
         string instance,
         string range,
@@ -468,6 +471,12 @@ public static class RootCauseAggregator
                 + $"are the last lines it printed before exiting at {console.Crash!.Ts.ToString("u")}:\n"
                 + string.Join("\n", excerpt);
         }
+
+        // Said whether or not there was output to quote: how a process exited is measured separately
+        // from what it printed, and a run that died without a word is exactly where the code is the
+        // only evidence there is.
+        if (DescribeExit(console.ExitCode) is { } exitNote)
+            explanation += " " + exitNote;
         else if (console.State == FactsState.Unavailable)
         {
             explanation +=
@@ -479,6 +488,50 @@ public static class RootCauseAggregator
             RootCauseSignature.None, "No signature matched — correlation only",
             Confidence.Possible, explanation, salient, metricFacts, healthChecks, excerpt);
     }
+
+    /// <summary>
+    /// One sentence about how the crashed run's process exited, or null when the supervisor could not
+    /// read a code.
+    /// <para>
+    /// <b>A signal is the fact worth carrying.</b> A process terminated by a signal did not choose to
+    /// exit — that is something the console cannot show, because there is nothing for it to print, and
+    /// it is precisely the case where output alone reads as "the server was fine and then stopped".
+    /// The wording names what produces the signal and stops there: which of those causes it actually
+    /// was is not something an exit code can settle.
+    /// </para>
+    /// <para>
+    /// A plain code says much less, and code 0 says least of all — game servers routinely exit 0 on a
+    /// fatal error, so it is reported without letting it read as a clean shutdown.
+    /// </para>
+    /// </summary>
+    private static string? DescribeExit(int? exitCode)
+    {
+        if (exitCode is not { } code)
+            return null;
+
+        // POSIX shells report a signal death as 128+N, and that is what the supervisor reads back.
+        if (code is > 128 and < 160 && SignalNames.TryGetValue(code - 128, out string? signal))
+            return $"The process was terminated by {signal} (exit {code}) rather than exiting on its own. "
+                + "A supervisor's hard teardown, an operator or tool killing it, and the kernel's "
+                + "out-of-memory killer all end a process this way, and the exit code cannot tell them "
+                + "apart — establishing which one it was needs the host's own logs.";
+
+        return code == 0
+            ? "The process exited with code 0. That is not evidence of a clean shutdown — game servers "
+                + "routinely exit 0 after a fatal error — so it neither supports nor rules out a crash."
+            : $"The process exited with code {code}.";
+    }
+
+    /// <summary>
+    /// The signals worth naming: the ways a game server actually gets killed. An unlisted signal falls
+    /// through to the plain exit-code wording rather than being described with a number a reader would
+    /// have to look up anyway.
+    /// </summary>
+    private static readonly Dictionary<int, string> SignalNames = new()
+    {
+        [4] = "SIGILL", [6] = "SIGABRT", [7] = "SIGBUS", [8] = "SIGFPE",
+        [9] = "SIGKILL", [11] = "SIGSEGV", [15] = "SIGTERM",
+    };
 
     private static RootCauseFinding UnavailableFinding(
         string instance, IReadOnlyList<MetricFact> metricFacts, IReadOnlyList<HealthCheck> healthChecks) =>

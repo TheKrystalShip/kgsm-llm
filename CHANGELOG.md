@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The crashed run is now identified by the supervisor's verdict, not by proximity alone.**
+  `ConsoleRunInfo` carries the `Outcome` and `ExitCode` the watchdog recorded for each run, and
+  `CrashRunSelector` prefers a run marked `crashed`/`gave-up` over one that merely ended nearby.
+  Timestamps still pair a marked run with a particular crash — every run in a crash loop is marked —
+  but they no longer have to carry the question of whether a crash happened at all. A server stopped
+  and restarted moments before an unrelated crash can no longer donate its console to it.
+
+  Time-only matching stays for every run the supervisor never classified: a run rotated before the
+  ledger existed reports `unknown`, and unknown is not "did not crash".
+
 ### Added
 
 - **`trace_root_cause` reads what the crashed run printed.** It composed the event timeline, a

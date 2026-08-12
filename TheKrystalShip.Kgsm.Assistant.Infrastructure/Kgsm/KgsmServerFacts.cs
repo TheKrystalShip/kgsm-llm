@@ -181,7 +181,12 @@ internal sealed class KgsmServerFacts : IServerFacts
                     r.Current,
                     // The supervisor reports UTC; carrying the offset explicitly keeps the
                     // comparison against an event's timestamp from depending on this host's zone.
-                    r.EndedAt is null ? null : new DateTimeOffset(r.EndedAt.Value, TimeSpan.Zero)))
+                    r.EndedAt is null ? null : new DateTimeOffset(r.EndedAt.Value, TimeSpan.Zero),
+                    // Passed through verbatim. An unrecognised value stays unrecognised rather than
+                    // being folded into "unknown", so a newer supervisor's vocabulary reaches the
+                    // rules that read it instead of being flattened on the way in.
+                    string.IsNullOrEmpty(r.Outcome) ? ConsoleRunInfo.UnknownOutcome : r.Outcome,
+                    r.ExitCode))
                 .ToList());
         }
         catch (Exception ex)

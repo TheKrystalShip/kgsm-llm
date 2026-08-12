@@ -27,6 +27,12 @@ public class CrashRunSelectorTests
     private static ConsoleRunInfo Run(int index, DateTimeOffset? endedAt, bool current = false) =>
         new(index, current, endedAt);
 
+    private static ConsoleRunInfo Crashed(int index, DateTimeOffset endedAt) =>
+        new(index, Current: false, endedAt, ConsoleRunInfo.CrashedOutcome, ExitCode: 139);
+
+    private static ConsoleRunInfo Stopped(int index, DateTimeOffset endedAt) =>
+        new(index, Current: false, endedAt, "stopped");
+
     [Fact]
     public void PicksTheRunThatEndedJustBeforeTheCrashWasSeen()
     {
@@ -91,6 +97,71 @@ public class CrashRunSelectorTests
         var runs = new[] { Run(0, Crash.AddMinutes(4)) };
 
         CrashRunSelector.Select(runs, Crash).Should().BeNull();
+    }
+
+    [Fact]
+    public void TheRunTheSupervisorMarkedCrashed_OutranksOneThatMerelyEndedNearer()
+    {
+        // An operator stopped the server and started it again seconds before the crash. Both runs
+        // ended inside the window and the STOP ended nearer, so proximity alone hands back a console
+        // that holds an orderly shutdown. The supervisor watched one of these processes fail; that
+        // verdict is measured, and it wins.
+        var runs = new[]
+        {
+            Run(0, endedAt: null, current: true),
+            Stopped(1, new DateTimeOffset(2026, 8, 11, 18, 16, 45, TimeSpan.Zero)),
+            Crashed(2, new DateTimeOffset(2026, 8, 11, 18, 16, 30, TimeSpan.Zero)),
+        };
+
+        CrashRunSelector.Select(runs, Crash).Should().Be(2);
+    }
+
+    [Fact]
+    public void AmongSeveralCrashedRuns_TheNearestStillWins()
+    {
+        // Marking narrows the field; it does not replace the pairing. In a crash loop every run is
+        // marked, and each crash still belongs to the run that ended nearest it.
+        var runs = new[]
+        {
+            Run(0, endedAt: null, current: true),
+            Crashed(1, new DateTimeOffset(2026, 8, 11, 18, 16, 44, TimeSpan.Zero)),
+            Crashed(2, new DateTimeOffset(2026, 8, 11, 18, 16, 20, TimeSpan.Zero)),
+        };
+
+        CrashRunSelector.Select(runs, Crash).Should().Be(1);
+        CrashRunSelector.Select(runs, new DateTimeOffset(2026, 8, 11, 18, 16, 22, TimeSpan.Zero))
+            .Should().Be(2);
+    }
+
+    [Fact]
+    public void AnUnclassifiedRunIsStillFoundByTime()
+    {
+        // Every run rotated before the supervisor kept a ledger reports "unknown", and unknown is not
+        // "did not crash". Requiring the mark would make an absent record look like an absent crash
+        // and lose the console entirely.
+        var runs = new[]
+        {
+            Run(0, endedAt: null, current: true),
+            Run(1, new DateTimeOffset(2026, 8, 11, 18, 16, 38, TimeSpan.Zero)),
+        };
+
+        runs[1].Outcome.Should().Be(ConsoleRunInfo.UnknownOutcome);
+        CrashRunSelector.Select(runs, Crash).Should().Be(1);
+    }
+
+    [Fact]
+    public void GivingUpCountsAsHavingCrashed()
+    {
+        // The supervisor stops retrying after enough consecutive failures and files the last run
+        // under a different word. It is the same event — the process died on its own — and its
+        // console is the one worth reading.
+        var gaveUp = new ConsoleRunInfo(
+            1, Current: false, new DateTimeOffset(2026, 8, 11, 18, 16, 30, TimeSpan.Zero),
+            ConsoleRunInfo.GaveUpOutcome, ExitCode: 1);
+
+        var runs = new[] { Stopped(0, new DateTimeOffset(2026, 8, 11, 18, 16, 45, TimeSpan.Zero)), gaveUp };
+
+        CrashRunSelector.Select(runs, Crash).Should().Be(1);
     }
 
     [Fact]
@@ -200,6 +271,43 @@ public class FatalConsoleOutputRuleTests
         // Still surfaced — unrecognised is a lead to read, not nothing to report.
         r.Summary.Should().Contain("last lines it printed").And.Contain("failed to load texture pack");
         best.ConsoleExcerpt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ASignalDeathIsNamed_BecauseTheConsoleCannotShowIt()
+    {
+        // The exact hole this closes: a process killed from outside prints nothing on its way out, so
+        // the console reads as a server that was fine and then stopped. The exit code is the only
+        // evidence there is, and it says the process did not choose to exit.
+        var r = Run(new CrashConsole(
+            CrashEvent,
+            ["Ready.", "HostServer_SavingGame", "HostServer_WorldSaved"],
+            FactsState.Available,
+            ExitCode: 137));
+
+        r.Summary.Should().Contain("SIGKILL").And.Contain("exit 137")
+            .And.Contain("rather than exiting on its own");
+        // The causes are listed as mechanisms and explicitly not ranked. Naming one as the likely
+        // cause is a diagnosis an exit code cannot support, and the reader will make it if the text
+        // leaves room for it.
+        r.Summary.Should().Contain("cannot tell them apart");
+    }
+
+    [Fact]
+    public void ExitZeroIsReported_ButNeverAsACleanShutdown()
+    {
+        var r = Run(new CrashConsole(CrashEvent, ["some output"], FactsState.Available, ExitCode: 0));
+
+        r.Summary.Should().Contain("not evidence of a clean shutdown");
+    }
+
+    [Fact]
+    public void AnUnreadExitCodeSaysNothingAtAll()
+    {
+        // An honest unknown stays silent rather than being described as anything.
+        var r = Run(new CrashConsole(CrashEvent, ["some output"], FactsState.Available, ExitCode: null));
+
+        r.Summary.Should().NotContain("exited with code").And.NotContain("terminated by");
     }
 
     [Fact]

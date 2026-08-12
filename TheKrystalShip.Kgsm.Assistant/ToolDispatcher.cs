@@ -1001,7 +1001,12 @@ public class ToolDispatcher : IToolDispatcher
         var tail = await _serverFacts.GetConsoleRunTailAsync(
             instance, CrashConsoleLines, index.Value, cancellationToken);
 
-        return new CrashConsole(crash, tail.Lines, tail.State);
+        // The exit code belongs to the run that was selected, so it is read from that run's own entry
+        // rather than looked up again — a second lookup could resolve differently and describe a
+        // different run's ending than the output being quoted.
+        int? exitCode = runs.Runs.FirstOrDefault(r => r.Index == index.Value)?.ExitCode;
+
+        return new CrashConsole(crash, tail.Lines, tail.State, exitCode);
     }
 
     /// <summary>

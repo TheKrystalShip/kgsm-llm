@@ -68,6 +68,38 @@ public class LlmAgentTests
             Gate = gate,
         };
 
+    /// <summary>
+    /// In a shared conversation the model is told who is speaking — and the record keeps the prompt
+    /// exactly as it was typed. Both halves matter: the label is what stops the model conflating two
+    /// people, and its absence from the record is what stops every later reader of the log inheriting
+    /// a sentence nobody wrote.
+    /// </summary>
+    [Fact]
+    public async Task ASpeaker_IsNamedToTheModel_ButNeverRecorded()
+    {
+        ScriptLlm(Text("It crashed twice."));
+
+        var result = await CreateAgent().RunAsync(Turn() with { Speaker = "Alice" });
+
+        result.IsSuccess.Should().BeTrue();
+        _seen[0].Last().Content.Should().Be("Alice: do the thing");
+        _store.Turns.Should().ContainSingle().Which.UserPrompt.Should().Be("do the thing");
+    }
+
+    /// <summary>
+    /// Without a speaker the model-facing prompt is untouched — every one-participant conversation
+    /// keeps reading exactly as it did.
+    /// </summary>
+    [Fact]
+    public async Task WithNoSpeaker_ThePromptReachesTheModelUnlabelled()
+    {
+        ScriptLlm(Text("done"));
+
+        await CreateAgent().RunAsync(Turn());
+
+        _seen[0].Last().Content.Should().Be("do the thing");
+    }
+
     [Fact]
     public async Task MultiToolCalls_AreDispatchedSequentiallyInOrder()
     {

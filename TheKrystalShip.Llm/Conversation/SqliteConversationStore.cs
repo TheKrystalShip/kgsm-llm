@@ -704,7 +704,7 @@ public sealed class SqliteConversationStore : IConversationStore
     public IReadOnlyList<ConversationEntry> GetHistory(string conversationId) =>
         LoadEntries(conversationId);
 
-    public IReadOnlyList<LlmMessage> GetModelContext(string conversationId)
+    public IReadOnlyList<LlmMessage> GetModelContext(string conversationId, bool attributeSpeakers = false)
     {
         var entries = LoadEntries(conversationId);
 
@@ -732,7 +732,9 @@ public sealed class SqliteConversationStore : IConversationStore
             if (entries[i].Kind != ConversationEntryKind.Turn)
                 continue;
             var turn = entries[i].Turn!;
-            messages.Add(LlmMessage.User(turn.UserPrompt));
+            messages.Add(attributeSpeakers
+                ? SpeakerAttribution.Message(turn.UserDisplay, turn.UserPrompt)
+                : LlmMessage.User(turn.UserPrompt));
             if (!string.IsNullOrWhiteSpace(turn.Final))
                 messages.Add(LlmMessage.Assistant(turn.Final!));
         }

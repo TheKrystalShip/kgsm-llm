@@ -110,4 +110,27 @@ public sealed class AssistantRelayHeaderWriterTests
         RelayLeaf.Bot.Should().Be("kgsm-bot");
         RelayLeaf.Api.Should().Be("kgsm-api");
     }
+
+    /// <summary>
+    /// The room rides the same writer as everything else, so a leaf cannot spell it differently from
+    /// the filter that reads it. Whether it is HONOURED is the receiver's decision — this side only
+    /// has to state it correctly.
+    /// </summary>
+    [Fact]
+    public void WritesTheRoom_WhenTheCallNamesOne() =>
+        Header(Written(call: new RelayCall(Room: "g1-t9")), "X-Relay-Room").Should().Be("g1-t9");
+
+    [Fact]
+    public void WithNoRoom_TheHeaderIsAbsent()
+    {
+        Header(Written(call: new RelayCall(ConversationId: "chat-1")), "X-Relay-Room").Should().BeNull();
+        Header(Written(call: new RelayCall()), "X-Relay-Room").Should().BeNull();
+    }
+
+    /// <summary>A blank room says nothing, so it is not said at all.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ABlankRoom_IsNotWritten(string room) =>
+        Header(Written(call: new RelayCall(Room: room)), "X-Relay-Room").Should().BeNull();
 }

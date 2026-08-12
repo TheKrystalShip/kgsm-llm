@@ -55,7 +55,7 @@ public class SharedTurnTests : IClassFixture<WebApplicationFactory<Program>>
         public Task<AssistantResult> RunAsync(
             string conversationId, string prompt, bool canPerformActions, bool think, bool autoExecute,
             IReadOnlyList<string>? tools, CancellationToken ct, string? draftYaml,
-            string? userDisplay, string? leaf) =>
+            string? userDisplay, string? leaf, bool sharedConversation) =>
             throw new NotSupportedException("These tests only stream.");
 
         public Task<Status.ConfirmOutcome> ConfirmAsync(
@@ -69,7 +69,7 @@ public class SharedTurnTests : IClassFixture<WebApplicationFactory<Program>>
         public async IAsyncEnumerable<AssistantStreamEvent> RunStreamAsync(
             string conversationId, string prompt, bool canPerformActions, bool think, bool autoExecute,
             IReadOnlyList<string>? tools, [EnumeratorCancellation] CancellationToken ct,
-            string? draftYaml, string? userDisplay, string? leaf)
+            string? draftYaml, string? userDisplay, string? leaf, bool sharedConversation)
         {
             Interlocked.Increment(ref Runs);
             yield return AssistantStreamEvent.Token("watching ");

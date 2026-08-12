@@ -158,6 +158,13 @@ public interface IServerAssistant
     /// The leaf this turn is being run for (<c>kgsm-bot</c>, <c>kgsm-api</c>), selecting that leaf's
     /// prompt and tool-description overrides; null reads the assistant's own text.
     /// </param>
+    /// <param name="sharedConversation">
+    /// Whether this conversation is one several people hold together (a Discord thread), rather than
+    /// one person's own. When true the turn is attributed to <paramref name="userDisplay"/> and the
+    /// replayed history is attributed too, so the model reads a transcript with speakers instead of
+    /// one in which everybody is "you". The host decides it, because it is a property of the key the
+    /// conversation was opened under — nothing here can tell a shared conversation from a busy one.
+    /// </param>
     Task<AssistantResult> RunAsync(
         string conversationId,
         string userPrompt,
@@ -175,7 +182,10 @@ public interface IServerAssistant
         // The leaf this turn is being run for (kgsm-bot, kgsm-api), selecting that leaf's prompt and
         // tool-description overrides; null reads the assistant's own text. Last param to keep every
         // existing positional caller/mock unshifted.
-        string? leaf = null);
+        string? leaf = null,
+        // Whether several people share this conversation (a Discord thread), which attributes both
+        // this prompt and the replayed history to their speakers. Last param, same reason.
+        bool sharedConversation = false);
 
     /// <summary>
     /// Streaming counterpart to <see cref="RunAsync"/>: same policy (tool offering, gate, blast
@@ -201,7 +211,10 @@ public interface IServerAssistant
         // The leaf this turn is being run for (kgsm-bot, kgsm-api), selecting that leaf's prompt and
         // tool-description overrides; null reads the assistant's own text. Last param to keep every
         // existing positional caller/mock unshifted.
-        string? leaf = null);
+        string? leaf = null,
+        // Whether several people share this conversation (a Discord thread), which attributes both
+        // this prompt and the replayed history to their speakers. Last param, same reason.
+        bool sharedConversation = false);
 
     /// <summary>
     /// Executes a previously-staged destructive operation after a human has confirmed

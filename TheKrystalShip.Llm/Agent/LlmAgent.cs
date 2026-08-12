@@ -56,8 +56,11 @@ public class LlmAgent : ILlmAgent
         // Assemble [fresh system, ...projected history, this turn's user prompt]. The user prompt is
         // not yet in the store — it is persisted with the whole turn at completion (PersistTurn).
         var working = new List<LlmMessage> { LlmMessage.System(turn.SystemPrompt) };
-        working.AddRange(_conversationStore.GetModelContext(turn.ConversationId));
-        working.Add(LlmMessage.User(turn.UserPrompt));
+        // A turn that names its speaker is a turn in a conversation several people share, so the
+        // history replays with speakers too — the live prompt and the transcript above it are
+        // attributed the same way or not at all, never one of each.
+        working.AddRange(_conversationStore.GetModelContext(turn.ConversationId, turn.Speaker is not null));
+        working.Add(SpeakerAttribution.Message(turn.Speaker, turn.UserPrompt));
 
         var tools = turn.Tools;
         var gate = turn.Gate;
@@ -131,8 +134,11 @@ public class LlmAgent : ILlmAgent
         // Assemble [fresh system, ...projected history, this turn's user prompt]. Identical boundary to
         // RunAsync; the whole turn (incl. the prompt) is persisted at completion via PersistTurn.
         var working = new List<LlmMessage> { LlmMessage.System(turn.SystemPrompt) };
-        working.AddRange(_conversationStore.GetModelContext(turn.ConversationId));
-        working.Add(LlmMessage.User(turn.UserPrompt));
+        // A turn that names its speaker is a turn in a conversation several people share, so the
+        // history replays with speakers too — the live prompt and the transcript above it are
+        // attributed the same way or not at all, never one of each.
+        working.AddRange(_conversationStore.GetModelContext(turn.ConversationId, turn.Speaker is not null));
+        working.Add(SpeakerAttribution.Message(turn.Speaker, turn.UserPrompt));
 
         var tools = turn.Tools;
         var gate = turn.Gate;

@@ -47,4 +47,30 @@ internal static class RelayLeaves
     /// </summary>
     public static string OriginFor(string? leaf) =>
         leaf is not null && Origins.TryGetValue(leaf, out var origin) ? origin : Invocation.AssistantOrigin;
+
+    /// <summary>
+    /// The leaves permitted to open a <b>room</b> — a conversation keyed to a place rather than to a
+    /// person, which everyone there shares.
+    /// </summary>
+    /// <remarks>
+    /// A table for the same reason the origins above are one: a caller that decides its own answer can
+    /// decide it wrongly. Every other conversation on this service is prefixed with the verified user
+    /// id, which is what makes a caller structurally unable to name somebody else's memory; a room is
+    /// the one shape without that anchor, so what stands in its place is this list plus the relay
+    /// secret that got the request here.
+    /// <para>
+    /// Only the Discord bot is on it. A room needs a place with a membership the host can see and a
+    /// life of its own — a thread has both. The Control Panel relays one browser session at a time and
+    /// has nothing to key a room to, so a room claim from it is a bug in the making rather than a
+    /// feature waiting for a caller.
+    /// </para>
+    /// </remarks>
+    private static readonly IReadOnlySet<string> RoomOpeners =
+        new HashSet<string>(StringComparer.Ordinal) { Bot };
+
+    /// <summary>
+    /// Whether <paramref name="leaf"/> may open a room. False for an absent, unrecognised or
+    /// unlisted leaf — a room is granted, never assumed.
+    /// </summary>
+    public static bool OpensRooms(string? leaf) => leaf is not null && RoomOpeners.Contains(leaf);
 }

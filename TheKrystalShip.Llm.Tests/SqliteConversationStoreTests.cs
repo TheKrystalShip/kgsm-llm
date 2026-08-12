@@ -66,6 +66,66 @@ public sealed class SqliteConversationStoreTests : IDisposable
             (LlmRole.User, "is terraria up?"), (LlmRole.Assistant, "Yes, it's running."));
     }
 
+    /// <summary>
+    /// A room replays with speakers, so the model reads a conversation several people had rather than
+    /// one long monologue it will answer as though one person said all of it.
+    /// </summary>
+    [Fact]
+    public void GetModelContext_WhenAttributing_NamesWhoSaidEachThing()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("room:g-t", "did it crash again?", "It did — twice.", display: "Alice"));
+        store.AppendTurn(Turn("room:g-t", "same reason?", "Same exit code.", display: "Bob"));
+
+        store.GetModelContext("room:g-t", attributeSpeakers: true).Select(m => (m.Role, m.Content))
+            .Should().Equal(
+                (LlmRole.User, "Alice: did it crash again?"), (LlmRole.Assistant, "It did — twice."),
+                (LlmRole.User, "Bob: same reason?"), (LlmRole.Assistant, "Same exit code."));
+    }
+
+    /// <summary>
+    /// The stored prompt stays exactly what the person typed. The label belongs to the projection, so
+    /// the log the review surface reads — and anything later derived from it — is never the composed
+    /// string.
+    /// </summary>
+    [Fact]
+    public void Attributing_ChangesTheProjection_NotTheRecord()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("room:g-t", "did it crash again?", "It did.", display: "Alice"));
+
+        store.GetHistory("room:g-t").Should().ContainSingle()
+            .Which.Turn!.UserPrompt.Should().Be("did it crash again?");
+    }
+
+    /// <summary>
+    /// The default is the behaviour every one-participant conversation has always had, character for
+    /// character — a turn carrying a display name is not thereby a shared one.
+    /// </summary>
+    [Fact]
+    public void WithoutAttributing_ADisplayNameChangesNothing()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("web:u1", "is terraria up?", "Yes.", display: "Alice"));
+
+        store.GetModelContext("web:u1").Select(m => m.Content)
+            .Should().Equal("is terraria up?", "Yes.");
+    }
+
+    /// <summary>
+    /// A turn whose speaker was never recorded replays unlabelled rather than under an invented name —
+    /// the measured-or-unknown rule, applied to who said something.
+    /// </summary>
+    [Fact]
+    public void AnUnnamedSpeaker_IsNotGivenAName()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("room:g-t", "anyone there?", "Yes.", display: null));
+
+        store.GetModelContext("room:g-t", attributeSpeakers: true).Select(m => m.Content)
+            .Should().Equal("anyone there?", "Yes.");
+    }
+
     [Fact]
     public void GetModelContext_WithoutCheckpoint_ReplaysEveryTurn_OmittingMissingFinals()
     {

@@ -90,6 +90,23 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     /// </summary>
     public const string RelayLeafKey = "relayLeaf";
 
+    /// <summary>
+    /// Key under which the trusted relay's ROOM is stored (a <c>string</c>), set ONLY on the
+    /// authenticated relay path, ONLY from <c>X-Relay-Room</c>, and ONLY for a leaf
+    /// <see cref="RelayLeaves.OpensRooms"/> permits. It names a conversation keyed to a PLACE — a
+    /// Discord thread — which everyone speaking there shares, so the /turn handler keys memory as
+    /// <c>room:{thisValue}</c> with no user segment at all.
+    /// <para>
+    /// This is the one conversation key on the service that is not prefixed with the caller's own
+    /// verified id, so it is the one that cannot be made safe by construction. Three things stand in
+    /// place of that: the relay secret (already matched to get here), the leaf allow-list, and the
+    /// absence of any room path on the session-bearer side — a browser caller sending this header is
+    /// answered exactly as one that did not, because the filter never reaches this branch for them.
+    /// Absent, blank or from an unlisted leaf ⇒ not set ⇒ the ordinary per-user key.
+    /// </para>
+    /// </summary>
+    public const string RelayRoomKey = "relayRoom";
+
     private const string BearerPrefix = "Bearer ";
     private const string RelaySecretHeader = "X-Relay-Secret";
     private const string RelayUserHeader = "X-Relay-User";
@@ -98,6 +115,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     private const string RelayAutoActHeader = "X-Relay-Auto-Act";
     private const string RelayConversationIdHeader = "X-Relay-Conversation-Id";
     private const string RelayLeafHeader = "X-Relay-Leaf";
+    private const string RelayRoomHeader = "X-Relay-Room";
 
     private static readonly JsonWebTokenHandler Handler = new();
 
@@ -164,8 +182,17 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             // The calling leaf, which selects its prompt overrides and its audit origin. Validated
             // rather than repaired: it is used as a path segment, and a name that has to be cleaned up
             // to be usable is a name this service should not act on.
-            if (LeafName.Validate(request.Headers[RelayLeafHeader].ToString()) is { } relayLeaf)
-                context.HttpContext.Items[RelayLeafKey] = relayLeaf;
+            string? leaf = LeafName.Validate(request.Headers[RelayLeafHeader].ToString());
+            if (leaf is not null)
+                context.HttpContext.Items[RelayLeafKey] = leaf;
+            // The room, read LAST because it is the one header whose meaning depends on another: only
+            // a leaf on the room allow-list may name a conversation that is not prefixed with the
+            // caller's own id. An unlisted leaf is not an error — its request is simply the per-user
+            // one it would have been without the header, which is the same answer a leaf that never
+            // heard of rooms gets.
+            var relayRoom = request.Headers[RelayRoomHeader].ToString();
+            if (!string.IsNullOrWhiteSpace(relayRoom) && RelayLeaves.OpensRooms(leaf))
+                context.HttpContext.Items[RelayRoomKey] = relayRoom;
             return await next(context);
         }
 

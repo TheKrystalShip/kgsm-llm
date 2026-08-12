@@ -36,6 +36,19 @@ public sealed record AgentTurn
     public required string UserPrompt { get; init; }
 
     /// <summary>
+    /// The name to attribute <see cref="UserPrompt"/> to in the model's view, for a conversation
+    /// several people share. Null leaves the prompt unattributed — the right shape for a
+    /// conversation with one participant, where a label answers a question nobody asked.
+    /// </summary>
+    /// <remarks>
+    /// Model-facing only: the recorded turn keeps <see cref="UserPrompt"/> verbatim, and the label is
+    /// re-derived on replay from the display name stored against each turn. Storing the composed
+    /// string instead would make the log disagree with what the person actually typed, and every
+    /// later reader — the review surface, the compactor, a re-index — would inherit the disagreement.
+    /// </remarks>
+    public string? Speaker { get; init; }
+
+    /// <summary>
     /// The system prompt, built fresh by the host each turn. Not persisted to
     /// conversation memory; it is prepended to the working message list only.
     /// </summary>

@@ -289,7 +289,14 @@ app.UseStaticFiles();
 // The surface this service's conversation ids are namespaced under: web:{userId}[:{chatId}]. Every
 // key is composed from it, and the review surface is scoped to it — a conversation from another
 // surface in the same database is not this service's to serve.
-const string WebSurface = "web";
+const string WebSurface = ConversationSurfaces.Web;
+
+// The surface for conversations keyed to a PLACE instead of a person: room:{room}. It carries no user
+// segment, which is exactly what makes it shared and exactly why only a permitted leaf may name one
+// (RelayLeaves.OpensRooms). Nothing a person addresses by id — their chat list, a transcript, a
+// compaction — reaches it: those endpoints compose a web: key from the verified principal and always
+// will, so a room is reachable only by speaking in the place it belongs to.
+const string RoomSurface = ConversationSurfaces.Room;
 
 // --- Public endpoints --------------------------------------------------------
 // Open: a liveness probe, the two auth-bootstrap endpoints (a caller has no session yet) and the
@@ -1049,9 +1056,16 @@ var review = app.MapGroup("/admin")
 
 // Everyone who has talked to this assistant, derived from the conversation ids themselves (the store
 // holds no user registry). The list a reviewer picks from.
-review.MapGet("/conversations/users", (IConversationStore store) =>
+// The surface is a query parameter defaulting to web, so every existing caller reads exactly what it
+// read before while a reviewer can also ask for the rooms. Refused rather than defaulted when it names
+// no surface this service stores: an unrecognised name would otherwise select nothing and report the
+// emptiness as a finding about the corpus.
+review.MapGet("/conversations/users", (IConversationStore store, string? surface) =>
 {
-    var users = store.ListActors(WebSurface)
+    if (ConversationSurfaces.Resolve(surface ?? WebSurface) is not { } scope)
+        return Results.BadRequest(new { error = "unknown surface." });
+
+    var users = store.ListActors(scope)
         .Select(a => new AdminConversationUserDto(
             a.UserId, a.UserDisplay, a.ConversationCount, a.DeletedCount, a.TurnCount,
             a.FirstActivityAt, a.LastActivityAt))
@@ -1066,9 +1080,13 @@ review.MapGet("/conversations/stats", (
     IConversationStore store,
     IOptions<OllamaOptions> ollama,
     IOptions<LlmAgentOptions> agent,
-    IOptions<AssistantServiceOptions> assistant) =>
+    IOptions<AssistantServiceOptions> assistant,
+    string? surface) =>
 {
-    var stats = store.GetStats(WebSurface);
+    if (ConversationSurfaces.Resolve(surface ?? WebSurface) is not { } scope)
+        return Results.BadRequest(new { error = "unknown surface." });
+
+    var stats = store.GetStats(scope);
 
     // Whether a recorded tool name is one this assistant actually ships is a question only the
     // catalog can answer, and the catalog lives here — the store that counted the calls is
@@ -1108,12 +1126,15 @@ review.MapGet("/conversations/stats", (
 
 // One user's conversations. The user id comes from the list above, so it names an EXISTING namespace;
 // an unknown one is simply an empty list, never an error (nothing is revealed either way).
-review.MapGet("/conversations", (string user, IConversationStore store) =>
+review.MapGet("/conversations", (string user, IConversationStore store, string? surface) =>
 {
     if (string.IsNullOrWhiteSpace(user))
         return Results.BadRequest(new { error = "user is required." });
 
-    var conversations = store.ListConversations($"{WebSurface}:{user}", includeDeleted: true)
+    if (ConversationSurfaces.Resolve(surface ?? WebSurface) is not { } scope)
+        return Results.BadRequest(new { error = "unknown surface." });
+
+    var conversations = store.ListConversations($"{scope}:{user}", includeDeleted: true)
         .Select(ReviewConversationId.ToDto)
         .ToArray();
     return Results.Ok(conversations);
@@ -1125,11 +1146,13 @@ review.MapGet("/conversations", (string user, IConversationStore store) =>
 // surface, is a 404 — the surface only serves what it lists.
 review.MapGet("/conversations/{id}", (string id, IConversationStore store) =>
 {
-    if (!ReviewConversationId.TryDecode(id, WebSurface, out var conversationId))
+    // Read under whichever surface the handle decodes into, rather than under one chosen here: the
+    // listing minted it from a stored key, and that key already says which namespace it belongs to.
+    if (!ReviewConversationId.TryDecode(id, ConversationSurfaces.All, out var conversationId, out var scope))
         return Results.NotFound(new { error = "unknown conversation." });
 
-    var userId = ReviewConversationId.UserOf(conversationId, WebSurface);
-    var summary = store.ListConversations($"{WebSurface}:{userId}", includeDeleted: true)
+    var userId = ReviewConversationId.UserOf(conversationId, scope);
+    var summary = store.ListConversations($"{scope}:{userId}", includeDeleted: true)
         .FirstOrDefault(s => s.ConversationId == conversationId);
     if (summary is null)
         return Results.NotFound(new { error = "unknown conversation." });
@@ -1185,9 +1208,26 @@ secured.MapPost("/turn", async (
         http.Items.TryGetValue(BearerAuthFilter.RelayConversationIdKey, out var relayConv) && relayConv is string rc
             ? rc
             : request.ConversationId);
-    var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"{WebSurface}:{principal.UserId}"
-        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+
+    // A ROOM instead, when a permitted leaf named one: a conversation belonging to a place, which
+    // everyone speaking there continues. The filter has already established that this is the relay
+    // path and that the leaf may open rooms — the check cannot be repeated here, because the header
+    // itself never reaches this handler. Sanitised the same way and by the same authority as a chat
+    // scope; what differs is only that no user id precedes it.
+    //
+    // It WINS over the per-chat scope rather than combining with it: the two answer the same question,
+    // and a key built from both would be a room per person — every participant alone in a transcript
+    // named after the place they thought they were sharing.
+    var room = ConversationScope.Sanitize(
+        http.Items.TryGetValue(BearerAuthFilter.RelayRoomKey, out var roomObj) && roomObj is string rr
+            ? rr
+            : null);
+
+    var conversationId = room is not null
+        ? $"{RoomSurface}:{room}"
+        : string.IsNullOrEmpty(chatScope)
+            ? $"{WebSurface}:{principal.UserId}"
+            : $"{WebSurface}:{principal.UserId}:{chatScope}";
 
     // The leaf this turn arrives through, when one named itself. It picks the prompt overrides the turn
     // is built from and the origin its actions are recorded under; absent, both are the assistant's own.
@@ -1222,17 +1262,28 @@ secured.MapPost("/turn", async (
     // place in the list and its transcript all just moved. Published even when the turn was cut short,
     // because one abandoned part-way is still a turn that may have been recorded — and the cost of
     // saying so when nothing changed is one re-read.
-    void PublishActivity() => bus.Publish(principal.UserId, new ConversationEvent(
-        ConversationStream.Activity,
-        new ConversationChanged(
-            chatScope ?? string.Empty,
-            http.Request.Headers.TryGetValue(OriginHeaderName, out var named) && named.Count > 0 ? named[0] : null)));
+    //
+    // A room publishes nothing: the event names a chat in the caller's own list, and a room is in
+    // nobody's list. Sent anyway it would carry the empty chat id and point every one of that person's
+    // surfaces at their unpartitioned conversation — a re-read of something that did not change,
+    // announcing a turn that happened somewhere else entirely.
+    void PublishActivity()
+    {
+        if (room is not null)
+            return;
+
+        bus.Publish(principal.UserId, new ConversationEvent(
+            ConversationStream.Activity,
+            new ConversationChanged(
+                chatScope ?? string.Empty,
+                http.Request.Headers.TryGetValue(OriginHeaderName, out var named) && named.Count > 0 ? named[0] : null)));
+    }
 
     if (wantsStream)
     {
         var admission = turns.Admit(
             principal, conversationId, chatScope ?? string.Empty,
-            new TurnRun(request.Prompt, request.Tools, request.DraftYaml, relayLeaf, authority));
+            new TurnRun(request.Prompt, request.Tools, request.DraftYaml, relayLeaf, authority, room is not null));
 
         if (admission.Outcome == TurnAdmission.QueueFull)
             return Results.Json(
@@ -1289,7 +1340,7 @@ secured.MapPost("/turn", async (
 
     var result = await assistant.RunAsync(
         conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct,
-        request.DraftYaml, principal.DisplayName, relayLeaf);
+        request.DraftYaml, principal.DisplayName, relayLeaf, room is not null);
 
     if (result.IsFailure)
     {

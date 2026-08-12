@@ -20,7 +20,7 @@
     <PackageId>TheKrystalShip.Kgsm.Assistant.Relay</PackageId>
     <!-- Bump on ANY change to the header set or their spellings. NuGet caches by id+version, so a
          same-version repack serves a stale dll to a consumer. -->
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Heisenberg</Authors>
     <Description>The trusted-relay client contract for kgsm-assistant-service: the forwarded principal, the relay headers (identity, verified tier, auto-accept, conversation sub-scope, calling leaf) and the liveness probe. Referenced by the leaves that relay a turn on a verified user's behalf.</Description>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>

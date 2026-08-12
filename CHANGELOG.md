@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Rooms: a conversation belonging to a place, shared by everyone in it.** Every conversation this
+  service stores is keyed `web:{userId}[:{chatId}]`, with the user id set server-side — which is what
+  makes a client structurally unable to name anybody else's memory. A room is the deliberate second
+  shape, `room:{room}`, with no user segment at all: everyone speaking in one Discord thread continues
+  the same transcript instead of each holding a private one beside it.
+  - Opened only over the trusted relay, only by a leaf on an allow-list (`RelayLeaves.OpensRooms`,
+    today just `kgsm-bot`), via `X-Relay-Room`. It is refused on the session-bearer path outright: a
+    browser caller able to name a room could read a Discord thread by guessing a channel id.
+  - A room supersedes `X-Relay-Conversation-Id` rather than combining with it. Combined they would key
+    a room per person — everyone alone in a transcript named after the place they believed they shared.
+  - **A shared transcript is not shared authority.** Tier still travels per request and is re-read at
+    execution, so two people in one room act with their own permissions. What a Viewer inherits from an
+    Operator's turn is only what the assistant said out loud in the room: the replay carries the user
+    prompt and the final reply, never tool output.
+  - Rooms are in nobody's chat list and no per-user endpoint can address one — those compose a `web:`
+    key from the verified principal. The review surface reaches them with `?surface=room`, defaulting to
+    `web` so every existing caller reads exactly what it read before.
+- **Speaker attribution for shared conversations.** With several people in one transcript, an
+  unlabelled replay reads as one person having said all of it, and the model answers "as you said
+  earlier" to somebody who said nothing of the kind. A room labels both the live prompt and the
+  replayed history from the display name already recorded against each turn.
+  - The stored prompt stays verbatim; the label lives in the projection, so the review surface and
+    anything later derived from the log never inherit a composed string.
+  - Colons and control characters are removed from a display name before it becomes a label — a name
+    is chosen by its owner, and one containing either could otherwise typeset a second speaker's line
+    inside its own.
+  - A one-participant conversation is untouched, character for character.
+
 ### Fixed
 
 - **Confirming from a notification no longer appears to do nothing.** `POST /push/actions/{handle}`

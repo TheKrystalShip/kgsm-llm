@@ -74,4 +74,30 @@ public sealed class RelayLeafTests
     [InlineData("discord")]
     public void AnAbsentOrUnknownLeaf_RecordsTheAssistantsOrigin_NeverTheCallersClaim(string? leaf) =>
         RelayLeaves.OriginFor(leaf).Should().Be(Invocation.AssistantOrigin);
+
+    // ------------------------------------------------------------------- rooms ------------------
+
+    /// <summary>
+    /// A room is the one conversation key with no verified user id in it, so who may open one is a
+    /// grant rather than a default. The bot holds it because a Discord thread is a real place with a
+    /// membership and a lifetime; nothing else does.
+    /// </summary>
+    [Fact]
+    public void OnlyTheBot_MayOpenARoom()
+    {
+        RelayLeaves.OpensRooms(RelayLeaves.Bot).Should().BeTrue();
+        RelayLeaves.OpensRooms(RelayLeaves.Api).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Fail-closed, like every other relay header: a leaf this service does not recognise — or none at
+    /// all — is not granted a shared conversation by omission.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("kgsm-monitor")]
+    [InlineData("KGSM-BOT")]
+    public void AnUnlistedLeaf_MayNotOpenARoom(string? leaf) =>
+        RelayLeaves.OpensRooms(leaf).Should().BeFalse();
 }

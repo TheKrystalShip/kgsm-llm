@@ -87,7 +87,7 @@ internal sealed class TestConversationStore : IConversationStore
         };
     }
 
-    public IReadOnlyList<LlmMessage> GetModelContext(string conversationId)
+    public IReadOnlyList<LlmMessage> GetModelContext(string conversationId, bool attributeSpeakers = false)
     {
         var messages = new List<LlmMessage>();
         var lastCheckpoint = _entries.FindLastIndex(e => e.Kind == ConversationEntryKind.Checkpoint);

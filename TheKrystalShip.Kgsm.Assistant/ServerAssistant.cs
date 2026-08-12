@@ -206,7 +206,8 @@ public class ServerAssistant : IServerAssistant
         CancellationToken cancellationToken = default,
         string? openDraftYaml = null,
         string? userDisplay = null,
-        string? leaf = null)
+        string? leaf = null,
+        bool sharedConversation = false)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
         var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen, leaf);
@@ -226,6 +227,9 @@ public class ServerAssistant : IServerAssistant
             Gate = BuildGate(canPerformActions),
             Think = think,
             UserDisplay = userDisplay,
+            // Named only for a conversation people share. In a one-person conversation the label is
+            // noise the model has to read past on every single turn, and "you" was never ambiguous.
+            Speaker = sharedConversation ? userDisplay : null,
         };
 
         // The dispatcher stages any proposed commands into this per-turn scope; we drain
@@ -254,7 +258,8 @@ public class ServerAssistant : IServerAssistant
         [EnumeratorCancellation] CancellationToken cancellationToken = default,
         string? openDraftYaml = null,
         string? userDisplay = null,
-        string? leaf = null)
+        string? leaf = null,
+        bool sharedConversation = false)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
         var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen, leaf);
@@ -277,6 +282,9 @@ public class ServerAssistant : IServerAssistant
             Gate = BuildGate(canPerformActions),
             Think = think,
             UserDisplay = userDisplay,
+            // Named only for a conversation people share. In a one-person conversation the label is
+            // noise the model has to read past on every single turn, and "you" was never ambiguous.
+            Speaker = sharedConversation ? userDisplay : null,
         };
 
         // CRUCIAL: the dispatcher stages destructive ops into an AsyncLocal confirmation scope

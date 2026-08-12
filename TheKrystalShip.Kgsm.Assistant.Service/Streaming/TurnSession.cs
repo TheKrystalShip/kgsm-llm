@@ -323,12 +323,19 @@ internal sealed class TurnSession
 /// takes effect on it. A snapshot of permissions carried forward is how a queue launders privilege
 /// past a revocation.
 /// </summary>
+/// <remarks>
+/// <c>Shared</c> says the turn belongs to a conversation several people hold together (a room), which
+/// attributes both this prompt and the replayed history to their speakers. Carried rather than
+/// re-read from the conversation key: which surface a key belongs to is the composing handler's to
+/// know, and a prefix test here would be a second, quietly divergent copy of that scheme.
+/// </remarks>
 internal sealed record TurnRun(
     string Prompt,
     IReadOnlyList<string>? Tools,
     string? DraftYaml,
     string? RelayLeaf,
-    KgsmTierSource Authority);
+    KgsmTierSource Authority,
+    bool Shared = false);
 
 /// <summary>
 /// How this turn's authority is established when it runs. The relay carries the caller's verified tier

@@ -65,6 +65,19 @@ public sealed class AssistantRelay
     /// <summary>A sub-scope of this user's own memory; never an identity.</summary>
     public const string ConversationIdHeader = "X-Relay-Conversation-Id";
 
+    /// <summary>
+    /// A conversation held in common by everyone in one place, rather than inside one person's
+    /// memory — the exact opposite of <see cref="ConversationIdHeader"/>, and the reason it is a
+    /// second header rather than a value of the first.
+    /// </summary>
+    /// <remarks>
+    /// The assistant honours it only from a leaf it lists as permitted to open rooms, and never on
+    /// its session-bearer path: a browser caller that could name a room could read a Discord thread's
+    /// transcript. A leaf that does not send it is unaffected, and one that sends it without being
+    /// permitted is answered as though it had not.
+    /// </remarks>
+    public const string RoomHeader = "X-Relay-Room";
+
     /// <summary>The leaf making the call, selecting its prompts and its audit origin.</summary>
     public const string LeafHeader = "X-Relay-Leaf";
 
@@ -125,6 +138,13 @@ public sealed class AssistantRelay
         var conversationId = HeaderSafe(call.ConversationId ?? string.Empty);
         if (!string.IsNullOrWhiteSpace(conversationId))
             request.Headers.TryAddWithoutValidation(ConversationIdHeader, conversationId);
+
+        // Written the same way and read under the same rule, but it names a conversation OUTSIDE this
+        // user — so whether it is honoured is the assistant's decision about this leaf, not this
+        // writer's. Sending it is a request; the receiver is the boundary.
+        var room = HeaderSafe(call.Room ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(room))
+            request.Headers.TryAddWithoutValidation(RoomHeader, room);
     }
 
     /// <summary>

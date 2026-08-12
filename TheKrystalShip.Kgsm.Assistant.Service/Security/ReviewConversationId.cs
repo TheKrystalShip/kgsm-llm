@@ -16,7 +16,8 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// <para>
 /// It is an opaque handle, not a secret: it is reversible by design and carries no authority. What
 /// keeps one user's conversation out of another's hands is the admin gate in front of the endpoint,
-/// plus <see cref="TryDecode"/> refusing anything outside the surface it is scoped to.
+/// plus <see cref="TryDecode(string?,string,out string)"/> refusing anything outside the surface it
+/// is scoped to.
 /// </para>
 /// </summary>
 internal static class ReviewConversationId
@@ -56,8 +57,39 @@ internal static class ReviewConversationId
     }
 
     /// <summary>
+    /// As <see cref="TryDecode(string?,string,out string)"/>, but against several surfaces at once,
+    /// reporting which one the handle turned out to name.
+    /// </summary>
+    /// <remarks>
+    /// The decoded key names its own surface, so this identifies rather than guesses — a handle is
+    /// still refused unless it decodes into one of the surfaces offered, and the caller never picks
+    /// the namespace a handle is read under.
+    /// </remarks>
+    public static bool TryDecode(
+        string? handle, IReadOnlyList<string> surfaces, out string conversationId, out string surface)
+    {
+        foreach (var candidate in surfaces)
+        {
+            if (TryDecode(handle, candidate, out conversationId))
+            {
+                surface = candidate;
+                return true;
+            }
+        }
+
+        conversationId = string.Empty;
+        surface = string.Empty;
+        return false;
+    }
+
+    /// <summary>
     /// The user segment of a stored id (<c>{surface}:{user}[:{chat}]</c>) — who the conversation
     /// belongs to. Empty when the id carries no user segment.
+    /// <para>
+    /// A room (<c>room:{room}</c>) has no user to name: what comes back is the room itself, which is
+    /// the whole of that key's identity. Nobody owns a room, and reporting its first segment as an
+    /// owner would invent one.
+    /// </para>
     /// </summary>
     public static string UserOf(string conversationId, string surfacePrefix)
     {

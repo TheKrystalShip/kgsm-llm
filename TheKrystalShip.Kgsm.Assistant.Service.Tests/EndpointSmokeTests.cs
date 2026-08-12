@@ -1241,6 +1241,159 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             "web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
+    // --- Rooms: a conversation keyed to a PLACE, shared by everyone in it -------------------------
+
+    /// <summary>
+    /// The bot may open a room, and a room key carries NO user segment — that absence is the whole
+    /// feature: everyone speaking in the thread continues one transcript instead of each holding their
+    /// own. The turn is also marked shared, which is what makes the history replay with speakers.
+    /// </summary>
+    [Fact]
+    public async Task Turn_Relay_Room_KeysTheConversationToThePlace_NotThePerson()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true)
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var response = await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "kgsm-bot", room: "g1-t9");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        assistant.Received().RunStreamAsync(
+            "room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true);
+    }
+
+    /// <summary>
+    /// Two people speaking into the same room reach the SAME conversation. This is the property the
+    /// whole feature is for, and the one a per-user key cannot express.
+    /// </summary>
+    [Fact]
+    public async Task Turn_Relay_Room_IsTheSameConversationForEveryone()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<bool>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var client = factory.CreateClient();
+        await StreamTurnRelayAsync(client, "hi", "relay-secret", "alice", "Alice", leaf: "kgsm-bot", room: "g1-t9");
+        await StreamTurnRelayAsync(client, "me too", "relay-secret", "bob", "Bob", leaf: "kgsm-bot", room: "g1-t9");
+
+        assistant.Received().RunStreamAsync(
+            "room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), "Alice", Arg.Any<string?>(), true);
+        assistant.Received().RunStreamAsync(
+            "room:g1-t9", "me too", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), "Bob", Arg.Any<string?>(), true);
+    }
+
+    /// <summary>
+    /// A leaf that is not on the room allow-list gets the per-user key it would have got without the
+    /// header. Not an error: the request is a perfectly good turn, and the room is simply not a thing
+    /// this caller may ask for.
+    /// </summary>
+    [Fact]
+    public async Task Turn_Relay_Room_FromAnUnlistedLeaf_IsIgnored()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false)
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var response = await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "kgsm-api", room: "g1-t9");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        assistant.Received().RunStreamAsync(
+            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false);
+    }
+
+    /// <summary>A relay naming no leaf at all is likewise not permitted to open a room.</summary>
+    [Fact]
+    public async Task Turn_Relay_Room_WithNoLeafNamed_IsIgnored()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false)
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", room: "g1-t9");
+
+        assistant.Received().RunStreamAsync(
+            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false);
+    }
+
+    /// <summary>
+    /// THE negative test. A browser session naming a room — even one that exists, even naming the
+    /// bot's leaf — reads its own memory and nothing else. Without this, anybody with a login could
+    /// read a Discord thread's transcript by guessing a channel id.
+    /// </summary>
+    [Fact]
+    public async Task Turn_Session_CannotNameARoom_EvenClaimingTheBotsLeaf()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<bool>())
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant);
+        var client = await AuthedAsync(factory);
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt = "hi" }),
+        };
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        request.Headers.Add("X-Relay-Leaf", "kgsm-bot");
+        request.Headers.Add("X-Relay-Room", "g1-t9");
+        await client.SendAsync(request);
+
+        assistant.DidNotReceive().RunStreamAsync(
+            Arg.Is<string>(id => id.StartsWith("room:")), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(),
+            Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<bool>());
+    }
+
+    /// <summary>
+    /// A room and a per-chat scope answer the same question, so the room wins outright. Combined they
+    /// would produce a room per person — everyone alone in a transcript named after the place they
+    /// believed they were sharing.
+    /// </summary>
+    [Fact]
+    public async Task Turn_Relay_Room_SupersedesThePerChatScope()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true)
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User",
+            conversationId: "chat-abc123", leaf: "kgsm-bot", room: "g1-t9");
+
+        assistant.Received().RunStreamAsync(
+            "room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true);
+    }
+
+    /// <summary>
+    /// A room id is sanitised by the same authority and to the same alphabet as a chat scope, so a
+    /// caller cannot smuggle key structure — another surface's prefix, a second segment — into a key
+    /// this service composes.
+    /// </summary>
+    [Fact]
+    public async Task Turn_Relay_Room_IsSanitisedIntoASingleSegment()
+    {
+        var assistant = Substitute.For<IServerAssistant>();
+        assistant.RunStreamAsync("room:webu1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true)
+            .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
+
+        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        await StreamTurnRelayAsync(
+            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User",
+            leaf: "kgsm-bot", room: "web:u1");
+
+        assistant.Received().RunStreamAsync(
+            "room:webu1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true);
+    }
+
     [Fact]
     public async Task Turn_Relay_WrongSecret_Returns401()
     {
@@ -1586,7 +1739,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// forwarded identity headers, no session bearer. A null header value is omitted.</summary>
     private static async Task<HttpResponseMessage> StreamTurnRelayAsync(
         HttpClient client, string prompt, string? secret, string? userId, string? userName = null,
-        string? conversationId = null, string? leaf = null)
+        string? conversationId = null, string? leaf = null, string? room = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
         {
@@ -1598,6 +1751,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         if (userName is not null) request.Headers.Add("X-Relay-User-Name", userName);
         if (conversationId is not null) request.Headers.Add("X-Relay-Conversation-Id", conversationId);
         if (leaf is not null) request.Headers.Add("X-Relay-Leaf", leaf);
+        if (room is not null) request.Headers.Add("X-Relay-Room", room);
         return await client.SendAsync(request);
     }
 
@@ -2298,7 +2452,7 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
         return History;
     }
 
-    public IReadOnlyList<Llm.Models.LlmMessage> GetModelContext(string conversationId) => Array.Empty<Llm.Models.LlmMessage>();
+    public IReadOnlyList<Llm.Models.LlmMessage> GetModelContext(string conversationId, bool attributeSpeakers = false) => Array.Empty<Llm.Models.LlmMessage>();
     public long AppendTurn(Llm.Models.ConversationTurnRecord turn) => 0;
     public void AddCheckpoint(string conversationId, string summary) { }
     public void SoftDelete(string conversationId) => DeletedKey = conversationId;

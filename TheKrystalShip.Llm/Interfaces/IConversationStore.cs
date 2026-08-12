@@ -60,8 +60,18 @@ public interface IConversationStore
     /// The messages the model should replay as context: the latest checkpoint's summary (if any) as a
     /// leading assistant message, then the user prompt + final reply of every turn after it (or the
     /// whole conversation when there is no checkpoint). Tool/thinking detail is never replayed.
+    /// <para>
+    /// <paramref name="attributeSpeakers"/> prefixes each replayed user message with the display name
+    /// recorded against that turn (<see cref="SpeakerAttribution"/>) — for a conversation several
+    /// people share, where an unlabelled transcript reads as one person having said all of it. The
+    /// caller decides, because whether a conversation is shared is a property of the key it was
+    /// opened under, not of what happens to be in it yet: measured from the turns instead, a room in
+    /// which only one person has spoken so far would replay unlabelled while the live prompt arrived
+    /// labelled, and the model would meet two spellings of the same conversation. Default false
+    /// replays exactly as a one-participant conversation always has.
+    /// </para>
     /// </summary>
-    IReadOnlyList<LlmMessage> GetModelContext(string conversationId);
+    IReadOnlyList<LlmMessage> GetModelContext(string conversationId, bool attributeSpeakers = false);
 
     /// <summary>
     /// Appends one completed turn (the canonical per-turn delta) to the history log, returning the

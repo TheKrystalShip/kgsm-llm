@@ -52,12 +52,14 @@ public static class ServiceCollectionExtensions
         // with no cache to keep warm, the HTTP service is resident and wants events — so the
         // listener is a separate opt-in call (AddKgsmEventListener) and the shared graph stays
         // event-free. The journal settings ride on KgsmOptions for the hosts that do opt in.
+        string engineJournalDir = string.IsNullOrWhiteSpace(kgsm.JournalDir)
+            ? KgsmOptions.DefaultEventJournalDirectory
+            : kgsm.JournalDir;
+
         services.AddSingleton(new KgsmOptions
         {
             KgsmPath = kgsm.Path,
-            EventJournalDirectory = string.IsNullOrWhiteSpace(kgsm.JournalDir)
-                ? KgsmOptions.DefaultEventJournalDirectory
-                : kgsm.JournalDir,
+            EventJournalDirectory = engineJournalDir,
             // Tail: this listener exists only to drop a cache when a blueprint changes. Replaying
             // history would re-invalidate for edits already reflected in what the next read returns.
             EventStartPosition = EventStartPosition.Tail
@@ -83,7 +85,21 @@ public static class ServiceCollectionExtensions
         // Reading the event journal back, for the audit/timeline/root-cause tools. Unlike the listener
         // above this starts nothing and holds no position — it opens segments per query — so it belongs
         // in the shared graph rather than behind the per-host opt-in.
-        services.AddSingleton<IEventJournalHistory, EventJournalHistory>();
+        //
+        // EVERY producer's journal, not the engine's alone, and for this graph that is the difference
+        // between answering an incident and not. The engine records what an operator asked for; the
+        // supervisor records the crash, the give-up and who was playing, the firewall records the port
+        // edges and the monitor records a threshold episode. trace_root_cause correlates exactly those
+        // against a metrics window — reading one journal, it would search for the cause of a crash in a
+        // record that does not contain the crash, and report honestly that it found nothing.
+        //
+        // It also registers the federated IEventSource, which AddKgsmEventListener then builds its
+        // IEventService on. That call must stay AFTER this one; it no longer registers a source of its
+        // own, because a later single-journal registration would win and quietly undo this.
+        services.AddKgsmJournalFederation(
+            cursorPath: null,
+            startPosition: EventStartPosition.Tail,
+            engineJournalDirectory: engineJournalDir);
         services.AddSingleton<IWatcherService, WatcherService>(); // port-reachability probe for run_health_check
 
         // One singleton inventory, exposed under both the read port and the invalidation seam so
@@ -295,9 +311,10 @@ public static class ServiceCollectionExtensions
         if (string.IsNullOrWhiteSpace(kgsm?.JournalDir))
             return services;
 
-        services.AddSingleton<IEventCursorStore, NullEventCursorStore>();
-        services.AddSingleton<IEventJournalReader, EventJournalReader>();
-        services.AddSingleton<IEventSource>(sp => sp.GetRequiredService<IEventJournalReader>());
+        // The source itself comes from AddKgsmAdapters' federation call, which is why this one must
+        // run after it: what stays here is the dispatch on top of that source and the hosted service
+        // that starts it. Registering a reader here as well would put a second tail on the same files
+        // and, being last, would be the one every handler was wired to — the engine's journal alone.
         services.AddSingleton<IEventService, EventService>();
         services.AddHostedService<KgsmEventListener>();
 

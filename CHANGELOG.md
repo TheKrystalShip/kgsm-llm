@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — `trace_root_cause` can see the crash it is asked to explain
+
+**The evidence an incident is made of belongs to four producers, and this service was reading one.**
+The crash, the give-up and who was playing are the supervisor's events; the port edges are the
+firewall authority's; a threshold breach is the monitor's; the engine records what an operator asked
+for. Reading the engine's journal alone, `trace_root_cause` correlated a metrics window and a health
+snapshot against a timeline that did not contain the crash — and reported honestly that it found
+nothing. Nothing failed; the answer was simply always "no correlation". `get_events` was narrowed the
+same way.
+
+`AddKgsmAdapters` now registers `AddKgsmJournalFederation`, so both the history reader behind those
+tools and the live source read every producer's journal.
+
+⚠ **`AddKgsmEventListener` must keep running after `AddKgsmAdapters`.** It no longer registers a
+reader of its own — it adds dispatch on top of the federated source and starts it — because a later
+single-journal registration would win and quietly undo this. `JournalFederationWiringTests` asserts
+both halves against the composed graph, in that order.
+
+### Changed
+
+- **kgsm-lib 4.23.1**, from 4.11.0. Carries journal federation and the per-producer event ids.
+
 ### Added
 
 - **Rooms: a conversation belonging to a place, shared by everyone in it.** Every conversation this

@@ -130,17 +130,19 @@ log "starting ${SERVICE}"
 sysctl_do start "$SERVICE"
 STOPPED=0
 
-# Indexer: only start it if Ollama is present (its unit Requires=ollama.service → starting
-# without Ollama would fail). Otherwise leave it installed-but-stopped with a hint. Enabling it
-# at boot is setup.sh's call, and setup deliberately does not — it is opt-in.
+# Indexer: start it, and let systemd answer whether it can run. Its unit declares
+# Requires=ollama.service, so a host without Ollama fails the start there — the same answer this
+# script could work out for itself, without carrying a second copy of the dependency that has to
+# be kept in step with the unit. This script stops the indexer before syncing, so anything that
+# decides NOT to start it again leaves the host worse than it found it; the start is therefore
+# unconditional and a failure is reported rather than predicted. Enabling it at boot is
+# setup.sh's call, and setup deliberately does not — it is opt-in.
 if [[ "$WITH_INDEXER" -eq 1 ]]; then
-    if systemctl list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
-        log "starting ${INDEXER} (Ollama detected)"
-        sysctl_do start "$INDEXER" || \
-            warn "indexer failed to start — check 'systemctl status ${INDEXER}' (corpus at ${PREFIX}/docs?)."
-    else
-        warn "indexer installed but NOT started: ollama.service was not found. The indexer embeds via Ollama."
-        warn "install/run Ollama, drop docs into ${PREFIX}/docs, then: systemctl enable --now ${INDEXER}"
+    log "starting ${INDEXER}"
+    if ! sysctl_do start "$INDEXER"; then
+        warn "indexer installed but NOT started. Its unit requires ollama.service, so this also"
+        warn "fails when Ollama is absent or not running — check 'systemctl status ${INDEXER}'."
+        warn "corpus lives at ${PREFIX}/docs; start it later with: systemctl start ${INDEXER}"
     fi
 fi
 

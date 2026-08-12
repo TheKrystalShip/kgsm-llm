@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`/var/lib/kgsm-assistant` is provisioned by systemd, not by `setup.sh` under sudo.** Both units
+  declare `StateDirectory=kgsm-assistant` with `StateDirectoryMode=0750`, so systemd creates the
+  directory owned by `User=` before `ExecStart` and exports `$STATE_DIRECTORY`. The service resolves
+  `Conversation:DatabasePath` from it (`StatePaths`, keeping the shipped path as the fallback for a
+  process run outside systemd, and leaving any other configured value exactly as given), and the
+  indexer's `--index` argument is written as `${STATE_DIRECTORY}/rag-index.krag`, which also drops
+  its `ReadWritePaths=` — `StateDirectory=` grants the write through `ProtectSystem=strict`. The path
+  is unchanged and the databases are untouched; the directory is now `0750`, and provisioning it
+  costs no privilege, works under any `User=` the deploy templates in, and needs no home directory.
+
 - **The crashed run is now identified by the supervisor's verdict, not by proximity alone.**
   `ConsoleRunInfo` carries the `Outcome` and `ExitCode` the watchdog recorded for each run, and
   `CrashRunSelector` prefers a run marked `crashed`/`gave-up` over one that merely ended nearby.

@@ -25,6 +25,7 @@ using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
 using TheKrystalShip.Llm.Agent;
+using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
@@ -93,6 +94,15 @@ builder.Services.Configure<KgsmAuthOptions>(
 // (prompt builder with the lib's canonical prompt, tool dispatcher, policy, ConfirmAsync).
 // No Llm:* config is required here — the prompt text lives in the library.
 builder.Services.AddLocalLlm(builder.Configuration);
+// The conversation database is this service's state, and its directory is the unit's
+// StateDirectory=kgsm-assistant — read back from $STATE_DIRECTORY so the unit is the only place the
+// location is declared. Done here rather than in the library because the CLI shares that options
+// class and has no state directory of its own. All three stores that open the file
+// (SqliteConversationStore, SqlitePendingConfirmationStore, SqliteSessionRegistry) read the options
+// object, so resolving it once here is what keeps them on the same file.
+builder.Services.PostConfigure<ConversationOptions>(options =>
+    options.DatabasePath = StatePaths.Resolve(
+        options.DatabasePath, StatePaths.DefaultConversationDbPath, StatePaths.ConversationDbFileName));
 builder.Services.AddKgsmAssistant();
 // The kgsm-lib graph + port adapters + Tavily web search, behind one socket-safe seam shared
 // with the CLI. MUST come AFTER AddKgsmAssistant so the concrete IWebSearch (TavilyWebSearch)

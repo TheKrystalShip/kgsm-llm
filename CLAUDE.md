@@ -52,13 +52,19 @@ Note the install prefix keeps the *assistant's* name, not the repo's: everything
 `/opt/kgsm-assistant`, configured from `/etc/kgsm-assistant/service.env`.
 
 `setup.sh` is the only part that needs privilege. It chowns `/opt/kgsm-assistant` to you, seeds the
-env file, creates the `service`/`cli`/`indexer`/`docs` subtrees plus `/var/lib/kgsm-assistant` and
+env file, creates the `service`/`cli`/`indexer`/`docs` subtrees and
 the `/usr/local/bin/kgsm-assistant-cli` symlink, puts the real units in **user-owned**
 `/etc/kgsm-assistant/systemd/` with the `/etc/systemd/system/` entries symlinked to them, installs a
 polkit rule scoped to this project's units, and then verifies the grant by making the same
 unprivileged `systemctl` calls the deploy will. Both units are installed but only
 `kgsm-assistant-service.service` is **enabled** — `kgsm-rag-indexer.service` is opt-in, so
 provisioning a host never silently starts indexing.
+
+`/var/lib/kgsm-assistant` — the conversation database and the RAG index — is not in that list: both
+units declare `StateDirectory=kgsm-assistant`, so systemd creates it owned by `User=` before
+`ExecStart` and exports `$STATE_DIRECTORY`, which the Service resolves the database from and the
+indexer's `--index` argument is written in terms of. Provisioning it therefore costs no privilege at
+all, and the directory follows the user `deploy.sh` templates the units with.
 
 That setup is what makes `deploy.sh` **need no privilege at all**: the prefix is yours so installing
 is a plain file write, a changed unit is a plain file write into the user-owned directory, and every

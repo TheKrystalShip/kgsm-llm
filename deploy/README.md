@@ -33,8 +33,9 @@ Run as the service user (not root). On the first run, fill in the secrets it rem
 
 ```bash
 # 1. Lay down the artifacts (paths match the unit files; adjust both if you change them).
+#    /var/lib/kgsm-assistant is absent on purpose: the units' StateDirectory= creates it.
 sudo install -d /opt/kgsm-assistant/service /opt/kgsm-assistant/indexer \
-                /opt/kgsm-assistant/docs   /var/lib/kgsm-assistant
+                /opt/kgsm-assistant/docs
 sudo cp -r <service-publish>/*  /opt/kgsm-assistant/service/      # framework-dependent publish
 sudo install <indexer-publish>/kgsm-rag-indexer /opt/kgsm-assistant/indexer/   # AOT binary
 

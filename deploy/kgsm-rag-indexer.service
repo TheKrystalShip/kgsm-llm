@@ -27,7 +27,7 @@ Group=kgsm
 ExecStart=/opt/kgsm-assistant/indexer/kgsm-rag-indexer \
     --watch \
     --source /opt/kgsm/docs/knowledge \
-    --index /var/lib/kgsm-assistant/rag-index.krag \
+    --index ${STATE_DIRECTORY}/rag-index.krag \
     --model embeddinggemma \
     --debounce-ms 750
 # Override the embedder endpoint here if Ollama isn't on localhost:
@@ -43,8 +43,13 @@ StandardError=journal
 SyslogIdentifier=kgsm-rag-indexer
 
 NoNewPrivileges=true
-# The index dir is the only thing it writes to.
-ReadWritePaths=/var/lib/kgsm-assistant
+# /var/lib/kgsm-assistant, created before ExecStart owned by User= and exported as $STATE_DIRECTORY
+# — which is where the --index argument above gets it from, so the path is declared once. It is also
+# the only thing this daemon writes to: StateDirectory= makes it writable through ProtectSystem=strict
+# below without naming it a second time. kgsm-assistant-service.service declares the SAME directory
+# and reads the index written here; both units run as the same user.
+StateDirectory=kgsm-assistant
+StateDirectoryMode=0750
 ProtectSystem=strict
 # The corpus lives under /opt, so the daemon never needs a home directory.
 ProtectHome=true

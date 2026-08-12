@@ -47,6 +47,16 @@ RuntimeDirectoryMode=0750
 # unlinked, but preserving the directory prevents the systemd-driven removal class outright.
 RuntimeDirectoryPreserve=yes
 
+# Persistent state (the conversation database, which also holds the staged actions and the session
+# registry) lives in /var/lib/kgsm-assistant. systemd creates the directory before ExecStart owned by
+# User= and exports $STATE_DIRECTORY, so provisioning it costs no privilege — the same declaration
+# kgsm-api, kgsm-monitor and kgsm-watchdog use. It is independent of User=, which deploy.sh templates
+# per host, and of whether that account has a home directory at all. kgsm-rag-indexer.service
+# declares the SAME directory: it writes the index this service reads, and both units run as the
+# same user, so one declaration on each is what puts them in one place.
+StateDirectory=kgsm-assistant
+StateDirectoryMode=0750
+
 Restart=on-failure
 RestartSec=5
 

@@ -67,11 +67,17 @@ cd ~/tks/kgsm-llm
 ```
 
 `setup.sh` provisions everything privileged: it creates `/opt/kgsm-assistant/{service,cli,indexer,docs}`
-and `/var/lib/kgsm-assistant` owned by you, seeds `/etc/kgsm-assistant/service.env` from the template if
+owned by you, seeds `/etc/kgsm-assistant/service.env` from the template if
 absent (never clobbering it), puts the real unit files in `/etc/kgsm-assistant/systemd/` with
 `/etc/systemd/system/` symlinks to them, symlinks the CLI onto `PATH`, installs a scoped polkit grant so
 you can drive `systemctl` for these units with no password, enables the service, and verifies that grant
 works. It enables the **service** only — the RAG indexer is opt-in and stays off until you enable it.
+
+`/var/lib/kgsm-assistant` is not among them: both units declare `StateDirectory=kgsm-assistant`, so
+systemd creates the directory (mode `0750`, owned by the unit's `User=`) before `ExecStart` and
+exports `$STATE_DIRECTORY`. The Service resolves `Conversation__DatabasePath` from it and the
+indexer's `--index` argument is written in terms of it, so the location is declared in the units and
+nowhere else — and provisioning it needs no privilege.
 
 `deploy.sh` then builds, publishes, refreshes the units if they changed, swaps the binaries, and blocks
 on a real `/health` 200 — with **no privilege at all**. Run both **as the service user, not root**. It
@@ -414,7 +420,7 @@ Tavily key set too, it falls back to the web when local hits are weak.
 Install the indexer as a systemd unit so the index rebuilds when docs change:
 
 ```bash
-sudo install -d /opt/kgsm-assistant/indexer /opt/kgsm-assistant/docs /var/lib/kgsm-assistant
+sudo install -d /opt/kgsm-assistant/indexer /opt/kgsm-assistant/docs
 sudo install out/indexer/kgsm-rag-indexer /opt/kgsm-assistant/indexer/
 sudo cp deploy/kgsm-rag-indexer.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now kgsm-rag-indexer
@@ -422,7 +428,8 @@ sudo systemctl daemon-reload && sudo systemctl enable --now kgsm-rag-indexer
 
 The shipped unit watches `--source /opt/kgsm-assistant/docs` (still empty until you fill it — §8.1);
 edit that line, or add more `--source` flags, to index a different tree, and keep the unit's `--index`
-equal to the Service's `Rag__IndexPath` (that one file is the whole producer→consumer contract). The
+equal to the Service's `Rag__IndexPath` (that one file is the whole producer→consumer contract) — the
+shipped unit writes it as `${STATE_DIRECTORY}/rag-index.krag`, which is `/var/lib/kgsm-assistant`. The
 daemon debounces bursts of edits, rebuilds incrementally, and **atomically swaps** the file; the
 Service **hot-reloads** on the swap (a failed/mid-swap read degrades to the last good index, never
 goes dark). The unit is ordered `After=ollama.service` on purpose — see the gap in

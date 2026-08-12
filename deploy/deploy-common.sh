@@ -70,10 +70,13 @@ ASSISTANT_URL="${ASSISTANT_URL:-http://127.0.0.1:5180}"
 health_probe() {
     curl -fsS -o /dev/null --max-time 2 "${ASSISTANT_URL}/health" 2>/dev/null
 }
-# The assistant installs three artifacts under one prefix, keeps its own state dir, and puts the
-# CLI on PATH. All of that is one-shot host layout, so it is provisioned here — deploy.sh then
-# rsyncs into directories it already owns and never touches /usr/local/bin.
-STATE_DIR="/var/lib/kgsm-assistant"
+# The assistant installs three artifacts under one prefix and puts the CLI on PATH. Both are
+# one-shot host layout, so they are provisioned here — deploy.sh then rsyncs into directories it
+# already owns and never touches /usr/local/bin.
+#
+# The state directory (/var/lib/kgsm-assistant — the conversation database and the RAG index) is NOT
+# here: both units declare StateDirectory=kgsm-assistant, so systemd creates it owned by User=
+# before ExecStart, which needs no privilege and no step in this script.
 CLI_LINK="/usr/local/bin/kgsm-assistant-cli"
 setup_project_extras() {
     local d
@@ -81,7 +84,7 @@ setup_project_extras() {
     # root ONCE at startup: a directory that appears later is invisible until the service restarts.
     # Creating it here means kgsm-web's deploy-assistant.sh can publish into a running service and
     # have the page live immediately, the same way every other deploy in the ecosystem behaves.
-    for d in "$PREFIX/service" "$PREFIX/service/wwwroot" "$PREFIX/cli" "$PREFIX/indexer" "$PREFIX/docs" "$STATE_DIR"; do
+    for d in "$PREFIX/service" "$PREFIX/service/wwwroot" "$PREFIX/cli" "$PREFIX/indexer" "$PREFIX/docs"; do
         if [[ ! -d "$d" ]]; then
             log "creating ${d} (owned by ${DEPLOY_USER})"
             $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" "$d"

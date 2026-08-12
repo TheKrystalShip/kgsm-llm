@@ -900,7 +900,8 @@ secured.MapGet("/conversations", (
 // server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever address the caller's
 // OWN conversation. An unknown id ⇒ an empty transcript (still 200), never another user's data.
 secured.MapGet("/conversations/{id}", (
-    string id, HttpContext http, IConversationStore store, IOptions<OllamaOptions> ollamaOptions) =>
+    string id, HttpContext http, IConversationStore store, IPendingConfirmationStore pending,
+    IOptions<OllamaOptions> ollamaOptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
@@ -915,11 +916,21 @@ secured.MapGet("/conversations/{id}", (
     // next turn will do. Auto-run's floor is false because nothing else is safe to assume of a
     // conversation nobody has armed.
     var preferences = store.GetPreferences(conversationId);
+
+    // What is still awaiting this caller here, restated as the same frame the live path emits. Without
+    // it a proposal exists only for the surfaces that were attached when it was staged — so a reload,
+    // a second device, or a tap on the notification announcing it all arrive at the assistant saying
+    // it staged something, with nothing to approve.
+    var waiting = pending.PendingFor(principal.UserId, conversationId)
+        .Select((p, i) => TurnFrames.Describe(p.Confirmation, p.Handle, $"cmd_pending_{i}"))
+        .ToArray();
+
     return Results.Ok(new ConversationHistoryDto(
         chatScope ?? string.Empty,
         entries,
         preferences.Think ?? ollamaOptions.Value.Think,
-        preferences.Autorun ?? false));
+        preferences.Autorun ?? false,
+        waiting));
 });
 
 // Soft-delete one of the caller's chats: hides it from their list while keeping the full transcript in the

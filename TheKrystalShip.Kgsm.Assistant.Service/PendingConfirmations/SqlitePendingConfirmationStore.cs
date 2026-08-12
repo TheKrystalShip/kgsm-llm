@@ -51,7 +51,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                 expires_at    TEXT NOT NULL,
                 announce_provider TEXT,
                 announce_name     TEXT,
-                announced_at      TEXT
+                announced_at      TEXT,
+                conversation_id   TEXT
             );
             """;
         cmd.ExecuteNonQuery();
@@ -60,7 +61,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
         // has no "add column if absent", and a duplicate-column error is the ordinary answer on every
         // start after the first rather than a fault.
         foreach (var column in (string[])
-                 ["announce_provider TEXT", "announce_name TEXT", "announced_at TEXT"])
+                 ["announce_provider TEXT", "announce_name TEXT", "announced_at TEXT",
+                  "conversation_id TEXT"])
         {
             try
             {
@@ -79,7 +81,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
         PendingConfirmation confirmation,
         string userId,
         DateTimeOffset expiry,
-        ConfirmationStager? announceTo = null)
+        ConfirmationStager? announceTo = null,
+        string? conversationId = null)
     {
         ArgumentNullException.ThrowIfNull(confirmation);
 
@@ -95,14 +98,15 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                 """
                 INSERT INTO pending_confirmations
                     (id, kind, target, instance_name, config_key, config_value, staged_by, expires_at,
-                     announce_provider, announce_name)
+                     announce_provider, announce_name, conversation_id)
                 VALUES ($id, $kind, $target, $instance, $ckey, $cvalue, $by, $expires,
-                        $provider, $name);
+                        $provider, $name, $conversation);
                 """;
             // Both null is the ordinary case and is what makes a row unannounceable: there is nobody
             // recorded to announce it to, which is the same statement as "do not".
             cmd.Parameters.AddWithValue("$provider", (object?)announceTo?.Provider ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$name", (object?)announceTo?.DisplayName ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$conversation", (object?)conversationId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$kind", (int)confirmation.Kind);
             cmd.Parameters.AddWithValue("$target", confirmation.Target);
@@ -219,6 +223,48 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                 DateTimeOffset.Parse(reader.GetString(7))));
         }
         return waiting;
+    }
+
+    public IReadOnlyList<StagedProposal> PendingFor(string userId, string conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(conversationId))
+            return [];
+
+        using var connection = Open();
+        using var cmd = connection.CreateCommand();
+        // Scoped to the caller as well as the conversation: the id is derived from their own principal
+        // upstream, and matching on both means a scoping mistake there cannot hand somebody another
+        // person's staged action.
+        cmd.CommandText =
+            """
+            SELECT id, kind, target, instance_name, config_key, config_value, expires_at
+            FROM pending_confirmations
+            WHERE staged_by = $by AND conversation_id = $conversation AND expires_at > $now
+            ORDER BY expires_at;
+            """;
+        cmd.Parameters.AddWithValue("$by", userId);
+        cmd.Parameters.AddWithValue("$conversation", conversationId);
+        cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+
+        var pending = new List<StagedProposal>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var kind = (ConfirmationKind)reader.GetInt32(1);
+            if (!Enum.IsDefined(kind))
+                continue;
+
+            pending.Add(new StagedProposal(
+                reader.GetString(0),
+                new PendingConfirmation(
+                    kind,
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5)),
+                DateTimeOffset.Parse(reader.GetString(6))));
+        }
+        return pending;
     }
 
     public void MarkAnnounced(string id)

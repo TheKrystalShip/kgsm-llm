@@ -65,6 +65,14 @@ client shows is what the next turn will run on. A surface displaying the switche
 never what it last remembered, since any other surface may have moved them since. A move made while
 it is watching arrives on the event stream (§5), so it need not wait to be asked.
 
+`GET /conversations/{id}` also carries **`pending`**: the proposals still awaiting this caller in that
+conversation, each shaped exactly as the `command.proposed` frame (§5) that first announced it, with
+the handle that redeems it. A proposal is state the endpoint owns, not an event — the frame reaches
+only the surfaces attached when it was staged, and the surface that most needs it is the one arriving
+afterwards: a reload, a second device, or a tap on the push notification announcing it. A client
+renders these through the same path as a live frame. Expired and already-approved proposals are
+absent, so what is listed is what a button can still act on.
+
 Auto-run is **intent, not authority**. It asks for lifecycle commands to run with no confirmation
 step, and every gate it passes narrows it further: the caller's admin tier, and on the relay path the
 surface's own `X-Relay-Auto-Act` floor. It does **not** gate whether an action may be *proposed* —

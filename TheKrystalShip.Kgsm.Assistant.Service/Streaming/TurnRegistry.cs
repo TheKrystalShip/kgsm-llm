@@ -315,7 +315,8 @@ internal sealed class TurnRegistry : ITurnRegistry
                                session.ConversationId, run.Prompt, canPerform, think, autoExecute,
                                run.Tools, session.Token, run.DraftYaml, principal.DisplayName, run.RelayLeaf))
             {
-                var frame = TurnFrames.From(ev, principal, _pending, ttl, ref proposalSeq);
+                var frame = TurnFrames.From(
+                    ev, principal, _pending, ttl, session.ConversationId, ref proposalSeq);
                 if (frame is null)
                     continue;
                 if (ev.Kind == AssistantEventKind.Confirmation && frame.Payload is CommandProposedEvent proposed)

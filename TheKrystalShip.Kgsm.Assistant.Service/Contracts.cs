@@ -316,11 +316,27 @@ public sealed record ConversationSummaryDto(
 /// having to know what an unset switch falls back to.
 /// </param>
 /// <param name="Autorun">Whether this conversation runs authorized actions without confirming each one.</param>
+/// <param name="Pending">
+/// Actions still awaiting this caller's approval in this conversation, oldest deadline first.
+/// <para>
+/// ⚠ Load-bearing, not a convenience. A proposal is otherwise only ever a <c>command.proposed</c>
+/// stream frame, which reaches the surfaces attached when it was staged and nobody else — so a
+/// reload, a second device, or following the push notification that announced it all land on the
+/// assistant saying it staged something with no way to approve it. The stream is an optimisation
+/// over the endpoints; this is the endpoint restating what it owns.
+/// </para>
+/// <para>
+/// Shaped as <see cref="CommandProposedEvent"/> — the same frame the live path emits — so a client
+/// renders a restated proposal through the very same code as a fresh one, and the two cannot drift
+/// into looking or behaving differently.
+/// </para>
+/// </param>
 public sealed record ConversationHistoryDto(
     string Id,
     IReadOnlyList<ConversationHistoryEntryDto> Entries,
     bool Think,
-    bool Autorun);
+    bool Autorun,
+    IReadOnlyList<CommandProposedEvent>? Pending = null);
 
 // ---- the review surface (GET /admin/conversations…) ---------------------------------------------
 // An administrator reading OTHER users' conversations, to judge where the assistant needs tuning.

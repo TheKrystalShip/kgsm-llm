@@ -47,11 +47,21 @@ public interface IPendingConfirmationStore
     /// authority can be re-derived.
     /// </para>
     /// </param>
+    /// <param name="conversationId">
+    /// The conversation it was proposed in, so it can be restated to a surface that comes back to it.
+    /// <para>
+    /// ⚠ Without this a proposal exists only as a live stream frame, and any fresh load — a reload, a
+    /// second device, or following the notification that announced it — shows the assistant saying it
+    /// staged something with no way to approve it. The endpoints own the state; the stream is an
+    /// optimisation over them.
+    /// </para>
+    /// </param>
     string Put(
         PendingConfirmation confirmation,
         string userId,
         DateTimeOffset expiry,
-        ConfirmationStager? announceTo = null);
+        ConfirmationStager? announceTo = null,
+        string? conversationId = null);
 
     /// <summary>
     /// Redeems <paramref name="id"/> on behalf of <paramref name="userId"/>, yielding the operation
@@ -88,7 +98,24 @@ public interface IPendingConfirmationStore
     /// outage needs. The cost of the other order is silence.
     /// </remarks>
     void MarkAnnounced(string id);
+
+    /// <summary>
+    /// What <paramref name="userId"/> still has awaiting approval in <paramref name="conversationId"/>.
+    /// </summary>
+    /// <remarks>
+    /// Read back on every conversation load, because a staged action is state rather than an event: the
+    /// frame that announced it reaches only the surfaces attached when it was staged, and the one that
+    /// most needs it is the one arriving afterwards. Expired rows are excluded — restating a proposal
+    /// whose handle is already dead offers a button that cannot work.
+    /// </remarks>
+    IReadOnlyList<StagedProposal> PendingFor(string userId, string conversationId);
 }
+
+/// <summary>A proposal still awaiting its owner, as a conversation load restates it.</summary>
+public sealed record StagedProposal(
+    string Handle,
+    PendingConfirmation Confirmation,
+    DateTimeOffset ExpiresAt);
 
 /// <summary>
 /// Who staged an action, in full — enough to ask what they may do without a session to read it from.

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A staged action is restated when a conversation is loaded, so coming back to it still offers the
+  button.** `GET /conversations/{id}` now carries `pending` — the proposals still awaiting the caller
+  there, each shaped as the same `command.proposed` frame that first announced it. Until now a
+  proposal existed only as a live stream frame, which reaches the surfaces attached when it was
+  staged and nobody else: a reload, a second device, or following the push notification that
+  announced it all arrived at the assistant saying it had staged something, with no way to approve
+  it. Push made that systematic, since bringing somebody back to the app is the entire point.
+  `pending_confirmations` records the conversation to make it possible, and `TurnFrames.Describe` is
+  shared by the live and restated paths so the two cannot drift.
+
 ### Added
 
 - **The assistant tells your phone when it is waiting on you.** A proposed action staged from a

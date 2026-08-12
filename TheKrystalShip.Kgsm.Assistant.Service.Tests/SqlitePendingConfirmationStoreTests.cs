@@ -182,4 +182,90 @@ public sealed class SqlitePendingConfirmationStoreTests : IDisposable
 
         store.TryTake(stale, Owner, out _).Should().BeFalse();
     }
+
+    // --- Restating what is still waiting -------------------------------------------------------
+    //
+    // A proposal reaches a client as a live `command.proposed` frame, which only the surfaces attached
+    // at the time ever see. Everything below is about the surface that arrives AFTERWARDS — a reload, a
+    // second device, or the one following the push notification that announced it, which is by
+    // definition the surface that was not there.
+
+    private const string Chat = "web:245717107596197888:abc123";
+
+    [Fact]
+    public void AWaitingProposalIsRestatedToItsOwnConversation()
+    {
+        var store = Create();
+        var handle = store.Put(
+            new PendingConfirmation(ConfirmationKind.Backup, "projectzomboid"),
+            Owner, InFiveMinutes, conversationId: Chat);
+
+        var pending = store.PendingFor(Owner, Chat);
+
+        pending.Should().ContainSingle();
+        pending[0].Handle.Should().Be(handle, "the restated card must carry the handle that redeems it");
+        pending[0].Confirmation.Kind.Should().Be(ConfirmationKind.Backup);
+        pending[0].Confirmation.Target.Should().Be("projectzomboid");
+    }
+
+    [Fact]
+    public void AProposalStagedWithNoConversationIsRestatedNowhere()
+    {
+        // The buffered /turn is kgsm-bot's. Its confirmations belong to a Discord message, not to a
+        // conversation any browser can open.
+        var store = Create();
+        store.Put(new PendingConfirmation(ConfirmationKind.Backup, "projectzomboid"), Owner, InFiveMinutes);
+
+        store.PendingFor(Owner, Chat).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnExpiredProposalIsNotRestated()
+    {
+        // Drawing it would offer a button that cannot work — worse than not drawing it, because the
+        // person would spend their remaining seconds pressing it.
+        var store = Create();
+        store.Put(
+            new PendingConfirmation(ConfirmationKind.Backup, "projectzomboid"),
+            Owner, DateTimeOffset.UtcNow.AddSeconds(-1), conversationId: Chat);
+
+        store.PendingFor(Owner, Chat).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AProposalAlreadyApprovedIsNotRestated()
+    {
+        var store = Create();
+        var handle = store.Put(
+            new PendingConfirmation(ConfirmationKind.Backup, "projectzomboid"),
+            Owner, InFiveMinutes, conversationId: Chat);
+
+        store.TryTake(handle, Owner, out _).Should().BeTrue();
+
+        store.PendingFor(Owner, Chat).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AProposalIsNeverRestatedIntoAnotherConversation()
+    {
+        var store = Create();
+        store.Put(
+            new PendingConfirmation(ConfirmationKind.Backup, "projectzomboid"),
+            Owner, InFiveMinutes, conversationId: Chat);
+
+        store.PendingFor(Owner, "web:245717107596197888:somewhere-else").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AProposalIsNeverRestatedToSOMEBODYELSE()
+    {
+        // The conversation id is derived from the caller's own principal upstream, so this is a second
+        // lock on the same door: a scoping mistake there still cannot hand over somebody else's action.
+        var store = Create();
+        store.Put(
+            new PendingConfirmation(ConfirmationKind.Backup, "projectzomboid"),
+            Owner, InFiveMinutes, conversationId: Chat);
+
+        store.PendingFor(Someone, Chat).Should().BeEmpty();
+    }
 }

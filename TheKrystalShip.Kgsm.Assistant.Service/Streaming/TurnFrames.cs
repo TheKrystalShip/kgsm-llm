@@ -16,6 +16,7 @@ internal static class TurnFrames
         AuthPrincipal principal,
         IPendingConfirmationStore pending,
         int confirmationTtlSeconds,
+        string conversationId,
         ref int proposalSeq) => ev.Kind switch
         {
             AssistantEventKind.Token =>
@@ -46,7 +47,8 @@ internal static class TurnFrames
 
             AssistantEventKind.Confirmation =>
                 new TurnFrame(TurnStream.CommandProposed,
-                    Proposed(ev.StagedConfirmation!, principal, pending, confirmationTtlSeconds, ref proposalSeq)),
+                    Proposed(ev.StagedConfirmation!, principal, pending, confirmationTtlSeconds,
+                        conversationId, ref proposalSeq)),
 
             AssistantEventKind.Error =>
                 new TurnFrame(TurnStream.Error,
@@ -70,7 +72,33 @@ internal static class TurnFrames
         AuthPrincipal principal,
         IPendingConfirmationStore pending,
         int confirmationTtlSeconds,
-        ref int proposalSeq)
+        string conversationId,
+        ref int proposalSeq) =>
+        Describe(
+            c,
+            // Announceable, and recorded against its conversation. Announceable because this path is
+            // the browser surfaces': the buffered /turn stages the same kinds and passes neither, since
+            // that one is kgsm-bot's and Discord already draws Confirm and Cancel on the message it
+            // staged from. Recorded against the conversation so a surface arriving afterwards — a
+            // reload, a second device, the notification's own tap-through — can be told it is waiting.
+            pending.Put(
+                c, principal.UserId,
+                DateTimeOffset.UtcNow.AddSeconds(Math.Max(confirmationTtlSeconds, 1)),
+                announceTo: new ConfirmationStager(
+                    principal.Provider, principal.UserId, principal.DisplayName),
+                conversationId: conversationId),
+            $"cmd_{proposalSeq++}");
+
+    /// <summary>
+    /// Project a staged operation onto the frame that describes it.
+    /// </summary>
+    /// <remarks>
+    /// Separate from staging because a proposal is described twice: once as it is staged, and again
+    /// whenever a conversation is loaded while it is still waiting. Both go through here so a restated
+    /// proposal is the same frame as a live one — a client renders them with one code path, and the two
+    /// cannot drift into disagreeing about what an action is called.
+    /// </remarks>
+    public static CommandProposedEvent Describe(PendingConfirmation c, string handle, string id)
     {
         // write_file: the frame's `file` block carries the real content, so a surface can render a diff
         // before anyone approves it.
@@ -80,18 +108,11 @@ internal static class TurnFrames
             : null;
 
         return new CommandProposedEvent(
-            Id: $"cmd_{proposalSeq++}",
+            Id: id,
             Verb: ApiVerb(c.Kind),
             Subject: new CommandSubject(SubjectResource(c.Kind), c.Target),
             Confirm: ComposeConfirm(c),
-            // Announceable, because this path is the browser surfaces'. The buffered /turn stages the
-            // same kinds and does not set this: that one is kgsm-bot's, and Discord already draws
-            // Confirm and Cancel on the message it staged from.
-            Token: pending.Put(
-                c, principal.UserId,
-                DateTimeOffset.UtcNow.AddSeconds(Math.Max(confirmationTtlSeconds, 1)),
-                announceTo: new ConfirmationStager(
-                    principal.Provider, principal.UserId, principal.DisplayName)),
+            Token: handle,
             Reason: null,
             // write_file's content already rides `file` above — ConfigKey/ConfigValue here stay
             // set-config's own fields, never the write payload.

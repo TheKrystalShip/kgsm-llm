@@ -255,6 +255,7 @@ dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --filter D,C8 --reps 
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --model qwen3.5:9b --out eval-results/qwen.json
 
 # Reproducible single-path run (fixed sampling seed) instead of pass-rate-over-N.
+# Read "What a seed fixes, and what it does not" before comparing a seeded score with an unseeded one.
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --seed 7 --reps 1
 
 # Diff two runs: what improved, what regressed.
@@ -269,6 +270,13 @@ Key options: `--model`, `-n/--reps`, `--seed`, `--temp`, `--filter <ids|dims>`, 
 points it at an empty dir to test the in-code defaults (`KgsmAssistantPrompts`). Either way the
 result file stamps the system-prompt template hash, so every run records exactly what it tested.
 
+A deployed service reads its own `Prompts:Directory`, which is **not** the one the eval defaults to.
+To measure what a host actually runs, point `--prompts` at that directory; an override sitting there
+changes behaviour while appearing in no diff. The hash is how you tell: an empty override directory
+and a default run stamp the same hash, so equal hashes mean no override is in play. The hash also
+moves when the live instance list does — it is injected every turn — so only compare hashes from
+runs made close together.
+
 **Config:** `KGSM:Path` and the Ollama endpoint are inherited from the CLI's
 `$XDG_CONFIG_HOME/kgsm-assistant/appsettings.json` (or env / flags) — so on a box where the assistant
 CLI is set up, the eval just works.
@@ -282,3 +290,27 @@ full reply, per-check verdict), so a diff shows *how* a case changed — "C8 wen
 staging-restart to asking-which" — not merely that a rate moved.
 
 Bump `BenchmarkSuite.Version` whenever a case changes, so older result files are compared honestly.
+
+### What a seed fixes, and what it does not
+
+`--seed N` fixes the model's sampling: two runs of the **same invocation** produce byte-identical
+replies, tool calls and check verdicts. That is what makes a change attributable — edit one thing,
+repeat the command, and any difference is the edit rather than the draw.
+
+Two limits decide when to reach for it.
+
+**A seed collapses the reps.** Every rep of a case samples identically, so `--reps N` yields one
+trajectory instead of N, and the score stops being a pass-rate: a case that truly holds two times
+in three shows as 3/3 or 0/3 depending on which path the seed lands on. Run seeded work at
+`--reps 1` and read it as "this path passes", never as "this rate". When the question is *how
+often* something holds, run unseeded with enough reps to see the spread.
+
+**A seeded result belongs to the run, not the case.** Requests earlier in a run influence later
+ones, so `--filter X --seed N` does **not** reproduce what case X scored inside a full run at the
+same seed — the same case at the same seed scores differently alone. A failure seen in a seeded
+full run is reproducible only by repeating that same full invocation; filtering down to iterate
+faster changes the thing being measured.
+
+So: **seed to attribute a change, unseeded reps to measure a rate.** A number from one is not
+comparable with a number from the other, and a seeded score moving is not by itself evidence that
+behaviour moved.

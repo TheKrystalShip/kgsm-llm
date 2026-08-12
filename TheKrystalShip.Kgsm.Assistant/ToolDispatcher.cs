@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
+using TheKrystalShip.Kgsm.Assistant.Consoles;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Fetch;
 using TheKrystalShip.Kgsm.Assistant.Health;
@@ -752,7 +753,16 @@ public class ToolDispatcher : IToolDispatcher
         return trimmed.Length <= 200 ? trimmed : trimmed[..200] + "…";
     }
 
-    /// <summary>Reads the supervisor's captured console output for one instance.</summary>
+    /// <summary>
+    /// Reads one run of the supervisor's captured console output for an instance.
+    /// <para>
+    /// <b>The output is prefaced with which run it is.</b> A server's log restarts from empty on every
+    /// fresh start, so after a crash-restart the default run holds a clean boot and the crash is in the
+    /// run before it. Those lines look identical to a healthy server's, and the model sees only this
+    /// text — so where they came from has to be said here, in the same string, or it is not said at
+    /// all. <see cref="ConsoleProvenance"/> owns the wording.
+    /// </para>
+    /// </summary>
     private async Task<ToolOutput> ReadConsoleAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
         var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
@@ -763,15 +773,34 @@ public class ToolDispatcher : IToolDispatcher
             ? Math.Min(n, MaxConsoleLines)
             : DefaultConsoleLines;
 
-        var tail = await _serverFacts.GetConsoleTailAsync(resolved!, lines, cancellationToken);
+        var run = int.TryParse(call.Arg("run")?.Trim(), out var r) && r > 0 ? r : CurrentConsoleRun;
+
+        // The run list is what places the output; it is fetched alongside rather than instead, so a
+        // supervisor that serves the lines but not the list still answers with the lines.
+        var runs = await _serverFacts.GetConsoleRunsAsync(resolved!, cancellationToken);
+
+        if (run != CurrentConsoleRun && runs.State == FactsState.Available && run >= runs.Runs.Count)
+            return runs.Runs.Count == 0
+                ? $"{resolved} has no recorded runs, so there is no run {run} to read."
+                : $"{resolved} has no run {run} — it has {runs.Runs.Count} run(s) on record, numbered 0 "
+                  + $"(most recent) to {runs.Runs.Count - 1}.";
+
+        var tail = await _serverFacts.GetConsoleRunTailAsync(resolved!, lines, run, cancellationToken);
         if (tail.State == FactsState.Unavailable)
             return $"Couldn't read {resolved}'s console — the supervisor didn't answer. "
                  + "That isn't the same as it having produced no output.";
 
-        return tail.Lines.Count == 0
-            ? $"{resolved} has produced no console output (it may not be running)."
-            : $"Recent console output for {resolved}:\n" + string.Join("\n", tail.Lines);
+        if (tail.Lines.Count == 0)
+            return run == CurrentConsoleRun
+                ? $"{resolved} has produced no console output in its current run."
+                : $"{resolved}'s run {run} holds no output.";
+
+        string header = ConsoleProvenance.Describe(resolved!, runs.Runs, run, DateTimeOffset.UtcNow);
+        return header + "\n" + string.Join("\n", tail.Lines);
     }
+
+    /// <summary>The run in progress — what a caller that named no run means.</summary>
+    private const int CurrentConsoleRun = 0;
 
     private const int DefaultConsoleLines = 50;
     private const int MaxConsoleLines = 500;

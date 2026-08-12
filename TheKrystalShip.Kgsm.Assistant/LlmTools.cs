@@ -392,6 +392,14 @@ public static class LlmTools
         "Optional. How many of the most recent console lines to read. Defaults to a recent tail.",
         Required: false);
 
+    private static readonly LlmToolParameter ConsoleRun = new(
+        "run",
+        "Optional. Which run of the server to read, newest first: 0 is the current run (the default), "
+        + "1 the run before it, and so on. A server's log restarts from empty every time it starts, so "
+        + "after a crash-restart the crash is in run 1 while run 0 holds only the clean boot that "
+        + "followed it.",
+        Required: false);
+
     private static readonly LlmToolParameter WritePath = new(
         "path",
         "The file to write, as a path relative to the server's own directory — e.g. " +
@@ -555,10 +563,12 @@ public static class LlmTools
             InstanceName, SearchFilesText, FindSubdir),
 
         LlmToolDefinition.Create(ReadConsole,
-            "Read the most recent console output a running server has produced — what the game itself " +
-            "printed. Use this when a server has no log file, or when you want what it is saying right " +
-            "now rather than what it wrote to disk. Only a running server has console output.",
-            InstanceName, ConsoleLines),
+            "Read what a server itself printed — its console output. Use this for what a server is " +
+            "saying right now, or for what it said on its way down. A stopped server's last output is " +
+            "still readable. The reply says which run it came from and whether the server restarted " +
+            "recently; if it did, the reason it went down is in the previous run, which you read by " +
+            "calling this again with run=1.",
+            InstanceName, ConsoleLines, ConsoleRun),
     };
 
     /// <summary>

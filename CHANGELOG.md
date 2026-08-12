@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`read_console` says which run it read, and takes a `run` argument.** A server's log restarts from
+  empty on every fresh start, so after a crash-restart the default read is the clean boot that
+  followed — lines indistinguishable from a healthy server's, which the model can only report as "no
+  errors". The output is now prefaced with which run it is, when the server last restarted, and how
+  the run before it ended; when that restart was recent, it names the run holding the crash and how to
+  ask for it. `run=1` reads the run before the current one, and a run that does not exist is refused
+  with a count rather than answered with run 0's output.
+
+  The wording lives in a pure `ConsoleProvenance`, and states only what the run list measured. A run
+  in progress is never given a start time — nothing measures one — so the boundary is stated as the
+  previous run's ending.
+
 ### Changed
 
 - **The crashed run is now identified by the supervisor's verdict, not by proximity alone.**

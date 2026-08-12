@@ -73,9 +73,10 @@ public class ToolDispatcherTests
     private readonly SettlementTiming _settlement =
         new(TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(10));
 
-    private ToolDispatcher Create() =>
+    private ToolDispatcher Create(IServerFacts? serverFacts = null) =>
         new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp,
-            _serverFacts, _hostFacts, _blueprintAuthoring, _settlement, NullLogger<ToolDispatcher>.Instance);
+            serverFacts ?? _serverFacts, _hostFacts, _blueprintAuthoring, _settlement,
+            NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
@@ -1379,5 +1380,105 @@ public class ToolDispatcherTests
         var result = await Summary(SearchFilesCall("minecraft", "pattern", "MaxPlayers"));
 
         result.Should().Contain("server.properties");
+    }
+
+    // --- read_console: which run, and saying so -------------------------------------------------
+
+    /// <summary>
+    /// A console that has runs. <paramref name="Runs"/> is what the run list reports;
+    /// <paramref name="LinesByRun"/> is what each run's output holds.
+    /// </summary>
+    private sealed record StubConsole(
+        IReadOnlyList<ConsoleRunInfo> Runs,
+        IReadOnlyDictionary<int, IReadOnlyList<string>> LinesByRun) : IServerFacts
+    {
+        public Task<ConsoleRuns> GetConsoleRunsAsync(string instance, CancellationToken ct = default) =>
+            Task.FromResult(new ConsoleRuns(FactsState.Available, Runs));
+
+        public Task<ConsoleTail> GetConsoleRunTailAsync(
+            string instance, int lines, int run, CancellationToken ct = default) =>
+            Task.FromResult(new ConsoleTail(
+                FactsState.Available,
+                LinesByRun.TryGetValue(run, out var l) ? l : []));
+
+        public Task<ConsoleTail> GetConsoleTailAsync(string instance, int lines, CancellationToken ct = default) =>
+            GetConsoleRunTailAsync(instance, lines, 0, ct);
+
+        public Task<BackupListing> GetBackupsAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new BackupListing(FactsState.Unavailable, []));
+        public Task<VersionFacts> GetVersionAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new VersionFacts(FactsState.Unavailable, null, null, null));
+        public Task<PresenceReading> GetPresenceAsync(CancellationToken ct = default) =>
+            Task.FromResult(new PresenceReading(FactsState.Unavailable, []));
+        public Task<AutostartReading> GetAutostartAsync(CancellationToken ct = default) =>
+            Task.FromResult(new AutostartReading(FactsState.Unavailable, []));
+    }
+
+    private static LlmToolCall ReadConsoleCall(string instance, string? run = null) =>
+        new(LlmTools.ReadConsole, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["run"] = run,
+        });
+
+    private static StubConsole CrashedThenRestarted() => new(
+        Runs: new[]
+        {
+            new ConsoleRunInfo(0, Current: true, EndedAt: null),
+            new ConsoleRunInfo(1, Current: false, DateTimeOffset.UtcNow.AddMinutes(-6),
+                ConsoleRunInfo.CrashedOutcome, ExitCode: 139),
+        },
+        LinesByRun: new Dictionary<int, IReadOnlyList<string>>
+        {
+            [0] = new[] { "Server ready." },
+            [1] = new[] { "Unhandled exception. System.NullReferenceException" },
+        });
+
+    [Fact]
+    public async Task ReadConsole_DefaultsToTheCurrentRun_AndSaysTheCrashIsInTheOneBefore()
+    {
+        // The original failure: after a crash-restart the default read is a clean boot, and handed over
+        // bare it reads as "no errors". The lines are still the lines — what changes is that they now
+        // arrive labelled, with the crashed run named and reachable.
+        var result = await Create(CrashedThenRestarted()).ExecuteAsync(ReadConsoleCall("minecraft"));
+
+        result.Summary.Should().Contain("Server ready.");
+        result.Summary.Should().Contain("run 0, the run in progress");
+        result.Summary.Should().Contain("ended in a crash").And.Contain("exit 139");
+        result.Summary.Should().Contain("run=1");
+    }
+
+    [Fact]
+    public async Task ReadConsole_ReadsTheRunItWasAskedFor()
+    {
+        var result = await Create(CrashedThenRestarted()).ExecuteAsync(ReadConsoleCall("minecraft", run: "1"));
+
+        result.Summary.Should().Contain("Unhandled exception");
+        result.Summary.Should().NotContain("Server ready.");
+    }
+
+    [Fact]
+    public async Task ReadConsole_RefusesARunThatDoesNotExist_AndSaysHowManyThereAre()
+    {
+        // Answering a missing run with run 0's output would hand back a clean boot under the label of
+        // the run that was asked for — the same confusion, now with the tool's authority behind it.
+        var result = await Create(CrashedThenRestarted()).ExecuteAsync(ReadConsoleCall("minecraft", run: "7"));
+
+        result.Summary.Should().Contain("no run 7").And.Contain("2 run(s)");
+        result.Summary.Should().NotContain("Server ready.");
+    }
+
+    [Fact]
+    public async Task ReadConsole_WithNoRunList_StillReturnsTheOutput()
+    {
+        // The run list is what places the output, not what permits it. A supervisor that serves the
+        // lines but not the list still answers with the lines, unlabelled.
+        var facts = new StubConsole(
+            Runs: [],
+            LinesByRun: new Dictionary<int, IReadOnlyList<string>> { [0] = new[] { "Server ready." } });
+
+        var result = await Create(facts).ExecuteAsync(ReadConsoleCall("minecraft"));
+
+        result.Summary.Should().Contain("Server ready.").And.Contain("Recent console output for minecraft");
     }
 }

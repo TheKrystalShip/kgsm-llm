@@ -90,6 +90,11 @@
       "id": "rag",
       "label": "Knowledge base",
       "order": 13
+    },
+    {
+      "id": "notifications",
+      "label": "Notifications",
+      "order": 14
     }
   ],
   "fields": [
@@ -834,6 +839,50 @@
       "type": "string",
       "risk": "wiring",
       "dependsOn": "ragEnabled"
+    },
+    {
+      "key": "pushEnabled",
+      "env": "Assistant__Push__Enabled",
+      "label": "Notify about waiting actions",
+      "description": "Whether the assistant may notify a phone about an action it is waiting on you to approve. Nothing is sent until you register a browser under Settings → Notifications in the assistant app; this turns the whole path off for everyone on this host.",
+      "group": "notifications",
+      "type": "bool",
+      "default": "true",
+      "risk": "safe"
+    },
+    {
+      "key": "pushSubject",
+      "env": "Assistant__Push__Subject",
+      "label": "Push contact",
+      "description": "Who a push service should contact about notifications from this host — an email address as mailto:you@example.com, or a web address. The default names the KGSM project.",
+      "group": "notifications",
+      "type": "string",
+      "default": "https://github.com/TheKrystalShip/KGSM",
+      "risk": "wiring"
+    },
+    {
+      "key": "pushPresenceGraceSec",
+      "env": "Assistant__Push__PresenceGraceSeconds",
+      "label": "Count me as here for",
+      "description": "How long after you close the assistant it still counts you as here, and stays quiet. Longer means fewer notifications you did not need, and less of the approval window left to act in when you did.",
+      "group": "notifications",
+      "type": "int",
+      "default": "20",
+      "min": 0,
+      "unit": "s",
+      "risk": "safe"
+    },
+    {
+      "key": "pushPollSec",
+      "env": "Assistant__Push__PollSeconds",
+      "label": "Check for waiting actions every",
+      "description": "How often the assistant checks whether an action it is waiting on should be sent to your phone.",
+      "group": "notifications",
+      "type": "int",
+      "default": "5",
+      "min": 1,
+      "unit": "s",
+      "risk": "safe"
     }
   ]
 }

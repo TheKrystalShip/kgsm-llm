@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The assistant tells your phone when it is waiting on you.** A proposed action staged from a
+  browser is announced by Web Push, with Confirm and Cancel on the notification, once the person it
+  is waiting on has no surface open. The leaf owns the whole path — its own VAPID pair (generated
+  once into the state database), its own device store, its own staged buttons — so it keeps working
+  when kgsm-api is not running; only the protocol is shared, as `TheKrystalShip.KGSM.WebPush`.
+  Configured under `Assistant__Push__*`, and switched on per device from the standalone assistant's
+  Settings → Notifications.
+  - The trigger is **presence**, not a delay: `IConversationEventBus.PresentWithin` already decides
+    whether a turn nobody is watching keeps running, and a second notion of "around" would drift from
+    it. Somebody at their desk when an action was staged is announced to if they walk away with time
+    still on the clock.
+  - A notification's button carries a **device-bound handle** — single-use, expiring with the
+    confirmation it points at, redeemed on an anonymous route because a service worker has no
+    session. The account rides the handle; the *authority* is re-derived at the tap, exactly as
+    `/confirm` does, so somebody demoted since staging is refused.
+  - Only browser-staged actions are announced. The buffered `/turn` is kgsm-bot's and Discord
+    already draws Confirm and Cancel on it.
+
 - **`run_health_check` gains a stability check, so a crash-restart is no longer reported as health.**
   Every other check reads the current run — the log sample begins where the run began — so a server
   that aborted and was restarted is examined entirely after the fact and passes clean. The crash was

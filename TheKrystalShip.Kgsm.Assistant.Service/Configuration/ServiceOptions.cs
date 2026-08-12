@@ -28,6 +28,75 @@ public sealed class AssistantServiceOptions
     public ConfirmationOptions Confirmation { get; set; } = new();
     public WebhookOptions Webhook { get; set; } = new();
     public RelayOptions Relay { get; set; } = new();
+    public PushOptions Push { get; set; } = new();
+}
+
+/// <summary>
+/// Web Push for proposed actions: what reaches somebody who asked the assistant to do something and
+/// then put the phone down.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This announces <b>one thing</b> — a confirmation waiting for the person who staged it — and it is
+/// worth being clear about why that is the whole list. A staged action lives for
+/// <see cref="ConfirmationOptions.TtlSeconds"/>, five minutes by default, and that lifetime is a
+/// deliberate security property rather than a tuning knob. So the journey this serves is a short
+/// absence: the app is backgrounded, the notification arrives seconds later, and most of the five
+/// minutes is still there to act in. Somebody who closed a laptop and went to lunch is not served by
+/// this and must not be told they are — the notification carries its deadline, and the buttons answer
+/// honestly once it passes.
+/// </para>
+/// <para>
+/// Nothing here is a second audience for what the Control Panel already announces. Fleet events —
+/// a crash, a finished update — are kgsm-api's, on its own origin with its own key, and duplicating
+/// them here would double-notify the same person about the same thing from two apps.
+/// </para>
+/// </remarks>
+public sealed class PushOptions
+{
+    /// <summary>
+    /// Whether a waiting confirmation may be announced at all. Inert until somebody subscribes a
+    /// browser, so the default is on: this is the switch for a host that wants it off regardless.
+    /// </summary>
+    /// <panel>Whether the assistant may notify a phone about an action it is waiting on you to approve.
+    /// Nothing is sent until you register a browser under Settings → Notifications in the assistant
+    /// app; this turns the whole path off for everyone on this host.</panel>
+    [LeafField("pushEnabled", "Notify about waiting actions", Group = "notifications")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// The VAPID <c>sub</c> claim: a stable contact URI identifying who is sending, which is what a
+    /// push service uses to reach an operator about a misbehaving sender. A <c>mailto:</c> or
+    /// <c>https:</c> URI per RFC 8292 §2.1; the default names the project rather than a person, so a
+    /// host that never sets it still sends a valid, meaningful token.
+    /// </summary>
+    /// <panel>Who a push service should contact about notifications from this host — an email address
+    /// as <c>mailto:you@example.com</c>, or a web address. The default names the KGSM project.</panel>
+    [LeafField("pushSubject", "Push contact", Group = "notifications", Risk = LeafRisk.Wiring)]
+    public string Subject { get; set; } = "https://github.com/TheKrystalShip/KGSM";
+
+    /// <summary>
+    /// How long after a person's last open stream closes they are still counted as present, and so
+    /// still not worth notifying.
+    /// </summary>
+    /// <remarks>
+    /// Shorter than the grace that keeps a turn running, and deliberately: that one protects work in
+    /// progress from a screen lock, where this one is spending a fixed five-minute budget. A push that
+    /// arrives while the app is still open costs a glance; one that arrives with sixty seconds left
+    /// costs the whole point.
+    /// </remarks>
+    /// <panel>How long after you close the assistant it still counts you as here, and stays quiet.
+    /// Longer means fewer notifications you did not need, and less of the approval window left to act
+    /// in when you did.</panel>
+    [LeafField("pushPresenceGraceSec", "Count me as here for", Group = "notifications", Min = 0, Unit = "s")]
+    public int PresenceGraceSeconds { get; set; } = 20;
+
+    /// <summary>How often waiting confirmations are re-examined. Small: the budget being spent is the
+    /// confirmation's own lifetime, and a tick is a handful of indexed reads against a local file.</summary>
+    /// <panel>How often the assistant checks whether an action it is waiting on should be sent to your
+    /// phone.</panel>
+    [LeafField("pushPollSec", "Check for waiting actions every", Group = "notifications", Min = 1, Unit = "s")]
+    public int PollSeconds { get; set; } = 5;
 }
 
 /// <summary>

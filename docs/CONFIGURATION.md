@@ -250,6 +250,25 @@ Bind address. Default `http://localhost:5180` (loopback). Override with the stan
 | `Confirmation:TtlSeconds` | `300` | `Assistant__Confirmation__TtlSeconds` | Confirmation token lifetime |
 | `Webhook:Secret` | _(empty)_ | `Assistant__Webhook__Secret` | **Secret.** HMAC for `POST /events`; empty ⇒ unverified (dev) |
 | `Relay:Secret` | _(empty)_ | `Assistant__Relay__Secret` | **Secret.** Trusted-relay auth (e.g. kgsm-api); empty ⇒ relay path off |
+| `Push:Enabled` | `true` | `Assistant__Push__Enabled` | Whether a waiting action may be announced by Web Push at all |
+| `Push:Subject` | `https://github.com/TheKrystalShip/KGSM` | `Assistant__Push__Subject` | VAPID `sub` — a `mailto:`/`https:` contact URI for the sender |
+| `Push:PresenceGraceSeconds` | `20` | `Assistant__Push__PresenceGraceSeconds` | How long after a surface closes somebody still counts as present |
+| `Push:PollSeconds` | `5` | `Assistant__Push__PollSeconds` | How often waiting actions are re-examined |
+
+**Web Push announces one thing:** an action the assistant staged and is waiting on, once the person it
+is waiting on has no surface open. It is inert until a browser registers itself under the standalone
+assistant's Settings → Notifications, and it never carries fleet events — a crash or a finished update
+is the Control Panel's, on its own origin with its own key.
+
+⚠ **The VAPID pair is generated once, into the state database, and must never be regenerated.** Its
+public half is baked into every subscription a browser has already created, so a new pair silently
+orphans every registered device with no error at either end. There is no config key for it precisely
+so that no deploy can lose or replace it.
+
+⚠ **`Push:PresenceGraceSeconds` spends a fixed budget.** A staged action lives `Confirmation:TtlSeconds`
+(five minutes by default), so raising this trades fewer unnecessary notifications for less of the
+approval window left to act in. It is deliberately shorter than the grace that keeps a turn running:
+that one protects work in progress from a screen lock, this one is spending somebody's deadline.
 
 ### `KgsmAuth` — the host's Discord application (shared)
 

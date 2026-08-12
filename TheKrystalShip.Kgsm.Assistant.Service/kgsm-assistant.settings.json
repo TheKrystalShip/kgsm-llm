@@ -75,6 +75,12 @@
     },
     "Relay": {
       "Secret": ""
+    },
+    "Push": {
+      "Enabled": true,
+      "Subject": "https://github.com/TheKrystalShip/KGSM",
+      "PresenceGraceSeconds": 20,
+      "PollSeconds": 5
     }
   },
   "KgsmAuth": {

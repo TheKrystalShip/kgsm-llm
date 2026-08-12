@@ -33,6 +33,10 @@
     <!-- The host's KGSM accounts, read straight off the shared store. Not via kgsm-api: a file is
          not something a sibling service can be down for, which is what keeps this leaf standalone. -->
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Users" Version="1.2.0" />
+    <!-- RFC 8291/8292 only: the encryption and the VAPID token, with no opinion about what is being
+         announced or to whom. The subscriptions, the preferences and the staged actions are this
+         leaf's own — sharing those with kgsm-api would be sharing an audience, not a protocol. -->
+    <PackageReference Include="TheKrystalShip.KGSM.WebPush" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>

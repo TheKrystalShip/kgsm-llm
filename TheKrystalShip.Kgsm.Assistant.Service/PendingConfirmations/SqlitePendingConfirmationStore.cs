@@ -27,25 +27,7 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
 
     public SqlitePendingConfirmationStore(IOptions<ConversationOptions> options)
     {
-        var value = options.Value;
-
-        // Same default-path rule as SqliteConversationStore: a configured path wins, otherwise a
-        // file beside the host binary — this store always shares whichever file that store picked.
-        var databasePath = string.IsNullOrWhiteSpace(value.DatabasePath)
-            ? Path.Combine(AppContext.BaseDirectory, "conversations.db")
-            : value.DatabasePath;
-
-        var directory = Path.GetDirectoryName(Path.GetFullPath(databasePath));
-        if (!string.IsNullOrEmpty(directory))
-            Directory.CreateDirectory(directory);
-
-        _connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            DefaultTimeout = 5,
-        }.ToString();
-
+        _connectionString = StateDatabase.ConnectionString(options.Value);
         Initialize();
     }
 
@@ -66,13 +48,38 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                 config_key    TEXT,
                 config_value  TEXT,
                 staged_by     TEXT NOT NULL,
-                expires_at    TEXT NOT NULL
+                expires_at    TEXT NOT NULL,
+                announce_provider TEXT,
+                announce_name     TEXT,
+                announced_at      TEXT
             );
             """;
         cmd.ExecuteNonQuery();
+
+        // A database created before this table carried the announcement columns keeps its rows; SQLite
+        // has no "add column if absent", and a duplicate-column error is the ordinary answer on every
+        // start after the first rather than a fault.
+        foreach (var column in (string[])
+                 ["announce_provider TEXT", "announce_name TEXT", "announced_at TEXT"])
+        {
+            try
+            {
+                using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE pending_confirmations ADD COLUMN {column};";
+                alter.ExecuteNonQuery();
+            }
+            catch (SqliteException)
+            {
+                // Already there.
+            }
+        }
     }
 
-    public string Put(PendingConfirmation confirmation, string userId, DateTimeOffset expiry)
+    public string Put(
+        PendingConfirmation confirmation,
+        string userId,
+        DateTimeOffset expiry,
+        ConfirmationStager? announceTo = null)
     {
         ArgumentNullException.ThrowIfNull(confirmation);
 
@@ -87,9 +94,15 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
             cmd.CommandText =
                 """
                 INSERT INTO pending_confirmations
-                    (id, kind, target, instance_name, config_key, config_value, staged_by, expires_at)
-                VALUES ($id, $kind, $target, $instance, $ckey, $cvalue, $by, $expires);
+                    (id, kind, target, instance_name, config_key, config_value, staged_by, expires_at,
+                     announce_provider, announce_name)
+                VALUES ($id, $kind, $target, $instance, $ckey, $cvalue, $by, $expires,
+                        $provider, $name);
                 """;
+            // Both null is the ordinary case and is what makes a row unannounceable: there is nobody
+            // recorded to announce it to, which is the same statement as "do not".
+            cmd.Parameters.AddWithValue("$provider", (object?)announceTo?.Provider ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$name", (object?)announceTo?.DisplayName ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$kind", (int)confirmation.Kind);
             cmd.Parameters.AddWithValue("$target", confirmation.Target);
@@ -166,6 +179,62 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
 
             confirmation = found;
             return true;
+        }
+    }
+
+    public IReadOnlyList<WaitingConfirmation> Unannounced()
+    {
+        using var connection = Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText =
+            """
+            SELECT id, kind, target, instance_name, config_key, config_value, staged_by, expires_at,
+                   announce_provider, announce_name
+            FROM pending_confirmations
+            WHERE announce_provider IS NOT NULL AND announced_at IS NULL AND expires_at > $now
+            ORDER BY expires_at;
+            """;
+        cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+
+        var waiting = new List<WaitingConfirmation>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var kind = (ConfirmationKind)reader.GetInt32(1);
+            // A row this build cannot describe is not one to announce: the notification would have to
+            // name an action whose kind means nothing here.
+            if (!Enum.IsDefined(kind))
+                continue;
+
+            waiting.Add(new WaitingConfirmation(
+                reader.GetString(0),
+                new ConfirmationStager(
+                    reader.GetString(8), reader.GetString(6), reader.IsDBNull(9) ? "" : reader.GetString(9)),
+                new PendingConfirmation(
+                    kind,
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5)),
+                DateTimeOffset.Parse(reader.GetString(7))));
+        }
+        return waiting;
+    }
+
+    public void MarkAnnounced(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return;
+
+        lock (_writeGate)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText =
+                "UPDATE pending_confirmations SET announced_at = $now WHERE id = $id;";
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            cmd.ExecuteNonQuery();
         }
     }
 

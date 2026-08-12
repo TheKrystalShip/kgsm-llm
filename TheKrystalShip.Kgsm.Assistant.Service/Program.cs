@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration.Json;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.FileProviders;
 
 using Microsoft.Extensions.Options;
@@ -18,12 +19,14 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
+using TheKrystalShip.Kgsm.Assistant.Service.Push;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.Kgsm.Assistant.Service.Streaming;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
+using TheKrystalShip.KGSM.WebPush;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Extensions;
@@ -136,6 +139,21 @@ builder.Services.AddSingleton<IConversationEventBus, ConversationEventBus>();
 // by a restart is over, and nothing here is owed durability the conversation store does not give.
 builder.Services.AddSingleton<ITurnRegistry, TurnRegistry>();
 builder.Services.AddHostedService<TurnPresenceWorker>();
+
+// --- Web Push ----------------------------------------------------------------
+// What reaches somebody who asked for an action and then put the phone down. This leaf owns the whole
+// path — its own VAPID pair, its own devices, its own staged buttons — because a confirmation is the
+// assistant's to announce and it must keep working when kgsm-api is not running. The shared package is
+// the protocol and nothing else.
+//
+// Both stores sit on the same SQLite file as everything else here, each creating its own tables.
+builder.Services.AddSingleton<IPushActionStore, SqlitePushActionStore>();
+builder.Services.AddSingleton<IPushSubscriptionStore, SqlitePushSubscriptionStore>();
+// A typed client so the push services' connections are pooled and the handler recycles; the sender
+// itself holds no state and no ILogger — every failure comes back as a result its caller logs.
+builder.Services.AddHttpClient<WebPushSender>(c => c.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddHostedService<ConfirmationPushWorker>();
 
 // --- Web auth (Discord OAuth) ------------------------------------------------
 // A sign-in yields a short-lived access bearer plus a refresh token, both signed by this service
@@ -1342,6 +1360,7 @@ secured.MapPost("/confirm", async (
     HttpContext http,
     IServerAssistant assistant,
     IPendingConfirmationStore pending,
+    IPushActionStore pushActions,
     AuthService auth,
     IInvocationContext invocation,
     IOptions<AssistantServiceOptions> assistantOptions,
@@ -1354,6 +1373,11 @@ secured.MapPost("/confirm", async (
     // never which of those it was, so the endpoint is no oracle for handles it was not given.
     if (!pending.TryTake(request.Token, principal.UserId, out var confirmation))
         return Results.BadRequest(new { error = "Invalid or expired confirmation." });
+
+    // Settled here, so the notification's buttons stop being live. They would already fail — the
+    // handle they point at is consumed — but a person tapping Confirm on something they confirmed in
+    // the chat a moment ago deserves the buttons to be gone rather than a refusal.
+    pushActions.VoidForConfirmation(request.Token!);
 
     // Re-derive authority FRESH at confirm time — never trust it from the token. Mirror the /turn path
     // exactly (the confirm EXECUTES a mutation, so it must read authority the SAME way the propose did):
@@ -1457,6 +1481,115 @@ secured.MapPost("/confirm", async (
     }
 
     return Results.Ok(await work(ct));
+});
+
+// --- Web Push ----------------------------------------------------------------
+// Registering a browser, and the one anonymous route a notification's buttons can reach.
+
+// The application server key a browser subscribes against. Public by definition — it is handed to
+// every subscriber and is what a push service verifies this host's tokens with.
+secured.MapGet("/push/key", (IPushSubscriptionStore subscriptions, IOptions<AssistantServiceOptions> o) =>
+    Results.Ok(new PushKeyResponse(
+        subscriptions.Keys().PublicKey,
+        o.Value.Push.Enabled)));
+
+// Register this browser. The subscription's keys come from the browser and mean nothing to anyone
+// else: they are what the payload is encrypted to, so this host can send to that device and the push
+// service routing it cannot read what it carries.
+secured.MapPost("/push/subscribe", (
+    PushSubscribeRequest request, HttpContext http, IPushSubscriptionStore subscriptions) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+
+    if (string.IsNullOrWhiteSpace(request.Endpoint)
+        || string.IsNullOrWhiteSpace(request.P256dh)
+        || string.IsNullOrWhiteSpace(request.Auth))
+        return Results.BadRequest(new { error = "A subscription needs an endpoint and both keys." });
+
+    if (!Uri.TryCreate(request.Endpoint, UriKind.Absolute, out var endpoint)
+        || endpoint.Scheme != Uri.UriSchemeHttps)
+        return Results.BadRequest(new { error = "A push endpoint must be an absolute https URL." });
+
+    // The page origin is recorded, never trusted and never branched on: it is here so that a second
+    // surface registering against this same leaf needs no schema change, not as a check.
+    subscriptions.Register(
+        principal.UserId,
+        new PushSubscription(request.Endpoint, request.P256dh, request.Auth),
+        http.Request.Headers.Origin.FirstOrDefault());
+
+    return Results.NoContent();
+});
+
+// Forget this browser, at its owner's request. Scoped to them: an endpoint is not a handle on
+// somebody else's device.
+// ⚠ [FromBody] is required, not decorative: a DELETE never infers one, and without it the route fails
+// to build — which takes the whole endpoint graph with it rather than just this route.
+secured.MapDelete("/push/subscribe", (
+    [FromBody] PushUnsubscribeRequest request, HttpContext http, IPushSubscriptionStore subscriptions) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    subscriptions.Unregister(principal.UserId, request.Endpoint ?? string.Empty);
+    // Idempotent: a browser that unsubscribed locally and then told us is the ordinary sequence, and
+    // there being no row to delete is that sequence completing rather than an error.
+    return Results.NoContent();
+});
+
+// Whether THIS browser is registered, which is the only question its settings screen can ask — it
+// knows its own endpoint and nothing about the others.
+secured.MapGet("/push/devices", (HttpContext http, IPushSubscriptionStore subscriptions) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var endpoints = subscriptions.For(principal.UserId)
+        .Select(d => d.Subscription.Endpoint)
+        .ToArray();
+    return Results.Ok(new PushDevicesResponse(endpoints));
+});
+
+// Redeem a notification's button.
+//
+// ⚠ ANONYMOUS, and deliberately so: a service worker wakes on an OS push with no page, no bearer and
+// nothing it could sign with. The handle is the whole credential — unguessable, single-use, and dead
+// with the confirmation it points at. What it is NOT is a way to act without authority: the account
+// comes off the handle and that person's tier is resolved HERE, at the tap, exactly as /confirm does.
+// A handle minted while somebody was an operator does not keep them one.
+app.MapPost("/push/actions/{handle}", async (
+    string handle,
+    IPushActionStore pushActions,
+    IPendingConfirmationStore pending,
+    IServerAssistant assistant,
+    AuthService auth,
+    IInvocationContext invocation,
+    CancellationToken ct) =>
+{
+    if (!pushActions.TryTake(handle, out var action))
+        return Results.Ok(new PushActionResponse(false, "That notification is no longer valid."));
+
+    if (action.Verb == PushActionVerb.Cancel)
+    {
+        // Cancelling is taking the handle and doing nothing with it: the staged operation is consumed
+        // and can never run. It needs no authority — declining to act is not an action.
+        pending.TryTake(action.ConfirmationHandle, action.Stager.UserId, out _);
+        return Results.Ok(new PushActionResponse(true, "Cancelled."));
+    }
+
+    if (!pending.TryTake(action.ConfirmationHandle, action.Stager.UserId, out var confirmation))
+        return Results.Ok(new PushActionResponse(false, "That action has already been handled or has expired."));
+
+    // The identity was recorded when the action was staged; what is derived HERE is the authority, off
+    // the live account store. So the session this tap does not have is the only thing missing, and the
+    // check is otherwise the one /confirm makes: somebody demoted since staging is refused now.
+    var principal = new AuthPrincipal(
+        action.Stager.Provider, action.Stager.UserId, action.Stager.DisplayName, SessionId: string.Empty);
+
+    var canPerform = await auth.CanPerformActionsAsync(principal, ct);
+    if (!canPerform)
+        return Results.Ok(new PushActionResponse(false, "You are no longer allowed to run that action."));
+
+    using var provenance = invocation.Begin(
+        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(null)));
+
+    var outcome = await assistant.ConfirmAsync(confirmation, canPerform, ct);
+    return Results.Ok(new PushActionResponse(outcome.Ok, outcome.Summary));
 });
 
 app.Run();

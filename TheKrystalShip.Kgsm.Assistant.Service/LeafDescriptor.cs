@@ -32,6 +32,7 @@ using TheKrystalShip.KGSM.LeafConfig;
 [assembly: LeafGroup("webfetch", "Web fetch", 11)]
 [assembly: LeafGroup("authoring", "Blueprint authoring", 12)]
 [assembly: LeafGroup("rag", "Knowledge base", 13)]
+[assembly: LeafGroup("notifications", "Notifications", 14)]
 
 // Lowest precedence first — the same order Program.cs registers them in.
 [assembly: LeafFloorSource("appsettings", "/opt/kgsm-assistant/service/kgsm-assistant.settings.json")]

@@ -84,9 +84,14 @@ internal static class TurnFrames
             Verb: ApiVerb(c.Kind),
             Subject: new CommandSubject(SubjectResource(c.Kind), c.Target),
             Confirm: ComposeConfirm(c),
+            // Announceable, because this path is the browser surfaces'. The buffered /turn stages the
+            // same kinds and does not set this: that one is kgsm-bot's, and Discord already draws
+            // Confirm and Cancel on the message it staged from.
             Token: pending.Put(
                 c, principal.UserId,
-                DateTimeOffset.UtcNow.AddSeconds(Math.Max(confirmationTtlSeconds, 1))),
+                DateTimeOffset.UtcNow.AddSeconds(Math.Max(confirmationTtlSeconds, 1)),
+                announceTo: new ConfirmationStager(
+                    principal.Provider, principal.UserId, principal.DisplayName)),
             Reason: null,
             // write_file's content already rides `file` above — ConfigKey/ConfigValue here stay
             // set-config's own fields, never the write payload.

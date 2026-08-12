@@ -662,3 +662,43 @@ public sealed record DoneEvent(
 /// is a coarse closed bucket (e.g. <c>assistant_failed</c>); <see cref="Message"/> carries the real detail.
 /// </summary>
 public sealed record StreamErrorEvent(string Code, string Message);
+
+// --- Web Push ----------------------------------------------------------------
+
+/// <summary>
+/// The application server key a browser subscribes against, and whether this host would send anything.
+/// </summary>
+/// <remarks>
+/// <see cref="Enabled"/> is here so a settings screen can say "the operator has this switched off"
+/// rather than offering a toggle that silently achieves nothing. The key is returned either way — it is
+/// public by definition, and a browser that already subscribed still needs it to compare against.
+/// </remarks>
+public sealed record PushKeyResponse(string PublicKey, bool Enabled);
+
+/// <summary>A browser registering itself, in the shape <c>PushSubscription.toJSON()</c> produces.</summary>
+public sealed record PushSubscribeRequest(string? Endpoint, string? P256dh, string? Auth);
+
+/// <summary>A browser asking to be forgotten.</summary>
+public sealed record PushUnsubscribeRequest(string? Endpoint);
+
+/// <summary>
+/// The caller's registered endpoints, so a browser can tell whether the one it holds is known here.
+/// </summary>
+/// <remarks>
+/// An endpoint is not a secret and is already held by the browser being told about it — but it is also
+/// the only thing a settings screen can match on, since a browser knows its own subscription and
+/// nothing about anyone's other devices.
+/// </remarks>
+public sealed record PushDevicesResponse(IReadOnlyList<string> Endpoints);
+
+/// <summary>
+/// What a notification's button did.
+/// </summary>
+/// <remarks>
+/// ⚠ Always <c>200</c>, including when the handle was refused. The caller is a service worker with no
+/// user in front of it and no retry that could help: every outcome here is final and is something to
+/// say, so it is said in the body rather than as a status a worker would have to translate. It never
+/// distinguishes an unknown handle from an expired or already-used one, for the same reason
+/// <c>/confirm</c> does not — a caller learns there is nothing to act on, never which.
+/// </remarks>
+public sealed record PushActionResponse(bool Ok, string Message);

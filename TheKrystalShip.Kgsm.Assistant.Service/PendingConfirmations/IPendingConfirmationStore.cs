@@ -31,7 +31,27 @@ public interface IPendingConfirmationStore
     /// Stages <paramref name="confirmation"/> for <paramref name="userId"/>, returning the opaque
     /// handle that redeems it until <paramref name="expiry"/>.
     /// </summary>
-    string Put(PendingConfirmation confirmation, string userId, DateTimeOffset expiry);
+    /// <param name="announceTo">
+    /// Who to notify if they walk away from this one, or <see langword="null"/> to announce it nowhere.
+    /// <para>
+    /// Eligibility and recipient are one parameter because they are one fact: there is no such thing as
+    /// an announceable action with nobody to announce it to. It is supplied by the shared-turn
+    /// streaming path and nothing else, because that is the browser surfaces' path — an action staged
+    /// through the buffered <c>/turn</c> is kgsm-bot's, and Discord already renders Confirm and Cancel
+    /// on it. Pushing that one too notifies one person twice about one decision, from two apps, with
+    /// two sets of buttons that race each other.
+    /// </para>
+    /// <para>
+    /// It carries the whole identity rather than the user id alone because a notification's button
+    /// arrives with no session, so the account has to be rebuilt from what was recorded here before its
+    /// authority can be re-derived.
+    /// </para>
+    /// </param>
+    string Put(
+        PendingConfirmation confirmation,
+        string userId,
+        DateTimeOffset expiry,
+        ConfirmationStager? announceTo = null);
 
     /// <summary>
     /// Redeems <paramref name="id"/> on behalf of <paramref name="userId"/>, yielding the operation
@@ -49,4 +69,42 @@ public interface IPendingConfirmationStore
     /// of them is an action to run.
     /// </returns>
     bool TryTake(string? id, string userId, out PendingConfirmation confirmation);
+
+    /// <summary>
+    /// Actions that are still waiting, may be announced, and have not been announced yet.
+    /// </summary>
+    /// <remarks>
+    /// Expired rows are excluded: announcing one would produce a notification whose buttons are dead
+    /// before it is drawn.
+    /// </remarks>
+    IReadOnlyList<WaitingConfirmation> Unannounced();
+
+    /// <summary>
+    /// Record that <paramref name="id"/> has been announced, so it is announced once.
+    /// </summary>
+    /// <remarks>
+    /// Marked after the push is accepted rather than before it is attempted: a send that fails leaves
+    /// the row standing to be retried on the next pass, which is the behaviour a transient push-service
+    /// outage needs. The cost of the other order is silence.
+    /// </remarks>
+    void MarkAnnounced(string id);
 }
+
+/// <summary>
+/// Who staged an action, in full — enough to ask what they may do without a session to read it from.
+/// </summary>
+/// <param name="Provider">Which identity provider proved them, which the account lookup is keyed by.</param>
+/// <param name="UserId">Their id with that provider. What <see cref="IPendingConfirmationStore.TryTake"/> matches on.</param>
+/// <param name="DisplayName">
+/// What to attribute the action to. A snapshot, and the only field here that is: it labels an
+/// invocation, where the two above decide authority and are re-resolved against the live account store
+/// every time.
+/// </param>
+public sealed record ConfirmationStager(string Provider, string UserId, string DisplayName);
+
+/// <summary>A staged action waiting on somebody, with what an announcement needs to describe it.</summary>
+public sealed record WaitingConfirmation(
+    string Handle,
+    ConfirmationStager Stager,
+    PendingConfirmation Confirmation,
+    DateTimeOffset ExpiresAt);

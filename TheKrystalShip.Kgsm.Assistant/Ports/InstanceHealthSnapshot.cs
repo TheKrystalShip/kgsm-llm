@@ -25,6 +25,28 @@ public sealed record HostDisk(
     string? Mount = null);
 
 /// <summary>
+/// When a running instance's current run began, and how the run before it ended — the fact that
+/// separates "up and well" from "up again".
+/// </summary>
+/// <remarks>
+/// The health check reads the current run's logs, so a server that crashed and was restarted is
+/// examined entirely after the event: the sample is clean because the crash is in the previous run,
+/// and the verdict comes back healthy. That is true of what was measured and useless as an answer.
+/// This carries the part the log sample structurally cannot.
+/// </remarks>
+/// <param name="At">
+/// When the current run began, taken as the moment the previous run stopped printing — the spawn
+/// follows it within about a second. Measured rather than assumed: nothing records a run's start.
+/// </param>
+/// <param name="PreviousOutcome">
+/// How the run before this one ended, as the supervisor classified it: <c>crashed</c>,
+/// <c>gave-up</c>, <c>exited</c>, <c>stopped</c>, or <c>unknown</c>. An unknown ending is reported as
+/// unknown and never warned on — not knowing how a run ended is not evidence that it failed.
+/// </param>
+/// <param name="PreviousExitCode">The exit code the supervisor read for that run, where it could.</param>
+public sealed record InstanceRestart(DateTimeOffset At, string PreviousOutcome, int? PreviousExitCode);
+
+/// <summary>
 /// The raw inputs <see cref="Health.HealthCheckAggregator"/> needs for one instance,
 /// in a neutral shape that keeps the assistant library decoupled from kgsm-lib (the
 /// host maps its own types onto this — the same boundary <see cref="FleetStatusEntry"/>
@@ -68,6 +90,11 @@ public sealed record HostDisk(
 /// A short human detail for the ports probe (e.g. "no ports configured"), or <c>null</c>. Feeds the
 /// skip/warn wording so an honest "not checked" reason surfaces rather than a bare skip.
 /// </param>
+/// <param name="Restart">
+/// When this run began and how the one before it ended, or <c>null</c> when the instance is not
+/// running, has only one run on record, or the run list could not be read — the stability check then
+/// skips, never reporting an unknown history as a stable one.
+/// </param>
 public sealed record InstanceHealthSnapshot(
     bool Running,
     IReadOnlyList<string> RecentLogLines,
@@ -78,4 +105,5 @@ public sealed record InstanceHealthSnapshot(
     HostDisk? HostDisk,
     string? HostDiskUnavailableReason,
     bool? PortsReachable = null,
-    string? PortsDetail = null);
+    string? PortsDetail = null,
+    InstanceRestart? Restart = null);

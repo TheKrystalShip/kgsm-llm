@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`run_health_check` gains a stability check, so a crash-restart is no longer reported as health.**
+  Every other check reads the current run — the log sample begins where the run began — so a server
+  that aborted and was restarted is examined entirely after the fact and passes clean. The crash was
+  in none of the evidence and therefore in none of the answer.
+
+  The check reports how long this run has been up and how the run before it ended, from the
+  supervisor's own classification. A crash-restart inside the last hour is a **warning**, which stops
+  the overall verdict reading "healthy" and states why a clean log scan proves nothing here. A
+  deliberate stop is not a warning, and an ending nobody recorded is reported as unknown and never
+  warned on — not knowing how a run ended is not evidence that it failed. No run history skips the
+  check rather than assuming a settled run.
+
+  The window is one hour, deliberately not the supervisor's 300s `RestartStabilitySeconds`, which
+  answers a different question — whether to reset a failure streak.
+
+### Changed
+
+- **The log scan says what it actually read.** "No errors in recent logs" reads as a statement about
+  the server; the sample is only ever the stretch since it last started, so it now says "No errors
+  since the server last started" whether or not anything restarted recently.
+
+### Added
+
 - **`read_console` says which run it read, and takes a `run` argument.** A server's log restarts from
   empty on every fresh start, so after a crash-restart the default read is the clean boot that
   followed — lines indistinguishable from a healthy server's, which the model can only report as "no

@@ -27,7 +27,9 @@ public class HealthCheckAggregatorTests
         bool hasDisk = true,
         string? diskReason = null,
         bool? portsReachable = true,
-        string? portsDetail = null) =>
+        string? portsDetail = null,
+        InstanceRestart? restart = null,
+        bool hasRestart = true) =>
         new(
             Running: running,
             // A healthy running server HAS clean log output; the logs check now Skips on an
@@ -43,7 +45,18 @@ public class HealthCheckAggregatorTests
             HostDiskUnavailableReason: diskReason,
             // A healthy running server's configured ports are active; a null models "not probed" (skip).
             PortsReachable: portsReachable,
-            PortsDetail: portsDetail);
+            PortsDetail: portsDetail,
+            // A healthy running server has been up a good while. hasRestart:false models "no run
+            // history" — the stability check then skips rather than assuming a settled run.
+            Restart: hasRestart
+                ? (restart ?? new InstanceRestart(Now.AddDays(-3), "stopped", null))
+                : null);
+
+    /// <summary>Fixed "now", so a test's uptime wording cannot drift with the clock.</summary>
+    private static readonly DateTimeOffset Now = new(2026, 8, 12, 12, 0, 0, TimeSpan.Zero);
+
+    private static ToolResult<HealthData> Run(InstanceHealthSnapshot snapshot, string id) =>
+        HealthCheckAggregator.Run(snapshot, id, Now);
 
     private static HealthCheck Check(ToolResult<HealthData> r, string name) =>
         r.Data.Checks.Single(c => c.Name == name);
@@ -51,11 +64,11 @@ public class HealthCheckAggregatorTests
     [Fact]
     public void Healthy_RunningInstance_AllPass()
     {
-        var r = HealthCheckAggregator.Run(Healthy(), "minecraft");
+        var r = Run(Healthy(), "minecraft");
 
         r.Data.Overall.Should().Be(CheckState.Pass);
-        r.Data.Total.Should().Be(5);
-        r.Data.Passed.Should().Be(5);
+        r.Data.Total.Should().Be(6);
+        r.Data.Passed.Should().Be(6);
         r.Data.Skipped.Should().Be(0);
         r.Tool.Should().Be(LlmTools.RunHealthCheck);
         r.Confidence.Should().Be(Confidence.Confirmed);
@@ -67,7 +80,7 @@ public class HealthCheckAggregatorTests
     public void Stopped_IsNeverFailure_AndSkipsLogScan()
     {
         // The §D5 proof: stateless KGSM can't know stopped is a crash, so it must not fail.
-        var r = HealthCheckAggregator.Run(Healthy(running: false), "factorio-test");
+        var r = Run(Healthy(running: false), "factorio-test");
 
         Check(r, "liveness").State.Should().Be(CheckState.Pass);
         Check(r, "liveness").Severity.Should().Be(Severity.Info);
@@ -76,7 +89,7 @@ public class HealthCheckAggregatorTests
         Check(r, "ports").State.Should().Be(CheckState.Skip);
         r.Data.Overall.Should().NotBe(CheckState.Fail);
         r.Data.Overall.Should().Be(CheckState.Pass);
-        r.Data.Skipped.Should().Be(2);
+        r.Data.Skipped.Should().Be(3);
         r.Summary.Should().Contain("stopped").And.Contain("skipped");
     }
 
@@ -90,7 +103,7 @@ public class HealthCheckAggregatorTests
             "2026-06-14 10:02:00 normal line",
         };
 
-        var r = HealthCheckAggregator.Run(Healthy(logs: logs), "minecraft");
+        var r = Run(Healthy(logs: logs), "minecraft");
 
         Check(r, "logs").State.Should().Be(CheckState.Warn);
         Check(r, "logs").Detail.Should().Contain("1 error line").And.Contain("failed to bind");
@@ -108,14 +121,14 @@ public class HealthCheckAggregatorTests
         // measured.
         var lines = new[] { "Server ready...", "Gingera is trying to connect", "player id 1" };
 
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(logs: lines, logsRequested: 3), "romestead");
 
         var logs = Check(r, "logs");
         logs.State.Should().Be(CheckState.Skip);
         logs.State.Should().NotBe(CheckState.Pass);
         logs.Detail.Should().Contain("3 line").And.Contain("too few");
-        r.Summary.Should().NotContain("No errors in recent logs");
+        r.Summary.Should().NotContain("No errors since the server last started");
         r.Data.Overall.Should().Be(CheckState.Pass);   // a skip never fails the overall
         r.Data.Skipped.Should().Be(1);
     }
@@ -128,12 +141,12 @@ public class HealthCheckAggregatorTests
         // real evidence and must not be downgraded to a skip alongside the keyhole case.
         var lines = new[] { "Starting server", "Loading world 'tks'", "Server ready..." };
 
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(logs: lines, logsRequested: 200), "romestead");
 
         var logs = Check(r, "logs");
         logs.State.Should().Be(CheckState.Pass);
-        logs.Detail.Should().Contain("No errors in recent logs");
+        logs.Detail.Should().Contain("No errors since the server last started");
     }
 
     [Fact]
@@ -144,7 +157,7 @@ public class HealthCheckAggregatorTests
         // tally's "1 error line" would be a number the sample cannot support.
         var lines = new[] { "INFO ok", "ERROR failed to bind port 25565", "INFO ok" };
 
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(logs: lines, logsRequested: 3), "minecraft");
 
         Check(r, "logs").State.Should().Be(CheckState.Skip);
@@ -157,7 +170,7 @@ public class HealthCheckAggregatorTests
         // Honesty: a running instance with NO recent log lines has nothing to scan, so the
         // check must Skip ("couldn't read") — asserting "no errors" from zero evidence would
         // be a fabricated clean bill (the kgsm recent_logs=[] bug this guards against).
-        var r = HealthCheckAggregator.Run(Healthy(logs: Array.Empty<string>()), "factorio-test");
+        var r = Run(Healthy(logs: Array.Empty<string>()), "factorio-test");
 
         var logs = Check(r, "logs");
         logs.State.Should().Be(CheckState.Skip);
@@ -165,13 +178,13 @@ public class HealthCheckAggregatorTests
         logs.Detail.Should().Contain("No recent log output");
         r.Data.Overall.Should().Be(CheckState.Pass);   // a skip never fails the overall
         r.Data.Skipped.Should().Be(1);
-        r.Data.Passed.Should().Be(4);                  // liveness + updates + disk + ports
+        r.Data.Passed.Should().Be(5);                  // liveness + stability + updates + disk + ports
     }
 
     [Fact]
     public void UpdateAvailable_WarnsWithVersions()
     {
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(updatesAvailable: true, current: "1.20.1", latest: "1.20.4"), "minecraft");
 
         var updates = Check(r, "updates");
@@ -184,7 +197,7 @@ public class HealthCheckAggregatorTests
     [Fact]
     public void UpdateStatusUnknown_Skips_NeverGuesses()
     {
-        var r = HealthCheckAggregator.Run(Healthy(updatesAvailable: null), "minecraft");
+        var r = Run(Healthy(updatesAvailable: null), "minecraft");
 
         Check(r, "updates").State.Should().Be(CheckState.Skip);
         r.Data.Skipped.Should().Be(1);
@@ -199,7 +212,7 @@ public class HealthCheckAggregatorTests
     [InlineData(99, CheckState.Fail)]
     public void Disk_ThresholdsHeadroom(int usedPercent, CheckState expected)
     {
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(disk: new HostDisk(usedPercent, "916G", "10G")), "minecraft");
 
         Check(r, "disk").State.Should().Be(expected);
@@ -209,7 +222,7 @@ public class HealthCheckAggregatorTests
     [Fact]
     public void Disk_Unavailable_Skips_WithReason_NeverFakesZero()
     {
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(hasDisk: false, diskReason: "monitor offline"), "minecraft");
 
         var disk = Check(r, "disk");
@@ -223,7 +236,7 @@ public class HealthCheckAggregatorTests
     [Fact]
     public void Disk_PercentUnparsed_Skips()
     {
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(disk: new HostDisk(null, "916G", "649G")), "minecraft");
 
         Check(r, "disk").State.Should().Be(CheckState.Skip);
@@ -232,7 +245,7 @@ public class HealthCheckAggregatorTests
     [Fact]
     public void Ports_ReachableWhileRunning_Passes()
     {
-        var r = HealthCheckAggregator.Run(Healthy(portsReachable: true), "factorio-test");
+        var r = Run(Healthy(portsReachable: true), "factorio-test");
 
         var ports = Check(r, "ports");
         ports.State.Should().Be(CheckState.Pass);
@@ -245,7 +258,7 @@ public class HealthCheckAggregatorTests
     {
         // A running server whose ports aren't bound is a warning (it may still be starting), never a
         // hard fail — the honest middle ground.
-        var r = HealthCheckAggregator.Run(Healthy(portsReachable: false), "factorio-test");
+        var r = Run(Healthy(portsReachable: false), "factorio-test");
 
         var ports = Check(r, "ports");
         ports.State.Should().Be(CheckState.Warn);
@@ -257,7 +270,7 @@ public class HealthCheckAggregatorTests
     public void Ports_NotProbed_Skips_WithReason_NeverFabricatesPass()
     {
         // null reachability (no ports configured / probe failed) must Skip, never assert reachable.
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(portsReachable: null, portsDetail: "no ports configured"), "factorio-test");
 
         var ports = Check(r, "ports");
@@ -271,7 +284,7 @@ public class HealthCheckAggregatorTests
     public void Ports_StoppedServer_Skips_WithoutProbing()
     {
         // Even with a stale true, a stopped server's ports check skips (binding is meaningless stopped).
-        var r = HealthCheckAggregator.Run(Healthy(running: false, portsReachable: true), "factorio-test");
+        var r = Run(Healthy(running: false, portsReachable: true), "factorio-test");
 
         Check(r, "ports").State.Should().Be(CheckState.Skip);
     }
@@ -281,12 +294,111 @@ public class HealthCheckAggregatorTests
     {
         // Running + error logs (warn) + disk critically full (fail) → overall fail.
         var logs = new[] { "FATAL out of memory" };
-        var r = HealthCheckAggregator.Run(
+        var r = Run(
             Healthy(logs: logs, disk: new HostDisk(98, "916G", "1G")), "minecraft");
 
         Check(r, "logs").State.Should().Be(CheckState.Warn);
         Check(r, "disk").State.Should().Be(CheckState.Fail);
         r.Data.Overall.Should().Be(CheckState.Fail);
         r.Summary.Should().Contain("problems");
+    }
+
+    // --- Stability: a server that is up again is not the same as a server that is well ------------
+
+    private static InstanceHealthSnapshot AfterRestart(
+        TimeSpan ago, string previousOutcome, int? exit = null) =>
+        Healthy(restart: new InstanceRestart(Now - ago, previousOutcome, exit));
+
+    [Fact]
+    public void ARecentCrashRestart_IsNotReportedAsHealthy()
+    {
+        // The failure this check exists for. Every other check reads the CURRENT run: the log sample
+        // starts where the run started, so a server that aborted and came back is examined entirely
+        // after the fact and passes clean. Without this, the crash is in none of the evidence and so
+        // in none of the answer — "healthy, no errors" ten minutes after it went down.
+        var r = Run(AfterRestart(TimeSpan.FromMinutes(10), ConsoleRunInfo.CrashedOutcome, exit: 139), "romestead");
+
+        r.Data.Overall.Should().Be(CheckState.Warn);
+        r.Summary.Should().NotContain("romestead: healthy.");
+        Check(r, "stability").State.Should().Be(CheckState.Warn);
+        r.Summary.Should().Contain("Restarted 10 minutes ago after a crash").And.Contain("exit 139");
+
+        // And the reason the clean log scan is not reassurance is stated, not left to be inferred.
+        r.Summary.Should().Contain("this run's logs begin after it");
+    }
+
+    [Fact]
+    public void TheLogScanNeverClaimsMoreThanTheRunItRead()
+    {
+        // "No errors in recent logs" reads as a statement about the server. It is only ever about the
+        // stretch since it last started, and after a restart those are very different claims — so the
+        // wording is scoped whether or not anything restarted recently.
+        var r = Run(Healthy(), "minecraft");
+
+        Check(r, "logs").Detail.Should().Be("No errors since the server last started.");
+    }
+
+    [Fact]
+    public void AnOldCrashIsNotAWarning_AndTheUptimeIsReported()
+    {
+        // A server that has held for hours is demonstrating the stability the supervisor credited it
+        // with long ago. Warning forever would make the check noise, and noise gets ignored.
+        var r = Run(AfterRestart(TimeSpan.FromHours(9), ConsoleRunInfo.CrashedOutcome, exit: 139), "romestead");
+
+        r.Data.Overall.Should().Be(CheckState.Pass);
+        Check(r, "stability").Detail.Should().Be("Up 9 hours since the last restart.");
+    }
+
+    [Fact]
+    public void ARecentDeliberateRestart_IsNotAWarning()
+    {
+        // Somebody restarting a server is somebody doing their job. Warning on it would train a
+        // reader to discount the warning that matters.
+        var r = Run(AfterRestart(TimeSpan.FromMinutes(5), "stopped"), "minecraft");
+
+        r.Data.Overall.Should().Be(CheckState.Pass);
+        Check(r, "stability").Detail.Should().Contain("after a deliberate stop rather than a failure");
+    }
+
+    [Fact]
+    public void AnUnrecordedPreviousEnding_IsSaidToBeUnknown_AndDoesNotWarn()
+    {
+        // Not knowing how a run ended is not evidence that it failed — warning on it would invent a
+        // crash. Nor is it evidence it ended cleanly, which is why it is said out loud.
+        var r = Run(AfterRestart(TimeSpan.FromMinutes(3), ConsoleRunInfo.UnknownOutcome), "romestead");
+
+        r.Data.Overall.Should().Be(CheckState.Pass);
+        Check(r, "stability").Detail.Should()
+            .Contain("never recorded").And.Contain("not the same as it having ended cleanly");
+    }
+
+    [Fact]
+    public void NoRunHistory_Skips_RatherThanAssumingAStableRun()
+    {
+        // An unreadable run list must not read as "nothing has restarted" — the same fabrication the
+        // rest of this aggregator refuses everywhere else.
+        var r = Run(Healthy(hasRestart: false), "minecraft");
+
+        var stability = Check(r, "stability");
+        stability.State.Should().Be(CheckState.Skip);
+        stability.Detail.Should().Contain("unknown");
+        r.Data.Overall.Should().Be(CheckState.Pass);
+    }
+
+    [Fact]
+    public void AStoppedInstance_SkipsStability()
+    {
+        // Uptime is not a question a stopped server has an answer to.
+        var r = Run(Healthy(running: false), "factorio-test");
+
+        Check(r, "stability").State.Should().Be(CheckState.Skip);
+    }
+
+    [Fact]
+    public void GivingUpCountsAsACrash()
+    {
+        var r = Run(AfterRestart(TimeSpan.FromMinutes(2), ConsoleRunInfo.GaveUpOutcome, exit: 1), "romestead");
+
+        Check(r, "stability").State.Should().Be(CheckState.Warn);
     }
 }

@@ -404,7 +404,8 @@ internal sealed class KgsmServerOperations : IServerOperations
                 HostDisk: hostDisk,
                 HostDiskUnavailableReason: diskReason,
                 PortsReachable: portsReachable,
-                PortsDetail: portsDetail);
+                PortsDetail: portsDetail,
+                Restart: status.Status ? await ReadRestartAsync(instance, cancellationToken) : null);
 
             return Result.Success(snapshot);
         }
@@ -471,6 +472,42 @@ internal sealed class KgsmServerOperations : IServerOperations
         }
 
         return (fallback, fallback.Count);
+    }
+
+    /// <summary>
+    /// When this run began and how the one before it ended, from the supervisor's run list, or null
+    /// when there is nothing to say: only one run on record, or a list that could not be read.
+    /// <para>
+    /// A run's start is not recorded anywhere, so it is taken from the previous run's ending — the
+    /// spawn follows it within about a second. That is measured, unlike a start time, which is why
+    /// the absence of a previous run yields null rather than a guess at how long this one has been up.
+    /// </para>
+    /// <para>
+    /// Best-effort, exactly like the log sample and the disk read beside it: a failure here skips the
+    /// stability check rather than failing the health read.
+    /// </para>
+    /// </summary>
+    private async Task<InstanceRestart?> ReadRestartAsync(string instance, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var runs = await _watchdog.GetConsoleRunsAsync(instance, cancellationToken);
+
+            // The run in progress is index 0; the one before it is what ended to make room for it.
+            // Anything else means the supervisor is describing a shape this cannot read, so say nothing.
+            if (runs.Count < 2 || !runs[0].Current || runs[1].EndedAt is not { } endedAt)
+                return null;
+
+            return new InstanceRestart(
+                new DateTimeOffset(endedAt, TimeSpan.Zero),
+                runs[1].Outcome,
+                runs[1].ExitCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Run list read for the health check of {Instance} failed", instance);
+            return null;
+        }
     }
 
     private static IReadOnlyList<string> SplitLogLines(string? recentLogs) =>

@@ -41,27 +41,42 @@ public static class HealthCheckAggregator
     private const int MinLogLinesForVerdict = 25;
 
     /// <summary>
+    /// How recently a crash-restart still belongs in the answer to "is it healthy". Inside this
+    /// window the crash is the most useful thing anyone can be told about the server; past it, one
+    /// that has stayed up is demonstrating the stability the supervisor credited it with long before.
+    /// <para>
+    /// Deliberately not the supervisor's own <c>RestartStabilitySeconds</c> (300s), which answers a
+    /// different question — whether to reset a failure streak, a supervision decision — and is far too
+    /// short to govern what a person is told.
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan RecentRestartWindow = TimeSpan.FromHours(1);
+
+    /// <summary>
     /// Runs the deterministic sweep. Always returns a result — partial inputs degrade to
     /// <see cref="CheckState.Skip"/> checks, never errors.
     /// </summary>
     /// <param name="snapshot">The fetched, neutral inputs for one instance.</param>
     /// <param name="instanceId">The resolved instance name (the result's subject).</param>
-    public static ToolResult<HealthData> Run(InstanceHealthSnapshot snapshot, string instanceId)
+    /// <param name="now">The current time, injected so the stability check is testable.</param>
+    public static ToolResult<HealthData> Run(
+        InstanceHealthSnapshot snapshot, string instanceId, DateTimeOffset? now = null)
     {
         var liveness = CheckLiveness(snapshot);
+        var stability = CheckStability(snapshot, now ?? DateTimeOffset.UtcNow);
         var logs = CheckLogs(snapshot);
         var updates = CheckUpdates(snapshot);
         var disk = CheckDisk(snapshot);
         var ports = CheckPorts(snapshot);
 
-        var checks = new[] { liveness, logs, updates, disk, ports };
+        var checks = new[] { liveness, stability, logs, updates, disk, ports };
 
         var overall = WorstNonSkip(checks);
         var passed = checks.Count(c => c.State == CheckState.Pass);
         var skipped = checks.Count(c => c.State == CheckState.Skip);
 
         var data = new HealthData(overall, checks, passed, checks.Length, skipped);
-        var summary = BuildSummary(instanceId, snapshot.Running, overall, logs, updates, disk, ports);
+        var summary = BuildSummary(instanceId, snapshot.Running, overall, stability, logs, updates, disk, ports);
 
         return new ToolResult<HealthData>(
             Tool: LlmTools.RunHealthCheck,
@@ -78,6 +93,75 @@ public static class HealthCheckAggregator
             // Stateless KGSM: stopped is NOT a failure — it may be intentional.
             ? new HealthCheck("liveness", CheckState.Pass, Severity.Success, "Running.")
             : new HealthCheck("liveness", CheckState.Pass, Severity.Info, "Stopped (idle).");
+
+    /// <summary>
+    /// Whether this run has been up long enough to stand on its own, and what ended the run before it.
+    /// <para>
+    /// <b>This is the check that stops a crash-restart reading as health.</b> Every other check looks
+    /// at the current run: the log sample starts where the run started, so a server that aborted and
+    /// came back is examined entirely after the fact and passes cleanly. The crash is not in any of
+    /// the evidence, so without this it is in none of the answer either.
+    /// </para>
+    /// <para>
+    /// A restart is only a warning when the supervisor says the previous run <em>failed</em>. A
+    /// deliberate stop and restart is somebody doing their job, and an ending nobody recorded is
+    /// unknown — reported as such, and never warned on, because not knowing how a run ended is not
+    /// evidence that it ended badly.
+    /// </para>
+    /// </summary>
+    private static HealthCheck CheckStability(InstanceHealthSnapshot s, DateTimeOffset now)
+    {
+        if (!s.Running)
+            return new HealthCheck(
+                "stability", CheckState.Skip, Severity.Info, "Stability not assessed — instance not running.");
+
+        if (s.Restart is not { } restart)
+            return new HealthCheck(
+                "stability", CheckState.Skip, Severity.Info,
+                "No run history available, so how long this run has been up is unknown.");
+
+        string uptime = Duration(now - restart.At);
+
+        if (now - restart.At > RecentRestartWindow)
+            return new HealthCheck(
+                "stability", CheckState.Pass, Severity.Success, $"Up {uptime} since the last restart.");
+
+        string exit = restart.PreviousExitCode is { } code ? $", exit {code}" : "";
+
+        return restart.PreviousOutcome switch
+        {
+            ConsoleRunInfo.CrashedOutcome or ConsoleRunInfo.GaveUpOutcome => new HealthCheck(
+                "stability", CheckState.Warn, Severity.Warn,
+                $"Restarted {uptime} ago after a crash{exit} — this run's logs begin after it, so a "
+                + "clean scan here says nothing about what went wrong."),
+
+            "stopped" or "exited" => new HealthCheck(
+                "stability", CheckState.Pass, Severity.Info,
+                $"Up {uptime}, after a deliberate stop rather than a failure."),
+
+            _ => new HealthCheck(
+                "stability", CheckState.Pass, Severity.Info,
+                $"Up {uptime}. How the previous run ended was never recorded, which is not the same as "
+                + "it having ended cleanly."),
+        };
+    }
+
+    /// <summary>
+    /// A duration in the coarsest unit that still says something useful — the reader needs to know
+    /// whether a restart was minutes or hours ago, not a figure precise enough to be quoted as one.
+    /// </summary>
+    private static string Duration(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero)
+            span = TimeSpan.Zero;
+
+        return span.TotalMinutes < 1 ? "less than a minute"
+            : span.TotalHours < 1 ? Plural((int)span.TotalMinutes, "minute")
+            : span.TotalDays < 1 ? Plural((int)span.TotalHours, "hour")
+            : Plural((int)span.TotalDays, "day");
+    }
+
+    private static string Plural(int n, string unit) => n == 1 ? $"1 {unit}" : $"{n} {unit}s";
 
     private static HealthCheck CheckLogs(InstanceHealthSnapshot s)
     {
@@ -105,11 +189,16 @@ public static class HealthCheckAggregator
             return new HealthCheck(
                 "logs", CheckState.Skip, Severity.Info, "No recent log output to scan.");
 
+        // Scoped to THIS RUN, always — the sample is the current run's console, which begins at the
+        // last start. "No errors in recent logs" reads as a statement about the server; it is only
+        // ever a statement about the stretch since it last started, and after a restart those are
+        // very different claims. The stability check says whether that distinction matters here.
         var (count, sample) = TallyErrors(s.RecentLogLines);
         if (count == 0)
-            return new HealthCheck("logs", CheckState.Pass, Severity.Success, "No errors in recent logs.");
+            return new HealthCheck(
+                "logs", CheckState.Pass, Severity.Success, "No errors since the server last started.");
 
-        var detail = $"{count} error line{(count == 1 ? "" : "s")} in recent logs"
+        var detail = $"{count} error line{(count == 1 ? "" : "s")} since the server last started"
                      + (sample is null ? "." : $": \"{Truncate(sample, MaxSampleErrorLength)}\".");
         return new HealthCheck("logs", CheckState.Warn, Severity.Warn, detail);
     }
@@ -215,7 +304,7 @@ public static class HealthCheckAggregator
     /// </summary>
     private static string BuildSummary(
         string id, bool running, CheckState overall,
-        HealthCheck logs, HealthCheck updates, HealthCheck disk, HealthCheck ports)
+        HealthCheck stability, HealthCheck logs, HealthCheck updates, HealthCheck disk, HealthCheck ports)
     {
         var headline = (overall, running) switch
         {
@@ -225,7 +314,9 @@ public static class HealthCheckAggregator
             (_, false) => $"{id}: stopped (idle).",
         };
 
-        var rest = string.Join(" ", new[] { logs.Detail, updates.Detail, disk.Detail, ports.Detail }
+        // Stability leads the details: when it warns, it is the reason the headline is not "healthy",
+        // and it reframes every check after it as being about this run rather than about the server.
+        var rest = string.Join(" ", new[] { stability.Detail, logs.Detail, updates.Detail, disk.Detail, ports.Detail }
             .Where(d => !string.IsNullOrWhiteSpace(d)));
 
         return string.IsNullOrEmpty(rest) ? headline : $"{headline} {rest}";

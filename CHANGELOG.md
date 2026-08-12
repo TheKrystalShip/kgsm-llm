@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Confirming from a notification no longer appears to do nothing.** `POST /push/actions/{handle}`
+  redeemed the handle and then *waited for the whole action*, answering only once it finished. A
+  measured `instances create-backup projectzomboid` took **six minutes** — far past the short,
+  unstated budget a browser gives a service worker woken by a push, so the worker was terminated and
+  the tap produced no answer at all while the backup ran to completion.
+  - The redemption is still synchronous for everything that decides *whether* it may run — redeeming
+    the handle, rebuilding the account, re-deriving authority. Only the action itself is detached, on
+    its own DI scope and the application lifetime token rather than the request's.
+  - The immediate answer claims only what is known at that moment: approved, and started.
+  - The verdict comes back as a **second push** to the device that approved it, carrying no handles,
+    which is how the service worker knows to draw it without buttons. It reuses the confirmation's
+    notification tag, so the answer replaces the question rather than leaving a live-looking Confirm
+    on the shade for something already done.
+
+### Fixed
+
 - **A staged action is restated when a conversation is loaded, so coming back to it still offers the
   button.** `GET /conversations/{id}` now carries `pending` — the proposals still awaiting the caller
   there, each shaped as the same `command.proposed` frame that first announced it. Until now a

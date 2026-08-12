@@ -83,4 +83,25 @@ internal static class ConfirmationNotice
         };
         return JsonSerializer.SerializeToUtf8Bytes(payload);
     }
+
+    /// <summary>
+    /// The verdict on an action approved from a notification.
+    /// </summary>
+    /// <remarks>
+    /// It carries no handles, because there is nothing left to decide — which is what the service
+    /// worker keys on to draw it without buttons. The tag is the confirmation's, so the answer
+    /// REPLACES the question on the shade rather than sitting under a stale set of buttons for
+    /// something already done.
+    /// </remarks>
+    public static byte[] OutcomePayload(string title, string body, string confirmationHandle)
+    {
+        var payload = new
+        {
+            kind = "outcome",
+            title,
+            body,
+            tag = "kgsm-confirmation:" + confirmationHandle,
+        };
+        return JsonSerializer.SerializeToUtf8Bytes(payload);
+    }
 }

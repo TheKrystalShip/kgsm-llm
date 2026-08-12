@@ -154,6 +154,9 @@ builder.Services.AddSingleton<IPushSubscriptionStore, SqlitePushSubscriptionStor
 builder.Services.AddHttpClient<WebPushSender>(c => c.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.TryAddSingleton(TimeProvider.System);
 builder.Services.AddHostedService<ConfirmationPushWorker>();
+// Runs an action approved from a notification detached from the request that carried the tap,
+// and pushes the verdict back — a service worker cannot be held open for a fifteen-minute backup.
+builder.Services.AddSingleton<PushConfirmationRunner>();
 
 // --- Web auth (Discord OAuth) ------------------------------------------------
 // A sign-in yields a short-lived access bearer plus a refresh token, both signed by this service
@@ -1567,9 +1570,8 @@ app.MapPost("/push/actions/{handle}", async (
     string handle,
     IPushActionStore pushActions,
     IPendingConfirmationStore pending,
-    IServerAssistant assistant,
+    PushConfirmationRunner runner,
     AuthService auth,
-    IInvocationContext invocation,
     CancellationToken ct) =>
 {
     if (!pushActions.TryTake(handle, out var action))
@@ -1596,11 +1598,16 @@ app.MapPost("/push/actions/{handle}", async (
     if (!canPerform)
         return Results.Ok(new PushActionResponse(false, "You are no longer allowed to run that action."));
 
-    using var provenance = invocation.Begin(
-        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(null)));
+    // ⚠ Started, NOT awaited. A confirmed action runs to completion — a backup is minutes and the
+    // executor allows fifteen — and the caller is a service worker the browser will terminate long
+    // before that. Holding the request open means the tap appears to do nothing at all while the work
+    // runs. The verdict comes back as a second push, to the device that approved it.
+    runner.Start(confirmation, action, canPerform);
 
-    var outcome = await assistant.ConfirmAsync(confirmation, canPerform, ct);
-    return Results.Ok(new PushActionResponse(outcome.Ok, outcome.Summary));
+    // What is claimed here is only what is known here: it was approved and it has been started.
+    var verb = ConfirmationKinds.Verb(confirmation.Kind);
+    return Results.Ok(new PushActionResponse(
+        true, $"Confirmed — running the {verb} now. I'll let you know how it goes."));
 });
 
 app.Run();

@@ -23,7 +23,7 @@
     <Version>1.1.0</Version>
     <Authors>Heisenberg</Authors>
     <Description>The trusted-relay client contract for kgsm-assistant-service: the forwarded principal, the relay headers (identity, verified tier, auto-accept, conversation sub-scope, calling leaf) and the liveness probe. Referenced by the leaves that relay a turn on a verified user's behalf.</Description>
-    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
     <RepositoryType>GitHub</RepositoryType>

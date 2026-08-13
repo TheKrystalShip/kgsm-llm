@@ -101,4 +101,6 @@ package_kgsm-rag-indexer() {
 
     install -Dm644 "${repo}/deploy/kgsm-rag-indexer.service" \
         "${pkgdir}/usr/lib/systemd/system/kgsm-rag-indexer.service"
+
+    install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

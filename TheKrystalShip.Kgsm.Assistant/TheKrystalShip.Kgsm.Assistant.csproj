@@ -12,7 +12,7 @@
     <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
     <RepositoryType>GitHub</RepositoryType>
     <Description>kgsm-specific assistant built on TheKrystalShip.Llm: system prompt, tool definitions, dispatcher, policy/caps, and confirmation staging. Host-agnostic via the IServerOperations / IServerInventory ports.</Description>
-    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <NeutralLanguage>en</NeutralLanguage>
     <RootNamespace>TheKrystalShip.Kgsm.Assistant</RootNamespace>
     <AssemblyName>TheKrystalShip.Kgsm.Assistant</AssemblyName>

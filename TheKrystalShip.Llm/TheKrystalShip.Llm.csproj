@@ -12,7 +12,7 @@
     <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
     <RepositoryType>GitHub</RepositoryType>
     <Description>Reusable client and tool-calling agent loop for a local LLM (Ollama). Transport-agnostic DTOs, conversation memory, and a host-driven agent loop that any C# app can reuse.</Description>
-    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <NeutralLanguage>en</NeutralLanguage>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <RootNamespace>TheKrystalShip.Llm</RootNamespace>

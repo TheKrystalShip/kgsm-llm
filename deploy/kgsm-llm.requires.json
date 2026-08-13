@@ -1,0 +1,34 @@
+{
+  "project": "kgsm-llm",
+  "leafId": "assistant",
+  "role": "leaf",
+  "runtime": {
+    "kind": "dotnet",
+    "note": "Framework-dependent single-file today (Service + CLI); the rag-indexer is Native AOT. Packaged builds publish --self-contained so a node needs no .NET runtime."
+  },
+  "commands": [
+    { "name": "kgsm", "package": "kgsm", "required": true, "probe": "kgsm --version", "why": "every tool the assistant can call reaches the engine through kgsm-lib" }
+  ],
+  "services": [
+    { "name": "ollama", "required": true, "endpoint": "http://127.0.0.1:11434", "why": "the agent loop's model backend — the assistant has no other inference path", "without": "the leaf starts and every turn fails", "warning": "Must stay bound to 127.0.0.1. Binding it to a routable address exposes an unauthenticated inference endpoint to the internet." },
+    { "name": "kgsm-watchdog.service", "required": false, "why": "lifecycle tools act through it", "without": "read-only tools work; start/stop/restart fail" },
+    { "name": "nginx", "required": false, "why": "public TLS ingress for the standalone assistant SPA", "without": "the assistant serves on its own port only" }
+  ],
+  "system": [],
+  "units": {
+    "system": ["kgsm-assistant-service.service", "kgsm-rag-indexer.service"],
+    "user": [],
+    "note": "The rag-indexer is optional and installed with --with-indexer. It indexes the knowledge corpus under the engine's docs directory; without it, retrieval serves whatever index already exists."
+  },
+  "paths": {
+    "prefix": "/opt/kgsm-assistant",
+    "state": ["/var/lib/kgsm-assistant"],
+    "runtime": ["/run/kgsm-assistant"],
+    "config": ["/etc/kgsm-assistant/assistant.env"],
+    "descriptor": "/var/lib/kgsm/leaves/assistant.json",
+    "cliLink": "/usr/local/bin/kgsm-assistant"
+  },
+  "network": [
+    { "direction": "egress", "to": "the configured web-search provider", "required": false, "why": "the search tool's fallback when local retrieval finds nothing", "without": "the assistant answers from the local corpus only" }
+  ]
+}

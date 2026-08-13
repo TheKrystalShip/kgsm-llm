@@ -10,8 +10,8 @@
 #   kgsm-llm              the assistant service + CLI
 #   kgsm-rag-indexer      the RAG index builder — opt-in, and the assistant answers without it
 #
-# The Service is framework-dependent, so it declares the ASP.NET runtime. A CI publish with
-# --self-contained removes that; drop 'aspnet-runtime' from depends when it does.
+# The Service is framework-dependent, so it declares the ASP.NET runtime. Every release builds
+# against the current .NET, which is what Arch's aspnet-runtime tracks.
 
 pkgbase=kgsm-llm
 pkgname=('kgsm-llm' 'kgsm-rag-indexer')

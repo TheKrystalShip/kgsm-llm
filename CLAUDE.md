@@ -212,7 +212,8 @@ CLI and Eval — interactive tools, not leaves — keep `appsettings.json`;
 
 ## Version tracking
 
-- **Version source:** `<Version>` in `TheKrystalShip.Llm/TheKrystalShip.Llm.csproj` and `TheKrystalShip.Kgsm.Assistant/TheKrystalShip.Kgsm.Assistant.csproj` (each versioned independently)
+- **Version source:** `<Version>` in `TheKrystalShip.Kgsm.Assistant.Service/…csproj` — this repo's release line, the one `CHANGELOG.md` tracks and the one the assistant package ships under. The published libraries (`TheKrystalShip.Llm`, `.Kgsm.Assistant`, `.Kgsm.Assistant.Relay`) each version independently of it and of each other.
+- **Packaging reads it via `deploy/version.sh`** — `./deploy/version.sh` prints the declared version, `--pkgver` prints the pacman-safe form. A package never restates a version number; it asks for one.
 - Bump the version whenever you make a user-facing change (new feature, bug fix, behaviour change). Patch for fixes, minor for new features, major for breaking changes.
 - Update `CHANGELOG.md` under `## [Unreleased]` with a brief entry for every meaningful change.
 - A git tag matching the new version should be created on release: `git tag v<version>`.

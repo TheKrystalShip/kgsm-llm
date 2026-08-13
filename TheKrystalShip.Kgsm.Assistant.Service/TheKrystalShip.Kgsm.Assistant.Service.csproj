@@ -6,6 +6,11 @@
     <Nullable>enable</Nullable>
     <RootNamespace>TheKrystalShip.Kgsm.Assistant.Service</RootNamespace>
     <AssemblyName>kgsm-assistant</AssemblyName>
+    <!-- This repo's release line — the version CHANGELOG.md tracks and the one the assistant package
+         ships under. The three published libraries (TheKrystalShip.Llm, .Kgsm.Assistant and
+         .Kgsm.Assistant.Relay) each version independently of it and of each other. Read by
+         deploy/version.sh, which is the single source for packaging. -->
+    <Version>1.10.0</Version>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>

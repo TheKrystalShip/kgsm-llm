@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — one machine-readable version, read rather than restated
+
+`deploy/version.sh` prints this project's version from the single file that declares it, and
+`--pkgver` prints the form pacman accepts (a `pkgver` may not contain a hyphen; ordering survives it,
+since `vercmp` puts `3.16.0rc3` before `3.16.0`). Packaging asks for a version instead of carrying a
+copy that can fall behind the binary.
+
+The Service now declares `<Version>1.10.0</Version>` — this repo's release line, the one
+`CHANGELOG.md` has been tracking with no file to read it from. The three published libraries version
+independently of it and of each other.
+
 ### Added — the deploy contract is files, not install-time script output
 
 `deploy/polkit/48-kgsm-llm-deploy.rules.in` carries the headless-deploy grant as reviewable content, and

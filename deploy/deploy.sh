@@ -15,10 +15,9 @@
 #   * Indexer  — Native-AOT single file          → /opt/kgsm-assistant/indexer (opt-in; needs Ollama)
 #
 # Service + CLI need the .NET 10 ASP.NET Core runtime on the host (checked up front). kgsm-lib is
-# consumed as the packed NuGet TheKrystalShip.KGSM.Lib from the local feed (nuget.config →
-# /home/heisen/local-nuget); the sibling kgsm-lib checkout must be present so it can be packed
-# into that feed. The env file /etc/kgsm-assistant/service.env is setup.sh's business and is
-# never touched here — your secrets survive every redeploy.
+# consumed as the packed NuGet TheKrystalShip.KGSM.Lib from the org's GitHub Packages feed
+# (nuget.config), so this repo builds standalone. The env file /etc/kgsm-assistant/service.env is
+# setup.sh's business and is never touched here — your secrets survive every redeploy.
 #
 # Knobs: RID, ASSISTANT_URL, HEALTH_TRIES.
 #
@@ -29,7 +28,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/deploy-common.sh"
 WITH_INDEXER=0
 [[ "${1:-}" == "--with-indexer" ]] && WITH_INDEXER=1
 
-WORKSPACE="$(cd "$REPO_DIR/.." && pwd)"
 SVC_PROJ="$REPO_DIR/TheKrystalShip.Kgsm.Assistant.Service/TheKrystalShip.Kgsm.Assistant.Service.csproj"
 CLI_PROJ="$REPO_DIR/TheKrystalShip.Kgsm.Assistant.Cli/TheKrystalShip.Kgsm.Assistant.Cli.csproj"
 IDX_PROJ="$REPO_DIR/TheKrystalShip.Rag.Indexer/TheKrystalShip.Rag.Indexer.csproj"
@@ -56,9 +54,8 @@ trap 'on_err "$LINENO"' ERR
 refuse_root
 require_setup
 [[ -f "$SVC_PROJ" ]] || { err "project not found: $SVC_PROJ"; exit 1; }
-# kgsm-lib is consumed as the packed NuGet from the local feed (nuget.config). The sibling checkout is
-# what packs it there; if it's absent the pinned package may be unresolvable at restore.
-[[ -d "$WORKSPACE/kgsm-lib" ]] || { err "sibling repo missing: $WORKSPACE/kgsm-lib — it packs TheKrystalShip.KGSM.Lib into the local NuGet feed the build restores from."; exit 1; }
+# kgsm-lib restores as TheKrystalShip.KGSM.Lib from the org's GitHub Packages feed (nuget.config),
+# so no sibling checkout has to be present for this build to succeed.
 if ! dotnet --list-runtimes 2>/dev/null | grep -q 'Microsoft.AspNetCore.App 10\.'; then
     err "the .NET 10 ASP.NET Core shared runtime is not installed (need 'Microsoft.AspNetCore.App 10.x'). Check: dotnet --list-runtimes"
     exit 1

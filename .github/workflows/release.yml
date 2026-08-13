@@ -53,6 +53,7 @@ jobs:
             --store-password-in-clear-text \
             --configfile nuget.config
 
+
       # The live-Ollama smoke tests are inert unless KGSM_LIVE_OLLAMA=1, so the default run is
       # hermetic and needs no model on the runner.
       - name: Test

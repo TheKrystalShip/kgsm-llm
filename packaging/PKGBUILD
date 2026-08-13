@@ -1,0 +1,104 @@
+# Maintainer: Cristian Moraru <info@thekrystalship.com>
+#
+# Build from this directory:  cd packaging && makepkg
+#
+# The assistant leaf. Note the install prefix keeps the ASSISTANT's name, not the repo's:
+# /opt/kgsm-assistant, configured from /etc/kgsm-assistant. The package is named for the repo so it
+# matches the git remote and the rest of the fleet.
+#
+# Two packages from one build:
+#   kgsm-llm              the assistant service + CLI
+#   kgsm-rag-indexer      the RAG index builder — opt-in, and the assistant answers without it
+#
+# The Service is framework-dependent, so it declares the ASP.NET runtime. A CI publish with
+# --self-contained removes that; drop 'aspnet-runtime' from depends when it does.
+
+pkgbase=kgsm-llm
+pkgname=('kgsm-llm' 'kgsm-rag-indexer')
+pkgver=1.10.0
+pkgrel=1
+arch=('x86_64')
+url="https://github.com/TheKrystalShip/kgsm-llm"
+license=('GPL-3.0-or-later')
+# No separate debug package: these are shipped to a private fleet, not a distro archive.
+options=('!debug')
+
+_stage() { printf '%s' "${KGSM_STAGE:-${startdir}/../artifacts/publish}"; }
+
+pkgver() {
+    "${startdir}/../deploy/version.sh" --pkgver
+}
+
+build() {
+    local stage; stage="$(_stage)"
+    [[ -e "${stage}/service/kgsm-assistant" ]] || {
+        printf '\n  no publish output at %s\n' "$stage" >&2
+        printf '  build it first:  ./deploy/deploy.sh   (or dotnet publish the Service and Cli into artifacts/publish/{service,cli})\n' >&2
+        printf '  or point KGSM_STAGE at an existing one.\n\n' >&2
+        return 1
+    }
+}
+
+package_kgsm-llm() {
+    pkgdesc="KGSM assistant — a local tool-calling AI assistant over a KGSM host"
+    groups=('kgsm-node')
+    depends=('kgsm' 'systemd' 'glibc' 'aspnet-runtime')
+    optdepends=(
+        'ollama: the model backend — the assistant has no other inference path'
+        'kgsm-watchdog: lifecycle tools act through it'
+        'kgsm-rag-indexer: builds the retrieval index this reads'
+        'nginx: public TLS ingress for the assistant’s own site'
+    )
+    backup=('etc/kgsm-assistant/service.env')
+    install="kgsm-llm.install"
+
+    local repo="${startdir}/.." stage; stage="$(_stage)"
+    local prefix="${pkgdir}/opt/kgsm-assistant"
+
+    install -dm755 "${prefix}/service" "${prefix}/cli"
+    cp -a "${stage}/service/." "${prefix}/service/"
+    cp -a "${stage}/cli/." "${prefix}/cli/"
+    find "$prefix" -name '*.pdb' -delete
+    find "$prefix" -name '*.dbg' -delete
+
+    # The CLI on PATH. /usr/bin, never /usr/local/bin — /usr/local belongs to the local admin.
+    install -dm755 "${pkgdir}/usr/bin"
+    ln -s /opt/kgsm-assistant/cli/kgsm-assistant-cli "${pkgdir}/usr/bin/kgsm-assistant-cli"
+
+    install -Dm644 "${repo}/deploy/kgsm-assistant-service.service" \
+        "${pkgdir}/usr/lib/systemd/system/kgsm-assistant-service.service"
+
+    install -Dm644 "${repo}/deploy/sysusers.d/kgsm-llm.conf" \
+        "${pkgdir}/usr/lib/sysusers.d/kgsm-llm.conf"
+
+    install -Dm640 "${repo}/deploy/assistant.env.example" \
+        "${pkgdir}/etc/kgsm-assistant/service.env"
+
+    install -Dm644 "${repo}/deploy/kgsm-llm.leaf.json" \
+        "${pkgdir}/var/lib/kgsm/leaves/assistant.json"
+
+    install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
+
+package_kgsm-rag-indexer() {
+    pkgdesc="KGSM assistant RAG indexer — builds the retrieval index the assistant reads"
+    depends=('kgsm-llm' 'glibc')
+    optdepends=('ollama: computes the embeddings')
+
+    local repo="${startdir}/.." stage; stage="$(_stage)"
+
+    if [[ -d "${stage}/indexer" ]]; then
+        install -dm755 "${pkgdir}/opt/kgsm-assistant/indexer"
+        cp -a "${stage}/indexer/." "${pkgdir}/opt/kgsm-assistant/indexer/"
+        find "${pkgdir}/opt/kgsm-assistant/indexer" -name '*.pdb' -delete
+        find "${pkgdir}/opt/kgsm-assistant/indexer" -name '*.dbg' -delete
+    else
+        # deploy.sh builds it only with --with-indexer, so a stage without one is ordinary. Say so
+        # rather than producing a package that silently contains no indexer.
+        error "no indexer in ${stage} — publish it first: ./deploy/deploy.sh --with-indexer"
+        return 1
+    fi
+
+    install -Dm644 "${repo}/deploy/kgsm-rag-indexer.service" \
+        "${pkgdir}/usr/lib/systemd/system/kgsm-rag-indexer.service"
+}

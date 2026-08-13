@@ -1,0 +1,29 @@
+# pacman's own hooks run systemd-sysusers, systemd-tmpfiles and daemon-reload. Enabling a unit is
+# the administrator's call, not a package's.
+
+post_install() {
+    cat <<'MSG'
+
+  kgsm-assistant is installed but not running. Before starting it:
+
+    1. Set real values in /etc/kgsm-assistant/service.env
+    2. Make sure Ollama is reachable — the assistant has no other inference path, and every turn
+       fails without it. Keep it bound to 127.0.0.1: a routable bind is an unauthenticated
+       inference endpoint on the internet.
+    3. systemctl enable --now kgsm-assistant-service.service
+
+  Install kgsm-rag-indexer to build the retrieval index. Without it the assistant still answers —
+  it just has no local corpus to draw on.
+
+MSG
+}
+
+post_upgrade() {
+    cat <<'MSG'
+
+  Restart to pick up the new build:
+
+    systemctl restart kgsm-assistant-service.service
+
+MSG
+}

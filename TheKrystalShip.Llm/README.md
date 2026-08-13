@@ -102,15 +102,18 @@ if (result.IsSuccess) Reply(result.Value!);
 The `IToolDispatcher` is expected to enforce the tool whitelist (refuse unknown tools) and
 never throw — return execution failures as result strings so the model can recover.
 
-## Local development (consuming from a folder feed)
+## Publishing
 
-Sibling repos in the ecosystem (e.g. `kgsm-bot`) consume this as a NuGet package. While
-iterating before it's published to a real feed, it's consumed from a local folder feed
-(e.g. `/home/heisen/local-nuget`) via a `nuget.config` in the consumer:
+Sibling repos in the ecosystem consume this as a NuGet package from the org's GitHub Packages feed.
+Publish from the workspace root:
 
 ```bash
-dotnet pack TheKrystalShip.Llm/TheKrystalShip.Llm.csproj -c Release -o /home/heisen/local-nuget
+../../scripts/publish-packages.sh kgsm-llm
 ```
+
+A published version is immutable, so a consumer sees a change only after `<Version>` is bumped and
+the new version is pushed. While iterating, use a prerelease (`1.10.0-dev.1`, `-dev.2`, …) — a push
+is fetchable within seconds.
 
 > Note: within *this* repo, the assistant projects reference the library by **project
 > reference**, not the package — so a normal `dotnet build` of the solution never touches the

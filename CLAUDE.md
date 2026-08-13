@@ -148,10 +148,10 @@ Things that bite if you don't know them:
 
 - **Never shell out to `kgsm.sh` (or open the watchdog socket) from C#.** All engine access goes
   through **kgsm-lib**, consumed as a versioned `PackageReference`
-  (`TheKrystalShip.KGSM.Lib`) resolved from the local folder feed `/home/heisen/local-nuget` —
-  the same pattern kgsm-api, kgsm-bot and kgsm-monitor use. **The pinned version is what this repo
-  compiles against, not the sibling checkout**: a capability added to kgsm-lib is invisible here
-  until it is packed and the pin is bumped. Need more kgsm data? Extend a kgsm-lib method (then
+  (`TheKrystalShip.KGSM.Lib`) resolved from the org's GitHub Packages feed — the same pattern
+  kgsm-api, kgsm-bot and kgsm-monitor use. **The pinned version is what this repo compiles against,
+  not the sibling checkout**: a capability added to kgsm-lib is invisible here until it is published
+  and the pin is bumped. Need more kgsm data? Extend a kgsm-lib method (then
   repack + bump) or an assistant port.
 - **Never fabricate a status or metric.** Measured, or explicitly "unknown" — never invented. The
   ecosystem-wide rule; it's also why the eval scores *trajectory* (which tool was called), never a

@@ -97,6 +97,22 @@ public class KgsmServerInventoryTests
         _blueprints.Received(2).ListDetailed();
     }
 
+    /// <summary>
+    /// The TTL is the backstop behind the engine's events, not something they replace: an event
+    /// missed while this process was restarting must not be believed forever.
+    /// </summary>
+    [Fact]
+    public async Task WithNoEventAtAll_TheTtlStillRefreshes()
+    {
+        _instances.GetAll().Returns(Inst(("terraria", "terraria")));
+        var inv = Create(ttl: 0);
+
+        await inv.GetInstancesAsync();
+        await inv.GetInstancesAsync();
+
+        _instances.Received(2).GetAll();
+    }
+
     [Fact]
     public async Task RefreshFailure_ServesLastKnownGood()
     {

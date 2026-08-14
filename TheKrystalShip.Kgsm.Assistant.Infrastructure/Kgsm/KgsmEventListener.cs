@@ -18,7 +18,13 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 /// <para>
 /// The journal is the right seam precisely because it is surface-blind: it carries a change made by
 /// anyone on the host, not only the ones this process performed, so there is one freshness path
-/// rather than one per surface that can mutate the inventory.
+/// rather than one per surface that can mutate the inventory. Nothing invalidates from inside a
+/// mutating tool — that would be the same staleness with a narrower trigger, fresh for the
+/// assistant's own actions and stale for everybody else's.
+/// </para>
+/// <para>
+/// Events are the mechanism and the TTL is the backstop, and both are load-bearing: an event drops
+/// the cache the moment the world changes, and the TTL bounds how long a missed one can be believed.
 /// </para>
 /// <para>
 /// Only a resident host runs this, and only with <c>KGSM:JournalDir</c> set — because a one-shot
@@ -58,6 +64,15 @@ internal sealed class KgsmEventListener : IHostedService
         _events.RegisterHandler<InstanceInstalledData>(e => OnInstanceRosterChanged("instance_installed", e.InstanceName));
         _events.RegisterHandler<InstanceRemovedData>(e => OnInstanceRosterChanged("instance_removed", e.InstanceName));
         _events.RegisterHandler<InstanceUninstalledData>(e => OnInstanceRosterChanged("instance_uninstalled", e.InstanceName));
+
+        // An update rewrites the instance's own record, so the roster snapshot describing it is a
+        // reading from before the change. Both the run ending and the version actually moving are
+        // handled: the engine emits the first for every update and the second only when the version
+        // differs, and a cache that waited for the second would hold a stale record through every
+        // update that reinstalled the same version.
+        _events.RegisterHandler<InstanceUpdatedData>(e => OnInstanceRosterChanged("instance_updated", e.InstanceName));
+        _events.RegisterHandler<InstanceVersionUpdatedData>(
+            e => OnInstanceRosterChanged("instance_version_updated", e.InstanceName));
 
         // Starts the journal read loop. kgsm-lib tolerates a journal directory that does not exist
         // yet and picks up the first segment when it appears, so a kgsm redeploy — or a host that

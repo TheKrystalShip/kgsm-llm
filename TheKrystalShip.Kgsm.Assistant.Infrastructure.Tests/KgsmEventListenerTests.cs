@@ -126,6 +126,37 @@ public class KgsmEventListenerTests
     }
 
     /// <summary>
+    /// An update rewrites the instance's own record, so the roster describing it is a reading from
+    /// before the change — the user's explicit third case alongside install and uninstall.
+    /// </summary>
+    [Fact]
+    public async Task Instance_updated_invalidates_the_instance_cache()
+    {
+        Func<InstanceUpdatedData, Task>? handler = null;
+        _events.RegisterHandler(Arg.Do<Func<InstanceUpdatedData, Task>>(h => handler = h));
+
+        await Create().StartAsync(CancellationToken.None);
+        await handler!(new InstanceUpdatedData { InstanceName = "factorio-01" });
+
+        _inventory.Received(1).InvalidateInstances();
+    }
+
+    [Fact]
+    public async Task Instance_version_updated_invalidates_the_instance_cache()
+    {
+        Func<InstanceVersionUpdatedData, Task>? handler = null;
+        _events.RegisterHandler(Arg.Do<Func<InstanceVersionUpdatedData, Task>>(h => handler = h));
+
+        await Create().StartAsync(CancellationToken.None);
+        await handler!(new InstanceVersionUpdatedData
+        {
+            InstanceName = "factorio-01", OldVersion = "2.0.76", NewVersion = "2.0.77",
+        });
+
+        _inventory.Received(1).InvalidateInstances();
+    }
+
+    /// <summary>
     /// The two caches answer separate questions, so neither event drops the other's snapshot — a
     /// server installed does not change what games exist, and a blueprint edited does not change
     /// what is installed. Dropping both would cost the untouched half a kgsm subprocess for nothing.

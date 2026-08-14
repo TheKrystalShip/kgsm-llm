@@ -14,18 +14,20 @@ server installed through the assistant did not exist as far as every following t
 so an uninstall staged against it could not find its target; the same held for an install made from
 the Control Panel, the Discord bot or another operator's CLI.
 
-`KgsmEventListener` now handles the four engine events at which `kgsm instances list` answers
-differently — `instance_created`, `instance_installed`, `instance_removed`, `instance_uninstalled` —
-and drops the roster when one arrives. The journal is the seam because it is surface-blind: it
-carries a change made by anyone on the host, so there is one freshness path rather than one per
-surface that can mutate the inventory.
+`KgsmEventListener` handles the engine events that change an instance record — `instance_created`,
+`instance_installed`, `instance_removed`, `instance_uninstalled`, `instance_updated`,
+`instance_version_updated` — and drops the roster when one arrives. They come through kgsm-lib's
+federated journal, the same subscription every other leaf uses.
 
-The kgsm chokepoint drops the roster after its own successful install or uninstall as well. The
-journal listener is opt-in per host (`KGSM:JournalDir`), and a mutation this process performed
-itself must not depend on a listener the host may not be running. A failed call leaves the snapshot
-alone — the roster did not change.
+The journal is the seam because it is surface-blind: it carries a change made by anyone on the host.
+Nothing invalidates from inside a mutating tool, which would be the same staleness with a narrower
+trigger — fresh for the assistant's own actions and stale for the Control Panel's, the Discord bot's
+and a CLI run by hand.
 
-The roster and the blueprint catalog now invalidate separately (`InvalidateInstances`,
+Events are the mechanism and the TTL is the backstop. An event drops the cache the moment the world
+changes; the TTL bounds how long a missed one — a restart mid-install, say — can be believed.
+
+The roster and the blueprint catalog invalidate separately (`InvalidateInstances`,
 `InvalidateBlueprints`). A server installed does not change what games exist, and a blueprint edited
 does not change what is installed, so dropping both would cost the untouched half a `kgsm`
 subprocess on its next read for nothing.

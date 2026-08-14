@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-08-14
+
+### Fixed — a shared room's conversation could not be managed at all
+
+⚠ **Only `POST /turn` understood rooms.** Every other route composed a `web:{userId}` key of its own,
+so a conversation belonging to a place could be appended to and nothing else — not compacted, not
+cleared. A leaf asking to compact a room folded the *caller's private chat* instead and reported that
+it had worked. The resolution now lives in one place (`ConversationSurfaces.Key`) and every route that
+names a conversation uses it, because a turn and a compaction that disagree about which conversation
+they mean are not operating on the same thing.
+
+### Added — clearing a conversation, and `/new` in a room
+
+`IConversationStore.Reset` starts a conversation over: the model replays nothing from before it, and
+the transcript keeps every word. **It is a checkpoint carrying no summary** — compaction folds the
+history into a briefing and replays that, a reset folds it into silence. One mechanism, one append,
+one rule deciding where a replay begins.
+
+⚠ **`SoftDelete` is not this and looks like it is.** A tombstone hides a conversation from a listing
+while the model goes on remembering every word of it.
+
+**`/new` in a room resets rather than minting an id.** A room's id is derived from the place it
+belongs to, so there is nowhere to start over *to*: the next thing said there resolves back to the
+same key however many ids are minted. It needs **operator**, where the same command is free in a
+private chat — clearing a room takes the memory from everybody in it, and they are not the person who
+asked.
+
+### Added — conversations compact themselves
+
+`Conversation:CompactAtPercent` (70, 0 to disable). A turn that leaves the context window fuller than
+this is folded into a checkpoint once it finishes. Left to a person to ask for, this never happens: a
+conversation grows until the backend drops the front of it, and the first sign is the assistant having
+forgotten something nobody told it to forget. A room shared by a channel makes that a certainty rather
+than a risk — it is one conversation for the life of the place, and the people talking into it have no
+reason to know a context window exists.
+
+It runs after the reply is delivered and before any queued turn, so nothing a person waits on is
+delayed and the next turn inherits the smaller context. The trigger is the occupancy the backend
+reported, never an estimate; a turn that reported none is left alone.
+
+### Fixed — the model context no longer costs the whole conversation to build
+
+`GetModelContext` loaded and deserialised **every entry** of a conversation to project the handful of
+messages after its latest checkpoint. That is bounded for a chat somebody starts fresh and unbounded
+for a room keyed to a channel. The projection now reads from the latest checkpoint forward in SQL.
+
+⚠ The narrowed read is for the projection only: a transcript, a listing or a resolved preference must
+see the whole log, or it answers from the newest fragment as though nothing preceded it.
+
 ## [1.14.0] - 2026-08-14
 
 ### Fixed — the assistant may now search the docs, then search the web

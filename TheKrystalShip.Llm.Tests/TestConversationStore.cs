@@ -95,7 +95,12 @@ internal sealed class TestConversationStore : IConversationStore
         var start = 0;
         if (lastCheckpoint >= 0)
         {
-            messages.Add(LlmMessage.Assistant(_entries[lastCheckpoint].CheckpointSummary!));
+            // A checkpoint carrying nothing is a reset — no recap message, so the replay is exactly the
+            // turns after it. Mirrors the real store, which is what makes this double worth asserting on.
+            var summary = _entries[lastCheckpoint].CheckpointSummary;
+            if (!string.IsNullOrWhiteSpace(summary))
+                messages.Add(LlmMessage.Assistant(summary));
+
             start = lastCheckpoint + 1;
         }
 
@@ -174,6 +179,9 @@ internal sealed class TestConversationStore : IConversationStore
         _entries.Add(entry);
         Track(conversationId, entry);
     }
+
+    /// <summary>A checkpoint carrying nothing, exactly as the real store records one.</summary>
+    public void Reset(string conversationId) => AddCheckpoint(conversationId, string.Empty);
 
     public void SoftDelete(string conversationId) => _deleted.Add(conversationId);
 

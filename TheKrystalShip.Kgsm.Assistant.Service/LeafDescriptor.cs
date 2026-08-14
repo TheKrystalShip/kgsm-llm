@@ -109,6 +109,11 @@ using TheKrystalShip.KGSM.LeafConfig;
     Description = "File holding past conversations, which is both the assistant's memory and the record the Control Panel reads. Pointing it elsewhere starts an empty history and leaves the old one behind.",
     Group = "conversation", Type = LeafType.Path, Risk = LeafRisk.Destructive)]
 
+[assembly: LeafFrameworkField("conversationCompactAtPercent", "Conversation__CompactAtPercent",
+    "Summarise a conversation at",
+    Description = "How full the context window may get before the assistant folds a conversation into a summary on its own. Left to people to ask for, this never happens, and a conversation grows until the model quietly loses the start of it. Nothing is deleted — the full transcript is kept, and only what the model replays gets shorter. 0 switches it off.",
+    Group = "conversation", Type = LeafType.Int, Min = 0, Max = 95, Unit = "%")]
+
 // ── TheKrystalShip.KGSM.Auth's section, described for this surface ───────────
 // The shared authorization block. The type lives in the auth package, which is deliberately free of
 // every dependency including this one, so its keys are described here rather than on the type. Only

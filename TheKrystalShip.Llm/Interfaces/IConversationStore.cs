@@ -89,6 +89,26 @@ public interface IConversationStore
     void AddCheckpoint(string conversationId, string summary);
 
     /// <summary>
+    /// Starts the conversation over: subsequent <see cref="GetModelContext"/> replays nothing that came
+    /// before this point. Non-destructive in exactly the way <see cref="AddCheckpoint"/> is — every turn
+    /// stays in the history, and a transcript still shows the whole thing.
+    /// </summary>
+    /// <remarks>
+    /// <b>It is a checkpoint carrying no summary</b>, which is what makes it one mechanism rather than
+    /// two: compaction folds the history into a briefing and replays that, this folds it into silence.
+    /// <para>
+    /// This — not <see cref="SoftDelete"/> — is what clearing a conversation means. A tombstone hides a
+    /// conversation from a listing and the model goes on remembering every word of it.
+    /// </para>
+    /// <para>
+    /// For a conversation whose id is <em>derived</em> rather than chosen — a chat room keyed to the
+    /// place it happens in — this is also the only way to start fresh: there is no second id to move to,
+    /// because the next thing said in that room resolves back to the same key.
+    /// </para>
+    /// </remarks>
+    void Reset(string conversationId);
+
+    /// <summary>
     /// Soft-deletes a conversation: stops it appearing in <see cref="ListConversations"/> WITHOUT erasing
     /// any turn — the append-only history (the self-improvement corpus) is preserved in full. Append-only
     /// and idempotent; a later <see cref="AppendTurn"/> to the same id (a resume) supersedes the

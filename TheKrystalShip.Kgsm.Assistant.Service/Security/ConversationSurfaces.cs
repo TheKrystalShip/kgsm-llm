@@ -42,4 +42,37 @@ internal static class ConversationSurfaces
     /// </summary>
     public static string? Resolve(string? name) =>
         name is null ? null : All.FirstOrDefault(s => string.Equals(s, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The room this request is speaking into, or <see langword="null"/> when it is not in one. Read
+    /// from what the auth filter admitted, never from the header — a room key exists only when a leaf
+    /// on the allow-list asked for one.
+    /// </summary>
+    public static string? RoomOf(HttpContext http) =>
+        ConversationScope.Sanitize(
+            http.Items.TryGetValue(BearerAuthFilter.RelayRoomKey, out var room) && room is string named
+                ? named
+                : null);
+
+    /// <summary>
+    /// The stored key a request addresses: the room it is speaking into, or the caller's own chat.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>One resolution for every route.</b> A turn, a compaction and a wipe have to name the same
+    /// conversation or they are not operating on the same thing — and the way that goes wrong is silent:
+    /// a room asked to compact would fold the caller's private chat instead and report that it worked.
+    /// </para>
+    /// <para>
+    /// <b>A room wins over a per-chat id</b>, rather than combining with it. The two answer the same
+    /// question, and a key built from both would be a room per person — everybody alone in a transcript
+    /// named after the place they thought they were sharing.
+    /// </para>
+    /// </remarks>
+    public static string Key(HttpContext http, string userId, string? chatScope) =>
+        RoomOf(http) is { } room
+            ? $"{Room}:{room}"
+            : string.IsNullOrEmpty(chatScope)
+                ? $"{Web}:{userId}"
+                : $"{Web}:{userId}:{chatScope}";
 }

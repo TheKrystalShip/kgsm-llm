@@ -255,6 +255,19 @@
       "risk": "destructive"
     },
     {
+      "key": "conversationCompactAtPercent",
+      "env": "Conversation__CompactAtPercent",
+      "label": "Summarise a conversation at",
+      "description": "How full the context window may get before the assistant folds a conversation into a summary on its own. Left to people to ask for, this never happens, and a conversation grows until the model quietly loses the start of it. Nothing is deleted — the full transcript is kept, and only what the model replays gets shorter. 0 switches it off.",
+      "group": "conversation",
+      "type": "int",
+      "default": "70",
+      "min": 0,
+      "max": 95,
+      "unit": "%",
+      "risk": "safe"
+    },
+    {
       "key": "kgsmPath",
       "env": "KGSM__Path",
       "label": "KGSM executable",

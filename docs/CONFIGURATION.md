@@ -95,12 +95,22 @@ The **indexer takes CLI flags, not a config file** — its row maps to `--model`
 | `Seed` | _(unset)_ | `Ollama__Seed` | Reproducible sampling (eval/testing) |
 | `Think` | `true` (CLI) | `Ollama__Think` | Gemma "thinking" mode; CLI `--think/--no-think` overrides |
 
-### `Conversation` — short-term memory (`ConversationOptions`)
+### `Conversation` — the history and what the model replays (`ConversationOptions`)
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `MaxMessages` | `12` | `Conversation__MaxMessages` | Rolling window; older messages dropped |
-| `IdleTimeoutMinutes` | `15` | `Conversation__IdleTimeoutMinutes` | Inactivity before a conversation resets |
+| `DatabasePath` | beside the binary | `Conversation__DatabasePath` | SQLite file holding the whole corpus; the Service points it at its state dir |
+| `CompactAtPercent` | `70` | `Conversation__CompactAtPercent` | Context occupancy at which a finished turn is summarised into a checkpoint. `0` leaves compaction manual |
+
+The history is **append-only and never trimmed** — there is no rolling window and no idle timeout, and
+deliberately no knob for either. What bounds the model's context is a **checkpoint**: compaction folds
+the turns so far into a summary and the model replays that summary plus everything after it, while the
+transcript keeps every word. A checkpoint carrying *no* summary is a **reset** — the conversation
+continues from nothing, which is what `/new` does in a shared room, where the id is derived from the
+place and there is no second id to move to.
+
+`CompactAtPercent` is well under 100 on purpose: it is measured on the turn that just finished, and the
+next one still needs room for a fresh system prompt, the injected server lists, and its tool output.
 
 ### `LlmAgent` — agent loop (`LlmAgentOptions`)
 

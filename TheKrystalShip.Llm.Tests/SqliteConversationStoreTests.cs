@@ -164,6 +164,73 @@ public sealed class SqliteConversationStoreTests : IDisposable
     }
 
     [Fact]
+    public void Reset_LeavesTheModelReplayingNothing()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("room:g-c", "q1", "a1"));
+        store.AppendTurn(Turn("room:g-c", "q2", "a2"));
+
+        store.Reset("room:g-c");
+
+        // Nothing to replay: not a recap of an empty summary, not the turns before it — nothing.
+        store.GetModelContext("room:g-c").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Reset_KeepsTheWholeTranscript()
+    {
+        // The corpus is never destroyed. A wipe ends the model's memory of a conversation, not the
+        // record of it — the same bargain compaction makes.
+        var store = Create();
+        store.AppendTurn(Turn("room:g-c", "q1", "a1"));
+        store.Reset("room:g-c");
+
+        store.GetHistory("room:g-c").Select(e => e.Kind).Should().Equal(
+            ConversationEntryKind.Turn, ConversationEntryKind.Checkpoint);
+    }
+
+    [Fact]
+    public void Reset_ThenTalking_ReplaysOnlyWhatCameAfter()
+    {
+        var store = Create();
+        store.AppendTurn(Turn("room:g-c", "about minecraft", "an answer"));
+        store.Reset("room:g-c");
+        store.AppendTurn(Turn("room:g-c", "about terraria", "another answer"));
+
+        store.GetModelContext("room:g-c").Select(m => m.Content).Should().Equal(
+            "about terraria", "another answer");
+    }
+
+    [Fact]
+    public void Reset_IsRepeatable()
+    {
+        // A room is cleared by whoever is in it, and somebody clearing an already-clear room is asking
+        // for the state it is already in.
+        var store = Create();
+        store.AppendTurn(Turn("room:g-c", "q1", "a1"));
+        store.Reset("room:g-c");
+        store.Reset("room:g-c");
+
+        store.GetModelContext("room:g-c").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ACheckpointAfterAReset_SummarisesOnlyWhatFollowedIt()
+    {
+        // The two are one mechanism, so they compose: compacting after a wipe folds the turns since the
+        // wipe and nothing from before it.
+        var store = Create();
+        store.AppendTurn(Turn("room:g-c", "forgotten", "forgotten answer"));
+        store.Reset("room:g-c");
+        store.AppendTurn(Turn("room:g-c", "remembered", "remembered answer"));
+        store.AddCheckpoint("room:g-c", "we talked about the remembered thing");
+
+        var ctx = store.GetModelContext("room:g-c");
+        ctx.Should().ContainSingle();
+        ctx[0].Content.Should().Contain("we talked about the remembered thing");
+    }
+
+    [Fact]
     public void Conversations_AreIsolatedById()
     {
         var store = Create();

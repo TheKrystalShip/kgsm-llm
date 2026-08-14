@@ -706,7 +706,11 @@ public sealed class SqliteConversationStore : IConversationStore
 
     public IReadOnlyList<LlmMessage> GetModelContext(string conversationId, bool attributeSpeakers = false)
     {
-        var entries = LoadEntries(conversationId);
+        // Only what the model will actually replay. The whole log is the corpus and grows without
+        // bound — a room keyed to a channel is one conversation for the life of that channel — while
+        // the projection is the latest checkpoint and the turns after it. Loading all of it to build
+        // those few messages made every turn cost the conversation's entire history.
+        var entries = LoadEntries(conversationId, fromLastCheckpoint: true);
 
         // Replay from the latest checkpoint forward (or the whole conversation if there is none).
         var lastCheckpoint = -1;
@@ -723,7 +727,15 @@ public sealed class SqliteConversationStore : IConversationStore
         var start = 0;
         if (lastCheckpoint >= 0)
         {
-            messages.Add(LlmMessage.Assistant(CheckpointPreamble + entries[lastCheckpoint].CheckpointSummary));
+            var summary = entries[lastCheckpoint].CheckpointSummary;
+
+            // A checkpoint carrying nothing is a RESET: the conversation continues from here with no
+            // memory of what came before. The recap line is skipped rather than emitted empty — a
+            // preamble announcing a summary and then showing none tells the model there was a
+            // conversation it cannot see, which is worse than the clean slate that was asked for.
+            if (!string.IsNullOrWhiteSpace(summary))
+                messages.Add(LlmMessage.Assistant(CheckpointPreamble + summary));
+
             start = lastCheckpoint + 1;
         }
 
@@ -743,6 +755,14 @@ public sealed class SqliteConversationStore : IConversationStore
     public void AddCheckpoint(string conversationId, string summary)
     {
         Insert(conversationId, KindCheckpoint, DateTimeOffset.UtcNow, summary);
+    }
+
+    public void Reset(string conversationId)
+    {
+        // A checkpoint carrying nothing. Compaction folds the history into a summary and replays that;
+        // this folds it into silence — the same boundary, the same append, and one code path deciding
+        // where a replay begins.
+        Insert(conversationId, KindCheckpoint, DateTimeOffset.UtcNow, string.Empty);
     }
 
     public void SoftDelete(string conversationId)
@@ -887,13 +907,33 @@ public sealed class SqliteConversationStore : IConversationStore
         }
     }
 
-    private List<ConversationEntry> LoadEntries(string conversationId)
+    /// <summary>
+    /// The conversation's entries, oldest first. <paramref name="fromLastCheckpoint"/> narrows the read
+    /// to the latest checkpoint and everything after it — the model's replay window — instead of the
+    /// whole log.
+    /// </summary>
+    /// <remarks>
+    /// The checkpoint itself is included, because its summary is the first thing replayed. A
+    /// conversation with no checkpoint reads whole either way, which is the same answer.
+    /// <para>
+    /// ⚠ A narrowed read is for the projection ONLY. Anything describing the conversation to a person —
+    /// a transcript, a listing, a verdict — has to see every entry, and a tombstone or a preference
+    /// resolved from a truncated log would answer from the newest fragment as though nothing preceded it.
+    /// </para>
+    /// </remarks>
+    private List<ConversationEntry> LoadEntries(string conversationId, bool fromLastCheckpoint = false)
     {
         using var connection = Open();
         using var cmd = connection.CreateCommand();
-        cmd.CommandText =
-            "SELECT id, kind, created_at, payload FROM conversation_entries WHERE conversation_id = $cid ORDER BY id ASC;";
+        cmd.CommandText = fromLastCheckpoint
+            ? "SELECT id, kind, created_at, payload FROM conversation_entries "
+              + "WHERE conversation_id = $cid AND id >= COALESCE("
+              + "(SELECT MAX(id) FROM conversation_entries WHERE conversation_id = $cid AND kind = $checkpoint), 0) "
+              + "ORDER BY id ASC;"
+            : "SELECT id, kind, created_at, payload FROM conversation_entries WHERE conversation_id = $cid ORDER BY id ASC;";
         cmd.Parameters.AddWithValue("$cid", conversationId);
+        if (fromLastCheckpoint)
+            cmd.Parameters.AddWithValue("$checkpoint", KindCheckpoint);
 
         var entries = new List<ConversationEntry>();
         // Verdicts are appended after the turn they judge, so they are collected on the way past and

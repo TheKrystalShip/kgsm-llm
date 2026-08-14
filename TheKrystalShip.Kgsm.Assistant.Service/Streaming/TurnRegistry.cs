@@ -7,6 +7,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
 using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -78,6 +79,7 @@ internal sealed class TurnRegistry : ITurnRegistry
     private readonly IConversationEventBus _bus;
     private readonly IInvocationContext _invocation;
     private readonly IOptions<AssistantServiceOptions> _assistantOptions;
+    private readonly IOptions<ConversationOptions> _conversationOptions;
     private readonly ILogger<TurnRegistry> _log;
 
     public TurnRegistry(
@@ -87,6 +89,7 @@ internal sealed class TurnRegistry : ITurnRegistry
         IConversationEventBus bus,
         IInvocationContext invocation,
         IOptions<AssistantServiceOptions> assistantOptions,
+        IOptions<ConversationOptions> conversationOptions,
         ILogger<TurnRegistry> log)
     {
         _scopes = scopes;
@@ -95,6 +98,7 @@ internal sealed class TurnRegistry : ITurnRegistry
         _bus = bus;
         _invocation = invocation;
         _assistantOptions = assistantOptions;
+        _conversationOptions = conversationOptions;
         _log = log;
     }
 
@@ -227,9 +231,72 @@ internal sealed class TurnRegistry : ITurnRegistry
             {
                 session.Finish();
                 _byTurnId.TryRemove(session.TurnId, out _);
+
+                // Before the next turn rather than after this one's reply, which are the same moment
+                // from here: the answer has been delivered and its consumers are done, so nothing a
+                // person is waiting on is delayed — and a turn queued behind this one inherits the
+                // smaller context instead of racing the checkpoint being written under it.
+                await CompactIfFullAsync(session);
+
                 StartNext(turns, session);
             }
         });
+    }
+
+    /// <summary>
+    /// Folds the conversation into a checkpoint when the turn that just ran left the context window
+    /// close to full.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Nobody is going to ask for this.</b> A conversation that is never compacted grows until the
+    /// backend drops the front of it, and the first anybody knows is the assistant having forgotten
+    /// something they never told it to forget. A room shared by a channel makes that certain: it is one
+    /// conversation for the life of the place, and the people talking into it have no reason to know a
+    /// context window exists. <c>/compact</c> remains for asking early.
+    /// </para>
+    /// <para>
+    /// <b>Measured, never estimated.</b> The trigger is the occupancy the backend reported for the turn
+    /// that just ran. A turn that reported none is left alone rather than compacted on a guess.
+    /// </para>
+    /// <para>
+    /// <b>Failure is silent by design.</b> Compaction needs a model call, and one that fails costs a
+    /// larger context next turn — not an answer. Raising it here would report a fault against a turn
+    /// that has already succeeded and whose reply is on the person's screen.
+    /// </para>
+    /// </remarks>
+    private async Task CompactIfFullAsync(TurnSession session)
+    {
+        var at = _conversationOptions.Value.CompactAtPercent;
+        if (at <= 0) return;
+
+        var usage = session.Usage;
+        if (usage is null || usage.ContextWindow <= 0) return;
+        if (usage.UsedTokens * 100 < usage.ContextWindow * at) return;
+
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var compactor = scope.ServiceProvider.GetRequiredService<IConversationCompactor>();
+
+            var result = await compactor.CompactAsync(session.ConversationId, CancellationToken.None);
+            if (result.IsFailure)
+            {
+                _log.LogWarning(
+                    "Could not compact {Conversation} at {Used}/{Window} tokens: {Reason}",
+                    session.ConversationId, usage.UsedTokens, usage.ContextWindow, result.Error);
+                return;
+            }
+
+            if (result.Value!.Compacted)
+                _log.LogInformation(
+                    "Compacted {Conversation} — it was using {Used} of {Window} tokens",
+                    session.ConversationId, usage.UsedTokens, usage.ContextWindow);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not compact {Conversation}", session.ConversationId);
+        }
     }
 
     /// <summary>Hand the conversation to whatever was waiting, skipping anything cancelled meanwhile.</summary>

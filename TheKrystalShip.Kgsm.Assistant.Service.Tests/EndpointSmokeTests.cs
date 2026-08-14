@@ -1888,6 +1888,100 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         store.DeletedKey.Should().Be("web:relayuser:chatA");
     }
 
+    /// <summary>
+    /// POSTs a chat command over the relay, optionally speaking into a room and claiming a tier.
+    /// </summary>
+    private static async Task<HttpResponseMessage> RelayCommandAsync(
+        HttpClient client, string name, string secret, string userId,
+        string? room = null, string? conversationId = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/commands/{name}")
+        {
+            Content = JsonContent.Create(new { conversationId }),
+        };
+        request.Headers.Add("X-Relay-Secret", secret);
+        request.Headers.Add("X-Relay-User", userId);
+        // A room is granted to a listed leaf, never claimed — without this header the room one is
+        // ignored, which is the guard rather than an inconvenience.
+        request.Headers.Add("X-Relay-Leaf", "kgsm-bot");
+        if (room is not null) request.Headers.Add("X-Relay-Room", room);
+        return await client.SendAsync(request);
+    }
+
+    [Fact]
+    public async Task Command_New_InARoom_WipesThatRoomRatherThanMintingAnId()
+    {
+        // A room's id is derived from the place it belongs to, so there is nowhere to start over TO:
+        // the next thing said there resolves back to the same key. Starting fresh is the conversation
+        // itself starting fresh.
+        var store = new RecordingConversationStore();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, KgsmTier.Operator);
+        var factory = Factory(discord: discord,
+            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"), withStore: store);
+
+        var response = await RelayCommandAsync(
+            factory.CreateClient(), "new", "relay-secret", "relayuser", room: "g1-t9");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        store.ResetKey.Should().Be("room:g1-t9");
+    }
+
+    [Fact]
+    public async Task Command_New_InARoom_NeedsOperator()
+    {
+        // ⚠ Gated where the same command is free in a private chat: clearing a room takes the memory
+        // from everybody in it, and they are not the person who asked.
+        var store = new RecordingConversationStore();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, KgsmTier.Viewer);
+        var factory = Factory(discord: discord,
+            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"), withStore: store);
+
+        var response = await RelayCommandAsync(
+            factory.CreateClient(), "new", "relay-secret", "relayuser", room: "g1-t9");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        store.ResetKey.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Command_New_OutsideARoom_StartsAFreshConversation()
+    {
+        // The private-chat path is untouched: an id is minted and nothing is wiped.
+        var store = new RecordingConversationStore();
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, KgsmTier.Viewer);
+        var factory = Factory(discord: discord,
+            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"), withStore: store);
+
+        var response = await RelayCommandAsync(
+            factory.CreateClient(), "new", "relay-secret", "relayuser", conversationId: "chatA");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        store.ResetKey.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Command_Compact_InARoom_CompactsThatRoom()
+    {
+        // The defect this closes: every management route composed a web: key of its own, so a room
+        // asking to be compacted folded the caller's private chat and reported success.
+        var store = new RecordingConversationStore();
+        var compactor = new RecordingCompactor(Llm.Models.CompactionOutcome.Done(4, "a summary"));
+        var discord = Substitute.For<ISignInService, IAuthorityProvider>();
+        StubTier(discord, KgsmTier.Viewer);
+        var factory = Factory(discord: discord,
+            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            withStore: store, withCompactor: compactor);
+
+        var response = await RelayCommandAsync(
+            factory.CreateClient(), "compact", "relay-secret", "relayuser", room: "g1-t9");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        compactor.CompactedKey.Should().Be("room:g1-t9");
+    }
+
     [Fact]
     public async Task Conversation_Relay_Feedback_ScopesToCallerAndRecordsTheVerdict()
     {
@@ -2455,6 +2549,11 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
     public IReadOnlyList<Llm.Models.LlmMessage> GetModelContext(string conversationId, bool attributeSpeakers = false) => Array.Empty<Llm.Models.LlmMessage>();
     public long AppendTurn(Llm.Models.ConversationTurnRecord turn) => 0;
     public void AddCheckpoint(string conversationId, string summary) { }
+
+    /// <summary>The key a wipe addressed, so a test can assert which conversation was cleared.</summary>
+    public string? ResetKey { get; private set; }
+
+    public void Reset(string conversationId) => ResetKey = conversationId;
     public void SoftDelete(string conversationId) => DeletedKey = conversationId;
 
     /// <summary>What the feedback endpoint asked for, so a test can assert the key it composed.</summary>

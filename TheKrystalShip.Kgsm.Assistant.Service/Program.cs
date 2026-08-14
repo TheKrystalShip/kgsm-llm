@@ -291,12 +291,12 @@ app.UseStaticFiles();
 // surface in the same database is not this service's to serve.
 const string WebSurface = ConversationSurfaces.Web;
 
-// The surface for conversations keyed to a PLACE instead of a person: room:{room}. It carries no user
-// segment, which is exactly what makes it shared and exactly why only a permitted leaf may name one
-// (RelayLeaves.OpensRooms). Nothing a person addresses by id — their chat list, a transcript, a
-// compaction — reaches it: those endpoints compose a web: key from the verified principal and always
-// will, so a room is reachable only by speaking in the place it belongs to.
-const string RoomSurface = ConversationSurfaces.Room;
+// Conversations keyed to a PLACE instead of a person live under room:{room} — see
+// ConversationSurfaces, which composes every key and is where the difference is explained. A room
+// carries no user segment, which is what makes it shared and why only a permitted leaf may name one
+// (RelayLeaves.OpensRooms): a room exists to whoever is speaking in it, and is addressed by speaking
+// there rather than by naming an id. Nothing a person addresses BY id — their chat list, a
+// transcript — reaches one.
 
 // --- Public endpoints --------------------------------------------------------
 // Open: a liveness probe, the two auth-bootstrap endpoints (a caller has no session yet) and the
@@ -777,9 +777,12 @@ secured.MapPost("/commands/{name}", async (
         });
 
     var chatScope = ConversationScope.Sanitize(request?.ConversationId);
-    var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"{WebSurface}:{principal.UserId}"
-        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+
+    // Resolved exactly as /turn resolves it, so a command acts on the conversation the next thing said
+    // will continue. Composed per-endpoint, this is where a room asking to be compacted quietly folded
+    // the caller's own chat instead and reported success.
+    var room = ConversationSurfaces.RoomOf(http);
+    var conversationId = ConversationSurfaces.Key(http, principal.UserId, chatScope);
 
     // Tell the caller's OTHER surfaces where the switches now stand, re-read rather than assembled
     // from what was just written — the frame and a later listing must not be able to disagree.
@@ -810,6 +813,26 @@ secured.MapPost("/commands/{name}", async (
 
         case "new":
         {
+            // A ROOM has nowhere to start over TO. Its id is derived from the place it happens in, so
+            // the next thing said there resolves back to the same key however many ids are minted —
+            // starting fresh can only mean the conversation itself starting fresh, which is a reset:
+            // the room stops replaying anything from before this moment, and the transcript keeps it
+            // all.
+            if (room is not null)
+            {
+                // ⚠ Gated above where the same command is free in a private chat. Clearing a room is
+                // one person acting on a conversation everybody there is holding, and the people it
+                // takes the memory from are not the person who asked.
+                if (tier < KgsmTier.Operator)
+                    return Results.Json(
+                        new { error = $"Clearing a shared conversation needs {KgsmTiers.ToWire(KgsmTier.Operator)}." },
+                        statusCode: StatusCodes.Status403Forbidden);
+
+                conversations.Reset(conversationId);
+                return Results.Ok(new CommandResultDto(
+                    command.Name, "Cleared this conversation. I've forgotten what we were talking about."));
+            }
+
             // The id is the client's to offer (it is what the next turn will carry), but the
             // conversation is the leaf's to create — so a fresh chat exists, lists, and is resumable
             // from another device the moment it is started rather than only once it is spoken into.
@@ -1013,10 +1036,11 @@ secured.MapPost("/conversations/{id}/turns/{turnId:long}/feedback", (
     return Results.NoContent();
 });
 
-// Compact one of the caller's chats on demand: summarise its history in place to free up the context
-// window, returning a CompactionOutcome. The key is composed exactly as the reads/delete above — the
-// server-derived user-id prefix + the sanitised per-chat id — so {id} can only ever address the caller's
-// OWN conversation. Non-destructive (a checkpoint is appended; the append-only transcript is preserved) and
+// Compact a conversation on demand: summarise its history in place to free up the context window,
+// returning a CompactionOutcome. The key is composed exactly as /turn composes it — the room being
+// spoken into, or the server-derived user-id prefix + the sanitised per-chat id — so {id} can only
+// ever address the caller's own conversation, and a leaf speaking into a room compacts that room.
+// Non-destructive (a checkpoint is appended; the append-only transcript is preserved) and
 // idempotent-ish: a conversation with too little history to be worth a model round-trip returns
 // Compacted=false, untouched. A model/upstream failure ⇒ 502; the stored history is left as-is.
 secured.MapPost("/conversations/{id}/compact", async (
@@ -1025,9 +1049,7 @@ secured.MapPost("/conversations/{id}/compact", async (
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
-    var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"{WebSurface}:{principal.UserId}"
-        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+    var conversationId = ConversationSurfaces.Key(http, principal.UserId, chatScope);
 
     var result = await compactor.CompactAsync(conversationId, ct);
     if (result.IsFailure)
@@ -1212,22 +1234,9 @@ secured.MapPost("/turn", async (
     // A ROOM instead, when a permitted leaf named one: a conversation belonging to a place, which
     // everyone speaking there continues. The filter has already established that this is the relay
     // path and that the leaf may open rooms — the check cannot be repeated here, because the header
-    // itself never reaches this handler. Sanitised the same way and by the same authority as a chat
-    // scope; what differs is only that no user id precedes it.
-    //
-    // It WINS over the per-chat scope rather than combining with it: the two answer the same question,
-    // and a key built from both would be a room per person — every participant alone in a transcript
-    // named after the place they thought they were sharing.
-    var room = ConversationScope.Sanitize(
-        http.Items.TryGetValue(BearerAuthFilter.RelayRoomKey, out var roomObj) && roomObj is string rr
-            ? rr
-            : null);
-
-    var conversationId = room is not null
-        ? $"{RoomSurface}:{room}"
-        : string.IsNullOrEmpty(chatScope)
-            ? $"{WebSurface}:{principal.UserId}"
-            : $"{WebSurface}:{principal.UserId}:{chatScope}";
+    // itself never reaches this handler.
+    var room = ConversationSurfaces.RoomOf(http);
+    var conversationId = ConversationSurfaces.Key(http, principal.UserId, chatScope);
 
     // The leaf this turn arrives through, when one named itself. It picks the prompt overrides the turn
     // is built from and the origin its actions are recorded under; absent, both are the assistant's own.

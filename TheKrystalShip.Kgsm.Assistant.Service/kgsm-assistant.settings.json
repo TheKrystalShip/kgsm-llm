@@ -25,7 +25,16 @@
     "Think": false
   },
   "Conversation": {
-    "DatabasePath": "/var/lib/kgsm-assistant/conversations.db"
+    "DatabasePath": "/var/lib/kgsm-assistant/conversations.db",
+
+    // How full the context window may get before a finished turn is summarised into a checkpoint on
+    // its own. 0 leaves compaction entirely manual, which in practice means it never happens: a
+    // conversation nobody compacts grows until the backend drops the front of it, and the first sign
+    // is the assistant having forgotten something nobody asked it to forget. A room shared by a
+    // Discord channel makes that a certainty — it is one conversation for the life of the place.
+    // Well under 100 on purpose: the trigger is measured on the turn that just ran, and the next one
+    // still needs room for a fresh system prompt, the injected server lists and its tool output.
+    "CompactAtPercent": 70
   },
   "KGSM": {
     "Path": "/usr/local/bin/kgsm",

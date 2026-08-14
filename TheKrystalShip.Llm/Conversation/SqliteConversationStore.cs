@@ -16,7 +16,7 @@ namespace TheKrystalShip.Llm.Conversation;
 /// restart and is resumable by conversation id.
 /// <para>
 /// What the model replays is a projection (<see cref="GetModelContext"/>): the latest checkpoint
-/// summary plus the user/assistant text of the turns after it. Compaction is non-destructive — it
+/// summary plus the turns after it, each shaped by <see cref="ModelContextProjection"/>. Compaction is non-destructive — it
 /// appends a checkpoint, leaving prior turns intact. Each call opens a pooled connection; writes are
 /// serialised through a process lock (SQLite is single-writer) while WAL lets reads run concurrently.
 /// </para>
@@ -731,12 +731,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             if (entries[i].Kind != ConversationEntryKind.Turn)
                 continue;
-            var turn = entries[i].Turn!;
-            messages.Add(attributeSpeakers
-                ? SpeakerAttribution.Message(turn.UserDisplay, turn.UserPrompt)
-                : LlmMessage.User(turn.UserPrompt));
-            if (!string.IsNullOrWhiteSpace(turn.Final))
-                messages.Add(LlmMessage.Assistant(turn.Final!));
+            ModelContextProjection.AppendTurn(messages, entries[i].Turn!, attributeSpeakers);
         }
 
         return messages;

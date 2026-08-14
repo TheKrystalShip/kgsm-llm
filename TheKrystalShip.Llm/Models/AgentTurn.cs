@@ -79,6 +79,15 @@ public sealed record AgentTurn
     public Func<LlmToolCall, ToolGate>? Gate { get; init; }
 
     /// <summary>
+    /// Optional review of the model's reply, evaluated once per candidate reply before the turn is
+    /// recorded. The host answers with <see cref="ReplyReview"/>: accept it, amend it, or re-prompt
+    /// once. Like <see cref="Gate"/>, a closure created per turn can hold the state the verdict
+    /// needs (what this turn actually did, whether it has already been re-prompted). When null,
+    /// every reply is accepted as written.
+    /// </summary>
+    public Func<string, ReplyReview>? ReviewReply { get; init; }
+
+    /// <summary>
     /// When true, enables the model's thinking/reasoning mode for this turn. The model
     /// generates an internal chain-of-thought before producing its final answer.
     /// Defaults to false (no thinking); the host resolves this from the client's request

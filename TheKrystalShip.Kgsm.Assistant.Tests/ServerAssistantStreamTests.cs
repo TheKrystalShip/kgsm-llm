@@ -359,6 +359,63 @@ public class ServerAssistantStreamTests
         streamed.Should().Contain("Correction");
     }
 
+    /// <summary>
+    /// The claim is caught where the turn can still do something about it: the first unbacked claim
+    /// buys one re-prompt — the model is told, mid-turn, that it called no tool and staged nothing —
+    /// and only a second one is corrected and left standing.
+    /// </summary>
+    [Fact]
+    public async Task AnUnbackedClaim_BuysOneRePrompt_ThenTheCorrection()
+    {
+        var confirmations = new ConfirmationContext();
+        var agent = new ScriptedAgent(confirmations, new[] { AgentEvent.Final("done") },
+            review: new[] { "I've staged a backup for Ketchup.", "I've staged a backup for Ketchup." });
+
+        await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "back up ketchup", true));
+
+        agent.Verdicts[0].WantsRetry.Should().BeTrue();
+        // The nudge restates THIS request, which is what keeps the second attempt on the thing that
+        // was asked for rather than on the action the rejected reply invented.
+        agent.Verdicts[0].Nudge.Should().Be(UnbackedActionClaim.NudgeFor("back up ketchup"));
+        agent.Verdicts[0].Nudge.Should().Contain("back up ketchup");
+        agent.Verdicts[0].Amendment.Should().Be(UnbackedActionClaim.RetryNotice);
+        agent.Verdicts[1].WantsRetry.Should().BeFalse();
+        agent.Verdicts[1].Amendment.Should().Be(UnbackedActionClaim.Correction);
+    }
+
+    /// <summary>
+    /// The review is one-sided in exactly the way the correction is: a turn that staged something
+    /// leaves the reply alone, because the claim it makes is true.
+    /// </summary>
+    [Fact]
+    public async Task AClaimIsAccepted_WhenTheTurnStagedSomething()
+    {
+        var confirmations = new ConfirmationContext();
+        var agent = new ScriptedAgent(confirmations, new[] { AgentEvent.Final("done") },
+            stage: new[] { new PendingConfirmation(ConfirmationKind.Backup, "Ketchup") },
+            review: new[] { "I've staged a backup for Ketchup." });
+
+        await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "back up ketchup", true));
+
+        agent.Verdicts.Should().ContainSingle().Which.Should().Be(ReplyReview.Accept);
+    }
+
+    /// <summary>
+    /// A reply the review already corrected is not corrected again by the outer net that catches an
+    /// agent which never asked.
+    /// </summary>
+    [Fact]
+    public async Task AnAlreadyCorrectedReply_IsNotCorrectedTwice()
+    {
+        var confirmations = new ConfirmationContext();
+        var claimed = "I've staged a backup for Ketchup." + UnbackedActionClaim.Correction;
+        var agent = new ScriptedAgent(confirmations, new[] { AgentEvent.Final(claimed) });
+
+        var events = await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "back up ketchup", true));
+
+        events.Last().Text.Should().Be(claimed);
+    }
+
     [Fact]
     public async Task AClaimedActionIsLeftAloneInTheStream_WhenTheTurnActuallyStagedIt()
     {
@@ -385,6 +442,7 @@ public class ServerAssistantStreamTests
         private readonly Func<string?>? _ambientProbe;
         private readonly ITurnProgress? _progress;
         private readonly IReadOnlyList<(Tool Tool, string Key, string Label)> _progressSteps;
+        private readonly IReadOnlyList<string> _review;
 
         public AgentTurn? LastTurn { get; private set; }
 
@@ -410,6 +468,11 @@ public class ServerAssistantStreamTests
         /// (e.g. <c>create_blueprint</c>'s aggregator) calling <see cref="ITurnProgress.Report"/> from deep
         /// inside its own execution, BEFORE it returns its terminal result.
         /// </param>
+        /// <param name="review">
+        /// If supplied, each string is put to the turn's own <see cref="AgentTurn.ReviewReply"/> during
+        /// the run — where the real loop asks it, with the confirmation scope still live — and the
+        /// verdicts land in <see cref="Verdicts"/>.
+        /// </param>
         public ScriptedAgent(
             IConfirmationContext confirmations,
             IReadOnlyList<AgentEvent> events,
@@ -417,7 +480,8 @@ public class ServerAssistantStreamTests
             int stageAfter = 0,
             Func<string?>? ambientProbe = null,
             ITurnProgress? progress = null,
-            IReadOnlyList<(Tool Tool, string Key, string Label)>? progressSteps = null)
+            IReadOnlyList<(Tool Tool, string Key, string Label)>? progressSteps = null,
+            IReadOnlyList<string>? review = null)
         {
             _confirmations = confirmations;
             _events = events;
@@ -426,7 +490,11 @@ public class ServerAssistantStreamTests
             _ambientProbe = ambientProbe;
             _progress = progress;
             _progressSteps = progressSteps ?? Array.Empty<(Tool, string, string)>();
+            _review = review ?? Array.Empty<string>();
         }
+
+        /// <summary>The verdict the turn's review returned for each reviewed reply, in order.</summary>
+        public List<ReplyReview> Verdicts { get; } = new();
 
         public Task<Result<AgentRunResult>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("This stub only streams.");
@@ -439,6 +507,9 @@ public class ServerAssistantStreamTests
             if (_stageAfter == 0)
                 Stage();
             Probe(); // a tool dispatched up front, before any event is yielded out
+
+            foreach (var reply in _review)
+                Verdicts.Add(turn.ReviewReply?.Invoke(reply) ?? ReplyReview.Accept);
 
             var reportedProgress = false;
             for (var i = 0; i < _events.Count; i++)

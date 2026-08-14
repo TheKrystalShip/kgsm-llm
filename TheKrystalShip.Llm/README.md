@@ -85,7 +85,7 @@ if (result.IsSuccess) Reply(result.Value!);
 | Area | Types |
 |---|---|
 | DTOs | `LlmMessage`/`LlmRole`, `LlmResponse`, `LlmToolCall`, `LlmToolDefinition`/`LlmToolParameter`, `Result`/`Result<T>` |
-| Turn/policy | `AgentTurn`, `ToolGate` |
+| Turn/policy | `AgentTurn`, `ToolGate`, `ReplyReview` |
 | Interfaces | `ILlmClient`, `IConversationStore`, `IToolDispatcher`, `ILlmAgent` |
 | Ollama | `OllamaLlmClient`, `OllamaOptions` |
 | Memory | `InMemoryConversationStore`, `ConversationOptions` |
@@ -94,10 +94,12 @@ if (result.IsSuccess) Reply(result.Value!);
 
 ## Boundaries / responsibilities
 
-- **Library owns:** the model↔tool round-trip, the iteration cap, tool-output truncation,
-  the conversation persistence boundary (only user + final assistant text is stored).
+- **Library owns:** the model↔tool round-trip, the iteration cap, tool-output truncation, the
+  conversation persistence boundary, and the projection a past turn replays as (`ModelContextProjection`:
+  prompt, tool calls, reply — never a past call's output).
 - **Host owns:** the tool definitions, the `IToolDispatcher` that executes them, the system
-  prompt, and the per-call `ToolGate` (authorization, caps, confirmation).
+  prompt, the per-call `ToolGate` (authorization, caps, confirmation), and the per-reply
+  `ReviewReply` (accept, amend, or re-prompt the turn once).
 
 The `IToolDispatcher` is expected to enforce the tool whitelist (refuse unknown tools) and
 never throw — return execution failures as result strings so the model can recover.

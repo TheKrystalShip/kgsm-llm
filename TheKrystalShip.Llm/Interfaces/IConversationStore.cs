@@ -58,8 +58,9 @@ public interface IConversationStore
 
     /// <summary>
     /// The messages the model should replay as context: the latest checkpoint's summary (if any) as a
-    /// leading assistant message, then the user prompt + final reply of every turn after it (or the
-    /// whole conversation when there is no checkpoint). Tool/thinking detail is never replayed.
+    /// leading assistant message, then every turn after it (or the whole conversation when there is no
+    /// checkpoint), each projected by <see cref="Conversation.ModelContextProjection"/> — prompt, tool
+    /// calls, reply. A past call's output and the model's thinking are never replayed.
     /// <para>
     /// <paramref name="attributeSpeakers"/> prefixes each replayed user message with the display name
     /// recorded against that turn (<see cref="SpeakerAttribution"/>) — for a conversation several

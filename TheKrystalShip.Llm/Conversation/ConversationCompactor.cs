@@ -71,9 +71,10 @@ public sealed class ConversationCompactor : IConversationCompactor
     }
 
     /// <summary>
-    /// Renders the stored history into a plain "Role: text" transcript for the summarizer. The
-    /// agent's persistence boundary keeps only user text + final assistant text in the store, so
-    /// every message here carries meaningful <see cref="LlmMessage.Content"/>.
+    /// Renders the stored history into a plain "Role: text" transcript for the summarizer. A replayed
+    /// tool call carries its name and arguments instead of content, and is rendered as the call it is:
+    /// the briefing replaces the turns it folds, so what those turns DID has to survive the fold, or
+    /// the conversation continues from a summary in which the assistant only ever talked.
     /// </summary>
     private static string RenderTranscript(IReadOnlyList<LlmMessage> history)
     {
@@ -87,10 +88,16 @@ public sealed class ConversationCompactor : IConversationCompactor
                 LlmRole.Tool => $"Tool({m.ToolName})",
                 _ => m.Role.ToString(),
             };
-            sb.Append(who).Append(": ").AppendLine(m.Content);
+            sb.Append(who).Append(": ");
+            if (m.ToolCalls is { Count: > 0 })
+                sb.Append("called ").Append(string.Join(", ", m.ToolCalls.Select(RenderCall)));
+            sb.AppendLine(m.Content);
         }
         return sb.ToString().TrimEnd();
     }
+
+    private static string RenderCall(LlmToolCall call) =>
+        $"{call.Name}({string.Join(", ", call.Arguments.Select(a => $"{a.Key}={a.Value}"))})";
 
     private const string SummarizerPrompt =
         """

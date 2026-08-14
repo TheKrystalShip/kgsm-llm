@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-08-14
+
+### Fixed — a conversation stops teaching the model to narrate actions instead of taking them
+
+A replayed turn carries the tool calls it made. The transcript a model reads is also the set of
+examples it imitates, and a turn that answered "start the server" by calling `server_command`
+replayed as prose alone taught that the same request is answered by describing the action. Measured
+against `gemma4:12b`: one such turn in context and the next lifecycle request was answered with
+"I've staged the start command… awaiting your confirmation" and no tool call, every time.
+
+A past call's OUTPUT is still not replayed — each is a reading of a world that has moved on — so
+every replayed call stands against a placeholder that says so and asks for a fresh call.
+
+### Added — an unbacked action claim buys a second attempt, in the same turn
+
+`AgentTurn.ReviewReply` is the outbound counterpart of the per-call `ToolGate`: the host reviews the
+reply before the turn is recorded and answers accept, amend, or re-prompt once. The assistant answers
+with the check that already caught these claims — on a turn that staged and ran nothing, a
+first-person claim of a staged action is false by construction — so the first one re-prompts the
+model with the request restated, and only a second one is corrected and left standing.
+
+The correction is part of the recorded reply, so what a surface reads back is what the person saw,
+and the next turn reads a transcript in which the claim is contradicted rather than one in which it
+looks like it worked.
+
 ## [1.10.1] - 2026-08-14
 
 ### Changed — package license metadata is GPL-3.0-or-later

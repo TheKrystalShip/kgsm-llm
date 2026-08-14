@@ -72,4 +72,29 @@ public class UnbackedActionClaimTests
         UnbackedActionClaim.IsPresentIn(
             "I've stopped Ketchup. I can also back up Terraria if you want.").Should().BeTrue();
     }
+
+    /// <summary>
+    /// The correction is written in the first person and names the actions it denies, so it matches
+    /// the very pattern it answers. A reply already carrying it is corrected, not a fresh claim.
+    /// </summary>
+    [Fact]
+    public void TheCorrectionIsRecognisedInAReplyThatCarriesIt()
+    {
+        UnbackedActionClaim.CorrectionIsPresentIn(
+            "I've stopped Ketchup." + UnbackedActionClaim.Correction).Should().BeTrue();
+        UnbackedActionClaim.CorrectionIsPresentIn("I've stopped Ketchup.").Should().BeFalse();
+        UnbackedActionClaim.CorrectionIsPresentIn(null).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// The nudge puts the request back in front of the model, so a long one is cut to an excerpt
+    /// rather than spending the turn's context restating a pasted file.
+    /// </summary>
+    [Fact]
+    public void TheNudgeRestatesTheRequest_AndCutsALongOne()
+    {
+        UnbackedActionClaim.NudgeFor("stop minecraft").Should().Contain("\"stop minecraft\"");
+        UnbackedActionClaim.NudgeFor(new string('x', 900)).Should().Contain("…")
+            .And.HaveLength(UnbackedActionClaim.NudgeFor(new string('x', 300)).Length + 1);
+    }
 }

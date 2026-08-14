@@ -236,7 +236,10 @@ public class ServerAssistant : IServerAssistant
         // them after the run so the caller can post confirmation prompts. On an auto-accept
         // turn the dispatcher runs lifecycle verbs immediately instead (scope reads back AutoExecute).
         using var scope = _confirmations.BeginTurn(autoExecute);
-        var result = await _agent.RunAsync(turn, cancellationToken);
+        // The review reads the scope, so it is attached here rather than at construction: the scope
+        // exists only for the duration of the turn.
+        var result = await _agent.RunAsync(
+            turn with { ReviewReply = BuildReplyReview(scope, conversationId, userPrompt) }, cancellationToken);
         var confirmations = scope.Staged;
 
         return result.IsSuccess
@@ -334,6 +337,12 @@ public class ServerAssistant : IServerAssistant
         try
         {
             using var scope = _confirmations.BeginTurn(autoExecute);
+            // The review reads the scope, so it is attached here rather than where the turn is built:
+            // the scope exists only for the duration of the turn.
+            turn = turn with
+            {
+                ReviewReply = BuildReplyReview(scope, turn.ConversationId, turn.UserPrompt),
+            };
             // Opens the SAME per-turn ambient pattern as the confirmation scope above, carrying the
             // SAME writer this method already relays mapped agent events into — a long tool reports a
             // step by writing straight onto it (see ITurnProgress), landing on the stream immediately
@@ -441,13 +450,19 @@ public class ServerAssistant : IServerAssistant
     /// is deliberately one-sided — it runs ONLY on a turn that staged nothing and ran nothing, where
     /// any such claim is false by construction, so it can never contradict a real action.
     /// </para>
+    /// <para>
+    /// This is the outer net, over the reply the turn actually ends on:
+    /// <see cref="BuildReplyReview"/> reaches the same claim earlier, where the turn can still be
+    /// re-prompted, and its correction carries into the reply here — which is why a reply already
+    /// carrying the correction is left alone rather than corrected twice.
+    /// </para>
     /// </summary>
     private string CorrectUnbackedClaim(string text, IConfirmationScope scope, string conversationId)
     {
         if (scope.Staged.Count > 0 || scope.ActionPerformed)
             return text;
 
-        if (!UnbackedActionClaim.IsPresentIn(text))
+        if (!UnbackedActionClaim.IsPresentIn(text) || UnbackedActionClaim.CorrectionIsPresentIn(text))
             return text;
 
         _logger.LogWarning(
@@ -455,6 +470,47 @@ public class ServerAssistant : IServerAssistant
             + "Conversation {ConversationId}", conversationId);
 
         return text + UnbackedActionClaim.Correction;
+    }
+
+    /// <summary>
+    /// The same check as <see cref="CorrectUnbackedClaim"/>, put where the turn can still act on it:
+    /// the agent loop asks this of each candidate reply before recording the turn, so an unbacked
+    /// claim first buys a second attempt — the model is told, in the same turn, that it called no tool
+    /// and that nothing is staged — and only a second one is corrected and left standing.
+    /// <para>
+    /// A re-prompt is worth taking because the request usually WAS an action the user wanted: the
+    /// correction alone is honest but leaves them to ask again, and asking again in the same
+    /// conversation meets the same transcript. The verdict is never a guess — it reads the same
+    /// per-turn record the confirmation prompts come from.
+    /// </para>
+    /// </summary>
+    private Func<string, ReplyReview> BuildReplyReview(
+        IConfirmationScope scope, string conversationId, string userPrompt)
+    {
+        var rePrompted = false;
+        return text =>
+        {
+            if (scope.Staged.Count > 0 || scope.ActionPerformed)
+                return ReplyReview.Accept;
+
+            if (!UnbackedActionClaim.IsPresentIn(text))
+                return ReplyReview.Accept;
+
+            if (!rePrompted)
+            {
+                rePrompted = true;
+                _logger.LogWarning(
+                    "Reply claimed an action on a turn that has staged and run nothing; re-prompting once. "
+                    + "Conversation {ConversationId}", conversationId);
+                return ReplyReview.Retry(
+                    UnbackedActionClaim.NudgeFor(userPrompt), UnbackedActionClaim.RetryNotice);
+            }
+
+            _logger.LogWarning(
+                "Reply claimed an action on a turn that staged and ran nothing; correction appended. "
+                + "Conversation {ConversationId}", conversationId);
+            return ReplyReview.Amend(UnbackedActionClaim.Correction);
+        };
     }
 
     /// <summary>

@@ -31,6 +31,50 @@ public static partial class UnbackedActionClaim
         "\n\n**Correction — nothing was actually staged or changed.** I reported an action I did not "
         + "take: no confirmation is pending and no server was touched. Please ask me again.";
 
+    /// <summary>
+    /// Shown in place of <see cref="Correction"/> when the turn re-prompts itself: the sentence above
+    /// it is wrong the moment it is written, and the attempt that follows it needs to be readable as a
+    /// second attempt rather than as more of the first.
+    /// </summary>
+    public const string RetryNotice =
+        "\n\n*(Correction — nothing was staged there; I described an action I had not taken. Doing it "
+        + "properly now.)*\n\n";
+
+    /// <summary>
+    /// The model-facing half of the same moment: what the loop feeds back so the next round acts
+    /// instead of narrating. It states what is measured — no tool was called, so nothing is staged —
+    /// then puts <paramref name="userPrompt"/> back in front of the model with both answers open.
+    /// <para>
+    /// Both halves are load-bearing, measured against <c>gemma4:12b</c> in a conversation already
+    /// holding fabricated replies: without "the tool call itself and no prose" the model apologises and
+    /// narrates the same fabrication again, and without the request restated it answers a "thanks,
+    /// that's all" by staging the action from the reply it is being corrected about.
+    /// </para>
+    /// </summary>
+    public static string NudgeFor(string userPrompt) =>
+        "Your last reply described a staged or completed action, but you called no tool, so nothing was "
+        + "staged and no confirmation exists. Saying it happened does not make it happen. Answer the "
+        + $"request \"{Excerpt(userPrompt)}\" again: if it needs an action, reply with the tool call "
+        + "itself and no prose; if it needs none, say so plainly and claim no action.";
+
+    /// <summary>How much of the request the nudge restates. Enough to identify it, never a pasted file.</summary>
+    private const int MaxRestatedPromptChars = 300;
+
+    private static string Excerpt(string prompt)
+    {
+        var trimmed = (prompt ?? string.Empty).Trim();
+        return trimmed.Length <= MaxRestatedPromptChars
+            ? trimmed
+            : trimmed[..MaxRestatedPromptChars] + "…";
+    }
+
+    /// <summary>
+    /// Whether <paramref name="reply"/> already carries the correction — the guard's own text, which
+    /// matches the claim pattern it describes and must never be appended twice.
+    /// </summary>
+    public static bool CorrectionIsPresentIn(string? reply) =>
+        reply is not null && reply.Contains(Correction, StringComparison.Ordinal);
+
     // Verbs that assert a completed or staged action, in the first person. Present/future forms are
     // absent on purpose ("I can stage", "I'll stop") — those promise, and promising is honest.
     private const string Verbs =

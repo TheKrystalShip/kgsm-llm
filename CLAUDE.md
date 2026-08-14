@@ -158,11 +158,19 @@ Things that bite if you don't know them:
   world fact (`TheKrystalShip.Kgsm.Assistant.Eval/CLAUDE.md` invariant #1).
 - **The rule covers the model's account of its own turn.** A reply is held against what the turn did:
   on a turn that staged nothing and ran nothing, a first-person claim of a staged or completed action
-  is false by construction, and `ServerAssistant` appends a correction (`UnbackedActionClaim`). The
-  check is one-sided — it never runs on a turn that staged or executed something, so it cannot
-  contradict a real action; the auto-accept path records that it acted via
-  `IConfirmationContext.NoteActionPerformed`. Offers ("I can stop it") and reports of the world ("it
-  was restarted an hour ago") are honest and untouched.
+  is false by construction (`UnbackedActionClaim`). The check is one-sided — it never runs on a turn
+  that staged or executed something, so it cannot contradict a real action; the auto-accept path
+  records that it acted via `IConfirmationContext.NoteActionPerformed`. Offers ("I can stop it") and
+  reports of the world ("it was restarted an hour ago") are honest and untouched. The claim is caught
+  through `AgentTurn.ReviewReply`, the outbound counterpart of the per-call `ToolGate`: the first one
+  re-prompts the turn (the model is told it called no tool, with the request restated) and only a
+  second one is corrected and left standing, in the reply AND in the record.
+- **A replayed turn carries the tool calls it made** (`ModelContextProjection`). The transcript is
+  also the examples the model imitates: a turn that answered "start the server" by calling a tool,
+  replayed as prose alone, teaches that the request is answered by *describing* the action — the next
+  reply then narrates a staging that never happened (measured on `gemma4:12b`: reproducible on the
+  very next turn). A past call's **output** is not replayed — a stale reading offered as current is a
+  fabricated status — so each replayed call stands against a placeholder asking for a fresh call.
 - **This leaf depends only on kgsm-lib + a local Ollama** and runs fully standalone — no other
   ecosystem service. Don't add a dependency on the API or a sibling leaf.
 - **Authority is the ecosystem's ordered tier, and it comes from the KGSM account store.** A Discord

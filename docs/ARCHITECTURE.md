@@ -94,12 +94,28 @@ Being durable, a staged action survives a Service restart. The CLI needs none of
 of its own turn is not always right — it sometimes answers a mutating request conversationally and
 reports the action as staged anyway. Such a claim can move nothing, but it misinforms: the user waits
 on a confirmation prompt that was never posted. So on a turn that staged nothing and ran nothing, a
-first-person claim of a staged or completed action is false by construction, and `ServerAssistant`
-appends a correction (`UnbackedActionClaim`) rather than shipping it. The check runs only on that
-turn shape, so it can never contradict a real action; the auto-accept path, which runs a command
-without staging one, records that it acted. Offers and reports of world state are honest and pass
-through untouched. On the streaming path the correction is emitted as a token too, since the claim
-has already reached the screen.
+first-person claim of a staged or completed action is false by construction (`UnbackedActionClaim`).
+The check runs only on that turn shape, so it can never contradict a real action; the auto-accept
+path, which runs a command without staging one, records that it acted. Offers and reports of world
+state are honest and pass through untouched.
+
+The claim is caught where the turn can still answer it. `AgentTurn.ReviewReply` — the outbound
+counterpart of the per-call `ToolGate` — puts each candidate reply to the host before the turn is
+recorded, and `ServerAssistant` answers accept, amend, or re-prompt once. The first unbacked claim
+re-prompts: the model is told, mid-turn, that it called no tool and that nothing is staged, with the
+request restated. Only a second one is corrected and left standing. The correction is part of the
+recorded reply, so a surface reading the turn back describes it exactly as the person who watched it
+saw it — and on the streaming path both the notice and the correction are emitted as tokens, since
+the claim has already reached the screen.
+
+**A replayed turn keeps its shape.** The model's context is a projection of the history
+(`ModelContextProjection`): the prompt, the tool calls the turn made, and the reply. The transcript
+is also the set of examples the model imitates, so a turn that answered "start the server" by calling
+a tool has to replay as a tool call — replayed as prose alone it teaches that the same request is
+answered by describing the action instead of taking it, and the next reply narrates a staging that
+never happened. A past call's OUTPUT is not replayed: each is a reading of a world that has moved on,
+and a stale reading offered as current is a fabricated status, so every replayed call stands against
+a placeholder that says so and asks for a fresh call.
 
 ### The `search` tool (RAG + web)
 

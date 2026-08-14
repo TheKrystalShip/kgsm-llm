@@ -121,19 +121,85 @@ public class LlmAgentTests
         });
     }
 
+    /// <summary>
+    /// A replayed turn keeps its shape — prompt, the call it made, the reply — because the transcript
+    /// is also the examples the model imitates, and a turn that called a tool replayed as prose alone
+    /// teaches that the same request is answered by describing the action instead of taking it.
+    /// </summary>
     [Fact]
-    public async Task PersistenceBoundary_StoresOnlyUserAndFinalAssistantText()
+    public async Task AReplayedTurn_CarriesTheCallItMade()
     {
         ScriptLlm(Tools(Call(ToolA)), Text("Finished."));
 
         await CreateAgent().RunAsync(Turn());
 
-        _store.Messages.Should().HaveCount(2);
-        _store.Messages[0].Role.Should().Be(LlmRole.User);
-        _store.Messages[1].Role.Should().Be(LlmRole.Assistant);
-        _store.Messages[1].Content.Should().Be("Finished.");
-        _store.Messages.Should().NotContain(m => m.Role == LlmRole.Tool);
-        _store.Messages.Should().NotContain(m => m.ToolCalls != null);
+        _store.Messages.Select(m => m.Role).Should().Equal(
+            LlmRole.User, LlmRole.Assistant, LlmRole.Tool, LlmRole.Assistant);
+        _store.Messages[1].ToolCalls.Should().ContainSingle()
+            .Which.Name.Should().Be(new Tool(ToolA));
+        _store.Messages[3].Content.Should().Be("Finished.");
+    }
+
+    /// <summary>
+    /// The call replays; its OUTPUT does not. Each result is a reading of a world that has moved on,
+    /// and a stale reading offered as current is a fabricated status — so the placeholder says the
+    /// result is absent and asks for a fresh call.
+    /// </summary>
+    [Fact]
+    public async Task AReplayedCall_CarriesNoStaleOutput()
+    {
+        ScriptLlm(Tools(Call(ToolA)), Text("Finished."));
+
+        await CreateAgent().RunAsync(Turn());
+
+        var toolMessage = _store.Messages.Single(m => m.Role == LlmRole.Tool);
+        toolMessage.Content.Should().NotContain("Done.");
+        toolMessage.Content.Should().Contain("not replayed");
+        // The record keeps the real output — the projection is what withholds it.
+        _store.Turns.Should().ContainSingle()
+            .Which.Tools.Should().ContainSingle().Which.Summary.Should().Be("Done.");
+    }
+
+    /// <summary>
+    /// On the buffered path the rejected reply has been shown to nobody — it exists only inside the
+    /// call — so the re-prompted answer replaces it outright rather than carrying it along.
+    /// </summary>
+    [Fact]
+    public async Task ARejectedReply_IsDropped_AndTheRePromptedOneIsTheAnswer()
+    {
+        ScriptLlm(Text("I stopped it."), Text("Stopping it now."));
+        var asked = false;
+
+        ReplyReview Review(string _)
+        {
+            if (asked)
+                return ReplyReview.Accept;
+            asked = true;
+            return ReplyReview.Retry("call the tool", "[amended]");
+        }
+
+        var result = await CreateAgent().RunAsync(Turn() with { ReviewReply = Review });
+
+        result.Value!.Text.Should().Be("Stopping it now.");
+        _store.Messages.Last().Content.Should().Be("Stopping it now.");
+        // The nudge and the reply it refers to are what the second round reads.
+        _seen.Last().Should().Contain(m => m.Role == LlmRole.Assistant && m.Content == "I stopped it.");
+        _seen.Last().Last().Content.Should().Be("call the tool");
+    }
+
+    /// <summary>An amendment on an accepted reply is appended to the answer and to the record.</summary>
+    [Fact]
+    public async Task AnAmendedReply_CarriesTheAmendment()
+    {
+        ScriptLlm(Text("I stopped it."));
+
+        var result = await CreateAgent().RunAsync(Turn() with
+        {
+            ReviewReply = _ => ReplyReview.Amend(" [correction]"),
+        });
+
+        result.Value!.Text.Should().Be("I stopped it. [correction]");
+        _store.Messages.Last().Content.Should().Be("I stopped it. [correction]");
     }
 
     [Fact]

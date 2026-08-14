@@ -17,8 +17,7 @@ namespace TheKrystalShip.Llm.Tests;
 /// <summary>
 /// Streaming counterpart to <see cref="LlmAgentTests"/>: drives <c>RunStreamAsync</c> with a fake
 /// chunk-yielding <see cref="ILlmClient"/> and verifies the event sequence, tool-round dispatch,
-/// and that conversation persistence is IDENTICAL to the buffered path (only the user prompt and
-/// the final assistant text are stored).
+/// and that conversation persistence is IDENTICAL to the buffered path.
 /// </summary>
 public class LlmAgentStreamTests
 {
@@ -96,7 +95,7 @@ public class LlmAgentStreamTests
     }
 
     [Fact]
-    public async Task ToolRound_ThenProse_EmitsToolStartThenResult_DispatchesTool_AndPersistsOnlyFinalText()
+    public async Task ToolRound_ThenProse_EmitsToolStartThenResult_DispatchesTool_AndReplaysTheCall()
     {
         var client = new ScriptedStreamClient(new[]
         {
@@ -116,10 +115,93 @@ public class LlmAgentStreamTests
         await _dispatcher.Received(1).ExecuteAsync(
             Arg.Is<LlmToolCall>(c => c.Name == new Tool("tool_a")), Arg.Any<CancellationToken>());
 
-        // Persistence parity with the buffered loop: no tool messages, no tool-call turns.
-        _store.Messages.Should().HaveCount(2);
-        _store.Messages.Should().NotContain(m => m.Role == LlmRole.Tool);
-        _store.Messages.Should().NotContain(m => m.ToolCalls != null);
+        // Replay parity with the buffered loop: the call comes back, its output does not.
+        _store.Messages.Select(m => m.Role).Should().Equal(
+            LlmRole.User, LlmRole.Assistant, LlmRole.Tool, LlmRole.Assistant);
+        _store.Messages[1].ToolCalls.Should().ContainSingle().Which.Name.Should().Be(new Tool("tool_a"));
+        _store.Messages.Single(m => m.Role == LlmRole.Tool).Content.Should().NotContain("Done.");
+    }
+
+    /// <summary>
+    /// A rejected reply buys the turn one more round. The rejected text is already on the consumer's
+    /// screen, so it stays in the answer — with the amendment that qualifies it — ahead of what the
+    /// re-prompted round produces, and the record says the same thing the stream did.
+    /// </summary>
+    [Fact]
+    public async Task ARejectedReply_RunsAnotherRound_AndTheAnswerKeepsWhatWasAlreadyShown()
+    {
+        var client = new ScriptedStreamClient(new[]
+        {
+            new[] { Content("I stopped it."), DoneFrame() },
+            new[] { Content("Stopping it now."), DoneFrame() },
+        });
+        var reviewed = new List<string>();
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(
+            Turn() with { ReviewReply = Reviewing(reviewed, once: true) }));
+
+        reviewed.Should().Equal("I stopped it.", "Stopping it now.");
+        var final = events.Single(e => e.Kind == AgentEventKind.Final);
+        final.Text.Should().Be("I stopped it.[amended]Stopping it now.");
+        // The amendment reaches a client that renders live tokens and never re-reads the final text.
+        string.Concat(events.Where(e => e.Kind == AgentEventKind.Token).Select(e => e.Text))
+            .Should().Be("I stopped it.[amended]Stopping it now.");
+        _store.Messages.Last().Content.Should().Be("I stopped it.[amended]Stopping it now.");
+    }
+
+    /// <summary>
+    /// One re-prompt per turn. A model that makes the same reply twice is not talked round by a third
+    /// attempt, and a host that keeps asking must not be able to spin the loop.
+    /// </summary>
+    [Fact]
+    public async Task ARejectedReply_IsRePromptedOnce_ThenTheAmendmentStands()
+    {
+        var client = new ScriptedStreamClient(new[]
+        {
+            new[] { Content("I stopped it."), DoneFrame() },
+            new[] { Content("I stopped it."), DoneFrame() },
+            new[] { Content("never reached"), DoneFrame() },
+        });
+        var reviewed = new List<string>();
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(
+            Turn() with { ReviewReply = Reviewing(reviewed, once: false) }));
+
+        reviewed.Should().HaveCount(2);
+        events.Single(e => e.Kind == AgentEventKind.Final).Text
+            .Should().Be("I stopped it.[amended]I stopped it.[amended]");
+    }
+
+    /// <summary>An accepted reply is untouched: no amendment, no extra round.</summary>
+    [Fact]
+    public async Task AnAcceptedReply_IsLeftExactlyAsWritten()
+    {
+        var client = new ScriptedStreamClient(new[]
+        {
+            new[] { Content("all good"), DoneFrame() },
+        });
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(
+            Turn() with { ReviewReply = _ => ReplyReview.Accept }));
+
+        events.Single(e => e.Kind == AgentEventKind.Final).Text.Should().Be("all good");
+    }
+
+    /// <summary>
+    /// A review that asks to retry while <paramref name="once"/> is true accepts the second reply;
+    /// otherwise it keeps asking, which is what proves the loop's own cap.
+    /// </summary>
+    private static Func<string, ReplyReview> Reviewing(List<string> seen, bool once)
+    {
+        var asked = false;
+        return text =>
+        {
+            seen.Add(text);
+            if (once && asked)
+                return ReplyReview.Accept;
+            asked = true;
+            return ReplyReview.Retry("call the tool", "[amended]");
+        };
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -6,8 +7,8 @@ namespace TheKrystalShip.Llm.Tests;
 /// <summary>
 /// In-memory <see cref="IConversationStore"/> test double: records the appended turns and checkpoints,
 /// and mirrors the real store's model-context projection. <see cref="Messages"/> is that projection —
-/// what the model replays (the user prompt + final reply of each turn after the latest checkpoint) —
-/// the view the agent tests assert persistence against.
+/// what the model replays for each turn after the latest checkpoint (prompt, tool calls, reply) — the
+/// view the agent tests assert persistence against.
 /// </summary>
 internal sealed class TestConversationStore : IConversationStore
 {
@@ -102,10 +103,8 @@ internal sealed class TestConversationStore : IConversationStore
         {
             if (_entries[i].Kind != ConversationEntryKind.Turn)
                 continue;
-            var turn = _entries[i].Turn!;
-            messages.Add(LlmMessage.User(turn.UserPrompt));
-            if (!string.IsNullOrWhiteSpace(turn.Final))
-                messages.Add(LlmMessage.Assistant(turn.Final!));
+            // The same projection the real store uses, so a test observes what the model observes.
+            ModelContextProjection.AppendTurn(messages, _entries[i].Turn!, attributeSpeakers);
         }
 
         return messages;

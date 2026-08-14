@@ -20,10 +20,10 @@ namespace TheKrystalShip.Llm.Agent;
 /// one rich <see cref="ConversationTurnRecord"/> — the user prompt, the model's thinking, this turn's
 /// full tool trajectory, the final reply, token usage and outcome. That single append-only log is BOTH
 /// the model's continuity memory and the durable record mined for self-improvement. The model only
-/// replays a projection of it (<see cref="IConversationStore.GetModelContext"/>): the user prompt +
-/// final reply of prior turns (plus the latest checkpoint summary). The intermediate assistant-tool-call
-/// and tool-result messages live in the per-turn working list only — they are recorded in the turn's
-/// trajectory for analysis but never replayed, so follow-ups re-query live data fresh.
+/// replays a projection of it (<see cref="IConversationStore.GetModelContext"/>): the prompt, the tool
+/// calls and the final reply of prior turns, plus the latest checkpoint summary. A past call's OUTPUT
+/// is not replayed — the projection stands a placeholder in its place, so follow-ups re-query live
+/// data fresh (<see cref="Conversation.ModelContextProjection"/>).
 /// </summary>
 public class LlmAgent : ILlmAgent
 {
@@ -47,11 +47,19 @@ public class LlmAgent : ILlmAgent
         _logger = logger;
     }
 
+    /// <summary>
+    /// How many times one turn may be re-prompted after <see cref="AgentTurn.ReviewReply"/> rejects
+    /// a reply. One: a re-prompt is worth a round-trip, a model that repeats itself is not, and the
+    /// host's amendment says plainly what happened either way.
+    /// </summary>
+    private const int MaxReplyRetries = 1;
+
     public async Task<Result<AgentRunResult>> RunAsync(AgentTurn turn, CancellationToken cancellationToken = default)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var trajectory = new List<RecordedToolCall>();
         var iterationsRun = 0;
+        var replyRetries = 0;
 
         // Assemble [fresh system, ...projected history, this turn's user prompt]. The user prompt is
         // not yet in the store — it is persisted with the whole turn at completion (PersistTurn).
@@ -83,6 +91,25 @@ public class LlmAgent : ILlmAgent
                 if (!message.HasToolCalls)
                 {
                     var text = message.Content ?? string.Empty;
+                    var review = turn.ReviewReply?.Invoke(text) ?? ReplyReview.Accept;
+
+                    if (review.WantsRetry && replyRetries < MaxReplyRetries)
+                    {
+                        replyRetries++;
+                        _logger.LogWarning(
+                            "Reply rejected by the turn's review; re-prompting once for conversation {Conversation}",
+                            turn.ConversationId);
+                        // Nothing has been shown on this path — the reply only exists here — so the
+                        // rejected attempt is dropped rather than carried into the answer. It stays in
+                        // the working list, where it is what the nudge refers to.
+                        working.Add(LlmMessage.Assistant(text));
+                        working.Add(LlmMessage.User(review.Nudge!));
+                        continue;
+                    }
+
+                    if (review.HasAmendment)
+                        text += review.Amendment;
+
                     // Usage of the producing (final) call — the turn's context occupancy.
                     var turnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, message.Usage, null, null);
                     return Result.Success(new AgentRunResult(text, message.Usage, turnId));
@@ -130,6 +157,12 @@ public class LlmAgent : ILlmAgent
         // A terminal record was emitted (Ok/Error/CapHit). The finally then captures only the case
         // we can't reach in-body: cancellation / an exception unwinding the iterator before a finish.
         var recorded = false;
+        // Reply text the consumer has already been handed by a round the reviewer sent back, plus the
+        // amendment qualifying it. It stays part of the turn — it was shown, so the final text and the
+        // record carry it ahead of whatever the re-prompted round produces, and every surface describes
+        // the turn the same way whether it watched the tokens or read the record afterwards.
+        var shown = new StringBuilder();
+        var replyRetries = 0;
 
         // Assemble [fresh system, ...projected history, this turn's user prompt]. Identical boundary to
         // RunAsync; the whole turn (incl. the prompt) is persisted at completion via PersistTurn.
@@ -248,8 +281,36 @@ public class LlmAgent : ILlmAgent
                     continue;
                 }
 
-                // Final turn: persist the whole turn (the canonical record), then signal completion.
+                // Final turn: review it, then persist the whole turn (the canonical record) and signal
+                // completion.
                 var text = content.ToString().Trim();
+                var review = turn.ReviewReply?.Invoke(text) ?? ReplyReview.Accept;
+
+                if (review.HasAmendment)
+                {
+                    // The reply is already on the consumer's screen token by token, so the amendment is
+                    // streamed too — a client that renders the live tokens and never re-reads the final
+                    // text still sees it.
+                    text += review.Amendment;
+                    streamed.Append(review.Amendment);
+                    yield return AgentEvent.Token(review.Amendment!);
+                }
+
+                if (review.WantsRetry && replyRetries < MaxReplyRetries)
+                {
+                    replyRetries++;
+                    _logger.LogWarning(
+                        "Reply rejected by the turn's review; re-prompting once for conversation {Conversation}",
+                        turn.ConversationId);
+                    shown.Append(text);
+                    working.Add(LlmMessage.Assistant(content.ToString().Trim()));
+                    working.Add(LlmMessage.User(review.Nudge!));
+                    continue;
+                }
+
+                if (shown.Length > 0)
+                    text = shown + text;
+
                 var turnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, usage, null, thinking.ToString());
                 recorded = true;
                 yield return AgentEvent.Final(text, usage, turnId);
@@ -259,9 +320,11 @@ public class LlmAgent : ILlmAgent
             _logger.LogWarning(
                 "Agent hit the {Max}-iteration cap (stream) for conversation {Conversation}",
                 _options.MaxIterations, turn.ConversationId);
-            var cappedTurnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, _options.IterationLimitReply, null, null, thinking.ToString());
+            // Same reasoning as the ordinary finish: what was already shown stays in the answer.
+            var cappedText = shown.Length > 0 ? shown + _options.IterationLimitReply : _options.IterationLimitReply;
+            var cappedTurnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.CapHit, cappedText, null, null, thinking.ToString());
             recorded = true;
-            yield return AgentEvent.Final(_options.IterationLimitReply, turnId: cappedTurnId);
+            yield return AgentEvent.Final(cappedText, turnId: cappedTurnId);
         }
         finally
         {

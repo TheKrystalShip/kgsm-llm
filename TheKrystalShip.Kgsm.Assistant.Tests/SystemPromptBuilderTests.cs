@@ -28,7 +28,15 @@ public sealed class SystemPromptBuilderTests : IDisposable
             .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>()));
         _inventory.GetBlueprintNamesAsync(Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyCollection<string>>(Array.Empty<string>()));
+        _inventory.GetBlueprintCatalogAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<BlueprintSummary>>(Array.Empty<BlueprintSummary>()));
     }
+
+    /// <summary>The catalog as the engine hands it over: an identifier and the game's real name.</summary>
+    private void Catalog(params (string name, string? display)[] blueprints) =>
+        _inventory.GetBlueprintCatalogAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<BlueprintSummary>>(
+                blueprints.Select(b => new BlueprintSummary(b.name, b.display)).ToArray()));
 
     public void Dispose()
     {
@@ -142,6 +150,59 @@ public sealed class SystemPromptBuilderTests : IDisposable
 
         second.Text.Should().StartWith("VERSION TWO");
         second.TemplateHash.Should().NotBe(first.TemplateHash);
+    }
+
+    // --- the injected lists name games the way a person does ---
+    // This list is read out verbatim on a spoken surface, and the model answers "what can I install?"
+    // straight from it, so the identifier never reaches a person's ears.
+
+    [Fact]
+    public async Task InstallableGames_AreListedByDisplayName()
+    {
+        Catalog(("7dtd", "7 Days to Die"), ("projectzomboid", "Project Zomboid"));
+
+        var prompt = await Build().BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().Contain("7 Days to Die").And.Contain("Project Zomboid");
+        prompt.Text.Should().NotContain("7dtd").And.NotContain("projectzomboid");
+    }
+
+    [Fact]
+    public async Task ABlueprintWithNoDisplayName_KeepsItsIdentifier()
+    {
+        Catalog(("homebrew", null));
+
+        var prompt = await Build().BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().Contain("homebrew");
+    }
+
+    [Fact]
+    public async Task AnInstance_NamesItsGame_WithoutTheBlueprintFileStem()
+    {
+        // An instance carries its blueprint's file stem ("projectzomboid.bp"), which is neither a word
+        // anybody says nor the key the catalog is under.
+        Catalog(("projectzomboid", "Project Zomboid"));
+        _inventory.GetInstancesAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(
+                new Dictionary<string, string> { ["pz-main"] = "projectzomboid.bp" }));
+
+        var prompt = await Build().BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().Contain("pz-main (game: Project Zomboid)");
+        prompt.Text.Should().NotContain(".bp");
+    }
+
+    [Fact]
+    public async Task AnInstance_WhoseGameTheCatalogDoesNotKnow_KeepsTheEnginesWord()
+    {
+        _inventory.GetInstancesAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(
+                new Dictionary<string, string> { ["orphan"] = "retiredgame.bp" }));
+
+        var prompt = await Build().BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().Contain("orphan (game: retiredgame.bp)");
     }
 
     [Fact]

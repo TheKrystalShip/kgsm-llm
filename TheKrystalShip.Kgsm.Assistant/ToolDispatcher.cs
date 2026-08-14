@@ -624,15 +624,24 @@ public class ToolDispatcher : IToolDispatcher
         var name = call.Arg("blueprint_name")?.Trim();
         if (string.IsNullOrWhiteSpace(name))
         {
-            var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
+            var blueprints = await _inventory.GetBlueprintCatalogAsync(cancellationToken);
             if (blueprints.Count == 0)
                 return "There are no installable blueprints.";
 
             return "Installable game types:\n"
-                 + string.Join("\n", blueprints.OrderBy(k => k).Select(n => $"- {n}"));
+                 + string.Join("\n", blueprints
+                     .Select(b => b.Label)
+                     .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
+                     .Select(l => $"- {l}"));
         }
 
-        var detail = await _inventory.GetBlueprintDetailAsync(name, cancellationToken);
+        // The catalog is listed by game name, so a game name is what comes back here — resolve it to the
+        // blueprint the engine knows before asking the engine about it.
+        var (resolved, resolveError) = await ResolveBlueprintAsync(name, cancellationToken);
+        if (resolveError is not null)
+            return resolveError;
+
+        var detail = await _inventory.GetBlueprintDetailAsync(resolved!, cancellationToken);
         if (detail is null)
             return $"'{name}' is not a known game type. Use blueprint_info with no name to list them.";
 
@@ -1153,11 +1162,12 @@ public class ToolDispatcher : IToolDispatcher
         if (instances.TryGetValue(resolved!, out var blueprint))
         {
             var detail = await _inventory.GetBlueprintDetailAsync(blueprint, cancellationToken);
+            var game = detail?.DisplayName ?? blueprint;
             if (detail is not null && !detail.ModerationVerbs.Contains(verb!))
                 return detail.ModerationVerbs.Count == 0
-                    ? $"'{resolved}' runs {blueprint}, whose server supports no player moderation " +
+                    ? $"'{resolved}' runs {game}, whose server supports no player moderation " +
                       "commands at all. Tell the user rather than proposing one."
-                    : $"'{resolved}' runs {blueprint}, whose server cannot {verb}. It supports: " +
+                    : $"'{resolved}' runs {game}, whose server cannot {verb}. It supports: " +
                       $"{string.Join(", ", detail.ModerationVerbs)}. Tell the user rather than proposing one.";
         }
 
@@ -1305,7 +1315,8 @@ public class ToolDispatcher : IToolDispatcher
         var named = instanceName is null ? "" : $" named '{instanceName}'";
         var at = string.IsNullOrWhiteSpace(port) ? "" : $" on port {port}";
         var ver = string.IsNullOrWhiteSpace(version) ? "" : $" at version {version}";
-        return $"Staged an install of a new '{blueprint}' server{named}{ver}{at} for confirmation. A confirmation " +
+        var game = await GameLabelAsync(blueprint!, cancellationToken);
+        return $"Staged an install of a new {game} server{named}{ver}{at} for confirmation. A confirmation " +
                "prompt with a button has been shown to the user. This is NOT done yet and will only run " +
                "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
     }
@@ -1400,41 +1411,97 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>
-    /// Resolves a model-supplied blueprint name against the live blueprint list:
-    /// exact (case-insensitive) wins, else single substring match; ambiguous or
-    /// unknown returns a message so the model asks the user / self-corrects.
+    /// Resolves a model-supplied game name to the blueprint the engine knows it as. Both names a
+    /// blueprint has are matched — the identifier and the display name — because the catalog the model
+    /// reads is written in display names, so that is what comes back: exact (case-insensitive) first,
+    /// then equal once punctuation and spacing are set aside ("Counter-Strike: Source" ↔ "counter
+    /// strike source"), then a single substring match. What resolves is always the identifier: the
+    /// display name is for saying, and everything downstream is staged and executed against the engine's
+    /// own word. Ambiguous or unknown returns a message so the model asks the user / self-corrects.
     /// </summary>
     private async Task<(string? resolved, string? error)> ResolveBlueprintAsync(string? name, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(name))
             return (null, "Error: no blueprint_name was provided.");
 
-        var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
+        var blueprints = await _inventory.GetBlueprintCatalogAsync(cancellationToken);
         if (blueprints.Count == 0)
             return (null, "Error: there are no installable blueprints available.");
 
         var query = name.Trim();
 
-        var exact = blueprints
-            .FirstOrDefault(k => string.Equals(k, query, StringComparison.OrdinalIgnoreCase));
+        var exact = blueprints.FirstOrDefault(b =>
+            string.Equals(b.Name, query, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(b.DisplayName, query, StringComparison.OrdinalIgnoreCase));
         if (exact is not null)
-            return (exact, null);
+            return (exact.Name, null);
 
+        var normalizedQuery = NormalizeGameName(query);
+        if (normalizedQuery.Length > 0)
+        {
+            var normalized = blueprints
+                .Where(b => NormalizeGameName(b.Name) == normalizedQuery
+                         || NormalizeGameName(b.Label) == normalizedQuery)
+                .ToList();
+            if (normalized.Count == 1)
+                return (normalized[0].Name, null);
+        }
+
+        // One blueprint matching on both of its names is one candidate, not two — the predicate is per
+        // blueprint, so a query hitting the identifier AND the display name never reads as ambiguous.
         var candidates = blueprints
-            .Where(k => k.Contains(query, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(k => k)
+            .Where(b => b.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                     || b.Label.Contains(query, StringComparison.OrdinalIgnoreCase)
+                     || (normalizedQuery.Length > 0
+                         && (NormalizeGameName(b.Name).Contains(normalizedQuery, StringComparison.Ordinal)
+                          || NormalizeGameName(b.Label).Contains(normalizedQuery, StringComparison.Ordinal))))
+            .OrderBy(b => b.Label, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (candidates.Count == 1)
-            return (candidates[0], null);
+            return (candidates[0].Name, null);
 
         if (candidates.Count > 1)
             return (null,
-                $"Ambiguous: '{name}' matches multiple blueprints: {string.Join(", ", candidates)}. " +
+                $"Ambiguous: '{name}' matches multiple games: {string.Join(", ", candidates.Select(b => b.Label))}. " +
                 "Ask the user which one they mean and do not stage anything until they choose.");
 
-        var known = blueprints.OrderBy(k => k);
-        return (null, $"Error: no blueprint named '{name}'. Installable blueprints: {string.Join(", ", known)}.");
+        var known = blueprints.Select(b => b.Label).OrderBy(l => l, StringComparer.OrdinalIgnoreCase);
+        return (null, $"Error: no game named '{name}' can be installed. Installable games: {string.Join(", ", known)}.");
+    }
+
+    /// <summary>
+    /// The name to call a blueprint by in text the model reads back to a person. Falls back to the
+    /// identifier when the catalog cannot be read or does not carry it — a name is worth having, but
+    /// not worth failing a lookup over. Accepts an instance's <c>.bp</c>-suffixed form too.
+    /// </summary>
+    private async Task<string> GameLabelAsync(string blueprintName, CancellationToken cancellationToken)
+    {
+        var key = blueprintName.EndsWith(".bp", StringComparison.OrdinalIgnoreCase)
+            ? blueprintName[..^3]
+            : blueprintName;
+
+        var catalog = await _inventory.GetBlueprintCatalogAsync(cancellationToken);
+        return catalog.FirstOrDefault(b => string.Equals(b.Name, key, StringComparison.OrdinalIgnoreCase))?.Label
+               ?? blueprintName;
+    }
+
+    /// <summary>
+    /// A game name reduced to its letters and digits, lowercased — what "Don't Starve Together",
+    /// "dont starve together" and <c>dontstarvetogether</c> have in common. Punctuation and spacing are
+    /// where a spoken or typed game name differs from the blueprint's own spelling, and neither
+    /// difference means a different game.
+    /// </summary>
+    private static string NormalizeGameName(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (var c in value)
+        {
+            if (char.IsLetterOrDigit(c))
+                builder.Append(char.ToLowerInvariant(c));
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>

@@ -21,7 +21,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalidation
 {
     private static readonly IReadOnlyDictionary<string, string> EmptyInstances = new Dictionary<string, string>();
-    private static readonly IReadOnlyCollection<string> EmptyBlueprints = Array.Empty<string>();
+    private static readonly IReadOnlyList<BlueprintSummary> EmptyBlueprints = Array.Empty<BlueprintSummary>();
 
     private readonly IInstanceService _instances;
     private readonly IBlueprintService _blueprints;
@@ -35,7 +35,7 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
     private DateTime _instancesFetchedUtc = DateTime.MinValue;
     private volatile bool _instancesDirty = true;
 
-    private IReadOnlyCollection<string>? _blueprintsCache;
+    private IReadOnlyList<BlueprintSummary>? _blueprintsCache;
     private DateTime _blueprintsFetchedUtc = DateTime.MinValue;
     private volatile bool _blueprintsDirty = true;
 
@@ -97,6 +97,17 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
 
     public async Task<IReadOnlyCollection<string>> GetBlueprintNamesAsync(CancellationToken cancellationToken = default)
     {
+        var catalog = await GetBlueprintCatalogAsync(cancellationToken);
+        return catalog.Select(b => b.Name).ToArray();
+    }
+
+    /// <summary>
+    /// The catalog read both blueprint views are served from. <c>ListDetailed</c> already carries each
+    /// blueprint's metadata, so the display name costs nothing beyond keeping it — the alternative,
+    /// a detail read per game, would be one engine invocation per blueprint on every refresh.
+    /// </summary>
+    public async Task<IReadOnlyList<BlueprintSummary>> GetBlueprintCatalogAsync(CancellationToken cancellationToken = default)
+    {
         if (IsFresh(_blueprintsCache, _blueprintsFetchedUtc, _blueprintsDirty, _options.BlueprintsTtlSeconds))
             return _blueprintsCache!;
 
@@ -109,7 +120,9 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
             try
             {
                 var all = await Task.Run(() => _blueprints.ListDetailed(), cancellationToken);
-                _blueprintsCache = all.Keys.ToArray();
+                _blueprintsCache = all
+                    .Select(kv => new BlueprintSummary(kv.Key, NullIfBlank(kv.Value?.Metadata?.DisplayName)))
+                    .ToArray();
                 _blueprintsFetchedUtc = DateTime.UtcNow;
                 _blueprintsDirty = false;
                 _logger.LogDebug("Blueprint cache refreshed ({Count} blueprints)", _blueprintsCache.Count);

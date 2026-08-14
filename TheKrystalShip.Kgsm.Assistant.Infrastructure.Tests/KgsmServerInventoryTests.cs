@@ -142,4 +142,46 @@ public class KgsmServerInventoryTests
 
         names.Should().BeEquivalentTo("valheim", "terraria");
     }
+
+    [Fact]
+    public async Task GetBlueprintCatalog_CarriesTheDisplayNameTheBlueprintDeclares()
+    {
+        _blueprints.ListDetailed().Returns(new Dictionary<string, Blueprint>
+        {
+            ["projectzomboid"] = new Blueprint
+            {
+                Name = "projectzomboid",
+                Metadata = new BlueprintMetadata { DisplayName = "Project Zomboid" },
+            },
+            ["homebrew"] = new Blueprint { Name = "homebrew" },
+        });
+
+        var catalog = await Create().GetBlueprintCatalogAsync();
+
+        catalog.Should().ContainSingle(b => b.Name == "projectzomboid")
+            .Which.DisplayName.Should().Be("Project Zomboid");
+        // A blueprint declaring none says so — the label falls back, the field does not fabricate.
+        var homebrew = catalog.Single(b => b.Name == "homebrew");
+        homebrew.DisplayName.Should().BeNull();
+        homebrew.Label.Should().Be("homebrew");
+    }
+
+    /// <summary>
+    /// Both blueprint views are one read. The engine call behind them takes seconds, so a surface asking
+    /// for names and a surface asking for the catalog must not cost two of them.
+    /// </summary>
+    [Fact]
+    public async Task NamesAndCatalog_ShareOneEngineRead()
+    {
+        _blueprints.ListDetailed().Returns(new Dictionary<string, Blueprint>
+        {
+            ["terraria"] = new Blueprint { Name = "terraria" },
+        });
+        var inv = Create(ttl: 300);
+
+        await inv.GetBlueprintNamesAsync();
+        await inv.GetBlueprintCatalogAsync();
+
+        _blueprints.Received(1).ListDetailed();
+    }
 }

@@ -280,12 +280,12 @@ public static class LlmTools
         AllowedValues: HostInfoAspects);
 
     private static readonly LlmToolParameter BlueprintName = new(
-        "blueprint_name", "The game type (blueprint) to install, from the installable list.");
+        "blueprint_name", "The game to install, by the name it is listed under (e.g. \"Project Zomboid\").");
 
     private static readonly LlmToolParameter BlueprintInfoName = new(
         "blueprint_name",
-        "Optional. A game type to describe in detail — its ports, resource needs, and what it " +
-        "supports. OMIT it to list every game type that can be installed.",
+        "Optional. A game to describe in detail — its ports, resource needs, and what it supports — " +
+        "by the name it is listed under. OMIT it to list every game that can be installed.",
         Required: false);
 
     private static readonly LlmToolParameter OptionalInstanceName = new(

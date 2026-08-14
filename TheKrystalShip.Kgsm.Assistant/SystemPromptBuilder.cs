@@ -57,22 +57,29 @@ public class SystemPromptBuilder : ISystemPromptBuilder
 
         try
         {
+            // Games are named the way a person names them, here and in the tools' output alike. The
+            // engine's identifier (`lotrrtm`, `projectzomboid.bp`) is not a word anybody says, and this
+            // list is read out verbatim on a spoken surface — the model answers "what can I install?"
+            // straight from it rather than calling a tool. A name the model hands back to a tool is
+            // resolved against both forms, so nothing here has to carry an identifier for it to act.
+            var catalog = await _inventory.GetBlueprintCatalogAsync(cancellationToken);
+            var labels = catalog.ToDictionary(b => b.Name, b => b.Label, StringComparer.OrdinalIgnoreCase);
+
             var instances = await _inventory.GetInstancesAsync(cancellationToken);
             builder.Append("\n\nCurrently installed instances:\n");
             if (instances.Count > 0)
             {
                 foreach (var (name, game) in instances.OrderBy(kv => kv.Key))
-                    builder.Append($"- {name} (game: {game})\n");
+                    builder.Append($"- {name} (game: {GameLabel(game, labels)})\n");
             }
             else
             {
                 builder.Append("(none)\n");
             }
 
-            var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
             builder.Append("\nInstallable game types (blueprints): ");
-            builder.Append(blueprints.Count > 0
-                ? string.Join(", ", blueprints.OrderBy(k => k))
+            builder.Append(catalog.Count > 0
+                ? string.Join(", ", catalog.Select(b => b.Label).OrderBy(l => l, StringComparer.OrdinalIgnoreCase))
                 : "(none)");
         }
         catch (Exception ex)
@@ -86,6 +93,21 @@ public class SystemPromptBuilder : ISystemPromptBuilder
             builder.Append("\n\n").Append(styleSegment);
 
         return new BuiltPrompt(builder.ToString(), templateHash);
+    }
+
+    /// <summary>
+    /// The game name for an instance's blueprint. An instance carries its blueprint's file stem, so the
+    /// catalog is keyed one <c>.bp</c> suffix shorter; a blueprint the catalog doesn't know (a read that
+    /// failed, a game installed from a blueprint since removed) keeps the engine's own word rather than
+    /// being dropped — an instance with no game beside it reads as if it had none.
+    /// </summary>
+    private static string GameLabel(string game, IReadOnlyDictionary<string, string> labels)
+    {
+        if (string.IsNullOrWhiteSpace(game))
+            return game;
+
+        var key = game.EndsWith(".bp", StringComparison.OrdinalIgnoreCase) ? game[..^3] : game;
+        return labels.TryGetValue(key, out var label) ? label : game;
     }
 
     /// <summary>Resolves a segment: the calling leaf's file > the host-wide file > inline config >

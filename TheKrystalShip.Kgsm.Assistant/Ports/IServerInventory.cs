@@ -14,11 +14,33 @@ public interface IServerInventory
     Task<IReadOnlyCollection<string>> GetBlueprintNamesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The installable blueprints with the name a person calls each game by. Read this wherever the
+    /// catalog is shown to somebody; <see cref="GetBlueprintNamesAsync"/> is for the places that need
+    /// the engine's identifier and nothing else.
+    /// </summary>
+    Task<IReadOnlyList<BlueprintSummary>> GetBlueprintCatalogAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// One blueprint's detail, or <see langword="null"/> when no such blueprint exists. Null is
     /// "unknown game type", not "the read failed" — implementations must not throw.
     /// </summary>
     Task<BlueprintDetail?> GetBlueprintDetailAsync(
         string blueprintName, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// One installable game type: the engine's identifier and the name a person calls the game by.
+/// <para>
+/// The two are different things — <c>lotrrtm</c> is what kgsm installs, "The Lord of the Rings:
+/// Return to Moria" is what somebody asked for — and a surface that speaks its answers has to say
+/// the second. <see cref="Label"/> is the one to render; a blueprint that declares no display name
+/// falls back to its identifier, because a slug read aloud is still better than nothing.
+/// </para>
+/// </summary>
+public sealed record BlueprintSummary(string Name, string? DisplayName)
+{
+    /// <summary>What to show a person: the display name when the blueprint declares one.</summary>
+    public string Label => string.IsNullOrWhiteSpace(DisplayName) ? Name : DisplayName;
 }
 
 /// <summary>

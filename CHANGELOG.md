@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-08-15
+
+### Changed — games are named the way people name them
+
+The catalog the assistant reads and answers from carries each game's display name: "7 Days to Die",
+not `7dtd`; "The Lord of the Rings: Return to Moria", not `lotrrtm`. It reaches the injected system
+prompt, `blueprint_info`, the install grounding text and the instance roster (whose game no longer
+carries the blueprint's `.bp` file stem) — every place a game is named to a person. It matters most
+on the voice surface, where the list is read aloud verbatim.
+
+The engine's identifier is still what acts: `ResolveBlueprintAsync` matches a game by either name,
+and by either with punctuation and spacing set aside ("counter strike source" → `cssource`), then
+resolves to the identifier that gets staged and installed. `blueprint_info` now resolves its argument
+the same way instead of passing the model's word straight to the engine.
+
+`IServerInventory.GetBlueprintCatalogAsync` serves this from the existing `ListDetailed` read — the
+display name was already in that response and was being discarded, so the catalog costs no extra
+engine call. `GetBlueprintNamesAsync` is unchanged and still serves the paths that need the
+identifier alone, RAG game-scoping among them.
+
 ## [1.15.0] - 2026-08-14
 
 ### Fixed — a shared room's conversation could not be managed at all

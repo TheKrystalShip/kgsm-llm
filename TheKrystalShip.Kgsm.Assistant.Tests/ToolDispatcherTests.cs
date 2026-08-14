@@ -51,9 +51,18 @@ public class ToolDispatcherTests
         _inventory.GetInstancesAsync(Arg.Any<CancellationToken>())
             .Returns((IReadOnlyDictionary<string, string>)instances);
 
-        var blueprints = new[] { "valheim", "terraria" };
+        // A catalog carrying both names a blueprint has: the identifier kgsm installs, and the name a
+        // person says. `projectzomboid` earns its place by being the pair that differ most.
+        var blueprints = new BlueprintSummary[]
+        {
+            new("valheim", "Valheim"),
+            new("terraria", "Terraria"),
+            new("projectzomboid", "Project Zomboid"),
+        };
+        _inventory.GetBlueprintCatalogAsync(Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<BlueprintSummary>)blueprints);
         _inventory.GetBlueprintNamesAsync(Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyCollection<string>)blueprints);
+            .Returns((IReadOnlyCollection<string>)blueprints.Select(b => b.Name).ToArray());
 
         // Default the UPnP axis to "watchdog unreachable" so get_network tests that only exercise the
         // firewall axis get a valid (non-null) reading; router-specific tests override this.
@@ -1194,6 +1203,62 @@ public class ToolDispatcherTests
             _confirmations.Staged.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(
                     new PendingConfirmation(ConfirmationKind.Install, "valheim", "my-valheim"));
+        }
+    }
+
+    // --- the catalog is written in game names, and a game name is what comes back ---
+
+    [Fact]
+    public async Task BlueprintInfo_ListsGamesByTheNamePeopleUse_NotTheBlueprintIdentifier()
+    {
+        var result = await Summary(new LlmToolCall(LlmTools.BlueprintInfo, new Dictionary<string, string?>()));
+
+        result.Should().Contain("Project Zomboid");
+        result.Should().NotContain("projectzomboid");
+    }
+
+    [Fact]
+    public async Task BlueprintInfo_ByDisplayName_ReadsTheBlueprintTheEngineKnows()
+    {
+        _inventory.GetBlueprintDetailAsync("projectzomboid", Arg.Any<CancellationToken>())
+            .Returns(new BlueprintDetail(
+                "projectzomboid", "Project Zomboid", null, [], "native", false, null, null, null, null, []));
+
+        var result = await Summary(new LlmToolCall(LlmTools.BlueprintInfo,
+            new Dictionary<string, string?> { ["blueprint_name"] = "Project Zomboid" }));
+
+        result.Should().Contain("Project Zomboid");
+        await _inventory.Received(1).GetBlueprintDetailAsync("projectzomboid", Arg.Any<CancellationToken>());
+    }
+
+    // A display name is for saying; what gets staged is always the identifier the engine installs, so
+    // the confirmation runs against `projectzomboid` however the model spelled the game.
+    [Theory]
+    [InlineData("Project Zomboid")]
+    [InlineData("project zomboid")]
+    [InlineData("Project-Zomboid")]
+    [InlineData("projectzomboid")]
+    public async Task InstallServer_ByAnySpellingOfTheGame_StagesTheBlueprintIdentifier(string spoken)
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(InstallCall(spoken, "pz"));
+
+            result.Should().Contain("Staged").And.Contain("Project Zomboid");
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Target.Should().Be("projectzomboid");
+        }
+    }
+
+    [Fact]
+    public async Task InstallServer_UnknownGame_ListsTheGamesByName()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(InstallCall("Half-Life"));
+
+            result.Should().Contain("Project Zomboid");
+            _confirmations.Staged.Should().BeEmpty();
         }
     }
 

@@ -505,8 +505,30 @@ public class ServerAssistant : IServerAssistant
         IConfirmationScope scope, string conversationId, string userPrompt)
     {
         var rePrompted = false;
+        var rePromptedForSearch = false;
         return text =>
         {
+            // Asked to look online, and nothing was looked up. Checked before the action claim: this
+            // is about whether the work was DONE, where that one is about how it was described, and a
+            // turn that never searched has nothing yet worth reviewing the wording of.
+            if (SearchIntent.Required == SearchScope.Web && !SearchIntent.AnythingSearched)
+            {
+                if (!rePromptedForSearch)
+                {
+                    rePromptedForSearch = true;
+                    _logger.LogWarning(
+                        "The user asked for the web and the turn called no tool; re-prompting once. "
+                        + "Conversation {ConversationId}", conversationId);
+                    return ReplyReview.Retry(
+                        UnsearchedWebRequest.NudgeFor(userPrompt), UnsearchedWebRequest.RetryNotice);
+                }
+
+                _logger.LogWarning(
+                    "The user asked for the web and the turn still searched nothing; note appended. "
+                    + "Conversation {ConversationId}", conversationId);
+                return ReplyReview.Amend(UnsearchedWebRequest.Correction);
+            }
+
             if (scope.Staged.Count > 0 || scope.ActionPerformed)
                 return ReplyReview.Accept;
 

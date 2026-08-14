@@ -184,6 +184,11 @@ public class ToolDispatcher : IToolDispatcher
                 "Search scope raised to {Scope} for \"{Query}\": the user asked for it outright",
                 scope, query);
 
+        // Recorded before the search runs, so it counts as having looked even when nothing was found.
+        // The review this feeds asks whether the assistant LOOKED, not whether it succeeded — an
+        // honest "I searched and found nothing" is a real answer to "look it up online".
+        SearchIntent.NoteSearched();
+
         // The aggregator returns the model's grounding text (Summary) plus the cited passages (Data).
         // Attach the surface card only when there is something to cite — an empty / "couldn't search"
         // outcome stays summary-only, exactly like a summary-only lifecycle read (mirrors run_health_check).

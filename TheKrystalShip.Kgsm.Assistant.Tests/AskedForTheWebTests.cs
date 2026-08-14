@@ -79,4 +79,47 @@ public class AskedForTheWebTests
 
         SearchIntent.Required.Should().BeNull("a turn's request must not leak into the next one");
     }
+
+    [Fact]
+    public void ATurnRecordsWhetherAnythingWasActuallySearched()
+    {
+        // ⚠ Forcing the scope only bites on a search that HAPPENS. Measured: asked to look it up
+        // online, the model answered with no tool call at all — there was no scope to force. This is
+        // what lets the reply review tell looking something up from appearing to.
+        using (SearchIntent.BeginTurn(SearchScope.Web))
+        {
+            SearchIntent.AnythingSearched.Should().BeFalse();
+            SearchIntent.NoteSearched();
+            SearchIntent.AnythingSearched.Should().BeTrue();
+        }
+
+        SearchIntent.AnythingSearched.Should().BeFalse("a turn's record must not leak into the next one");
+    }
+
+    [Fact]
+    public void NotingASearchOutsideATurnIsHarmless()
+    {
+        SearchIntent.NoteSearched();
+        SearchIntent.AnythingSearched.Should().BeFalse();
+    }
+
+    [Fact]
+    public void TheNudgeRestatesTheRequestBecauseItIsUsuallyAFollowUp()
+    {
+        // "look it up online" on its own names no subject — the thing to search is whatever the
+        // conversation was about, and a nudge that does not say so invites a search for those words.
+        var nudge = UnsearchedWebRequest.NudgeFor("look it up online");
+
+        nudge.Should().Contain("look it up online");
+        nudge.Should().Contain("scope=\"web\"");
+        nudge.Should().Contain("conversation is about");
+    }
+
+    [Fact]
+    public void TheCorrectionSaysPlainlyThatNothingWasLookedUp()
+    {
+        // Answering from memory something you were asked to look up is a fabricated status. If the
+        // model will not search after being told to, the reply has to say so.
+        UnsearchedWebRequest.Correction.Should().Contain("did not actually look this up");
+    }
 }

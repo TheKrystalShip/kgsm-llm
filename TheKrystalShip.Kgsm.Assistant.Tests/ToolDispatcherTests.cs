@@ -430,20 +430,20 @@ public class ToolDispatcherTests
     [Fact]
     public async Task Search_RelaysTheAggregatorGroundingVerbatim()
     {
-        _search.SearchAsync("terraria latest version", Arg.Any<CancellationToken>())
+        _search.SearchAsync("terraria latest version", Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())
             .Returns(SearchEnvelope("Web results for \"terraria latest version\" … source: https://terraria.org/news",
                 SearchState.Web, new SearchPassage(SearchProvenance.Web, "https://terraria.org/news", "News", "…", 0.9)));
 
         var result = await Summary(SearchCall("terraria latest version"));
 
         result.Should().Be("Web results for \"terraria latest version\" … source: https://terraria.org/news");
-        await _search.Received(1).SearchAsync("terraria latest version", Arg.Any<CancellationToken>());
+        await _search.Received(1).SearchAsync("terraria latest version", Arg.Any<SearchScope>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task Search_WithPassages_SurfacesTheSearchCard()
     {
-        _search.SearchAsync("what is kgsm", Arg.Any<CancellationToken>())
+        _search.SearchAsync("what is kgsm", Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())
             .Returns(SearchEnvelope("From the operator's indexed docs …", SearchState.LocalStrong,
                 new SearchPassage(SearchProvenance.Local, "docs/x.md", "X > Y", "KGSM …", 0.8)));
 
@@ -457,7 +457,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task Search_WithNoPassages_StaysSummaryOnly()
     {
-        _search.SearchAsync("nonexistent", Arg.Any<CancellationToken>())
+        _search.SearchAsync("nonexistent", Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())
             .Returns(SearchEnvelope("No results …", SearchState.Empty));
 
         var output = await Create().ExecuteAsync(SearchCall("nonexistent"));
@@ -472,7 +472,7 @@ public class ToolDispatcherTests
         var result = await Summary(SearchCall("   "));
 
         result.Should().Contain("needs a 'query'");
-        await _search.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _search.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<SearchScope>(), Arg.Any<CancellationToken>());
     }
 
     // --- fetch_url (reading ONE specific page via the IWebFetch port) ---

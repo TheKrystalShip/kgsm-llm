@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-08-14
+
+### Added — `search` takes a scope, so "look it up online" reaches the web
+
+⚠ **The local index shadowed the web for any question about a game it has documentation for.** The
+ladder answers from the operator's own docs whenever a passage scores above `LocalMinScore`, which is
+right — until the passage matches on *topic* alone. Measured on this host: `search("next Valheim
+update date")` retrieved against fifty-four Valheim guide chunks, cleared the threshold, and **never
+called the web at all**, so somebody who explicitly asked to check online was answered out of a local
+guide that says nothing about release dates. Nothing was logged as wrong, because nothing was wrong —
+the ladder did exactly what it says.
+
+The tool now takes `scope` — `auto` (unchanged, and still the default), `local`, or `web` — and the
+model is told to pass `web` whenever the user asked to look online or the answer depends on what is
+true right now. `web` skips retrieval **outright** rather than retrieving and discarding: a local hit
+is only ever a reason not to call the web, so fetching one on that path could only produce an answer
+nobody asked for. `local` never calls the web, and a web search that finds nothing does **not** fall
+back to documentation the caller ruled out. An unrecognised value fails open to `auto`.
+
+**Where to look is the caller's to say.** Somebody who says "check online" has stated where they want
+the answer from, and no similarity score is evidence against that.
+
 ## [1.12.1] - 2026-08-14
 
 ### Fixed — a server installed or uninstalled is visible to the very next turn

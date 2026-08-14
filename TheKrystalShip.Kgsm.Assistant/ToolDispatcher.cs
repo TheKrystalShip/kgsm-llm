@@ -164,10 +164,19 @@ public class ToolDispatcher : IToolDispatcher
         if (string.IsNullOrWhiteSpace(query))
             return "Error: search needs a 'query'.";
 
+        // Anything unrecognised means "wherever you think best" — the same fail-open the reply style
+        // takes. A misread scope must not turn a search into an error.
+        SearchScope scope = call.Arg("scope")?.Trim().ToLowerInvariant() switch
+        {
+            "web" => SearchScope.Web,
+            "local" => SearchScope.Local,
+            _ => SearchScope.Auto,
+        };
+
         // The aggregator returns the model's grounding text (Summary) plus the cited passages (Data).
         // Attach the surface card only when there is something to cite — an empty / "couldn't search"
         // outcome stays summary-only, exactly like a summary-only lifecycle read (mirrors run_health_check).
-        var result = await _search.SearchAsync(query, cancellationToken);
+        var result = await _search.SearchAsync(query, scope, cancellationToken);
         return result.Data.Passages.Count > 0
             ? new ToolOutput(result.Summary, ToolResultCard.From(result))
             : result.Summary;

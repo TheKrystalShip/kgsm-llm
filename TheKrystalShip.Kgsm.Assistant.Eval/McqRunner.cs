@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant;
+using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
@@ -197,7 +198,7 @@ internal sealed class McqRunner : IDisposable
         });
         var aggregator = new SearchAggregator(retrieval, new NoWebSearch(), options, _aggregatorLogger);
         // The MCQ read only wants the model-facing grounding text (the Summary half of the envelope).
-        var grounding = (await aggregator.SearchAsync(query, ct)).Summary;
+        var grounding = (await aggregator.SearchAsync(query, SearchScope.Auto, ct)).Summary;
         return (grounding, retrieval.LastRawHits);
     }
 

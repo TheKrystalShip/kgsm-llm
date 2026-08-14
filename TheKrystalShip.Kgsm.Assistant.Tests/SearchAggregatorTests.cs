@@ -182,4 +182,57 @@ public class SearchAggregatorTests
         failed.Data.State.Should().Be(SearchState.SearchFailed);
         failed.Data.Passages.Should().BeEmpty();
     }
+
+    // --- scope: where the caller said to look -------------------------------------------------
+
+    [Fact]
+    public async Task Asking_for_the_web_skips_the_local_docs_entirely()
+    {
+        // ⚠ The measured failure this exists for: "next Valheim update date" matched fifty-four
+        // Valheim guide chunks on topic alone and never reached the web, so somebody who asked to
+        // check online was answered out of a local guide that says nothing about release dates.
+        LocalReturns(("KGSM manages game servers.", 0.95));
+        WebReturns(new WebSearchHit("Valheim patch", "https://valheim.com/news", "…", 0.9));
+
+        var result = await Create().SearchAsync("next valheim update", SearchScope.Web);
+
+        result.Data.State.Should().Be(SearchState.Web);
+        await _retrieval.DidNotReceive().RetrieveAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Asking_for_the_web_and_finding_nothing_does_not_fall_back_to_the_docs()
+    {
+        // A local passage the caller ruled out is not a better answer than saying nothing was found.
+        LocalReturns(("KGSM manages game servers.", 0.95));
+        WebReturns();
+
+        var result = await Create().SearchAsync("next valheim update", SearchScope.Web);
+
+        result.Data.State.Should().Be(SearchState.Empty);
+        result.Data.Passages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Confining_a_search_to_the_docs_never_calls_the_web()
+    {
+        LocalReturns(("Something loosely related.", 0.10));
+
+        var result = await Create().SearchAsync("terraria version", SearchScope.Local);
+
+        await _web.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        result.Data.State.Should().Be(SearchState.LocalWeak);
+    }
+
+    [Fact]
+    public async Task The_default_is_unchanged()
+    {
+        // Everything above is opt-in. A caller that says nothing still gets docs-first.
+        LocalReturns(("KGSM manages game servers.", 0.95));
+
+        var result = await Create().SearchAsync("what is kgsm");
+
+        result.Data.State.Should().Be(SearchState.LocalStrong);
+        await _web.DidNotReceive().SearchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
 }

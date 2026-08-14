@@ -418,6 +418,17 @@ public static class LlmTools
         "a game's latest version, release notes, or what a config option means. NOT for anything " +
         "about this host's own servers (status/config/health) — use the KGSM tools for those.");
 
+    private static readonly LlmToolParameter SearchScopeParam = new(
+        "scope",
+        "Where to look. Use \"web\" whenever the user asked you to check ONLINE or on the internet, " +
+        "or when the answer depends on what is true right now — a release date, a current version, " +
+        "recent news, anything that changes over time. Use \"local\" to stay inside the operator's " +
+        "own documentation. OMIT it (or \"auto\") otherwise, which tries the documentation first. " +
+        "NOTE: local guides about a game will match a question about that game even when they say " +
+        "nothing about what was asked, so \"auto\" is the wrong choice for anything time-sensitive.",
+        Required: false,
+        AllowedValues: ["auto", "local", "web"]);
+
     private static readonly LlmToolParameter FetchUrlParam = new(
         "url",
         "The exact web address to read, including scheme — e.g. an official server-setup doc, a " +
@@ -507,8 +518,10 @@ public static class LlmTools
             "a URL). Use it ONLY for outside facts that help with the games/servers — a game's latest " +
             "version, patch notes, or what a setting does. Results may be external and out of date, so " +
             "cite the sources and don't state them as certain. Do NOT use this for anything about this " +
-            "host's own servers (status, config, health) — the KGSM tools are authoritative for those.",
-            SearchQuery),
+            "host's own servers (status, config, health) — the KGSM tools are authoritative for those. " +
+            "When the user asks you to look something up ONLINE, pass scope=\"web\" — otherwise a local " +
+            "guide about the same game will answer instead, and it will not know anything current.",
+            SearchQuery, SearchScopeParam),
 
         LlmToolDefinition.Create(FetchUrl,
             "Fetch and read the full text of ONE specific web page by its exact URL — an official docs " +

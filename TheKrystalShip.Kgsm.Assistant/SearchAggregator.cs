@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Search;
+using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant;
 
@@ -43,26 +44,38 @@ public sealed class SearchAggregator : ISearch
         _logger = logger;
     }
 
-    public async Task<ToolResult<SearchData>> SearchAsync(string query, CancellationToken cancellationToken = default)
+    public async Task<ToolResult<SearchData>> SearchAsync(
+        string query, SearchScope scope = SearchScope.Auto, CancellationToken cancellationToken = default)
     {
         query = query.Trim();
 
-        // 1. Local retrieval. A disabled/unbuilt index returns a failed Result (never throws) — treated
-        //    the same as "no local hits", so we degrade to the web rather than surfacing an error.
-        var local = await _retrieval.RetrieveAsync(query, cancellationToken);
-        var localHits = local.IsSuccess
-            ? local.Value!.OrderByDescending(h => h.Score).ToArray()
-            : [];
-        if (local.IsFailure)
-            _logger.LogDebug("Local retrieval unavailable for \"{Query}\": {Error}", query, local.Error);
+        // 1. Local retrieval — skipped outright when the caller asked for the web. ⚠ Skipped rather
+        //    than retrieved-and-ignored: a local hit is only ever a reason NOT to call the web, so
+        //    fetching one here could only produce an answer nobody asked for. A disabled/unbuilt index
+        //    returns a failed Result (never throws) — treated the same as "no local hits", so we
+        //    degrade to the web rather than surfacing an error.
+        RetrievedChunk[] localHits = [];
+        if (scope != SearchScope.Web)
+        {
+            var local = await _retrieval.RetrieveAsync(query, cancellationToken);
+            localHits = local.IsSuccess
+                ? local.Value!.OrderByDescending(h => h.Score).ToArray()
+                : [];
+            if (local.IsFailure)
+                _logger.LogDebug("Local retrieval unavailable for \"{Query}\": {Error}", query, local.Error);
+        }
 
         // 2. A strong local hit answers from the docs — no web call (cheaper, and the operator's own
         //    docs are more trustworthy than a third-party snippet).
         if (localHits.Length > 0 && localHits[0].Score >= _options.LocalMinScore)
             return Envelope(query, SearchState.LocalStrong, FormatLocal(query, localHits, weak: false), LocalPassages(localHits));
 
-        // 3. Web fallback.
-        var web = await _webSearch.SearchAsync(query, cancellationToken);
+        // 3. The web. ⚠ Not consulted when the caller confined the search to the documentation — an
+        //    answer from somewhere they ruled out is worse than no answer.
+        Result<IReadOnlyList<WebSearchHit>> web = scope == SearchScope.Local
+            ? Result.Failure<IReadOnlyList<WebSearchHit>>("the search was limited to the local documentation")
+            : await _webSearch.SearchAsync(query, cancellationToken);
+
         if (web.IsSuccess && web.Value!.Count > 0)
             return Envelope(query, SearchState.Web, FormatWeb(query, web.Value!), WebPassages(web.Value!));
 

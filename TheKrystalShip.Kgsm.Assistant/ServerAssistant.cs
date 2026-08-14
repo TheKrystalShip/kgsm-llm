@@ -207,14 +207,17 @@ public class ServerAssistant : IServerAssistant
         string? openDraftYaml = null,
         string? userDisplay = null,
         string? leaf = null,
-        bool sharedConversation = false)
+        bool sharedConversation = false,
+        ReplyStyle style = ReplyStyle.Default)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
         var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen, leaf);
         if (toolResult.IsFailure)
             return AssistantResult.Fail(toolResult.Error!);
 
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf);
+        // The style reaches the prompt and stops there. It is never consulted when selecting tools or
+        // building the gate: a spoken turn may do exactly what a typed one may.
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf, style);
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn
@@ -245,7 +248,7 @@ public class ServerAssistant : IServerAssistant
         return result.IsSuccess
             ? AssistantResult.Ok(
                 NotePendingConfirmation(
-                    CorrectUnbackedClaim(result.Value!.Text, scope, conversationId), scope, conversationId),
+                    CorrectUnbackedClaim(result.Value!.Text, scope, conversationId), scope, conversationId, style),
                 confirmations,
                 result.Value!.Usage)
             : AssistantResult.Fail(result.Error!);
@@ -262,7 +265,8 @@ public class ServerAssistant : IServerAssistant
         string? openDraftYaml = null,
         string? userDisplay = null,
         string? leaf = null,
-        bool sharedConversation = false)
+        bool sharedConversation = false,
+        ReplyStyle style = ReplyStyle.Default)
     {
         var draftOpen = !string.IsNullOrWhiteSpace(openDraftYaml);
         var toolResult = SelectTools(userPrompt, canPerformActions, requestedTools, draftOpen, leaf);
@@ -272,7 +276,8 @@ public class ServerAssistant : IServerAssistant
             yield break;
         }
 
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf);
+        // Presentation only — see RunAsync: the style reaches the prompt and nothing else.
+        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf, style);
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn
@@ -307,7 +312,7 @@ public class ServerAssistant : IServerAssistant
         var channel = Channel.CreateUnbounded<AssistantStreamEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
-        var producer = ProduceStreamAsync(turn, autoExecute, channel.Writer, cancellationToken);
+        var producer = ProduceStreamAsync(turn, autoExecute, style, channel.Writer, cancellationToken);
         try
         {
             await foreach (var ev in channel.Reader.ReadAllAsync(cancellationToken))
@@ -331,6 +336,7 @@ public class ServerAssistant : IServerAssistant
     private async Task ProduceStreamAsync(
         AgentTurn turn,
         bool autoExecute,
+        ReplyStyle style,
         ChannelWriter<AssistantStreamEvent> writer,
         CancellationToken cancellationToken)
     {
@@ -420,11 +426,11 @@ public class ServerAssistant : IServerAssistant
 
                 // Same reasoning in the other direction: a client rendering live tokens must see the
                 // sentence naming what those confirmation prompts are for, not only the final text.
-                var noted = NotePendingConfirmation(finalText, scope, turn.ConversationId);
+                var noted = NotePendingConfirmation(finalText, scope, turn.ConversationId, style);
                 if (!ReferenceEquals(noted, finalText))
                 {
                     await writer.WriteAsync(
-                        AssistantStreamEvent.Token(PendingConfirmationNote.For(scope.Staged.Count)),
+                        AssistantStreamEvent.Token(PendingConfirmationNote.For(scope.Staged.Count, style)),
                         cancellationToken);
                     finalText = noted;
                 }
@@ -518,7 +524,8 @@ public class ServerAssistant : IServerAssistant
     /// unmentioned. Runs ONLY on a turn that staged something, so the sentence it appends is backed by
     /// the same record the confirmation prompts come from and cannot itself be a fabricated claim.
     /// </summary>
-    private string NotePendingConfirmation(string text, IConfirmationScope scope, string conversationId)
+    private string NotePendingConfirmation(
+        string text, IConfirmationScope scope, string conversationId, ReplyStyle style)
     {
         if (scope.Staged.Count == 0 || scope.ActionPerformed)
             return text;
@@ -530,7 +537,7 @@ public class ServerAssistant : IServerAssistant
             "Reply left {Count} staged action(s) unmentioned; pending-confirmation note appended. "
             + "Conversation {ConversationId}", scope.Staged.Count, conversationId);
 
-        return text + PendingConfirmationNote.For(scope.Staged.Count);
+        return text + PendingConfirmationNote.For(scope.Staged.Count, style);
     }
 
     public async Task<ConfirmOutcome> ConfirmAsync(

@@ -31,4 +31,26 @@ public class PendingConfirmationNoteTests
         PendingConfirmationNote.For(1).Should().Contain("one action").And.Contain("has not run yet");
         PendingConfirmationNote.For(3).Should().Contain("3 actions");
     }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void The_spoken_note_carries_nothing_a_synthesiser_reads_out(int staged)
+    {
+        var spoken = PendingConfirmationNote.For(staged, ReplyStyle.Voice);
+
+        spoken.Should().NotContain("*").And.NotContain("\n");
+        spoken.Should().Contain("confirm");
+    }
+
+    [Fact]
+    public void The_spoken_note_still_says_it_is_waiting_on_the_user()
+    {
+        // The whole reason a spoken reply may be asked for tersely: this sentence is written by code,
+        // so no amount of brevity in the model's own words can drop it.
+        var spoken = PendingConfirmationNote.For(1, ReplyStyle.Voice);
+
+        PendingConfirmationNote.IsPresentIn(spoken).Should().BeTrue();
+        spoken.Should().Contain("won't run until you confirm it");
+    }
 }

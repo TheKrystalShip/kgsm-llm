@@ -1235,6 +1235,12 @@ secured.MapPost("/turn", async (
         ? rl
         : null;
 
+    // The shape this surface needs the reply in. Read from the body on BOTH paths — unlike the
+    // conversation id, which is identity-adjacent and therefore only trusted from a relay header, a
+    // style says nothing about who is asking or what they may do, so there is nothing here for a
+    // header to protect. Unrecognised reads as the full written answer (ReplyStyles.Parse).
+    var style = ReplyStyles.Parse(request.Style);
+
     // How this turn's authority will be established WHEN IT RUNS, which for a queued turn is not now.
     // The relay reads the caller's verified tier off X-Relay-Tier and their auto-accept intent off
     // X-Relay-Auto-Act — a relay host may have no Discord config of its own, so the forwarded tier is
@@ -1283,7 +1289,8 @@ secured.MapPost("/turn", async (
     {
         var admission = turns.Admit(
             principal, conversationId, chatScope ?? string.Empty,
-            new TurnRun(request.Prompt, request.Tools, request.DraftYaml, relayLeaf, authority, room is not null));
+            new TurnRun(
+                request.Prompt, request.Tools, request.DraftYaml, relayLeaf, authority, room is not null, style));
 
         if (admission.Outcome == TurnAdmission.QueueFull)
             return Results.Json(
@@ -1340,7 +1347,7 @@ secured.MapPost("/turn", async (
 
     var result = await assistant.RunAsync(
         conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct,
-        request.DraftYaml, principal.DisplayName, relayLeaf, room is not null);
+        request.DraftYaml, principal.DisplayName, relayLeaf, room is not null, style);
 
     if (result.IsFailure)
     {

@@ -125,6 +125,39 @@ corpus is re-powered (general expansion for statistical power, *not* identifier-
 lexical-recall failure to justify it). `TextOverlap` + the bucket classifier are unit-tested in
 `McqDiagnosisTests`.
 
+## `voice` mode (spoken-reply length) — a THIRD instrument
+
+`voice` mode measures what the other two never look at: **how long the reply is**. It exists because a
+spoken surface is paid in duration — speech runs at a fixed rate and cannot be skimmed, so a reply's
+length *is* the time a listener spends on it, and a paragraph that reads fine is unbearable aloud.
+
+It asks each question in `VoiceSuite.Cases` **twice on fresh conversations** — once as
+`ReplyStyle.Default` and once as `ReplyStyle.Voice` — and reports characters, sentences and
+speakable-markup counts for each, plus the totals. Written goes first on purpose: a voice-shaped
+answer sitting in the transcript is an example the next turn imitates, and it would flatter the
+baseline.
+
+Its design rules:
+
+1. **Length alone is a trap — every case carries a trajectory floor.** The shortest possible reply is
+   an empty one, and a reply that got shorter by no longer calling a tool is a fabrication, not a win.
+   Each case names tools of which one must be called; the mutating case must also STAGE a confirmation
+   and the reply must still say so. A row with a red floor is a regression that looks like an
+   improvement. This is invariant #1 kept, not bent: the floor asserts what the turn DID, never
+   whether the answer was true about the world.
+2. **It reports characters, never seconds.** The chars→seconds rate belongs to the synthesiser and the
+   voice, measured on the bot's surface; converting here would be a metric this process did not
+   measure. The markup column is the other half of the read — asterisks and bullets a synthesiser
+   reads out are a defect on a speaker and nothing at all on a screen.
+3. **Non-destructive by the same construction as the routing harness** (invariant #2): `RunAsync`
+   only, which stages. There is no path from here to `ConfirmAsync` and there must not be.
+4. **Run it with `--shipped-prompts`.** The style is a compiled-in prompt segment, and a stale
+   `voice.md`/`preamble.md` in the CLI's prompt dir would measure that instead — the failure mode that
+   makes a prompt change read as 0/5.
+5. **Numbers move run to run even seeded.** Tool output feeds the context and the host is live (a
+   memory reading is different a minute later), so the reduction is a range, not a constant. Read the
+   `--transcript` before believing a single figure — the transcript decides, here as everywhere.
+
 ## Build / test / run
 
 ```bash
@@ -136,6 +169,8 @@ dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --kgsm ~/tks/kgsm/kgs
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --seed 42            # the lift chart
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --sweep min-score    # tune a knob
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --diagnose           # recall@k + gap buckets (Phase 6 read)
+# A live VOICE run needs the same things a routing run does (Ollama + a kgsm host):
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- voice --shipped-prompts --transcript
 ```
 
 The unit tests cover the deterministic core (checks, compare math, options, fixture resolution) and
@@ -179,6 +214,7 @@ run in CI without a model. A live run is the only thing that exercises the model
 | `EvalOptions.cs` / `Program.cs` | arg parsing + entry point (routing run vs `mcq` vs `compare`, `--filter`) |
 | `Mcq*.cs` + `AnswerParser`/`SweepGrid`/`EvalRetrieval`/`NoWebSearch`/`TextOverlap` | the ground-truth MCQ mode (separate harness, flat with the routing files): `McqRunner` (3-condition runner + retrieval-diagnostic capture), `McqCorpus`/`McqItem` (loader + types), `AnswerParser`, `SweepGrid`, `McqScorecard` (lift chart + `RenderDiagnosis`), `McqResult` (DTOs incl. `RetrievalDiagnostic`/`RetrievalBucket`/`RetrievalDiagnosis`), `EvalRetrieval`/`NoWebSearch` (drive the real `SearchAggregator`), `TextOverlap` (gold-coverage for the `--diagnose` read) |
 | `mcq/questions.json` + `mcq/corpus/` | the committed ground-truth corpus — hand-authored MCQs + the real-docs snapshot they're drawn from (copied next to the binary) |
+| `VoiceSuite.cs` + `VoiceReport.cs` | the `voice` mode: the spoken-style corpus + its trajectory floors, and the length table / transcript renderer. The run loop is `Harness.RunVoiceAsync` |
 
 ## Ecosystem rules that apply here
 

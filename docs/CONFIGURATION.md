@@ -231,7 +231,17 @@ baseline is **off**, but the shipped Service env template
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `Directory` | _(CLI: XDG config home)_ | `Prompts__Directory` | `preamble.md`, `actions-*.md`, `tools.json`; seed with `kgsm-assistant-cli --dump-prompts`; re-read every turn |
+| `Directory` | _(CLI: XDG config home)_ | `Prompts__Directory` | `preamble.md`, `actions-*.md`, `voice.md`, `tools.json`; seed with `kgsm-assistant-cli --dump-prompts`; re-read every turn |
+
+`voice.md` (inline: `Llm:Voice`) is the spoken-delivery segment, appended after the injected instance
+and blueprint lists only for a turn whose caller asked for `style: "voice"`. It is last so it is the
+final instruction the model reads before answering. Every other segment resolves the same way it
+always does — file > inline `Llm:*` > the lib constant.
+
+⚠ **A prompt directory is a prototyping tool.** Production runs the compiled-in text, and a file left
+in this directory silently shadows it for every turn — including one that has drifted behind a
+release. Point `Prompts__Directory` at an empty directory on a real host, and tune with
+`kgsm-assistant-eval --shipped-prompts`, which measures the constants rather than local edits.
 
 ---
 

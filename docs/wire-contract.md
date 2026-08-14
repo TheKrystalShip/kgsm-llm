@@ -52,6 +52,23 @@ Request body:
 | `prompt` | required |
 | `tools` | restrict the offered tool set |
 | `conversationId` | partitions this user's own history into separate context windows. It carries no identity — memory is always keyed by the server-resolved user id |
+| `style` | how the reply will be delivered: `"voice"` for one about to be read aloud by a synthesiser, absent for the full written answer |
+
+**`style` describes the surface, not the person**, which is why it is a turn field rather than
+something a leaf is configured with: one leaf carries both, and kgsm-bot sends `"voice"` from a voice
+channel and nothing from a text channel under the same relay identity. It is read from the body on
+the relay path too — unlike `conversationId`, which is identity-adjacent and therefore trusted only
+from its header, a style says nothing about who is asking.
+
+It **fails open**: an unrecognised value, a typo, or a style a newer client knows about and this
+build does not all read as the written answer, which is legible on every surface. A misspelt style is
+never a `400`, and never a guess at what was meant.
+
+It is **presentation, and reaches the system prompt only**. The tools offered, the caller's authority
+and the propose-then-confirm rule are identical in every style; a reply can get shorter and can never
+get less complete about a staged action, because the sentence naming a pending confirmation is
+written by the leaf rather than by the model. `style` changes the per-turn prompt fingerprint, so a
+transcript read can tell a spoken turn from a written one.
 
 **Thinking and auto-run are not turn fields.** They are switches the *conversation* carries, set by
 the `/think` and `/autorun` commands (§4) and read by the leaf when the turn runs — so two surfaces

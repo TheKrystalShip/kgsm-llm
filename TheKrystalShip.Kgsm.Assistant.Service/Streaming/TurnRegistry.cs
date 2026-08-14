@@ -314,7 +314,7 @@ internal sealed class TurnRegistry : ITurnRegistry
             await foreach (var ev in _assistant.RunStreamAsync(
                                session.ConversationId, run.Prompt, canPerform, think, autoExecute,
                                run.Tools, session.Token, run.DraftYaml, principal.DisplayName, run.RelayLeaf,
-                               run.Shared))
+                               run.Shared, run.Style))
             {
                 var frame = TurnFrames.From(
                     ev, principal, _pending, ttl, session.ConversationId, ref proposalSeq);

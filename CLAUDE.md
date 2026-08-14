@@ -103,6 +103,15 @@ Things that bite if you don't know them:
   load-bearing, not cosmetic — without it the model wastes a round-trip calling `list_instances` to
   "ground" itself before acting (a measured finding; see `kgsm-llm.md §7a`). The prompt is rebuilt
   fresh each turn for this reason.
+- **A reply's shape is a per-turn input, and presentation only.** `POST /turn` takes an optional
+  `style`; `"voice"` appends the spoken-delivery segment (`KgsmAssistantPrompts.Voice`,
+  overridable as `voice.md` / `Llm:Voice`) after the injected lists, so it is the last thing the
+  model reads. It rides the **turn**, not the leaf, because it describes where the answer lands and
+  one leaf carries both surfaces — kgsm-bot sends it from a voice channel and omits it from a text
+  channel under one identity. It reaches the system prompt and nothing else: the tools offered, the
+  authority and the propose-then-confirm rule are identical in every style, and an unrecognised
+  value fails open to the written answer. Measure a change to it with `kgsm-assistant-eval voice
+  --shipped-prompts`, which reports reply length against a trajectory floor.
 - **Propose, then confirm — mutations never execute inside a turn.** A mutating tool call *stages*
   the action and returns a confirmation token; the user confirms out-of-band (`/confirm` on the
   Service, interactive y/N on the CLI). A run with no confirmation touches no server.

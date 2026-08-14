@@ -26,6 +26,9 @@ internal sealed class EvalOptions
     public string? OutPath { get; private set; }
     public IReadOnlyList<string> Filter { get; private set; } = Array.Empty<string>();
 
+    // voice mode (spoken-reply length, measured against the same prompts answered for a screen)
+    public bool IsVoice { get; private set; }
+
     // mcq mode (ground-truth answer accuracy + retrieval tuning — Phase 5)
     public bool IsMcq { get; private set; }
     public string? CorpusDir { get; private set; }
@@ -57,6 +60,7 @@ internal sealed class EvalOptions
         USAGE
           kgsm-assistant-eval [options]                 run the ROUTING benchmark (did it call the right tool?)
           kgsm-assistant-eval mcq [options]             run the GROUND-TRUTH MCQ benchmark (is the answer correct?)
+          kgsm-assistant-eval voice [options]           measure SPOKEN reply length (written vs voice style)
           kgsm-assistant-eval compare <base> <head>     diff two routing result files (regressions / improvements)
 
         RUN OPTIONS
@@ -91,6 +95,12 @@ internal sealed class EvalOptions
                                with-rag→oracle gap (gold missed / dropped from context / model ceiling)
           (mcq defaults to temp 0 / 1 rep for a stable accuracy number — override with --temp / --reps)
 
+        VOICE OPTIONS (mode: voice) — needs Ollama + a kgsm host, like the routing run
+          (takes --model / --temp / --seed / --prompts / --shipped-prompts / --transcript / --kgsm)
+          Runs each spoken-style question twice — once for a screen, once for a speaker — and reports
+          reply length in characters alongside the trajectory floor (tool called, confirmation staged
+          AND stated). It only ever stages, never confirms.
+
         The routing harness drives the real assistant in-process and only ever STAGES actions (never
         confirms), so a full run is non-destructive; it prints a loud inventory preflight and aborts on
         empty. The mcq mode calls the model directly (no tools, no kgsm, no path to any action) and
@@ -114,6 +124,7 @@ internal sealed class EvalOptions
                 case "--diagnose": options.Diagnose = true; break;
                 case "compare": options.IsCompare = true; break;
                 case "mcq": options.IsMcq = true; break;
+                case "voice": options.IsVoice = true; break;
                 case "--shipped-prompts": options.PromptsDir = ShippedPromptsDir(); break;
 
                 case "--corpus": if (!Next(args, ref i, out var cd, out error)) return false; options.CorpusDir = cd; break;

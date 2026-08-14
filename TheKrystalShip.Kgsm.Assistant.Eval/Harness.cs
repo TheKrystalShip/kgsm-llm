@@ -151,6 +151,87 @@ internal sealed class Harness
             new RunHealthDto(health.TurnsRun, health.TurnsErrored, health.ErrorRate, health.IsDegraded));
     }
 
+    /// <summary>
+    /// Runs the spoken-reply corpus: each case once written and once spoken, on FRESH conversations, so
+    /// the two answers are the same question asked of the same host and neither sees the other. The
+    /// written run goes first for the same reason — a voice-shaped answer sitting in the transcript is
+    /// an example the next turn imitates, and it would flatter the written baseline.
+    /// <para>
+    /// Non-destructive by the same construction as <see cref="RunAsync"/>: <c>autoExecute: false</c> and
+    /// only <see cref="IServerAssistant.RunAsync"/>, which stages. Nothing here confirms.
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<VoiceRow>> RunVoiceAsync(
+        ResolvedFixtures fx, IReadOnlyList<VoiceCase> cases, CancellationToken ct)
+    {
+        var assistant = _provider.GetRequiredService<IServerAssistant>();
+        var invocation = _provider.GetRequiredService<IInvocationContext>();
+        using var scope = invocation.Begin(Invocation.ForCli(Environment.UserName));
+
+        var rows = new List<VoiceRow>();
+        foreach (var bench in cases)
+        {
+            var missing = bench.RequiredRoles.Where(r => !fx.Has(r)).ToList();
+            if (missing.Count > 0)
+            {
+                var reason = "missing fixture role(s): " + string.Join(", ", missing.Select(r => r.ToString()));
+                Console.Error.WriteLine($"  · {bench.Id,-4} SKIP — {reason}");
+                rows.Add(new VoiceRow(bench.Id, bench.Prompt, true, reason, null, null, false, false));
+                continue;
+            }
+
+            var prompt = fx.Fill(bench.Prompt);
+
+            Console.Error.Write($"  · {bench.Id,-4} written … ");
+            var written = await SampleAsync(assistant, bench, prompt, ReplyStyle.Default, ct);
+            Console.Error.WriteLine($"{written.Chars} chars");
+
+            Console.Error.Write($"  · {bench.Id,-4} spoken  … ");
+            var spoken = await SampleAsync(assistant, bench, prompt, ReplyStyle.Voice, ct);
+            Console.Error.WriteLine($"{spoken.Chars} chars");
+
+            rows.Add(new VoiceRow(
+                bench.Id, prompt, false, null, written, spoken,
+                FloorHeld(bench, written), FloorHeld(bench, spoken)));
+        }
+
+        return rows;
+    }
+
+    private async Task<VoiceSample> SampleAsync(
+        IServerAssistant assistant, VoiceCase bench, string prompt, ReplyStyle style, CancellationToken ct)
+    {
+        var conversationId = $"eval-voice:{bench.Id}:{style}:{Guid.NewGuid():N}";
+        var result = await assistant.RunAsync(
+            conversationId, prompt, bench.Authorized, false, autoExecute: false, requestedTools: null, ct,
+            openDraftYaml: null, userDisplay: null, leaf: null, sharedConversation: false, style: style);
+
+        var record = _store.GetHistory(conversationId)
+            .LastOrDefault(e => e.Kind == ConversationEntryKind.Turn)?.Turn;
+
+        return VoiceSample.From(
+            result.IsSuccess ? result.Text : record?.Final ?? "",
+            (record?.Tools ?? Array.Empty<RecordedToolCall>()).Select(t => t.Name.Name).ToList(),
+            (result.IsSuccess ? result.Confirmations : Array.Empty<PendingConfirmation>())
+                .Select(FormatStaged).ToList());
+    }
+
+    /// <summary>
+    /// The trajectory floor, so a shorter reply that stopped checking cannot read as an improvement.
+    /// It asserts what the turn DID — a tool call, a staged confirmation, the sentence naming it —
+    /// never whether the answer was true about the world (the routing harness's invariant #1).
+    /// </summary>
+    private static bool FloorHeld(VoiceCase bench, VoiceSample sample)
+    {
+        if (bench.MustCallAnyOf.Count > 0
+            && !bench.MustCallAnyOf.Any(t => sample.Tools.Contains(t.Name)))
+            return false;
+
+        // A staged action the reply never mentions is the one failure a short answer must not buy: the
+        // user hears an acknowledgement and a confirmation prompt sits there unexplained.
+        return !bench.MustStage || (sample.Staged.Count > 0 && sample.SaysPending);
+    }
+
     private async Task<(RepResultDto, string? sysHash)> RunRepAsync(
         IServerAssistant assistant, BenchmarkCase bench, ResolvedFixtures fx, int rep, RunHealth health,
         CancellationToken ct)

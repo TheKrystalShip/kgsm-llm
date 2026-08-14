@@ -161,4 +161,64 @@ public sealed class SystemPromptBuilderTests : IDisposable
             .BuildAsync(canPerformActions: false)).TemplateHash;
         edited.Should().NotBe(baseline);
     }
+
+    [Fact]
+    public async Task DefaultStyle_CarriesNoSpokenDeliverySegment()
+    {
+        var prompt = await Build().BuildAsync(canPerformActions: false);
+        prompt.Text.Should().NotContain("READ ALOUD");
+    }
+
+    [Fact]
+    public async Task VoiceStyle_AppendsTheSpokenSegmentLast()
+    {
+        // Last is the point of it: it has to survive the whole persona and the injected catalog, and be
+        // the thing the model reads immediately before it answers.
+        _inventory.GetInstancesAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(
+                new Dictionary<string, string> { ["terraria"] = "Terraria" }));
+
+        var prompt = await Build().BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
+
+        prompt.Text.Should().Contain("READ ALOUD");
+        prompt.Text.TrimEnd().Should().EndWith(KgsmAssistantPrompts.Voice);
+        prompt.Text.IndexOf("READ ALOUD", StringComparison.Ordinal)
+            .Should().BeGreaterThan(prompt.Text.IndexOf("terraria", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task VoiceStyle_IsAnEditableSegmentLikeTheOthers()
+    {
+        var prompt = await Build(withDir: true).BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
+        prompt.Text.Should().Contain("READ ALOUD");
+
+        WriteSegment("voice.md", "SAY IT SHORT");
+        var overridden = await Build(withDir: true).BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
+
+        overridden.Text.TrimEnd().Should().EndWith("SAY IT SHORT");
+        overridden.Text.Should().NotContain("READ ALOUD");
+    }
+
+    [Fact]
+    public async Task TemplateHash_SeparatesAStyledTurnFromAPlainOne()
+    {
+        // A turn answered in a different shape was built from a different prompt, and the recorded hash
+        // is what a later transcript read buckets by.
+        var plain = (await Build().BuildAsync(canPerformActions: false)).TemplateHash;
+        var spoken = (await Build().BuildAsync(canPerformActions: false, style: ReplyStyle.Voice)).TemplateHash;
+
+        spoken.Should().NotBe(plain);
+    }
+
+    [Fact]
+    public async Task VoiceStyle_LeavesTheAuthorizationStanceAlone()
+    {
+        // Presentation only: the same refusal text a denied caller gets on a screen is what they get
+        // through a speaker. A style must never be a route to a different stance.
+        var denied = await Build().BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
+        var allowed = await Build().BuildAsync(canPerformActions: true, style: ReplyStyle.Voice);
+
+        denied.Text.Should().Contain(KgsmAssistantPrompts.ActionsDenied);
+        allowed.Text.Should().Contain(KgsmAssistantPrompts.ActionsAllowed);
+    }
 }

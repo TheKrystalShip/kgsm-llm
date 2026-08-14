@@ -24,5 +24,10 @@ internal static class PromptSegments
     public static readonly PromptSegment ActionsDenied =
         new("actions-denied.md", "Llm:ActionsDenied", KgsmAssistantPrompts.ActionsDenied);
 
-    public static readonly IReadOnlyList<PromptSegment> All = new[] { Preamble, ActionsAllowed, ActionsAuto, ActionsDenied };
+    /// <summary>Appended only when the caller asked for <see cref="ReplyStyle.Voice"/>.</summary>
+    public static readonly PromptSegment Voice =
+        new("voice.md", "Llm:Voice", KgsmAssistantPrompts.Voice);
+
+    public static readonly IReadOnlyList<PromptSegment> All =
+        new[] { Preamble, ActionsAllowed, ActionsAuto, ActionsDenied, Voice };
 }

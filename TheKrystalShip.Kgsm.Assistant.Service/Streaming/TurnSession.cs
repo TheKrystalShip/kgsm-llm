@@ -328,6 +328,11 @@ internal sealed class TurnSession
 /// attributes both this prompt and the replayed history to their speakers. Carried rather than
 /// re-read from the conversation key: which surface a key belongs to is the composing handler's to
 /// know, and a prefix test here would be a second, quietly divergent copy of that scheme.
+/// <para>
+/// <c>Style</c> is carried for the opposite reason authority is not: it is what the surface that asked
+/// needs the answer to look like, which does not change while the turn waits. Presentation, never
+/// permission — a queued turn is no shorter or longer a licence for having been styled.
+/// </para>
 /// </remarks>
 internal sealed record TurnRun(
     string Prompt,
@@ -335,7 +340,8 @@ internal sealed record TurnRun(
     string? DraftYaml,
     string? RelayLeaf,
     KgsmTierSource Authority,
-    bool Shared = false);
+    bool Shared = false,
+    ReplyStyle Style = ReplyStyle.Default);
 
 /// <summary>
 /// How this turn's authority is established when it runs. The relay carries the caller's verified tier

@@ -165,6 +165,13 @@ public interface IServerAssistant
     /// one in which everybody is "you". The host decides it, because it is a property of the key the
     /// conversation was opened under — nothing here can tell a shared conversation from a busy one.
     /// </param>
+    /// <param name="style">
+    /// The shape the asking surface needs this reply in — a property of where the answer lands, not of
+    /// the person, so one leaf sends both (kgsm-bot's text channel and its voice channel).
+    /// <see cref="ReplyStyle.Voice"/> asks for something short enough to listen to; it changes wording
+    /// only, never which tools are offered, whether a mutation is staged, or that a staged one is
+    /// reported as awaiting confirmation.
+    /// </param>
     Task<AssistantResult> RunAsync(
         string conversationId,
         string userPrompt,
@@ -185,7 +192,10 @@ public interface IServerAssistant
         string? leaf = null,
         // Whether several people share this conversation (a Discord thread), which attributes both
         // this prompt and the replayed history to their speakers. Last param, same reason.
-        bool sharedConversation = false);
+        bool sharedConversation = false,
+        // The shape the asking surface needs the reply in (a screen reads, a voice channel listens).
+        // Presentation only. Last param, same reason.
+        ReplyStyle style = ReplyStyle.Default);
 
     /// <summary>
     /// Streaming counterpart to <see cref="RunAsync"/>: same policy (tool offering, gate, blast
@@ -214,7 +224,10 @@ public interface IServerAssistant
         string? leaf = null,
         // Whether several people share this conversation (a Discord thread), which attributes both
         // this prompt and the replayed history to their speakers. Last param, same reason.
-        bool sharedConversation = false);
+        bool sharedConversation = false,
+        // The shape the asking surface needs the reply in (a screen reads, a voice channel listens).
+        // Presentation only. Last param, same reason.
+        ReplyStyle style = ReplyStyle.Default);
 
     /// <summary>
     /// Executes a previously-staged destructive operation after a human has confirmed

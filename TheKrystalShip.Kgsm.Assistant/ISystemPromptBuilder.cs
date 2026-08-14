@@ -24,7 +24,13 @@ public interface ISystemPromptBuilder
     /// <param name="leaf">The leaf this turn runs for, selecting that leaf's prompt overrides;
     /// <see langword="null"/> reads the assistant's own. Last parameter to keep existing positional
     /// callers unshifted.</param>
+    /// <param name="style">
+    /// The shape the asking surface needs the reply in. <see cref="ReplyStyle.Voice"/> appends the
+    /// spoken-delivery segment after the live lists — the last thing the model reads. It changes
+    /// wording only: the authorization stance, the tool rules and the duty to report a staged action
+    /// are the same in every style.
+    /// </param>
     Task<BuiltPrompt> BuildAsync(
         bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default,
-        string? leaf = null);
+        string? leaf = null, ReplyStyle style = ReplyStyle.Default);
 }

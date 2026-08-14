@@ -30,7 +30,7 @@ public class SystemPromptBuilder : ISystemPromptBuilder
 
     public async Task<BuiltPrompt> BuildAsync(
         bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default,
-        string? leaf = null)
+        string? leaf = null, ReplyStyle style = ReplyStyle.Default)
     {
         // The editable template: persona + authorization stance. Each segment resolves
         // file (hot, top precedence) > inline Llm:* config > lib-owned constant default.
@@ -42,9 +42,16 @@ public class SystemPromptBuilder : ISystemPromptBuilder
         var actions = Effective(actionsSegment, leaf);
         var template = preamble + actions;
 
+        // A style asked for by the caller is delivery, not persona, and it is appended AFTER the live
+        // lists below rather than here — it is the one instruction that has to survive several hundred
+        // lines of persona and a catalog, so it goes last, where the model reads it immediately before
+        // answering. It is part of the hashed template all the same: a turn answered in a different
+        // shape was built from a different prompt, and the recorded hash has to say so.
+        var styleSegment = style == ReplyStyle.Voice ? Effective(PromptSegments.Voice, leaf) : string.Empty;
+
         // Hash ONLY the template — not the live lists appended below — so the recorded id moves when
         // the prompt is tuned, not when a server is installed mid-session.
-        var templateHash = PromptHash.Short(template);
+        var templateHash = PromptHash.Short(template + styleSegment);
 
         var builder = new StringBuilder(template);
 
@@ -74,6 +81,9 @@ public class SystemPromptBuilder : ISystemPromptBuilder
             // list, so a lookup failure degrades gracefully rather than aborting.
             _logger.LogWarning(ex, "Failed to inject live lists into system prompt");
         }
+
+        if (styleSegment.Length > 0)
+            builder.Append("\n\n").Append(styleSegment);
 
         return new BuiltPrompt(builder.ToString(), templateHash);
     }

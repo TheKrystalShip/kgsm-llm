@@ -24,13 +24,23 @@ public static partial class PendingConfirmationNote
     /// Appended to a reply that staged an action without saying so. Names the count rather than the
     /// operations: the confirmation prompts carry their own descriptions, and restating them here
     /// would be a second place for what an action is to be described, free to drift from the first.
+    /// <para>
+    /// This sentence is written by code rather than by the model, which is what makes it safe to ask
+    /// for short replies: however tersely a turn answers, the fact that something is waiting on the
+    /// user cannot be shortened away. That is also why it has a spoken form — a synthesiser reads the
+    /// markdown emphasis out as punctuation, and the line break means nothing to a listener.
+    /// </para>
     /// </summary>
-    public static string For(int stagedCount) =>
-        stagedCount == 1
-            ? "\n\n**Awaiting your confirmation.** I've proposed one action — it has not run yet, and "
-              + "only will if you confirm it."
-            : $"\n\n**Awaiting your confirmation.** I've proposed {stagedCount} actions — none has run "
-              + "yet, and each only will if you confirm it.";
+    public static string For(int stagedCount, ReplyStyle style = ReplyStyle.Default) =>
+        style == ReplyStyle.Voice
+            ? stagedCount == 1
+                ? " I've proposed one action, and it won't run until you confirm it."
+                : $" I've proposed {stagedCount} actions, and none will run until you confirm them."
+            : stagedCount == 1
+                ? "\n\n**Awaiting your confirmation.** I've proposed one action — it has not run yet, and "
+                  + "only will if you confirm it."
+                : $"\n\n**Awaiting your confirmation.** I've proposed {stagedCount} actions — none has run "
+                  + "yet, and each only will if you confirm it.";
 
     /// <summary>
     /// Whether the reply already tells the user something is waiting on them. Broad on purpose: the

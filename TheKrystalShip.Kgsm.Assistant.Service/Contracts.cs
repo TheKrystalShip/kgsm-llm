@@ -31,7 +31,13 @@ public sealed record TurnRequest(
     // revise_blueprint and injects this content into the turn so the model can actually change the draft
     // from chat — the only way to edit it, and what stops it fabricating "I updated the draft". Null on an
     // ordinary turn. Not identity-bearing; re-validated when a revision is saved.
-    string? DraftYaml = null);
+    string? DraftYaml = null,
+    // The shape this caller needs the reply in: "voice" for an answer that is about to be spoken aloud,
+    // absent (or anything unrecognised) for the full written answer. It describes the SURFACE, which is
+    // why it rides the turn rather than the leaf — kgsm-bot sends it on a voice-channel turn and omits it
+    // on a typed one, from the same relay identity. Presentation only: it reaches the system prompt and
+    // nothing else, so it can shorten an answer but never widen what the caller may do.
+    string? Style = null);
 
 /// <summary>
 /// A tool parameter, as returned by <c>GET /tools</c>.

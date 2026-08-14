@@ -25,13 +25,14 @@ public sealed class PromptScaffoldTests : IDisposable
     {
         var result = PromptScaffold.WriteDefaults(_dir);
 
-        result.Written.Should().HaveCount(5);   // 4 segments + tools.json
+        result.Written.Should().HaveCount(6);   // 5 segments + tools.json
         result.Skipped.Should().BeEmpty();
 
         File.ReadAllText(Path.Combine(_dir, "preamble.md")).Should().Contain(KgsmAssistantPrompts.Preamble);
         File.ReadAllText(Path.Combine(_dir, "actions-allowed.md")).Should().Contain(KgsmAssistantPrompts.ActionsAllowed);
         File.ReadAllText(Path.Combine(_dir, "actions-auto.md")).Should().Contain(KgsmAssistantPrompts.ActionsAuto);
         File.ReadAllText(Path.Combine(_dir, "actions-denied.md")).Should().Contain(KgsmAssistantPrompts.ActionsDenied);
+        File.ReadAllText(Path.Combine(_dir, "voice.md")).Should().Contain(KgsmAssistantPrompts.Voice);
         File.Exists(Path.Combine(_dir, "tools.json")).Should().BeTrue();
     }
 
@@ -46,7 +47,7 @@ public sealed class PromptScaffoldTests : IDisposable
 
         File.ReadAllText(preamble).Should().Be("MY EDITS");          // untouched
         result.Skipped.Should().Contain(preamble);
-        result.Written.Should().HaveCount(4);                        // the other four
+        result.Written.Should().HaveCount(5);                        // the other four + tools.json
     }
 
     [Fact]

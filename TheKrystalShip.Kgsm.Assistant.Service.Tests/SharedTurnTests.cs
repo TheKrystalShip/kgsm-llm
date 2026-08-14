@@ -50,12 +50,15 @@ public class SharedTurnTests : IClassFixture<WebApplicationFactory<Program>>
         public readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Runs;
 
+        /// <summary>The style the last streamed turn was run with — what the handler passed down.</summary>
+        public ReplyStyle LastStyle = ReplyStyle.Default;
+
         // Only the streaming path is exercised: it is the one a surface attaches to, and the buffered
         // path deliberately runs outside the session model.
         public Task<AssistantResult> RunAsync(
             string conversationId, string prompt, bool canPerformActions, bool think, bool autoExecute,
             IReadOnlyList<string>? tools, CancellationToken ct, string? draftYaml,
-            string? userDisplay, string? leaf, bool sharedConversation) =>
+            string? userDisplay, string? leaf, bool sharedConversation, ReplyStyle style) =>
             throw new NotSupportedException("These tests only stream.");
 
         public Task<Status.ConfirmOutcome> ConfirmAsync(
@@ -69,9 +72,10 @@ public class SharedTurnTests : IClassFixture<WebApplicationFactory<Program>>
         public async IAsyncEnumerable<AssistantStreamEvent> RunStreamAsync(
             string conversationId, string prompt, bool canPerformActions, bool think, bool autoExecute,
             IReadOnlyList<string>? tools, [EnumeratorCancellation] CancellationToken ct,
-            string? draftYaml, string? userDisplay, string? leaf, bool sharedConversation)
+            string? draftYaml, string? userDisplay, string? leaf, bool sharedConversation, ReplyStyle style)
         {
             Interlocked.Increment(ref Runs);
+            LastStyle = style;
             yield return AssistantStreamEvent.Token("watching ");
             Started.Release();
 
@@ -443,6 +447,42 @@ public class SharedTurnTests : IClassFixture<WebApplicationFactory<Program>>
         var after = await watching.QueueOfAsync(0);
         after.Should().NotBeNull("cancelling a queued turn takes it off the queue for everyone");
 
+        script.Release.TrySetResult();
+    }
+
+    [Fact]
+    public async Task AStyleTheCallerAsksForReachesTheTurn()
+    {
+        // The wire half of the spoken-reply shaping: kgsm-bot sends one JSON field on a voice-channel
+        // turn, and this is the only thing standing between that field and the system prompt.
+        var script = new ScriptedAssistant();
+        var factory = Factory(script);
+        var client = await AuthedAsync(factory, "voice-user");
+
+        await using var sending = await Frames.OpenAsync(client,
+            new HttpRequestMessage(HttpMethod.Post, "/turn")
+            {
+                Content = JsonContent.Create(new { prompt = "is it up", conversationId = "voice-chat", style = "voice" }),
+            });
+        await script.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        script.LastStyle.Should().Be(ReplyStyle.Voice);
+        script.Release.TrySetResult();
+    }
+
+    [Fact]
+    public async Task AStyleNobodyAskedForIsTheWrittenAnswer()
+    {
+        // Fails open on purpose: a surface that says nothing about how it renders gets the full answer,
+        // which is readable everywhere. Silence must never be read as a request for a shorter one.
+        var script = new ScriptedAssistant();
+        var factory = Factory(script);
+        var client = await AuthedAsync(factory, "plain-user");
+
+        await using var sending = await TurnAsync(client, "plain-chat", "is it up");
+        await script.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        script.LastStyle.Should().Be(ReplyStyle.Default);
         script.Release.TrySetResult();
     }
 

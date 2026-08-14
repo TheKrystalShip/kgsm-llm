@@ -35,6 +35,9 @@ if (string.IsNullOrWhiteSpace(kgsmPath) || !File.Exists(kgsmPath))
     return ExitUsage;
 }
 
+if (options.IsVoice)
+    return await RunVoiceAsync(options);
+
 var cases = Filter(BenchmarkSuite.Cases, options.Filter, out var filterError);
 if (filterError is not null)
 {
@@ -128,6 +131,54 @@ static string DefaultOutPath(string model)
     var safeModel = model.Replace(':', '_').Replace('/', '_');
     var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     return Path.Combine("eval-results", $"{safeModel}-{stamp}.json");
+}
+
+// Shares the routing run's preflight and its kgsm requirement — it drives the same assistant against the
+// same live inventory. What differs is only what it reads off the turn: how long the reply was.
+static async Task<int> RunVoiceAsync(EvalOptions options)
+{
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+    Harness voiceHarness;
+    try
+    {
+        voiceHarness = Harness.Build(options);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"kgsm-assistant-eval: startup failed — {ex.Message}");
+        return ExitRuntime;
+    }
+
+    try
+    {
+        Console.Error.WriteLine("Resolving fixtures against the live host …");
+        var fixtures = await voiceHarness.PreflightAsync(cts.Token);
+        if (fixtures is null)
+            return ExitRuntime;
+
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            $"Measuring {VoiceSuite.Cases.Count} spoken-style question(s) × 2 styles against {options.Model} …");
+        var rows = await voiceHarness.RunVoiceAsync(fixtures, VoiceSuite.Cases, cts.Token);
+
+        VoiceReport.Render(rows, options.Model, Console.Out);
+        if (options.Transcript)
+            VoiceReport.RenderTranscript(rows, Console.Out);
+        return ExitOk;
+    }
+    catch (OperationCanceledException)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("cancelled.");
+        return ExitCancelled;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"kgsm-assistant-eval: voice run failed — {ex.Message}");
+        return ExitRuntime;
+    }
 }
 
 static async Task<int> RunMcqAsync(EvalOptions options)

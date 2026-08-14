@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-08-14
+
+### Added — a caller can ask for a reply it is about to speak aloud
+
+`POST /turn` takes an optional `style`. `"voice"` says the answer is going to a speech synthesiser;
+anything else, including absence, is the full written answer. It describes the surface the answer
+lands on rather than the person asking, which is why it rides the turn and not the leaf — kgsm-bot
+sends it from a voice channel and omits it from a text channel under one relay identity.
+
+Speech is heard once, at talking speed, and cannot be skimmed, so a reply's length is its duration.
+The style appends a spoken-delivery segment to the system prompt, placed after the injected instance
+and blueprint lists so it is the last instruction the model reads: answer in one short sentence, lead
+with the answer, no markdown or bullets or file paths, and say measured numbers as they were
+measured rather than rounding them for the ear. Measured over six spoken-style questions on
+`gemma4:12b`, holding every trajectory floor: 685 characters of written reply become 357 spoken
+(48% shorter, median 86 → 60), and 34 characters of markup a synthesiser reads out become none.
+
+It is presentation and reaches the system prompt only. The tools offered, the authorization stance
+and the staging of a mutation are the same in every style; a style can shorten an answer and can
+never widen what its caller may do. The pending-confirmation sentence gains a spoken form for the
+same reason — it is written by code rather than by the model, so however tersely a turn answers, the
+fact that something is waiting on the user cannot be shortened away, and it no longer reaches a
+speaker wrapped in markdown emphasis.
+
+`kgsm-assistant-eval voice` is the instrument: it asks each question twice, once for a screen and
+once for a speaker, and reports reply length against the routing floor — the tool that had to be
+called and the confirmation that had to be staged AND stated. Length alone would be a trap, since
+the shortest possible reply is an empty one.
+
 ## [1.11.0] - 2026-08-14
 
 ### Fixed — a conversation stops teaching the model to narrate actions instead of taking them

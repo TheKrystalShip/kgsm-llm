@@ -239,6 +239,11 @@ public class ServerAssistant : IServerAssistant
         // them after the run so the caller can post confirmation prompts. On an auto-accept
         // turn the dispatcher runs lifecycle verbs immediately instead (scope reads back AutoExecute).
         using var scope = _confirmations.BeginTurn(autoExecute);
+
+        // Somebody who said "look it up online" has stated where they want the answer from. Recorded
+        // for the turn rather than left to the model to pass along, because the model was measured
+        // not passing it — see SearchIntent.
+        using var looking = SearchIntent.BeginTurn(SearchIntent.From(userPrompt));
         // The review reads the scope, so it is attached here rather than at construction: the scope
         // exists only for the duration of the turn.
         var result = await _agent.RunAsync(
@@ -354,6 +359,12 @@ public class ServerAssistant : IServerAssistant
             // step by writing straight onto it (see ITurnProgress), landing on the stream immediately
             // instead of waiting for its own terminal tool.result.
             using var progressScope = _progress.BeginTurn(writer);
+            // ⚠ Opened HERE and not in the iterator above, for the same reason as the two scopes
+            // beside it: an async iterator's yields drop the ambient value, and this method is the
+            // yield-free flow the dispatcher actually runs on. Opened in the iterator it would be
+            // gone by the first tool call — which is the streaming path every surface uses.
+            using var looking = SearchIntent.BeginTurn(SearchIntent.From(turn.UserPrompt));
+
             var finalText = string.Empty;
             LlmUsage? finalUsage = null;
             // The id the loop recorded this turn under, carried out to the surface so a client can rate

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] - 2026-08-14
+
+### Fixed — "look it up online" now reaches the web whatever the model decides
+
+⚠ **Adding the `scope` parameter was not enough, because the model never passed it.** Measured on this
+host with `gemma4:12b`: asked in plain English to check online, it called `search` with the query alone
+and no scope at all — every attempt, on the shipped build. The default ladder then ran, local
+documentation matched the game on topic, and the web was never reached. An optional parameter is a
+suggestion to a model, not an instruction from a person.
+
+So the turn now reads the request off **what the person actually typed**. `AskedForTheWeb` matches
+phrases that are somebody saying where to look — "check online", "search the web", "google it" — and
+`SearchIntent` carries that for the turn in the same ambient per-turn scope the confirmation context
+and the progress sink already use. ⚠ It is opened inside the yield-free producer, not the streaming
+iterator: an async iterator's yields drop the ambient value, and the streaming path is the one every
+surface actually uses.
+
+**What the person said outranks what the model passed.** A scope on the call is the model's reading of
+the request; the turn's intent is the request.
+
+Two properties keep this honest. It reads an **instruction, never a topic** — nothing here guesses
+whether a question needs current information, which stays the model's judgement. And it can only
+**widen**: no phrase confines a search to documentation or disables one, so the worst a false positive
+can do is answer from the web something the docs also covered. Bare "online" and "web" are excluded
+deliberately, because a server being online is the opposite subject.
+
+⚠ Also worth knowing: stopping `kgsm-rag-indexer` does **not** disable retrieval. The indexer only
+*writes* the index; the read path uses the file on disk while `Rag:Enabled` is true.
+
 ## [1.13.0] - 2026-08-14
 
 ### Added — `search` takes a scope, so "look it up online" reaches the web

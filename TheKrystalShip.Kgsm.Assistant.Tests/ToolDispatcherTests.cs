@@ -1481,4 +1481,49 @@ public class ToolDispatcherTests
 
         result.Summary.Should().Contain("Server ready.").And.Contain("Recent console output for minecraft");
     }
+
+    [Fact]
+    public async Task Search_WhenTheUserAskedToLookOnline_ReachesTheWebEvenThoughTheModelDidNotSaySo()
+    {
+        // ⚠ The measured failure, isolated: asked in plain English to check online, gemma4:12b called
+        // search with the query alone and no scope, so the default ladder ran and local docs answered.
+        // The turn's intent has to win, or an explicit instruction depends on the model's discretion.
+        _search.SearchAsync(Arg.Any<string>(), Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())
+            .Returns(SearchEnvelope("Web results …", SearchState.Web));
+
+        using (SearchIntent.BeginTurn(SearchScope.Web))
+            await Create().ExecuteAsync(SearchCall("newest terraria version"));
+
+        await _search.Received(1).SearchAsync(
+            "newest terraria version", SearchScope.Web, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Search_TheUsersOwnWordsOutrankTheModelsScope()
+    {
+        // The scope on the call is the model READING the request; the turn's intent IS the request.
+        _search.SearchAsync(Arg.Any<string>(), Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())
+            .Returns(SearchEnvelope("Web results …", SearchState.Web));
+
+        var call = new LlmToolCall(LlmTools.Search,
+            new Dictionary<string, string?> { ["query"] = "newest terraria version", ["scope"] = "local" });
+
+        using (SearchIntent.BeginTurn(SearchScope.Web))
+            await Create().ExecuteAsync(call);
+
+        await _search.Received(1).SearchAsync(
+            "newest terraria version", SearchScope.Web, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Search_OnAnOrdinaryTurn_TheModelsChoiceStands()
+    {
+        _search.SearchAsync(Arg.Any<string>(), Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())
+            .Returns(SearchEnvelope("From the docs …", SearchState.LocalStrong));
+
+        await Create().ExecuteAsync(SearchCall("what is kgsm"));
+
+        await _search.Received(1).SearchAsync(
+            "what is kgsm", SearchScope.Auto, Arg.Any<CancellationToken>());
+    }
 }

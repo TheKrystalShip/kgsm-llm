@@ -166,12 +166,23 @@ public class ToolDispatcher : IToolDispatcher
 
         // Anything unrecognised means "wherever you think best" — the same fail-open the reply style
         // takes. A misread scope must not turn a search into an error.
-        SearchScope scope = call.Arg("scope")?.Trim().ToLowerInvariant() switch
+        SearchScope asked = call.Arg("scope")?.Trim().ToLowerInvariant() switch
         {
             "web" => SearchScope.Web,
             "local" => SearchScope.Local,
             _ => SearchScope.Auto,
         };
+
+        // ⚠ What the person said beats what the model passed. The scope on the call is the model's
+        // reading of the request; the turn's intent IS the request, taken from their own words. They
+        // disagree in exactly the measured case: asked plainly to check online, the model called
+        // search with no scope at all and the local docs answered instead.
+        SearchScope scope = SearchIntent.Required ?? asked;
+
+        if (scope != asked)
+            _logger.LogDebug(
+                "Search scope raised to {Scope} for \"{Query}\": the user asked for it outright",
+                scope, query);
 
         // The aggregator returns the model's grounding text (Summary) plus the cited passages (Data).
         // Attach the surface card only when there is something to cite — an empty / "couldn't search"

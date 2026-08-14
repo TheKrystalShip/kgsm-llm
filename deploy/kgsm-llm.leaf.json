@@ -82,6 +82,11 @@
       "order": 11
     },
     {
+      "id": "speech",
+      "label": "Speaking answers",
+      "order": 12
+    },
+    {
       "id": "authoring",
       "label": "Blueprint authoring",
       "order": 12
@@ -634,6 +639,25 @@
       "min": 0,
       "risk": "safe",
       "dependsOn": "webFetchEnabled"
+    },
+    {
+      "key": "speechEnabled",
+      "env": "Speech__Enabled",
+      "label": "Read answers aloud",
+      "description": "Whether this assistant synthesises an answer as it writes it, for surfaces that ask to hear one. Each sentence is spoken while the next is still being written, so the first plays before the answer is finished. Costs nothing on a turn that did not ask, and nothing at all on a host with no speech engine installed.",
+      "group": "speech",
+      "type": "string",
+      "default": "true",
+      "risk": "safe"
+    },
+    {
+      "key": "speechSocket",
+      "env": "Speech__SocketPath",
+      "label": "Speech engine socket",
+      "description": "The socket the host's speech engine (kgsm-speech) listens on. Blank uses the standard path. Without that leaf installed this assistant still answers — in text, as it does for every surface that asks for no audio.",
+      "group": "speech",
+      "type": "path",
+      "risk": "wiring"
     },
     {
       "key": "authoringEnabled",

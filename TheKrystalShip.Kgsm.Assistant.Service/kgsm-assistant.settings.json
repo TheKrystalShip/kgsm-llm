@@ -24,6 +24,17 @@
     "Seed": null,
     "Think": false
   },
+  // Reading an answer aloud, for a surface that asks to hear one. The models are NOT this leaf's:
+  // kgsm-speech holds them — one engine per host, serving every surface, with the voice set there —
+  // so all that lives here is whether to ask it for anything. A sentence is synthesised as soon as it
+  // is written, which is what lets the first one play before the answer is finished. A host with no
+  // speech leaf ignores all of this and answers in text.
+  "Speech": {
+    "Enabled": true,
+    // Blank uses the standard socket path the engine listens on.
+    "SocketPath": ""
+  },
+
   "Conversation": {
     "DatabasePath": "/var/lib/kgsm-assistant/conversations.db",
 

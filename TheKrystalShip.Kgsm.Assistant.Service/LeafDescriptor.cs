@@ -30,6 +30,7 @@ using TheKrystalShip.KGSM.LeafConfig;
 [assembly: LeafGroup("session", "Sessions", 9)]
 [assembly: LeafGroup("websearch", "Web search", 10)]
 [assembly: LeafGroup("webfetch", "Web fetch", 11)]
+[assembly: LeafGroup("speech", "Speaking answers", 12)]
 [assembly: LeafGroup("authoring", "Blueprint authoring", 12)]
 [assembly: LeafGroup("rag", "Knowledge base", 13)]
 [assembly: LeafGroup("notifications", "Notifications", 14)]
@@ -64,6 +65,19 @@ using TheKrystalShip.KGSM.LeafConfig;
 [assembly: LeafFrameworkField("promptsDirectory", "Prompts__Directory", "Prompt overrides directory",
     Description = "Directory of editable prompt files that replace the assistant's built-in system prompt and tool descriptions. Blank uses the built-in text. A file here outranks every other way of setting the same prompt.",
     Group = "general", Type = LeafType.Path, Risk = LeafRisk.Wiring, NoDefault = true)]
+
+// ── Reading answers aloud ────────────────────────────────────────────────────
+// The models are not this leaf's — kgsm-speech holds them, one engine per host serving every surface,
+// and the voice is set there. What is settable here is only whether this assistant asks it for
+// anything, and where to find it.
+
+[assembly: LeafFrameworkField("speechEnabled", "Speech__Enabled", "Read answers aloud",
+    Description = "Whether this assistant synthesises an answer as it writes it, for surfaces that ask to hear one. Each sentence is spoken while the next is still being written, so the first plays before the answer is finished. Costs nothing on a turn that did not ask, and nothing at all on a host with no speech engine installed.",
+    Group = "speech")]
+
+[assembly: LeafFrameworkField("speechSocket", "Speech__SocketPath", "Speech engine socket",
+    Description = "The socket the host's speech engine (kgsm-speech) listens on. Blank uses the standard path. Without that leaf installed this assistant still answers — in text, as it does for every surface that asks for no audio.",
+    Group = "speech", Type = LeafType.Path, Risk = LeafRisk.Wiring, NoDefault = true)]
 
 [assembly: LeafFrameworkField("ollamaEndpoint", "Ollama__Endpoint", "Ollama endpoint",
     Description = "Where the language model is served from. Everything the assistant says comes through here, so an unreachable endpoint leaves it unable to answer at all.",

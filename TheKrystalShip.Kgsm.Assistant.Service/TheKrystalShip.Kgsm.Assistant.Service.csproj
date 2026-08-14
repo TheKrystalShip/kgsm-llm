@@ -10,7 +10,7 @@
          ships under. The three published libraries (TheKrystalShip.Llm, .Kgsm.Assistant and
          .Kgsm.Assistant.Relay) each version independently of it and of each other. Read by
          deploy/version.sh, which is the single source for packaging. -->
-    <Version>1.16.0</Version>
+    <Version>1.17.0</Version>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>
@@ -42,6 +42,11 @@
          announced or to whom. The subscriptions, the preferences and the staged actions are this
          leaf's own — sharing those with kgsm-api would be sharing an audience, not a protocol. -->
     <PackageReference Include="TheKrystalShip.KGSM.WebPush" Version="1.0.0" />
+
+    <!-- The host's speech engine (kgsm-speech), for reading an answer aloud as it is written. An
+         OPTIONAL leaf: this is the client and the wire contract, a few kilobytes with no native
+         dependency, and an assistant on a host without that leaf simply never emits an audio frame. -->
+    <PackageReference Include="TheKrystalShip.KGSM.Speech" Version="1.1.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -104,11 +104,44 @@ that follows the caller's operator tier alone, because the user confirms every p
 | `tool.start` | `{ id, tool, arguments }` | a tool is about to run |
 | `tool.result` | `{ id, tool, summary, result? }` | that tool finished |
 | `progress` | `{ tool, key, label, status, id? }` | a step *inside* a still-running tool |
+| `audio.delta` | `{ seq, mime, data }` | one sentence of the reply, spoken — only when the turn asked to be |
 | `command.proposed` | `{ id, verb, subject, confirm, token, reason?, configKey?, configValue?, instanceName?, file? }` | an operation staged for human confirmation |
 | `error` | `{ code, message }` | terminal failure |
 | `done` | `{ text, completedAt, usage?, turnId }` | terminal success |
 
 A turn ends with exactly one `done` **or** one `error`.
+
+### `audio.delta`
+
+A turn that sets **`speak: true`** is read aloud as it is written, and each sentence arrives as an
+`audio.delta` **interleaved with the text it belongs to** — not after it. That ordering is the whole
+point: the first sentence is synthesised while the model is still writing the third, so a listener
+hears the answer beginning at about the time a reader starts reading it.
+
+- **`data` is the audio, base64.** It rides the frame rather than a URL because this stream is
+  already authenticated, already ordered against the text, and already relayed verbatim by kgsm-api —
+  a URL would need its own auth, its own lifetime and a round trip per sentence. The cost is size: a
+  spoken sentence is around 160KB encoded.
+- **`mime` says what it is** — `audio/wav` today, a container a browser decodes with no library. It
+  is stated per frame rather than assumed, so a smaller format can be introduced without a client
+  having to be told first.
+- **`seq` counts the sentences from zero.** They are emitted in order, so it is a consistency check
+  rather than a sort key: a client that sees a gap has dropped a sentence, which is worth noticing
+  because the audio would otherwise simply have said less than the text.
+
+**Silence is the default and the fallback.** A turn that does not ask is never spoken; a host with no
+speech engine emits no `audio.delta` however the turn asked, because synthesis is an optional leaf
+(`kgsm-speech`) and its absence is an ordinary configuration. A client therefore treats audio as
+something that may never arrive, exactly as it treats `thinking.delta`.
+
+⚠ **What is spoken is the reply with its markup dropped, never a rewrite.** Emphasis, headings and
+list bullets are silent; a link is read as its text and not its address; a fenced code block is
+skipped entirely rather than recited line by line. Nothing is summarised and nothing is cut short —
+the audio says what the text says, minus the characters that only mean something on a screen.
+
+⚠ **Frames are produced once and broadcast**, so every surface attached to a spoken turn receives its
+audio. Two surfaces both playing it will talk over each other; whether to play is the client's
+decision, and a client that is not in the foreground should generally not.
 
 ### `tool.start` / `tool.result`
 

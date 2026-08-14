@@ -341,7 +341,11 @@ internal sealed record TurnRun(
     string? RelayLeaf,
     KgsmTierSource Authority,
     bool Shared = false,
-    ReplyStyle Style = ReplyStyle.Default);
+    ReplyStyle Style = ReplyStyle.Default,
+    // Whether this turn is to be read aloud as it is written. On the turn rather than the session for
+    // the same reason as the style: it describes the surface that asked, and a queued turn carries
+    // what its own caller wanted rather than whatever the last one did.
+    bool Speak = false);
 
 /// <summary>
 /// How this turn's authority is established when it runs. The relay carries the caller's verified tier

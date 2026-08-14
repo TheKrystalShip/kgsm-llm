@@ -21,6 +21,7 @@ using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Push;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.Kgsm.Assistant.Service.Speech;
 using TheKrystalShip.Kgsm.Assistant.Service.Streaming;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
@@ -137,6 +138,18 @@ builder.Services.AddSingleton<IConversationEventBus, ConversationEventBus>();
 // that asked for it — which is what lets a second surface watch one, lets any of them stop it, and
 // lets it survive the surface that started it going away. Also in memory: a turn that was interrupted
 // by a restart is over, and nothing here is owed durability the conversation store does not give.
+// Reading an answer aloud. The null one is registered FIRST and unconditionally, so an assistant on a
+// host with no speech leaf has a working port that reports itself unavailable — the same fail-closed
+// shape as DisabledRetrieval. The real adapter replaces it only when this host is configured to speak,
+// and even then it answers "unavailable" until the leaf's socket is actually there.
+builder.Services.AddSingleton<ISpokenAudio, NoSpokenAudio>();
+if (builder.Configuration.GetValue("Speech:Enabled", true))
+{
+    builder.Services.AddSingleton<ISpokenAudio>(sp => new LeafSpokenAudio(
+        builder.Configuration["Speech:SocketPath"],
+        sp.GetRequiredService<ILogger<LeafSpokenAudio>>()));
+}
+
 builder.Services.AddSingleton<ITurnRegistry, TurnRegistry>();
 builder.Services.AddHostedService<TurnPresenceWorker>();
 
@@ -1250,6 +1263,12 @@ secured.MapPost("/turn", async (
     // header to protect. Unrecognised reads as the full written answer (ReplyStyles.Parse).
     var style = ReplyStyles.Parse(request.Style);
 
+    // Whether this surface wants the answer read aloud as it is written. Read from the body on both
+    // paths, like the style and for the same reason: it says nothing about who is asking or what they
+    // may do. A host with no speech leaf ignores it — the port reports itself unavailable and no audio
+    // frame is ever emitted, so a client that asked simply hears nothing rather than being refused.
+    var speak = request.Speak ?? false;
+
     // How this turn's authority will be established WHEN IT RUNS, which for a queued turn is not now.
     // The relay reads the caller's verified tier off X-Relay-Tier and their auto-accept intent off
     // X-Relay-Auto-Act — a relay host may have no Discord config of its own, so the forwarded tier is
@@ -1299,7 +1318,8 @@ secured.MapPost("/turn", async (
         var admission = turns.Admit(
             principal, conversationId, chatScope ?? string.Empty,
             new TurnRun(
-                request.Prompt, request.Tools, request.DraftYaml, relayLeaf, authority, room is not null, style));
+                request.Prompt, request.Tools, request.DraftYaml, relayLeaf, authority, room is not null,
+                style, speak));
 
         if (admission.Outcome == TurnAdmission.QueueFull)
             return Results.Json(

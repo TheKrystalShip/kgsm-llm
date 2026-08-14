@@ -37,7 +37,15 @@ public sealed record TurnRequest(
     // why it rides the turn rather than the leaf — kgsm-bot sends it on a voice-channel turn and omits it
     // on a typed one, from the same relay identity. Presentation only: it reaches the system prompt and
     // nothing else, so it can shorten an answer but never widen what the caller may do.
-    string? Style = null);
+    string? Style = null,
+    // Whether this surface wants the answer READ ALOUD as it is written. Audio arrives as `audio.delta`
+    // frames, one per sentence, while the text is still streaming — the point being that the first
+    // sentence plays before the last one exists. Absent or false is silence, which is what every
+    // caller that plays no audio should send: synthesis costs the host's one speech engine, and a
+    // turn nobody listens to would spend it for nothing. Presentation only, exactly like Style: it
+    // changes what the answer is delivered AS, never what the caller may do or what the model is told.
+    // Ignored entirely on a host with no speech leaf, where no audio frame is ever emitted.
+    bool? Speak = null);
 
 /// <summary>
 /// A tool parameter, as returned by <c>GET /tools</c>.
@@ -589,7 +597,35 @@ public static class TurnStream
     /// outcome is the rich card + any re-edit token, not a text stream. Preceded by <see cref="Progress"/>
     /// steps and heartbeat comments that keep the minutes-long stream's socket alive.</summary>
     public const string Result = "result";
+
+    /// <summary>
+    /// `audio.delta` — one sentence of the reply, spoken, as a self-contained audio file.
+    /// </summary>
+    /// <remarks>
+    /// Emitted only when the turn asked to be spoken and the host has a speech engine, and interleaved
+    /// with <see cref="TextDelta"/> rather than following it: the first sentence is synthesised while
+    /// the model is still writing the third, which is what makes a spoken answer feel live. A client
+    /// that does not play audio ignores it, as it does any frame it does not know.
+    /// </remarks>
+    public const string AudioDelta = "audio.delta";
 }
+
+/// <summary>
+/// `audio.delta` — one sentence of the reply as playable audio.
+/// </summary>
+/// <param name="Seq">
+/// Its position in the spoken answer, from zero. Sentences are emitted in order, so this is a
+/// consistency check rather than a sort key — a client that ever sees a gap has dropped one, which is
+/// worth knowing because the audio would otherwise simply have said less than the text.
+/// </param>
+/// <param name="Mime">What <paramref name="Data"/> is — <c>audio/wav</c> today.</param>
+/// <param name="Data">
+/// The audio, base64. It rides the frame rather than a URL on purpose: this stream is already
+/// authenticated, already ordered against the text it belongs to, and already relayed verbatim by
+/// kgsm-api — a URL would need its own auth, its own lifetime, and a second round trip per sentence.
+/// The cost is size: a spoken sentence is around 160KB encoded.
+/// </param>
+public sealed record AudioEvent(int Seq, string Mime, string Data);
 
 /// <summary>`text.delta` — one incremental slice of the assistant's reply text.</summary>
 public sealed record TokenEvent(string Text);

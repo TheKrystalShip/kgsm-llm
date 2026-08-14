@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-08-15
+
+### Added — an answer can be read aloud while it is being written
+
+A turn that sets **`speak: true`** now emits `audio.delta` frames, one per sentence, **interleaved
+with the text rather than after it**. Each sentence is synthesised the moment it is complete, so the
+first one is on its way to the listener while the model is still writing the third.
+
+Measured on hotrod, warm: first text at 0.93s, **first audio at 1.50s** — 0.57s behind the words, and
+before the reply had finished streaming. Synthesising the finished answer instead would have started
+after the last word and delivered nothing until then.
+
+- **The models are not this leaf's.** `kgsm-speech` holds them — one engine per host, serving every
+  surface, with the voice set there — so nothing here names a voice and there is no second setting to
+  keep in step. `ISpokenAudio` has a null implementation registered first and always, the same
+  fail-closed shape as `DisabledRetrieval`: a host without that leaf emits no audio frame and answers
+  in text, which is the ordinary case rather than a degraded one.
+- ⚠ **The terminal frame is held until the audio catches up.** `done` is what a client tears a turn
+  down on, so emitting it while sentences were still being synthesised would deliver them to a turn
+  that had already been closed. A spoken turn is not over when its last word is written.
+- ⚠ **What is spoken is the reply minus its markup, never a rewrite.** A fenced code block is skipped
+  rather than recited line by line; a link is read as its text and not its address; headings and list
+  bullets lose their punctuation. Nothing is summarised and nothing is cut short.
+- ⚠ **A sentence ends at punctuation followed by a space**, decided one character late — because
+  `kgsm.sh`, `1.2.3` and `ggml-small.en.bin` are full of dots, and cutting at one splits a sentence
+  mid-word and spends a synthesis request saying half of it.
+
+`Speech:Enabled` and `Speech:SocketPath` are the whole configuration surface, and both appear on the
+leaf's Control Panel page.
+
 ## [1.16.0] - 2026-08-15
 
 ### Changed — games are named the way people name them

@@ -6,6 +6,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.Kgsm.Assistant.Service.Speech;
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
@@ -80,6 +81,7 @@ internal sealed class TurnRegistry : ITurnRegistry
     private readonly IInvocationContext _invocation;
     private readonly IOptions<AssistantServiceOptions> _assistantOptions;
     private readonly IOptions<ConversationOptions> _conversationOptions;
+    private readonly ISpokenAudio _audio;
     private readonly ILogger<TurnRegistry> _log;
 
     public TurnRegistry(
@@ -90,6 +92,7 @@ internal sealed class TurnRegistry : ITurnRegistry
         IInvocationContext invocation,
         IOptions<AssistantServiceOptions> assistantOptions,
         IOptions<ConversationOptions> conversationOptions,
+        ISpokenAudio audio,
         ILogger<TurnRegistry> log)
     {
         _scopes = scopes;
@@ -99,6 +102,7 @@ internal sealed class TurnRegistry : ITurnRegistry
         _invocation = invocation;
         _assistantOptions = assistantOptions;
         _conversationOptions = conversationOptions;
+        _audio = audio;
         _log = log;
     }
 
@@ -376,6 +380,21 @@ internal sealed class TurnRegistry : ITurnRegistry
         var proposalSeq = 0;
         var ttl = Math.Max(_assistantOptions.Value.Confirmation.TtlSeconds, 1);
 
+        // The turn's last frame, held back while a spoken turn finishes saying itself.
+        TurnFrame? ending = null;
+
+        // Read aloud while it is written, when the surface that asked wants that and this host has an
+        // engine to do it with. It is fed the same text deltas the reader is receiving and emits its
+        // own frames beside them; nothing about the turn waits for it.
+        await using SpokenTurn? spoken = run.Speak && _audio.Available
+            ? new SpokenTurn(
+                _audio,
+                (seq, mime, audio) => Publish(session, new TurnFrame(
+                    TurnStream.AudioDelta, new AudioEvent(seq, mime, Convert.ToBase64String(audio)))),
+                _log,
+                session.Token)
+            : null;
+
         try
         {
             await foreach (var ev in _assistant.RunStreamAsync(
@@ -389,8 +408,29 @@ internal sealed class TurnRegistry : ITurnRegistry
                     continue;
                 if (ev.Kind == AssistantEventKind.Confirmation && frame.Payload is CommandProposedEvent proposed)
                     session.RecordStaged(ev.StagedConfirmation!, proposed.Token);
+
+                // Before the frame is published, so the sentence is on its way to the engine while the
+                // words are on their way to the reader.
+                if (spoken is not null && frame.Name == TurnStream.TextDelta)
+                    spoken.Take(((TokenEvent)frame.Payload).Text);
+
+                // ⚠ A spoken turn is not over when its last word is written — the last sentence is
+                // still being synthesised. The terminal frame is held until the audio has caught up,
+                // because `done` is what a client tears its turn down on: emitted first, the sentences
+                // still in flight would arrive for a turn that had already been closed.
+                if (spoken is not null && frame.Name == TurnStream.Done)
+                {
+                    ending = frame;
+                    continue;
+                }
+
                 Publish(session, frame);
             }
+
+            // The last sentence, and the wait for the audio to catch up with the words. Inside the try
+            // because a cancelled turn has nothing left to say.
+            if (spoken is not null) await spoken.FinishAsync();
+            if (ending is not null) Publish(session, ending);
         }
         catch (OperationCanceledException) when (session.Token.IsCancellationRequested)
         {

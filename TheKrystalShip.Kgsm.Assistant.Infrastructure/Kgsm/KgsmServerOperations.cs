@@ -30,6 +30,7 @@ internal sealed class KgsmServerOperations : IServerOperations
     private readonly IWatcherService _watcher;
     private readonly IWatchdogClient _watchdog;
     private readonly IInvocationContext _invocation;
+    private readonly IInventoryInvalidation _inventory;
     private readonly ILogger<KgsmServerOperations> _logger;
 
     // kgsm's `watcher ports test` exit code when the instance has no ports configured — treated as
@@ -38,7 +39,8 @@ internal sealed class KgsmServerOperations : IServerOperations
 
     public KgsmServerOperations(
         IInstanceService instances, IInstanceFiles files, ISystemService system, IWatcherService watcher,
-        IWatchdogClient watchdog, IInvocationContext invocation, ILogger<KgsmServerOperations> logger)
+        IWatchdogClient watchdog, IInvocationContext invocation, IInventoryInvalidation inventory,
+        ILogger<KgsmServerOperations> logger)
     {
         _instances = instances;
         _files = files;
@@ -46,6 +48,7 @@ internal sealed class KgsmServerOperations : IServerOperations
         _watcher = watcher;
         _watchdog = watchdog;
         _invocation = invocation;
+        _inventory = inventory;
         _logger = logger;
     }
 
@@ -585,6 +588,11 @@ internal sealed class KgsmServerOperations : IServerOperations
                     blueprint, installDir: null, version: version, name: instanceName,
                     actor: actor, origin: origin, port: port),
                 cancellationToken);
+            // The roster this process answers from just changed by this process's own hand. The event
+            // journal carries the same news and is what catches every other surface's writes, but it
+            // is configured per host — so an install performed here settles its own cache rather than
+            // depending on a listener that a host may not be running.
+            _inventory.InvalidateInstances();
             return Result.Success();
         }
         catch (Exception ex)
@@ -600,6 +608,7 @@ internal sealed class KgsmServerOperations : IServerOperations
         {
             var (actor, origin) = Provenance();
             await Task.Run(() => _instances.Uninstall(instance, actor, origin), cancellationToken);
+            _inventory.InvalidateInstances();
             return Result.Success();
         }
         catch (Exception ex)

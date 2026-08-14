@@ -28,9 +28,11 @@ public sealed class KgsmServerOperationsTests
     private readonly IWatcherService _watcher = Substitute.For<IWatcherService>();
     private readonly IWatchdogClient _watchdog = Substitute.For<IWatchdogClient>();
     private readonly AsyncLocalInvocationContext _invocation = new();
+    private readonly IInventoryInvalidation _inventory = Substitute.For<IInventoryInvalidation>();
 
     private KgsmServerOperations Create() =>
-        new(_instances, _files, _system, _watcher, _watchdog, _invocation, NullLogger<KgsmServerOperations>.Instance);
+        new(_instances, _files, _system, _watcher, _watchdog, _invocation, _inventory,
+            NullLogger<KgsmServerOperations>.Instance);
 
     // --- provenance: a turn/confirm scope stamps actor (the Discord principal) + origin=assistant ---
 
@@ -68,6 +70,53 @@ public sealed class KgsmServerOperationsTests
         _instances.Received(1).CreateBackup("inst", "discord:Haru", "assistant");
         _instances.Received(1).SetInstanceConfigValue("inst", "key", "val", "discord:Haru", "assistant");
         _instances.Received(1).Install("valheim", null, null, "my-server", "discord:Haru", "assistant");
+    }
+
+    // --- a mutation performed here settles this process's own view of the roster ---
+
+    /// <summary>
+    /// Installing changes what is installed, so the roster snapshot this process answers from is
+    /// wrong the moment the call returns. The engine's journal says the same thing and is what
+    /// catches the other surfaces, but it is configured per host — so the chokepoint settles its own.
+    /// </summary>
+    [Fact]
+    public async Task InstallAsync_Success_InvalidatesTheInstanceRoster()
+    {
+        _instances.Install(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>()).Returns(new KgsmResult(0, "ok"));
+
+        await Create().InstallAsync("valheim", "my-server");
+
+        _inventory.Received(1).InvalidateInstances();
+        _inventory.DidNotReceive().InvalidateBlueprints();
+    }
+
+    [Fact]
+    public async Task UninstallAsync_Success_InvalidatesTheInstanceRoster()
+    {
+        _instances.Uninstall(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new KgsmResult(0, "ok"));
+
+        await Create().UninstallAsync("my-server");
+
+        _inventory.Received(1).InvalidateInstances();
+    }
+
+    /// <summary>
+    /// A throw means the roster did not change, so dropping the snapshot would buy a kgsm subprocess
+    /// to re-read a list that is already right.
+    /// </summary>
+    [Fact]
+    public async Task InstallAsync_Failure_LeavesTheRosterAlone()
+    {
+        _instances.When(i => i.Install(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>()))
+            .Do(_ => throw new InvalidOperationException("boom"));
+
+        var result = await Create().InstallAsync("valheim", "my-server");
+
+        result.IsSuccess.Should().BeFalse();
+        _inventory.DidNotReceive().InvalidateInstances();
     }
 
     [Fact]

@@ -7,13 +7,18 @@ using TheKrystalShip.KGSM.Events;
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 
 /// <summary>
-/// Keeps the assistant's blueprint cache honest by listening to the engine's own events.
+/// Keeps the assistant's inventory caches honest by listening to the engine's own events.
 /// <para>
-/// The assistant caches the blueprint catalog behind a TTL, so a blueprint edited anywhere else —
-/// the Control Panel's library editor, another operator's CLI — would otherwise be answered from a
-/// stale snapshot for the rest of the TTL. A blueprint write is the engine's to announce
-/// (<c>blueprint_created</c> / <c>_updated</c> / <c>_removed</c>), and this drops the cache the
-/// moment one arrives, so the next turn reads the new values.
+/// The assistant caches the instance roster and the blueprint catalog behind a TTL, so a server
+/// installed or a blueprint edited anywhere else — the Control Panel, the Discord bot, another
+/// operator's CLI, or this process's own confirmed action — would otherwise be answered from a stale
+/// snapshot for the rest of the TTL. Every one of those writes is the engine's to announce, and this
+/// drops the matching cache the moment an announcement arrives, so the next turn reads the new world.
+/// </para>
+/// <para>
+/// The journal is the right seam precisely because it is surface-blind: it carries a change made by
+/// anyone on the host, not only the ones this process performed, so there is one freshness path
+/// rather than one per surface that can mutate the inventory.
 /// </para>
 /// <para>
 /// Only a resident host runs this, and only with <c>KGSM:JournalDir</c> set — because a one-shot
@@ -43,6 +48,17 @@ internal sealed class KgsmEventListener : IHostedService
         _events.RegisterHandler<BlueprintUpdatedData>(e => OnBlueprintChanged("blueprint_updated", e.BlueprintName));
         _events.RegisterHandler<BlueprintRemovedData>(e => OnBlueprintChanged("blueprint_removed", e.BlueprintName));
 
+        // The four moments `kgsm instances list` answers differently: the record appearing and the
+        // install succeeding, the record going and the uninstall succeeding. Both halves of each pair
+        // are handled because the phase event is when the roster actually changes on disk and the fact
+        // event is when the change is known to have worked — a cache that dropped on only one of them
+        // is stale for the window between them. Invalidation is idempotent and the refresh is lazy, so
+        // the pair costs one re-read, not two.
+        _events.RegisterHandler<InstanceCreatedData>(e => OnInstanceRosterChanged("instance_created", e.InstanceName));
+        _events.RegisterHandler<InstanceInstalledData>(e => OnInstanceRosterChanged("instance_installed", e.InstanceName));
+        _events.RegisterHandler<InstanceRemovedData>(e => OnInstanceRosterChanged("instance_removed", e.InstanceName));
+        _events.RegisterHandler<InstanceUninstalledData>(e => OnInstanceRosterChanged("instance_uninstalled", e.InstanceName));
+
         // Starts the journal read loop. kgsm-lib tolerates a journal directory that does not exist
         // yet and picks up the first segment when it appears, so a kgsm redeploy — or a host that
         // has never emitted an event — never leaves the assistant deaf.
@@ -53,14 +69,26 @@ internal sealed class KgsmEventListener : IHostedService
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>
-    /// Drops the whole inventory cache, not just the one blueprint: the cache holds the catalog as a
+    /// Drops the whole blueprint catalog, not just the one blueprint: the cache holds the catalog as a
     /// single snapshot, so there is no per-name entry to evict. The next read re-lists from kgsm.
     /// </summary>
     private Task OnBlueprintChanged(string eventType, string blueprintName)
     {
         _logger.LogInformation(
             "kgsm {EventType} for {BlueprintName} — invalidating the blueprint cache", eventType, blueprintName);
-        _inventory.Invalidate();
+        _inventory.InvalidateBlueprints();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Drops the instance roster, and only it: what games exist is a separate question from what is
+    /// installed, and the blueprint catalog did not change.
+    /// </summary>
+    private Task OnInstanceRosterChanged(string eventType, string instanceName)
+    {
+        _logger.LogInformation(
+            "kgsm {EventType} for {InstanceName} — invalidating the instance cache", eventType, instanceName);
+        _inventory.InvalidateInstances();
         return Task.CompletedTask;
     }
 }

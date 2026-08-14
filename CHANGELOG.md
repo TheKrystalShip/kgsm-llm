@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] - 2026-08-14
+
+### Fixed — a server installed or uninstalled is visible to the very next turn
+
+The instance roster is cached for 300 seconds, and nothing dropped it when the roster changed. A
+server installed through the assistant did not exist as far as every following turn was concerned,
+so an uninstall staged against it could not find its target; the same held for an install made from
+the Control Panel, the Discord bot or another operator's CLI.
+
+`KgsmEventListener` now handles the four engine events at which `kgsm instances list` answers
+differently — `instance_created`, `instance_installed`, `instance_removed`, `instance_uninstalled` —
+and drops the roster when one arrives. The journal is the seam because it is surface-blind: it
+carries a change made by anyone on the host, so there is one freshness path rather than one per
+surface that can mutate the inventory.
+
+The kgsm chokepoint drops the roster after its own successful install or uninstall as well. The
+journal listener is opt-in per host (`KGSM:JournalDir`), and a mutation this process performed
+itself must not depend on a listener the host may not be running. A failed call leaves the snapshot
+alone — the roster did not change.
+
+The roster and the blueprint catalog now invalidate separately (`InvalidateInstances`,
+`InvalidateBlueprints`). A server installed does not change what games exist, and a blueprint edited
+does not change what is installed, so dropping both would cost the untouched half a `kgsm`
+subprocess on its next read for nothing.
+
+The cache still serves its last-known-good snapshot when a refresh fails, so an unreadable inventory
+stays unknown rather than becoming an empty list presented as "nothing installed".
+
 ## [1.12.0] - 2026-08-14
 
 ### Added — a caller can ask for a reply it is about to speak aloud

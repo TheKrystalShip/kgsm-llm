@@ -64,6 +64,40 @@ public class KgsmServerInventoryTests
     }
 
     [Fact]
+    public async Task InvalidateInstances_RefreshesTheRosterAndLeavesTheCatalog()
+    {
+        _instances.GetAll().Returns(Inst(("terraria", "terraria")));
+        _blueprints.ListDetailed().Returns(new Dictionary<string, Blueprint> { ["terraria"] = new() { Name = "terraria" } });
+        var inv = Create(ttl: 300);
+
+        await inv.GetInstancesAsync();
+        await inv.GetBlueprintNamesAsync();
+        inv.InvalidateInstances();
+        await inv.GetInstancesAsync();
+        await inv.GetBlueprintNamesAsync();
+
+        _instances.Received(2).GetAll();
+        _blueprints.Received(1).ListDetailed();
+    }
+
+    [Fact]
+    public async Task InvalidateBlueprints_RefreshesTheCatalogAndLeavesTheRoster()
+    {
+        _instances.GetAll().Returns(Inst(("terraria", "terraria")));
+        _blueprints.ListDetailed().Returns(new Dictionary<string, Blueprint> { ["terraria"] = new() { Name = "terraria" } });
+        var inv = Create(ttl: 300);
+
+        await inv.GetInstancesAsync();
+        await inv.GetBlueprintNamesAsync();
+        inv.InvalidateBlueprints();
+        await inv.GetInstancesAsync();
+        await inv.GetBlueprintNamesAsync();
+
+        _instances.Received(1).GetAll();
+        _blueprints.Received(2).ListDetailed();
+    }
+
+    [Fact]
     public async Task RefreshFailure_ServesLastKnownGood()
     {
         _instances.GetAll().Returns(

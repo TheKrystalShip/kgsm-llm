@@ -17,9 +17,9 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 
 /// <summary>
-/// The listener's whole job is that a blueprint changed anywhere else on the host reaches this
-/// process's cache. These assert the two halves of that: the engine's three blueprint events each
-/// invalidate, and the socket is bound only by a host that asked for it.
+/// The listener's whole job is that a change made anywhere else on the host reaches this process's
+/// caches. These assert that: each blueprint event drops the catalog, each roster event drops the
+/// instance list, neither drops the other, and the journal is read only by a host that asked for it.
 /// </summary>
 public class KgsmEventListenerTests
 {
@@ -45,7 +45,7 @@ public class KgsmEventListenerTests
         await Create().StartAsync(CancellationToken.None);
         await handler!(new BlueprintCreatedData { BlueprintName = "factorio" });
 
-        _inventory.Received(1).Invalidate();
+        _inventory.Received(1).InvalidateBlueprints();
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class KgsmEventListenerTests
         await Create().StartAsync(CancellationToken.None);
         await handler!(new BlueprintUpdatedData { BlueprintName = "factorio" });
 
-        _inventory.Received(1).Invalidate();
+        _inventory.Received(1).InvalidateBlueprints();
     }
 
     [Fact]
@@ -69,7 +69,82 @@ public class KgsmEventListenerTests
         await Create().StartAsync(CancellationToken.None);
         await handler!(new BlueprintRemovedData { BlueprintName = "factorio" });
 
-        _inventory.Received(1).Invalidate();
+        _inventory.Received(1).InvalidateBlueprints();
+    }
+
+    /// <summary>
+    /// The defect this listener exists to prevent, on the roster half: a server installed — by this
+    /// process's own confirmed action or by any other surface on the host — is invisible to every
+    /// later turn until the TTL lapses, so an uninstall staged against it cannot find it.
+    /// </summary>
+    [Fact]
+    public async Task Instance_installed_invalidates_the_instance_cache()
+    {
+        Func<InstanceInstalledData, Task>? handler = null;
+        _events.RegisterHandler(Arg.Do<Func<InstanceInstalledData, Task>>(h => handler = h));
+
+        await Create().StartAsync(CancellationToken.None);
+        await handler!(new InstanceInstalledData { InstanceName = "factorio-01", Blueprint = "factorio" });
+
+        _inventory.Received(1).InvalidateInstances();
+    }
+
+    [Fact]
+    public async Task Instance_created_invalidates_the_instance_cache()
+    {
+        Func<InstanceCreatedData, Task>? handler = null;
+        _events.RegisterHandler(Arg.Do<Func<InstanceCreatedData, Task>>(h => handler = h));
+
+        await Create().StartAsync(CancellationToken.None);
+        await handler!(new InstanceCreatedData { InstanceName = "factorio-01", Blueprint = "factorio" });
+
+        _inventory.Received(1).InvalidateInstances();
+    }
+
+    [Fact]
+    public async Task Instance_uninstalled_invalidates_the_instance_cache()
+    {
+        Func<InstanceUninstalledData, Task>? handler = null;
+        _events.RegisterHandler(Arg.Do<Func<InstanceUninstalledData, Task>>(h => handler = h));
+
+        await Create().StartAsync(CancellationToken.None);
+        await handler!(new InstanceUninstalledData { InstanceName = "factorio-01" });
+
+        _inventory.Received(1).InvalidateInstances();
+    }
+
+    [Fact]
+    public async Task Instance_removed_invalidates_the_instance_cache()
+    {
+        Func<InstanceRemovedData, Task>? handler = null;
+        _events.RegisterHandler(Arg.Do<Func<InstanceRemovedData, Task>>(h => handler = h));
+
+        await Create().StartAsync(CancellationToken.None);
+        await handler!(new InstanceRemovedData { InstanceName = "factorio-01" });
+
+        _inventory.Received(1).InvalidateInstances();
+    }
+
+    /// <summary>
+    /// The two caches answer separate questions, so neither event drops the other's snapshot — a
+    /// server installed does not change what games exist, and a blueprint edited does not change
+    /// what is installed. Dropping both would cost the untouched half a kgsm subprocess for nothing.
+    /// </summary>
+    [Fact]
+    public async Task Roster_and_catalog_events_do_not_drop_each_other()
+    {
+        Func<InstanceInstalledData, Task>? installed = null;
+        Func<BlueprintUpdatedData, Task>? updated = null;
+        _events.RegisterHandler(Arg.Do<Func<InstanceInstalledData, Task>>(h => installed = h));
+        _events.RegisterHandler(Arg.Do<Func<BlueprintUpdatedData, Task>>(h => updated = h));
+
+        await Create().StartAsync(CancellationToken.None);
+        await installed!(new InstanceInstalledData { InstanceName = "factorio-01", Blueprint = "factorio" });
+        await updated!(new BlueprintUpdatedData { BlueprintName = "factorio" });
+
+        _inventory.Received(1).InvalidateInstances();
+        _inventory.Received(1).InvalidateBlueprints();
+        _inventory.DidNotReceive().Invalidate();
     }
 
     /// <summary>

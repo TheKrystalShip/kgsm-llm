@@ -58,6 +58,10 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
         _blueprintsDirty = true;
     }
 
+    public void InvalidateInstances() => _instancesDirty = true;
+
+    public void InvalidateBlueprints() => _blueprintsDirty = true;
+
     public async Task<IReadOnlyDictionary<string, string>> GetInstancesAsync(CancellationToken cancellationToken = default)
     {
         if (IsFresh(_instancesCache, _instancesFetchedUtc, _instancesDirty, _options.InstancesTtlSeconds))

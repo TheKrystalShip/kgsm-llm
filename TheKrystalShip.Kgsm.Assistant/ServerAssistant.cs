@@ -1013,12 +1013,20 @@ public class ServerAssistant : IServerAssistant
                 // spends the budget and the turn's iterations on an answer already in context. Refused
                 // WITHOUT counting against the cap: the call was free of information, so charging for
                 // it would punish the model twice for one mistake and leave less room to recover.
+                // ⚠ Keyed on the query AND where it looked. The same words asked of the local
+                // documentation and of the web are two different questions with two different answers,
+                // and refusing the second as a repeat is what made "it wasn't in the docs, try online"
+                // impossible — the model asked, was told it had already searched, and gave up. The
+                // refusal even said so in as many words, which was simply untrue across sources.
                 var query = Normalize(call.Arg("query"));
-                if (query.Length > 0 && !searched.Add(query))
+                var where = Normalize(call.Arg("scope"));
+                if (query.Length > 0 && !searched.Add($"{where} {query}"))
                     return ToolGate.Refuse(
-                        "Refused: you already searched for that this message and the result is above. " +
-                        "Repeating a search returns the same thing — use what you have, ask the user, " +
-                        "or say you couldn't find it.");
+                        "Refused: you already searched for that, in that same place, this message. " +
+                        "Searching the SAME place for the same words returns the same thing — but if " +
+                        "the local documentation didn't answer it, searching again with scope=\"web\" " +
+                        "is a different question and is allowed. Otherwise use what you have, ask the " +
+                        "user, or say you couldn't find it.");
 
                 if (searches >= MaxSearchesPerMessage)
                     return ToolGate.Refuse(

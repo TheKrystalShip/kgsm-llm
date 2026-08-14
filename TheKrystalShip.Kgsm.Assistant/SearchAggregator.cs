@@ -160,8 +160,25 @@ public sealed class SearchAggregator : ISearch
             ? $"The local docs had no strong match for \"{query}\"; these are the closest passages and may " +
               "not directly answer it (say so if you rely on them):"
             : $"From the operator's indexed docs for \"{query}\" (local knowledge base — cite the source paths):";
+
+        // ⚠ Said HERE, where the decision is actually made. This text is what the model reads at the
+        // moment it has an answer in front of it and is deciding whether it will do — a rule stated
+        // once in the system prompt, thousands of tokens earlier, competes with everything since.
+        // Measured: given local passages that matched a game on topic and said nothing about the
+        // question, the model concluded the search had failed and gave up rather than looking further.
+        // Documentation cannot know about a patch released after it was written, and nothing else
+        // tells the model that the web is still open to it.
+        var next = weak
+            ? "\nIf that doesn't answer the question, search the same words again with scope=\"web\" — "
+              + "it is a different source and counts as a new search, not a repeat."
+            : "\nThese are the operator's own docs and are authoritative about THIS host. They cannot "
+              + "know about anything released or changed after they were written, so if the question "
+              + "was about what is current — a version, a release date, recent news — search the same "
+              + "words again with scope=\"web\". That is a different source, so it is a new search "
+              + "rather than a repeat.";
+
         var footer = omitted > 0 ? $"\n({omitted} more passage(s) omitted to fit.)" : string.Empty;
-        return $"{header}\n{sb}{footer}";
+        return $"{header}\n{sb}{next}{footer}";
     }
 
     /// <summary>Numbered grounding from web hits (title + snippet + URL) — external, possibly stale.</summary>

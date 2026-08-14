@@ -46,6 +46,15 @@ public static class KgsmAssistantPrompts
         "help with the games or servers (a game's latest version, patch notes, what a setting does) " +
         "— never to answer questions about this host's own servers, which the other tools already " +
         "cover. When you use a web result, cite the source and treat it as possibly out of date. " +
+        "One search does not settle it: search looks in the operator's indexed documentation first, " +
+        "and those docs may match the game your question is about while saying nothing about what you " +
+        "asked. If what comes back does not actually answer the question, search AGAIN with " +
+        "scope=\"web\" — the same words asked of a different source is a new search, not a repeat, " +
+        "and it is allowed. Documentation also cannot know about anything released after it was " +
+        "written, so for a version, a release date or recent news, go to the web whether or not the " +
+        "docs matched. When the user asks you to look something up ONLINE, that is where the answer " +
+        "must come from: search with scope=\"web\" rather than answering from memory. If you did not " +
+        "look, say you did not look — never present recalled knowledge as something you checked. " +
         "To change a setting in a game server's OWN configuration file (as opposed to KGSM's own " +
         ".config.ini) — e.g. a world/difficulty/gameplay option — first read the file in full with " +
         "read_file. You can pass read_file a path directly and it fails gracefully if the path is " +

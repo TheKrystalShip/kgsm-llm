@@ -255,6 +255,53 @@ public class ServerAssistantTests
             turn.Gate!(SearchFor($"distinct query {i}")).Allowed.Should().BeTrue();
     }
 
+    private static LlmToolCall SearchFor(string query, string scope) =>
+        new(LlmTools.Search,
+            new Dictionary<string, string?> { ["query"] = query, ["scope"] = scope });
+
+    [Fact]
+    public async Task Gate_LetsTheSameWordsGoToTheWebAfterTheDocsDidNotAnswerThem()
+    {
+        // ⚠ The one that made "it wasn't in the docs, try online" impossible. Keyed on the query
+        // alone, the second call looked like a repeat and was refused — with a message saying a repeat
+        // returns the same thing, which is simply untrue of a different source. The model asked, was
+        // told it had already searched, and gave up.
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        turn.Gate!(SearchFor("next Valheim update", "local")).Allowed.Should().BeTrue();
+
+        turn.Gate!(SearchFor("next Valheim update", "web"))
+            .Allowed.Should().BeTrue("a different source is a different question");
+    }
+
+    [Fact]
+    public async Task Gate_StillRefusesTheSameWordsInTheSamePlace()
+    {
+        // The guard it replaces is still doing its job: asking the same source the same thing twice
+        // cannot return anything new, and spends an iteration to learn that.
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        turn.Gate!(SearchFor("next Valheim update", "web")).Allowed.Should().BeTrue();
+
+        var repeat = turn.Gate!(SearchFor("next Valheim update", "web"));
+        repeat.Allowed.Should().BeFalse();
+        repeat.RefusalMessage.Should().Contain("already searched");
+    }
+
+    [Fact]
+    public async Task Gate_TellsTheModelTheWebIsStillOpenWhenItRefusesARepeat()
+    {
+        // A refusal the model reads as "stop searching" is how a docs-only answer became final. The
+        // refusal has to name the move that is still available, or it teaches the wrong lesson.
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        turn.Gate!(SearchFor("next Valheim update", "local")).Allowed.Should().BeTrue();
+        var repeat = turn.Gate!(SearchFor("next Valheim update", "local"));
+
+        repeat.Allowed.Should().BeFalse();
+        repeat.RefusalMessage.Should().Contain("scope=\"web\"");
+    }
+
     [Fact]
     public async Task Gate_SeesThroughCosmeticVariation_ButNotRewording()
     {

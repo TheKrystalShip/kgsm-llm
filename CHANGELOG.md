@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-08-14
+
+### Fixed — the assistant may now search the docs, then search the web
+
+⚠ **Searching again after the local docs came up short was structurally forbidden.** The per-message
+duplicate guard keyed on the query **alone**, so `search("next Valheim update")` against the
+documentation and the same words against the web looked like one repeated call — and the second was
+refused, with a message stating that *"repeating a search returns the same thing"*. That is true of one
+source and simply untrue across two. The model asked, was told it had already searched, and gave up.
+Every workaround before this was routing around a door that was locked.
+
+The key is now the query **and where it looked**, and the refusal names the move still available
+instead of reading as "stop searching".
+
+Two changes at the point of decision, rather than in control flow:
+
+- **The grounding text says what to do next.** Local passages now arrive with a line saying that these
+  are the operator's own docs, that they cannot know about anything released after they were written,
+  and that the same words asked with `scope="web"` is a new search rather than a repeat. This is what
+  the model reads *while holding the answer and deciding whether it will do* — a rule stated once in a
+  system prompt thousands of tokens earlier competes with everything since.
+- **The system prompt states the habit once.** One search does not settle it; documentation may match
+  the game and say nothing about the question; for a version, a release date or recent news go to the
+  web whether or not the docs matched; and if you did not look, say you did not look.
+
+Measured after the change: *"what is the next valheim update coming out"* — with no mention of the web
+anywhere in it — now goes to `scope="web"` on the model's own initiative, while *"what does the valheim
+server difficulty setting do"* still answers from the local documentation.
+
 ## [1.13.2] - 2026-08-14
 
 ### Fixed — asked to look online, the model was not calling search at all

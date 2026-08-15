@@ -1,3 +1,5 @@
+using TheKrystalShip.KGSM.Speech;
+
 namespace TheKrystalShip.Kgsm.Assistant.Service.Speech;
 
 /// <summary>

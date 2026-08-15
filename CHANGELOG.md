@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1] - 2026-08-15
+
+### Changed — where a sentence ends is the speech package's answer, not this service's
+
+`SpokenSentences` moved into `TheKrystalShip.KGSM.Speech` (1.2.0). The Discord bot cuts its spoken
+replies by the same rules and had its own implementation of them; two surfaces answering that question
+separately answer it differently within a release, and these two had already drifted on four rules
+before either shipped. This service's rules won almost all of it — every character consumed exactly
+once, punctuation only ending a sentence when whitespace follows, fences dropped, short sentences
+riding out with the next — so what a listener hears here is very nearly unchanged.
+
+What did change:
+
+- ⚠ **A fence marker counts only at the true start of a line.** A sentence ending part-way along a
+  line left the rest of it in a fresh buffer, and reading that as a line start took
+  "Done. \`\`\`yaml" for a fence — silencing every word after it for the rest of the answer. Neither
+  implementation had noticed.
+- **`+` is a list marker too**, alongside `-`, `*`, `#` and `>`.
+- **`Take` hands back a finished list rather than a lazy sequence.** An iterator that is never
+  enumerated consumes nothing at all, which for a class whose whole contract is "every character
+  exactly once" is a way to lose an entire reply with nothing anywhere to say so.
+
 ## [1.17.0] - 2026-08-15
 
 ### Added — an answer can be read aloud while it is being written

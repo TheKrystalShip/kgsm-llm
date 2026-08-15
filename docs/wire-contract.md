@@ -128,6 +128,11 @@ hears the answer beginning at about the time a reader starts reading it.
 - **`seq` counts the sentences from zero.** They are emitted in order, so it is a consistency check
   rather than a sort key: a client that sees a gap has dropped a sentence, which is worth noticing
   because the audio would otherwise simply have said less than the text.
+- **Where a sentence ends is `TheKrystalShip.KGSM.Speech.SpokenSentences`**, not this service's own
+  answer: every surface on the host that speaks reads the same rules, so a reply cut one way here and
+  another way in the Discord bot is not a thing that can happen. A fenced block is dropped rather than
+  read line by line; a sentence ends only at punctuation *followed by whitespace*, so `kgsm.sh` and
+  `1.2.3` survive; markup goes and words never do.
 
 **Silence is the default and the fallback.** A turn that does not ask is never spoken; a host with no
 speech engine emits no `audio.delta` however the turn asked, because synthesis is an optional leaf

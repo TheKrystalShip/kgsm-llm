@@ -50,16 +50,13 @@ systemctl daemon-reload
 
 cat <<EOF
 
-Installed, not started. Put the GGUFs in /var/lib/llama/models, check the paths in
-${ENV_FILE}, then:
+Installed, not started and not enabled. Put the GGUFs in /var/lib/llama/models and check the
+paths in ${ENV_FILE}, then switch with:
 
-    systemctl enable --now ${UNITS[*]}
+    sudo ./use-backend.sh llamacpp        # or: ollama
 
-Starting the chat unit STOPS Ollama (the units declare Conflicts), because one GPU holds one copy
-of the weights. Point the assistant at llama.cpp afterwards in /etc/kgsm-assistant/service.env:
-
-    Llm__Provider=LlamaCpp
-    Llm__Endpoint=http://127.0.0.1:8081
-    Rag__Provider=LlamaCpp
-    Rag__Endpoint=http://127.0.0.1:8082
+Use that rather than starting the units by hand. It moves the units AND the assistant's
+configuration together, and sets which backend comes back after a reboot — leaving both enabled
+makes boot a race that Conflicts= resolves arbitrarily, and the assistant would come up pointed at
+whichever one lost.
 EOF

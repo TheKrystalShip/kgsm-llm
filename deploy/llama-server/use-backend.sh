@@ -22,8 +22,10 @@ status() {
     for u in ollama.service "${LLAMA_UNITS[@]}"; do
         # is-active prints the state AND exits non-zero when it is not active, so the status is
         # taken from stdout and the exit code deliberately ignored.
-        local state; state=$(systemctl is-active "$u" 2>/dev/null) || true
-        printf '  %-28s %s\n' "$u" "${state:-unknown}"
+        local state boot
+        state=$(systemctl is-active "$u" 2>/dev/null) || true
+        boot=$(systemctl is-enabled "$u" 2>/dev/null) || true
+        printf '  %-28s %-10s at boot: %s\n' "$u" "${state:-unknown}" "${boot:-unknown}"
     done
     echo "assistant is pointed at:"
     if [[ -r $ENV_FILE ]]; then
@@ -53,6 +55,10 @@ status) status; exit 0 ;;
 ollama)
     require_root "$@"
     systemctl stop "${LLAMA_UNITS[@]}" 2>/dev/null || true
+    # Boot state follows the choice. Leaving both backends enabled makes a reboot a race that
+    # Conflicts= resolves arbitrarily, and the assistant would come up pointed at the loser.
+    systemctl disable "${LLAMA_UNITS[@]}" 2>/dev/null || true
+    systemctl enable ollama.service 2>/dev/null || true
     systemctl start ollama.service
     set_key Llm__Provider Ollama
     set_key Llm__Endpoint http://localhost:11434
@@ -68,6 +74,8 @@ llamacpp)
     # Starting the chat unit stops Ollama on its own (Conflicts), but doing it here too keeps the
     # order explicit rather than leaving it to unit ordering.
     systemctl stop ollama.service 2>/dev/null || true
+    systemctl disable ollama.service 2>/dev/null || true
+    systemctl enable "${LLAMA_UNITS[@]}" 2>/dev/null || true
     systemctl start "${LLAMA_UNITS[@]}"
     # shellcheck disable=SC1090
     chat_port=$(awk -F= '/^LLAMA_CHAT_PORT=/{print $2}' "$LLAMA_ENV")

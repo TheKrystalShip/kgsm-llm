@@ -40,6 +40,16 @@ EnvironmentFile=/etc/kgsm-assistant/llama-server.env
 #   argument, and a 3.5KB config already costs ~2870 tokens — around 80s of generation that is
 #   entirely legitimate. A cap sized to catch a hang would sit below that and truncate the payload
 #   mid-argument. A client timeout fails safe; a truncated write is a corrupted config file.
+# --cache-ram bounds the HOST-side prompt cache and --ctx-checkpoints the per-slot context
+#   checkpoints. Both live in system RAM, not VRAM, and llama-server's defaults are 8192 MiB and 32
+#   — large enough that host memory climbs into the gigabytes under ordinary varied traffic and
+#   competes with the game servers this host exists to run. Measured on this box: 16 varied 6-18k
+#   prompts take the default to 6412 MiB of anonymous memory, and a bounded cache holds the same
+#   work to ~1 GiB. The bound is close to free on this workload, because the assistant's requests
+#   share a long prefix (system prompt + tool definitions) that stays cached either way: on a
+#   shared-prefix run the capped server finished in 73s against the default's 74s. Setting
+#   --cache-ram 0 saves a further ~340 MiB but doubles wall time, which is why it is bounded here
+#   rather than disabled.
 # NOTE: systemd expands ${VAR} in ARGUMENTS but never in the executable position, so the binary is
 # written literally here and install.sh rewrites this line to whatever llama-server it found. A
 # variable here fails at exec with 203/EXEC and no useful message.
@@ -55,6 +65,7 @@ ExecStart=/usr/bin/llama-server \
     --cache-type-k q8_0 --cache-type-v q8_0 \
     --flash-attn on \
     -b 512 -ub 512 \
+    --cache-ram 1024 --ctx-checkpoints 4 \
     --context-shift --keep 4 \
     --no-webui
 

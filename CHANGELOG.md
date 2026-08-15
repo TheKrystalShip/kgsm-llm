@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.1] - 2026-08-15
+
+### Fixed — the embedding server no longer inherits the chat model's MTP settings
+
+`kgsm-llama-embed` and `kgsm-llama-chat` share `/etc/kgsm-assistant/llama-server.env`, and
+`llama-server` reads the `LLAMA_ARG_SPEC_*` keys in it directly. An embedding model has no draft
+head, so the embedder aborts in `common_speculative_init_from_params` on startup. The embed unit
+drops those four keys with `UnsetEnvironment=`.
+
+This surfaces only on restart, so a long-running embedder is unaffected until it is bounced — at
+which point RAG stops with a core dump rather than a diagnosable error.
+
+### Changed — the llama units bound their host-side caches
+
+`llama-server` keeps its prompt cache and per-slot context checkpoints in system RAM, defaulting to
+8192 MiB and 32 checkpoints. Host memory therefore climbs into the gigabytes under ordinary varied
+traffic, competing with the game servers the host runs.
+
+The chat unit pins `--cache-ram 1024 --ctx-checkpoints 4`; the embed unit pins `--cache-ram 0`,
+since one-shot encoding replays no prefix and can never hit the cache.
+
+Measured on one card, 16 varied 6-18k-token prompts:
+
+| chat unit | host anonymous memory | wall |
+|---|---|---|
+| defaults | 6412 MiB | 126s |
+| `--cache-ram 1024 --ctx-checkpoints 4` | 1628 MiB | 208s |
+
+The wall-clock figure is the worst case — every prompt distinct, no shared prefix. On the pattern
+the assistant actually produces, where a long system prompt and the tool definitions prefix every
+request, the bounded server finishes in 73s against 74s for the defaults. `--cache-ram 0` saves a
+further ~340 MiB and doubles wall time, which is why the chat side bounds rather than disables.
+
+Multi-token prediction costs 114 MiB of host memory and 578 MiB of VRAM, and is unaffected.
+
 ## [1.22.0] - 2026-08-15
 
 ### Changed — llama.cpp is the default backend

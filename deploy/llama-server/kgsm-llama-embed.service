@@ -21,6 +21,16 @@ EnvironmentFile=/etc/kgsm-assistant/llama-server.env
 # NOTE: systemd expands ${VAR} in ARGUMENTS but never in the executable position, so the binary is
 # written literally here and install.sh rewrites this line to whatever llama-server it found. A
 # variable here fails at exec with 203/EXEC and no useful message.
+# The env file is shared with the chat unit, and the LLAMA_ARG_SPEC_* keys in it configure
+#   multi-token prediction against the chat model's draft head. llama-server reads those keys
+#   itself, so this unit would pick them up too and abort in common_speculative_init_from_params:
+#   an embedding model has no draft head and speculative decoding is meaningless for one-shot
+#   encoding. They are dropped here so the embedder is unaffected by the chat model's MTP settings.
+UnsetEnvironment=LLAMA_ARG_SPEC_TYPE LLAMA_ARG_SPEC_DRAFT_MODEL LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_K LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_V
+
+# --cache-ram 0 disables the host-side prompt cache. Embedding is one-shot — each chunk is encoded
+#   independently and no prefix is ever replayed — so the cache can never hit, while llama-server's
+#   8192 MiB default still lets it claim system RAM this host would rather give to game servers.
 ExecStart=/usr/bin/llama-server \
     --model ${LLAMA_EMBED_MODEL} \
     --host 127.0.0.1 --port ${LLAMA_EMBED_PORT} \
@@ -31,6 +41,7 @@ ExecStart=/usr/bin/llama-server \
     --cache-type-k q8_0 --cache-type-v q8_0 \
     --flash-attn on \
     -b ${LLAMA_EMBED_CTX} -ub ${LLAMA_EMBED_CTX} \
+    --cache-ram 0 \
     --no-webui
 
 Restart=on-failure

@@ -402,14 +402,31 @@ public static class LlmTools
 
     private static readonly LlmToolParameter WritePath = new(
         "path",
-        "The file to write, as a path relative to the server's own directory — e.g. " +
+        "The file to change, as a path relative to the server's own directory — e.g. " +
         "\"install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini\" or \"server.properties\". Use " +
         "list_files/read_file first to find and read it.");
 
-    private static readonly LlmToolParameter WriteContent = new(
-        "content",
-        "The COMPLETE new content for the file. This OVERWRITES the whole file — it is not a patch or " +
-        "a diff, so include every existing setting you want to keep, not just the one you're changing.");
+    private static readonly LlmToolParameter EditOldString = new(
+        "old_string",
+        "The EXACT text to replace, copied character for character from what read_file showed you — " +
+        "normally just the one setting you're changing, e.g. \"Difficulty=None\". It must appear " +
+        "EXACTLY ONCE in the file; if it appears more than once, include a little of the surrounding " +
+        "text so it matches one place only. Everything else in the file is kept for you, so NEVER put " +
+        "the whole file here.");
+
+    private static readonly LlmToolParameter EditNewString = new(
+        "new_string",
+        "What that text becomes, e.g. \"Difficulty=Difficulty_Hard\". To ADD a setting, put a nearby " +
+        "existing line in old_string and that same line plus your new one here. An empty value deletes " +
+        "the old text.");
+
+    private static readonly LlmToolParameter EditCopyFrom = new(
+        "copy_from",
+        "Only for a file that is empty or does not exist yet, when the game ships a default/reference " +
+        "file beside it (e.g. \"install/DefaultPalWorldSettings.ini\"): its content is copied into the " +
+        "file server-side and your old_string/new_string replacement applied to that copy, so you never " +
+        "reproduce it yourself. Leave it out when editing a file that already has content.",
+        Required: false);
 
     private static readonly LlmToolParameter SearchQuery = new(
         "query",
@@ -676,16 +693,19 @@ public static class LlmTools
             InstanceName, ConfigKey, ConfigValue),
 
         LlmToolDefinition.Create(WriteFile,
-            "Propose OVERWRITING a text file inside a game server's OWN directory — e.g. its actual " +
+            "Propose a CHANGE to a text file inside a game server's OWN directory — e.g. its actual " +
             "game config file (Palworld's PalWorldSettings.ini, server.properties, a mod's settings " +
-            "file) — with content you provide. This is for the GAME's own config; for KGSM's own " +
-            "settings (ports, launch arguments, auto-update) use set_config_value instead. Give the " +
-            "COMPLETE new file content (this replaces the whole file, not a patch) — only propose an " +
-            "overwrite of a file you've read in full with read_file (or a brand-new file), and preserve " +
-            "every setting you're not changing. Staged for human confirmation against a preview; it " +
-            "does not run until a person confirms, and a running server picks up the change on its next " +
-            "restart. Never claim to have written the file yourself.",
-            InstanceName, WritePath, WriteContent),
+            "file). This is for the GAME's own config; for KGSM's own settings (ports, launch " +
+            "arguments, auto-update) use set_config_value instead. You send ONLY the text that " +
+            "changes: old_string is the exact text to replace, copied from read_file's output, and " +
+            "new_string is what it becomes. The rest of the file is preserved for you byte for byte — " +
+            "never send the whole file and never retype settings you aren't changing. If old_string " +
+            "matches nowhere, or matches more than one place, NOTHING is staged and you get an error " +
+            "saying so: read the file again and copy the text exactly rather than guessing at it. " +
+            "Staged for human confirmation against a preview; it does not run until a person confirms, " +
+            "and a running server picks up the change on its next restart. Never claim to have written " +
+            "the file yourself.",
+            InstanceName, WritePath, EditOldString, EditNewString, EditCopyFrom),
     };
 
     /// <summary>All tools, offered to callers authorized for actions.</summary>

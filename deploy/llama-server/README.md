@@ -70,6 +70,29 @@ sudo rm /var/lib/kgsm-assistant/rag-index.krag
 sudo systemctl start kgsm-rag-indexer      # expect "N embedded, 0 reused"
 ```
 
+## Multi-token prediction
+
+A draft head proposes several tokens at once and the 12B verifies them in a single pass. The output
+is identical to generating without it — only the speed changes, and only in proportion to how
+predictable the text is. Measured here (RTX 3060, gemma4-12B Q4_K_M main, Q8_0 draft head):
+
+| workload | no MTP | MTP | draft acceptance |
+|---|---|---|---|
+| one-line answer | 38.2 tok/s | 37.2 | 0.38 |
+| a few paragraphs of prose | 38.1 tok/s | 42–45 | 0.46 |
+| reproducing a config block | 37.9 tok/s | 65–70 | 0.92 |
+
+The acceptance rate is the whole story: it pays where the next token is guessable and costs a little
+where it is not. Short chat turns come out marginally slower, because the draft is not amortised
+over enough tokens to repay itself. Structured output — tool-call arguments, and the file bodies
+`write_file` produces — runs close to **1.8x**.
+
+It costs **582 MiB**, measured per-process, and coexists with `kgsm-speech` on this card.
+
+Turn it on in `/etc/kgsm-assistant/llama-server.env` (the drafter comes from the model's GGUF repo,
+`unsloth/gemma-4-12B-it-qat-GGUF` under `MTP/`). Both variables must be set: a path naming a file
+that is not there stops the server from starting, which is why they ship commented out.
+
 ## VRAM
 
 Both models stay resident for the life of their unit — there is no idle eviction, which is the

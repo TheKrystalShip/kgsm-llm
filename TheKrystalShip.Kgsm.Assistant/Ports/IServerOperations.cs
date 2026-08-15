@@ -182,6 +182,36 @@ public interface IServerOperations
         string instance, string relativePath, string content, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Resolves a proposed edit into the full new content of <paramref name="relativePath"/>, by
+    /// reading the file that is there now and replacing <paramref name="oldText"/> with
+    /// <paramref name="newText"/> in it — the read half of a staged write. Read-only: it computes
+    /// the content a confirmation would write and touches nothing.
+    /// <para>
+    /// This is what keeps a file's bytes off the model's round trip. The caller names only the text
+    /// that changes; every other byte comes from disk, so a large config cannot lose settings, gain
+    /// invented ones, or have a value flipped on its way through a model. The anchor must match
+    /// <b>exactly once</b> — no match, several matches, an empty anchor, or a replacement identical to
+    /// the anchor all return a failed <see cref="Result"/> naming the reason, so an approximate edit is
+    /// never resolved into a write.
+    /// </para>
+    /// <para>
+    /// <paramref name="copyFromPath"/> seeds the content from another file in the same instance instead
+    /// of from the target — for a config that is empty or absent while its defaults sit in a reference
+    /// file beside it. The replacement is then applied to that copy; an empty
+    /// <paramref name="oldText"/> is allowed in that case alone and copies the reference verbatim.
+    /// </para>
+    /// <para>
+    /// Both paths are path-bound to the instance's own directory exactly like
+    /// <see cref="ReadInstanceFileAsync"/>. The source is read under its own size cap, which is larger
+    /// than the model-facing read cap on purpose: the bytes go to the confirmation, not into a prompt.
+    /// Never throws.
+    /// </para>
+    /// </summary>
+    Task<Result<string>> PrepareInstanceFileEditAsync(
+        string instance, string relativePath, string oldText, string newText,
+        string? copyFromPath = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Restores <paramref name="backupId"/> over the instance's current data. Called only by
     /// <see cref="IServerAssistant.ConfirmAsync"/> after a human confirms — never from the agent
     /// loop. This REPLACES what is there now; the engine owns whatever safety it applies.

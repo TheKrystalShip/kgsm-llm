@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 
+using TheKrystalShip.Kgsm.Assistant.Files;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
@@ -744,6 +745,91 @@ internal sealed class KgsmServerOperations : IServerOperations
         {
             _logger.LogError(ex, "WriteInstanceFile failed for {Instance} ({Path})", instance, relativePath);
             return Result.Failure(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Cap on the bytes read to resolve an edit. Larger than the model-facing read cap because these
+    /// bytes never enter a prompt — they are the file's own content, carried to the confirmation.
+    /// </summary>
+    private const int MaxEditSourceBytes = 1024 * 1024;
+
+    /// <summary>
+    /// Reads the file the edit applies to (the target, or <paramref name="copyFromPath"/> when the
+    /// content is seeded from a reference file) through the same jail as every other read, then applies
+    /// the single anchored replacement with <see cref="FileEdit"/>. Every refusal — a missing file, an
+    /// anchor that matches nowhere or in several places, a binary or oversized source — comes back as a
+    /// failed <see cref="Result"/> whose message tells the caller what to do instead, because the one
+    /// thing this must never do is resolve into an approximate write.
+    /// </summary>
+    public async Task<Result<string>> PrepareInstanceFileEditAsync(
+        string instance, string relativePath, string oldText, string newText,
+        string? copyFromPath = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var seeded = !string.IsNullOrWhiteSpace(copyFromPath);
+            var sourcePath = seeded ? copyFromPath!.Trim() : relativePath;
+
+            var read = await Task.Run(
+                () => _files.Read(instance, sourcePath, MaxEditSourceBytes), cancellationToken);
+
+            if (read.Outcome != FileOpOutcome.Ok)
+                return Result.Failure<string>(read.Outcome switch
+                {
+                    FileOpOutcome.NotFound when seeded =>
+                        $"'{sourcePath}' does not exist, so there is nothing to copy from. Find the real "
+                        + "reference file with find_files or list_files first.",
+                    FileOpOutcome.NotFound =>
+                        $"'{sourcePath}' does not exist yet. To create it from the game's default/reference "
+                        + "file, pass that file's path as copy_from; its content is copied here and your "
+                        + "replacement applied to the copy.",
+                    FileOpOutcome.OutOfJail => $"the path '{sourcePath}' is outside the instance directory.",
+                    FileOpOutcome.NotAFile =>
+                        $"'{sourcePath}' isn't a regular file (it may be a directory, socket, pipe, or device).",
+                    FileOpOutcome.Binary => $"'{sourcePath}' isn't a text file, so it cannot be edited as text.",
+                    FileOpOutcome.TooLarge =>
+                        $"'{sourcePath}' is over the {MaxEditSourceBytes / 1024} KB edit limit.",
+                    FileOpOutcome.InstanceUnavailable => $"'{instance}' is not a known instance.",
+                    _ => read.Message ?? $"could not read '{sourcePath}'.",
+                });
+
+            var source = read.Value!.Content;
+
+            // An empty anchor is a copy, and only a seeded write can mean one: there is no text to
+            // replace, so the reference file's content IS the proposal.
+            if (oldText.Length == 0)
+                return seeded
+                    ? Result.Success(source)
+                    : Result.Failure<string>(
+                        "no text to replace was given. Pass old_string exactly as read_file showed it.");
+
+            var edit = FileEdit.Apply(source, oldText, newText);
+            return edit.Outcome switch
+            {
+                FileEditOutcome.Applied => Result.Success(edit.Content!),
+                FileEditOutcome.NoMatch when source.Trim().Length == 0 =>
+                    Result.Failure<string>(
+                        $"'{sourcePath}' is empty, so there is nothing to replace in it. Pass the game's "
+                        + "default/reference file as copy_from to fill it in."),
+                FileEditOutcome.NoMatch => Result.Failure<string>(
+                    $"the text to replace is not in '{sourcePath}'. Read the file again and copy the line "
+                    + "exactly as it appears — spacing, case and punctuation included — rather than "
+                    + "retyping it."),
+                FileEditOutcome.Ambiguous => Result.Failure<string>(
+                    $"the text to replace appears in more than one place in '{sourcePath}', so which one "
+                    + "was meant is unknown. Include enough surrounding text for it to match exactly one "
+                    + "place."),
+                FileEditOutcome.NoChange => Result.Failure<string>(
+                    "the replacement is identical to the text it replaces, so this edit changes nothing."),
+                _ => Result.Failure<string>(
+                    "no text to replace was given. Pass old_string exactly as read_file showed it."),
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PrepareInstanceFileEdit failed for {Instance} ({Path})", instance, relativePath);
+            return Result.Failure<string>(ex.Message);
         }
     }
 

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] - 2026-08-15
+
+### Changed — a spoken answer is as long as the question needs
+
+The voice style asks the model to judge a spoken reply's length from what was asked, rather than
+capping it at one sentence. The formatting rules are unchanged and still absolute: no markdown, no
+URLs, no asterisks, no bullet lists — a synthesiser reads those out or stumbles on them.
+
+A fixed cap cannot tell "is minecraft running" from "what does the update include". Measured against
+one turn's real search results, the capped reply carried 201 characters out of 6125 of grounding —
+3.3% — dropping the new enemies, the three armour sets, the moosehide cape and the confirmation that
+the ocean is not being updated, all of which the search had returned. The same model on the same
+grounding writes 2031 characters with the cap lifted. The operational answers the cap was written for
+("no, it's stopped") are short because the question is, and the model still has the medium described
+to it.
+
 ## [1.19.0] - 2026-08-15
 
 ### Added — the inference server is a choice, not an assumption

@@ -162,33 +162,36 @@ public static class KgsmAssistantPrompts
 
     /// <summary>
     /// Appended when the caller asked for <see cref="ReplyStyle.Voice"/>: the reply is going to a speech
-    /// synthesiser, so it is heard once, at talking speed, and cannot be skimmed or re-read. A measured
-    /// 126-character reply is twelve seconds of audio, which is why length matters far more here than on
-    /// a screen. Placed LAST in the assembled prompt, after the live lists, so it is the final instruction
-    /// the model reads before answering.
+    /// synthesiser, so it is heard once, at talking speed, and cannot be skimmed or re-read. Placed LAST
+    /// in the assembled prompt, after the live lists, so it is the final instruction the model reads
+    /// before answering.
+    /// <para>
+    /// The formatting rules are absolute — markdown, URLs and stray punctuation are read out or stumbled
+    /// over — but length is the model's own call, made from the question. A fixed cap cannot tell "is it
+    /// running" from "what does the update include", and a research answer clamped to one sentence
+    /// discards most of what the search returned.
+    /// </para>
     /// <para>
     /// It shapes PRESENTATION only, and says so explicitly: the tools, the grounding rule and the duty to
-    /// report a staged action are restated as untouched, because a short reply that swallowed "this is
-    /// waiting for your confirmation" would be worse than a long one.
+    /// report a staged action are restated as untouched, because a reply that swallowed "this is waiting
+    /// for your confirmation" would be worse than a long one.
     /// </para>
     /// </summary>
     public const string Voice =
         "HOW THIS REPLY IS DELIVERED: it will be READ ALOUD to the user by a speech synthesiser — they " +
-        "hear it once, at talking speed, and cannot skim it or scroll back. Every word costs them a " +
-        "second they cannot skip. So answer in ONE short sentence; use a second only when it carries a " +
-        "fact the first left out. Say the answer FIRST and then stop: a yes/no question gets \"Yes, it's " +
-        "running\" or \"No, it's stopped\" and nothing else. Do NOT restate the question, do NOT explain " +
-        "which tool you used or how you checked, do NOT list what else you could do, and do NOT end with " +
-        "an offer of further help — they will just ask. Write it the way a person says it out loud: no " +
-        "markdown, no headings, no bullet points or numbered lists, no code, no file paths, no URLs, no " +
-        "emoji, no asterisks — a synthesiser reads that punctuation out or stumbles on it. When a list is " +
-        "genuinely the answer, say the items in one spoken sentence. " +
+        "hear it once, at talking speed, and cannot skim it or scroll back. Judge the length yourself " +
+        "from what was asked: a yes/no question is answered in a few words, and a question about what " +
+        "something is, includes or changes gets the whole answer, spoken. Do NOT restate the question, " +
+        "and do NOT explain which tool you used or how you checked. Write it the way a person says it " +
+        "out loud: no markdown, no headings, no bullet points or numbered lists, no code, no file " +
+        "paths, no URLs, no emoji, no asterisks — a synthesiser reads that punctuation out or stumbles " +
+        "on it. When a list is the answer, say the items the way a person would speak them. " +
         "This changes ONLY how you word the reply. Check with exactly the tools you would have used " +
         "anyway, and keep every rule about truth: report only what a tool returned this turn, say " +
         "\"unknown\" rather than guessing at a value you did not measure, and never soften a measurement " +
         "into agreement. Being SPOKEN is not licence to round: a measured 4.1 gigabytes is \"four point " +
         "one gigabytes\", never \"about four\" — say the number you were given, in words a person would " +
-        "say. Being brief NEVER means leaving out something the user has to act on — if you " +
+        "say. Never leave out something the user has to act on — if you " +
         "staged an action, the reply must still say it is waiting for their confirmation, and if " +
         "something failed or a server is unhealthy, say so.";
 

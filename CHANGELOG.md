@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2026-08-15
+
+### Changed — llama.cpp is the default backend
+
+`Llm:Provider` and `Rag:Provider` default to `LlamaCpp`, on 8081 and 8082, in the types, the DI
+fallback and every settings file. Ollama remains fully supported and one command away:
+`deploy/llama-server/use-backend.sh ollama`.
+
+Measured on one card, same model and prompt and seed, before choosing:
+
+| | Ollama | llama.cpp |
+|---|---|---|
+| raw generation | 38.2 tok/s | 38.1 tok/s |
+| NoFabrication / Routing / Scope / Efficiency | identical | identical |
+| `write_file` staging (eval W4) | does not stage | stages |
+| VRAM, chat + embed | 8976 MiB | 8678 MiB |
+
+Neither generates faster. What decides it is the controls llama.cpp exposes — KV-cache type,
+batching, slot count, speculative decoding — and what the last of those buys.
+
+### Added — multi-token prediction, on by default
+
+A Gemma 4 draft head proposes tokens the 12B verifies in one pass; the output is identical and only
+the speed changes, in proportion to how predictable the text is:
+
+| workload | no MTP | MTP | draft acceptance |
+|---|---|---|---|
+| one-line answer | 38.2 tok/s | 37.2 | 0.38 |
+| a few paragraphs | 38.1 tok/s | 42–45 | 0.46 |
+| a config block | 37.9 tok/s | 65–70 | 0.92 |
+
+So it costs a little on short chat turns and returns ~1.8x on structured output — tool arguments and
+file bodies, which is where the slow turns were. 582 MiB, measured per-process.
+
+`deploy/llama-server/fetch-models.sh` downloads the four GGUFs from the models' own repositories
+(**not** from an Ollama blob store — those are not portable; its embeddinggemma blob fails in
+mainline llama.cpp with *wrong number of tensors*). `install.sh` refuses to install unless every
+model the env file names is present, because llama-server's own failure for a missing path is an
+exit with the reason buried in the journal.
+
+### Fixed — the indexer is told which embedding server it builds against
+
+It constructed its options without a provider, so it always took the Ollama route no matter what the
+rest of the assistant was pointed at: on a llama.cpp host, `/api/embed` against a server that serves
+only `/v1/embeddings`, and an index that quietly stayed as it was. It now takes `--provider`, and
+`use-backend.sh` moves the units, the service's configuration **and** the indexer's together —
+moving one alone points something at a dead port.
+
+⚠ Switching the embedding backend still does not rebuild the RAG index. The indexer is incremental
+by content hash and the index header records the model's *name*, which does not change when the
+server behind it does. Delete the `.krag` and restart the indexer; `use-backend.sh` says so on every
+switch.
+
 ## [1.21.0] - 2026-08-15
 
 ### Changed — `write_file` carries an edit, so a config file's other settings never go through the model

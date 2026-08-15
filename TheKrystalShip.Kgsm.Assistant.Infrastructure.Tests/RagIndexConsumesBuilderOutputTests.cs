@@ -8,7 +8,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 using TheKrystalShip.Rag.Index;
 using TheKrystalShip.Rag.Indexing;
 using TheKrystalShip.Rag.Models;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 

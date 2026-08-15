@@ -57,10 +57,10 @@ using TheKrystalShip.KGSM.LeafConfig;
 
 // ── TheKrystalShip.Llm's sections, described for this surface ────────────────
 //
-// Ollama, LlmAgent and Conversation are bound from types that library owns, and kgsm-bot binds the
-// same ones. The two describe them differently and correctly — what the assistant says when it runs
-// out of tool steps is not what the bot says — so the prose lives with the surface that shows it
-// rather than on the shared type.
+// Llm, LlmAgent and Conversation are bound from types that library owns, and it is published for
+// consumers outside this repo. The prose describing them belongs to the surface that shows it —
+// what this assistant says when it runs out of tool steps is not what another surface would say —
+// so it lives here rather than on the shared type.
 
 [assembly: LeafFrameworkField("promptsDirectory", "Prompts__Directory", "Prompt overrides directory",
     Description = "Directory of editable prompt files that replace the assistant's built-in system prompt and tool descriptions. Blank uses the built-in text. A file here outranks every other way of setting the same prompt.",
@@ -79,32 +79,50 @@ using TheKrystalShip.KGSM.LeafConfig;
     Description = "The socket the host's speech engine (kgsm-speech) listens on. Blank uses the standard path. Without that leaf installed this assistant still answers — in text, to people who typed the question, as it does for every surface that asks for no audio.",
     Group = "speech", Type = LeafType.Path, Risk = LeafRisk.Wiring, NoDefault = true)]
 
-[assembly: LeafFrameworkField("ollamaEndpoint", "Ollama__Endpoint", "Ollama endpoint",
+[assembly: LeafFrameworkField("llmProvider", "Llm__Provider", "Inference server",
+    Description = "Which local server runs the model: Ollama, which loads a model by name and manages it, or LlamaCpp, which talks to a llama-server already serving one. The choice reaches nothing above it — the same model, prompts and tools are used either way — but each expects its own endpoint, and llama-server has to be started with tool calling enabled or the assistant can answer and never act.",
+    Group = "model", Risk = LeafRisk.Wiring, Type = LeafType.Enum, Values = ["Ollama", "LlamaCpp"])]
+
+[assembly: LeafFrameworkField("llmEndpoint", "Llm__Endpoint", "Model endpoint",
     Description = "Where the language model is served from. Everything the assistant says comes through here, so an unreachable endpoint leaves it unable to answer at all.",
     Group = "model", Risk = LeafRisk.Wiring)]
 
-[assembly: LeafFrameworkField("ollamaModel", "Ollama__Model", "Model",
-    Description = "Name of the model to run, as Ollama knows it. It has to be pulled on the endpoint above and has to support tool calling, or the assistant can answer but never act.",
+[assembly: LeafFrameworkField("llmModel", "Llm__Model", "Model",
+    Description = "Which model to talk to. Ollama resolves this as a pulled tag and loads it on demand; llama-server serves whatever it was launched with and only echoes the name back. Either way it has to support tool calling, or the assistant can answer but never act.",
     Group = "model", Risk = LeafRisk.Wiring)]
 
-[assembly: LeafFrameworkField("ollamaNumCtx", "Ollama__NumCtx", "Context window",
-    Description = "How many tokens of context the model is given. Larger holds more conversation and more tool output at once, and costs more memory on the machine serving the model.",
+[assembly: LeafFrameworkField("llmContextWindow", "Llm__ContextWindow", "Context window",
+    Description = "How many tokens of context the model is given. Larger holds more conversation and more tool output at once, and costs more memory on the machine serving the model. On llama-server this is fixed when the server starts, and the value here has to match what it was started with — it is what token counts are measured against.",
     Group = "model", Type = LeafType.Int, Min = 512, Unit = "tokens")]
 
-[assembly: LeafFrameworkField("ollamaTimeoutSec", "Ollama__TimeoutSeconds", "Model timeout",
+[assembly: LeafFrameworkField("llmTimeoutSec", "Llm__TimeoutSeconds", "Model timeout",
     Description = "How long to wait for the model to finish a response before giving up on it.",
     Group = "model", Type = LeafType.Int, Min = 1, Unit = "s")]
 
-[assembly: LeafFrameworkField("ollamaTemperature", "Ollama__Temperature", "Temperature",
+[assembly: LeafFrameworkField("llmTemperature", "Llm__Temperature", "Temperature",
     Description = "How much the model varies its wording. Low keeps answers consistent and literal, which is what tool calling wants; high makes them more inventive.",
     Group = "model", Type = LeafType.Float, Min = 0, Max = 2)]
 
-[assembly: LeafFrameworkField("ollamaSeed", "Ollama__Seed", "Sampling seed",
+[assembly: LeafFrameworkField("llmSeed", "Llm__Seed", "Sampling seed",
     Description = "Fixes the model's randomness so the same question gives the same answer, which is useful when comparing runs. Leave it unset for normal use.",
     Group = "model", Type = LeafType.Int)]
 
-[assembly: LeafFrameworkField("ollamaThink", "Ollama__Think", "Thinking mode",
+[assembly: LeafFrameworkField("llmThink", "Llm__Think", "Thinking mode",
     Description = "Asks the model to reason before answering, on models that support it. Slower, and only worth it for a model trained for it.",
+    Group = "model", Type = LeafType.Bool)]
+
+[assembly: LeafFrameworkField("llamaCppApiKey", "Llm__LlamaCpp__ApiKey", "llama-server API key",
+    Description = "Token to send when llama-server was started demanding one. Blank sends nothing, which is what a server listening only on this machine wants. Ignored unless the inference server is LlamaCpp.",
+    Group = "model", Risk = LeafRisk.Wiring, NoDefault = true)]
+
+[assembly: LeafFrameworkField("llamaCppThinkingKwarg", "Llm__LlamaCpp__ThinkingTemplateKwarg",
+    "Thinking template variable",
+    Description = "The name llama-server's chat template gives the variable that turns reasoning on. Templates spell it differently, and a template declaring no such variable ignores it — thinking is a property of the template the server was started with, not something a request can add. Ignored unless the inference server is LlamaCpp.",
+    Group = "model", Risk = LeafRisk.Wiring)]
+
+[assembly: LeafFrameworkField("llamaCppParallelToolCalls", "Llm__LlamaCpp__ParallelToolCalls",
+    "Allow parallel tool calls",
+    Description = "Lets the model ask for several tools at once in a single step. Off matches how the assistant is prompted and measured — it works one step at a time — so turning this on changes behaviour that nothing else expects. Ignored unless the inference server is LlamaCpp.",
     Group = "model", Type = LeafType.Bool)]
 
 [assembly: LeafFrameworkField("agentMaxIterations", "LlmAgent__MaxIterations", "Maximum tool steps",

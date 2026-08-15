@@ -6,7 +6,7 @@ using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Search;
 using TheKrystalShip.Llm.Models;
 using TheKrystalShip.Rag.Index;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 

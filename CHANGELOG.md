@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] - 2026-08-15
+
+### Added — the inference server is a choice, not an assumption
+
+`Llm:Provider` selects which local server answers behind `ILlmClient`: `Ollama` (native `/api/chat`)
+or `LlamaCpp` (llama-server's OpenAI-compatible `/v1/chat/completions`). `Rag:Provider` does the
+same behind `IEmbeddingClient`, set independently — the index is its own model and may be served
+from elsewhere. Both are read once at startup; a swap is a restart.
+
+Nothing above those two interfaces changes. The agent loop, the compactor, the tool catalog, the
+prompts and the eval harness are identical either way, and the differences between the wire formats
+live entirely inside the clients:
+
+- a tool call's arguments arrive as string fragments keyed by index, accumulated in
+  `LlamaCppStreamParser` and emitted as one assembled frame — the shape Ollama already delivers;
+- a tool result is addressed by the id of the call it answers rather than by tool name, so
+  `LlamaCppRequestBuilder` assigns ids by walking each request's history;
+- the context window is fixed when llama-server launches, so `Llm:ContextWindow` is not sent to it —
+  it is read to stamp token accounting and must match the server's `-c`.
+
+`deploy/llama-server/` carries the two units, their env template and the setup runbook. They are not
+installed by `deploy.sh`: they decide what occupies the GPU and need root.
+
+⚠ **llama-server has to be started with `--jinja` and a tools-capable chat template.** Without it the
+`tools` array is accepted and no tool call is ever emitted — the assistant answers normally and
+silently never acts. Ollama does not use that path at all (it runs llama-server with
+`--no-jinja --chat-template chatml` and parses tool calls itself), so the two backends encode tool
+calls differently: switching is a measurable change to routing, and the eval is the measurement.
+
+### Changed — the `Ollama` config section is now `Llm`
+
+Every key moved with it, and `NumCtx` is now `ContextWindow`: `Ollama__Model` → `Llm__Model`,
+`Ollama__NumCtx` → `Llm__ContextWindow`, and so on. `Rag__Provider` is new alongside the existing
+`Rag__Endpoint`. A host carrying the old variables binds them to nothing and falls back to the
+defaults, so update `/etc/kgsm-assistant/service.env` in the same change as the deploy.
+
+The leaf descriptor's keys follow (`ollamaModel` → `llmModel`, …), and `TheKrystalShip.Llm`'s
+`Ollama` namespace is now `Backends.Ollama` alongside `Backends.LlamaCpp`.
+
 ## [1.18.0] - 2026-08-15
 
 ### Added — the assistant listens, so a browser can speak to it

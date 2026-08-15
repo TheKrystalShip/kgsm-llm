@@ -163,7 +163,7 @@ public sealed class ConfigEditLiveTests : IClassFixture<WebApplicationFactory<Pr
         _factory.WithWebHostBuilder(b =>
         {
             b.UseSetting("KGSM:Path", DevKgsm);
-            b.UseSetting("Ollama:Model", Model);
+            b.UseSetting("Llm:Model", Model);
         });
 
     /// <summary>As <see cref="WithDevKgsm"/>, but wraps the dispatcher to record each tool call + result.</summary>
@@ -171,7 +171,7 @@ public sealed class ConfigEditLiveTests : IClassFixture<WebApplicationFactory<Pr
         _factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("KGSM:Path", DevKgsm);
-            builder.UseSetting("Ollama:Model", Model);
+            builder.UseSetting("Llm:Model", Model);
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton(recorder);

@@ -489,3 +489,6 @@ scripts/tier.env
 
 # kgsm-assistant-eval result files (generated benchmark runs, not source)
 eval-results/
+
+# Scratch worktrees — each is its own checkout, never part of this one.
+.claude/worktrees/

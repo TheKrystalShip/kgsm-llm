@@ -1,9 +1,22 @@
 using TheKrystalShip.KGSM.LeafConfig;
 
-namespace TheKrystalShip.Rag.Ollama;
+namespace TheKrystalShip.Rag.Embedding;
 
 /// <summary>
-/// Configuration for the Ollama embedding client. Bound from the <c>Rag</c> config section
+/// Which local server produces embedding vectors. Independent of the chat model's backend: the
+/// index is a different model on a different endpoint, and the two are configured separately.
+/// </summary>
+public enum EmbeddingProvider
+{
+    /// <summary>Ollama's native <c>/api/embed</c>.</summary>
+    Ollama,
+
+    /// <summary>llama.cpp's <c>llama-server</c>, started with <c>--embedding</c>, over <c>/v1/embeddings</c>.</summary>
+    LlamaCpp
+}
+
+/// <summary>
+/// Configuration for the embedding client. Bound from the <c>Rag</c> config section
 /// (a subset of the wider RagOptions the host adds in Phase 2).
 /// </summary>
 [LeafSection(Section)]
@@ -11,8 +24,15 @@ public sealed class RagEmbeddingOptions
 {
     public const string Section = "Rag";
 
-    /// <summary>Base URL of the Ollama server, e.g. http://localhost:11434</summary>
-    /// <panel>Where the embedding model is served from. Usually the same Ollama as the chat model.</panel>
+    /// <summary>Which inference server produces the vectors.</summary>
+    /// <panel>Which local server turns text into vectors. Set separately from the chat model's server —
+    /// the index is its own model and may be served from somewhere else entirely.</panel>
+    [LeafField("ragEmbeddingProvider", "Embedding server", Group = "rag", Risk = LeafRisk.Wiring,
+        DependsOn = "ragEnabled")]
+    public EmbeddingProvider Provider { get; set; } = EmbeddingProvider.Ollama;
+
+    /// <summary>Base URL of the embedding server, e.g. http://localhost:11434</summary>
+    /// <panel>Where the embedding model is served from. Usually the same server as the chat model.</panel>
     [LeafField("ragEmbeddingEndpoint", "Embedding endpoint", Group = "rag", Risk = LeafRisk.Wiring,
         DependsOn = "ragEnabled")]
     public string Endpoint { get; set; } = "http://localhost:11434";

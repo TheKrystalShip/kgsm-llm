@@ -1,4 +1,4 @@
-namespace TheKrystalShip.Rag.Ollama;
+namespace TheKrystalShip.Rag.Embedding;
 
 /// <summary>
 /// The single home for the model → (document, query) task-prefix mapping. Most embedding models

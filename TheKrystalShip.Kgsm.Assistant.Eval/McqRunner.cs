@@ -8,10 +8,10 @@ using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
-using TheKrystalShip.Llm.Ollama;
+using TheKrystalShip.Llm.Backends;
 using TheKrystalShip.Rag.Index;
 using TheKrystalShip.Rag.Indexing;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Kgsm.Assistant.Eval;
 
@@ -90,9 +90,13 @@ internal sealed class McqRunner : IDisposable
                 o => o.LogToStandardErrorThreshold = LogLevel.Trace);
         });
 
-        services.AddLocalLlm(configuration);  // ILlmClient (Ollama chat) — no kgsm, no dispatcher
-        services.Configure<RagEmbeddingOptions>(configuration.GetSection(RagEmbeddingOptions.Section));
-        services.AddSingleton<IEmbeddingClient, OllamaEmbeddingClient>();
+        services.AddLocalLlm(configuration);  // ILlmClient (chat) — no kgsm, no dispatcher
+        var embeddingSection = configuration.GetSection(RagEmbeddingOptions.Section);
+        services.Configure<RagEmbeddingOptions>(embeddingSection);
+        if (embeddingSection.Get<RagEmbeddingOptions>()?.Provider == EmbeddingProvider.LlamaCpp)
+            services.AddSingleton<IEmbeddingClient, LlamaCppEmbeddingClient>();
+        else
+            services.AddSingleton<IEmbeddingClient, OllamaEmbeddingClient>();
         services.AddSingleton<IndexBuilder>();
 
         return new McqRunner(services.BuildServiceProvider(), config);
@@ -310,21 +314,21 @@ internal sealed class McqRunner : IDisposable
         // First pass: resolve the effective endpoint so chat + embed share it.
         var preliminary = Layers().Build();
         var endpoint = config.Endpoint
-            ?? preliminary["Ollama:Endpoint"]
+            ?? preliminary["Llm:Endpoint"]
             ?? "http://localhost:11434";
 
         var overrides = new Dictionary<string, string?>
         {
             ["Recording:Enabled"] = "false",
-            ["Ollama:Model"] = config.Model,
-            ["Ollama:Endpoint"] = endpoint,
+            ["Llm:Model"] = config.Model,
+            ["Llm:Endpoint"] = endpoint,
             // A generous ceiling so an occasional long generation doesn't truncate a question into an
             // unparsed reply (which the diagnosis would otherwise have to set aside as inconclusive).
-            ["Ollama:TimeoutSeconds"] = "900",
-            ["Ollama:Temperature"] = config.Temperature.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["Llm:TimeoutSeconds"] = "900",
+            ["Llm:Temperature"] = config.Temperature.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Rag:Endpoint"] = endpoint,
         };
-        if (config.Seed is int seed) overrides["Ollama:Seed"] = seed.ToString();
+        if (config.Seed is int seed) overrides["Llm:Seed"] = seed.ToString();
         if (!string.IsNullOrWhiteSpace(config.EmbeddingModel)) overrides["Rag:EmbeddingModel"] = config.EmbeddingModel;
 
         return Layers().AddInMemoryCollection(overrides).Build();

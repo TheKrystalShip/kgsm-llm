@@ -363,7 +363,7 @@ internal sealed class Harness
             // 2. The operator's CLI config — inherits KGSM:Path and Ollama:Endpoint so the eval "just
             //    works" on a box where the assistant CLI is already set up.
             .AddJsonFile(CliUserConfigPath(), optional: true)
-            // 3. Environment (KGSM__Path, Ollama__Endpoint, …).
+            // 3. Environment (KGSM__Path, Llm__Endpoint, …).
             .AddEnvironmentVariables();
 
         var overrides = new Dictionary<string, string?>
@@ -372,14 +372,14 @@ internal sealed class Harness
             // real corpus (the store is always-on now — there is no "recording off" switch).
             ["Conversation:DatabasePath"] =
                 Path.Combine(Path.GetTempPath(), $"kgsm-eval-conv-{Guid.NewGuid():N}.db"),
-            ["Ollama:Model"] = o.Model,
-            ["Ollama:Temperature"] = o.Temperature.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["Llm:Model"] = o.Model,
+            ["Llm:Temperature"] = o.Temperature.ToString(System.Globalization.CultureInfo.InvariantCulture),
             // Default the prompt dir to the SAME files the CLI tunes, so the eval measures the live
             // tuned prompts; an explicit --prompts (e.g. an empty dir) tests the shipped defaults.
             ["Prompts:Directory"] = o.PromptsDir ?? DefaultPromptsDir(),
         };
-        if (o.Seed is int seed) overrides["Ollama:Seed"] = seed.ToString();
-        if (!string.IsNullOrWhiteSpace(o.Endpoint)) overrides["Ollama:Endpoint"] = o.Endpoint;
+        if (o.Seed is int seed) overrides["Llm:Seed"] = seed.ToString();
+        if (!string.IsNullOrWhiteSpace(o.Endpoint)) overrides["Llm:Endpoint"] = o.Endpoint;
         if (!string.IsNullOrWhiteSpace(o.KgsmPath)) overrides["KGSM:Path"] = o.KgsmPath;
 
         builder.AddInMemoryCollection(overrides);

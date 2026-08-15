@@ -197,7 +197,7 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         _factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("KGSM:Path", DevKgsm);
-            builder.UseSetting("Ollama:Model", model);
+            builder.UseSetting("Llm:Model", model);
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton(recorder);

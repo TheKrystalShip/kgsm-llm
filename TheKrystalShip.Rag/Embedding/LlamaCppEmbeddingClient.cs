@@ -6,32 +6,35 @@ using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Rag.Models;
 
-namespace TheKrystalShip.Rag.Ollama;
+namespace TheKrystalShip.Rag.Embedding;
 
 /// <summary>
-/// <see cref="IEmbeddingClient"/> backed by a local Ollama server (<c>POST /api/embed</c>).
-/// Mirrors <c>OllamaLlmClient</c>'s HTTP/error idiom (Result on failure, terse user-facing
-/// messages) but is reflection-free: serialization goes through the source-generated
+/// <see cref="IEmbeddingClient"/> backed by llama.cpp's <c>llama-server</c> over its
+/// OpenAI-compatible <c>POST /v1/embeddings</c> endpoint. The server has to have been started with
+/// <c>--embedding</c>; without it the route answers an error and no vector is produced.
+/// <para>
+/// Reflection-free like its Ollama counterpart — serialization goes through the source-generated
 /// <see cref="RagJsonContext"/> so the core stays Native-AOT clean.
+/// </para>
 /// </summary>
-public sealed class OllamaEmbeddingClient : IEmbeddingClient
+public sealed class LlamaCppEmbeddingClient : IEmbeddingClient
 {
     private readonly HttpClient _httpClient;
     private readonly RagEmbeddingOptions _options;
-    private readonly ILogger<OllamaEmbeddingClient> _logger;
+    private readonly ILogger<LlamaCppEmbeddingClient> _logger;
 
-    public OllamaEmbeddingClient(
+    public LlamaCppEmbeddingClient(
         IOptions<RagEmbeddingOptions> options,
-        ILogger<OllamaEmbeddingClient> logger)
+        ILogger<LlamaCppEmbeddingClient> logger)
         : this(BuildHttpClient(options.Value), options.Value, logger)
     {
     }
 
     // Test seam: inject a HttpClient (with a stub handler) without going through the real network.
-    internal OllamaEmbeddingClient(
+    internal LlamaCppEmbeddingClient(
         HttpClient httpClient,
         RagEmbeddingOptions options,
-        ILogger<OllamaEmbeddingClient> logger)
+        ILogger<LlamaCppEmbeddingClient> logger)
     {
         _httpClient = httpClient;
         _options = options;
@@ -67,6 +70,7 @@ public sealed class OllamaEmbeddingClient : IEmbeddingClient
         for (var i = 0; i < inputs.Count; i++)
             prefixed[i] = prefix + inputs[i];
 
+        // Same request shape as Ollama's /api/embed — {model, input[]} — so the one DTO serves both.
         var request = new EmbedRequest { Model = _options.EmbeddingModel, Input = prefixed };
 
         try
@@ -74,47 +78,61 @@ public sealed class OllamaEmbeddingClient : IEmbeddingClient
             var json = JsonSerializer.Serialize(request, RagJsonContext.Default.EmbedRequest);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            using var response = await _httpClient.PostAsync("/api/embed", content, cancellationToken);
+            using var response = await _httpClient.PostAsync("/v1/embeddings", content, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogError(
-                    "Ollama embed returned {StatusCode}: {Body}", (int)response.StatusCode, body);
+                    "llama-server embed returned {StatusCode}: {Body}", (int)response.StatusCode, body);
                 return Result.Failure<IReadOnlyList<float[]>>(
                     $"Embedding backend returned status {(int)response.StatusCode}.");
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             var parsed = await JsonSerializer.DeserializeAsync(
-                stream, RagJsonContext.Default.EmbedResponse, cancellationToken);
+                stream, RagJsonContext.Default.OpenAiEmbedResponse, cancellationToken);
 
-            if (parsed?.Embeddings is null || parsed.Embeddings.Length != inputs.Count)
+            if (parsed?.Data is null || parsed.Data.Length != inputs.Count)
             {
                 _logger.LogError(
-                    "Ollama embed response shape unexpected: {Got} vectors for {Expected} inputs.",
-                    parsed?.Embeddings?.Length ?? 0, inputs.Count);
+                    "llama-server embed response shape unexpected: {Got} vectors for {Expected} inputs.",
+                    parsed?.Data?.Length ?? 0, inputs.Count);
                 return Result.Failure<IReadOnlyList<float[]>>(
                     "Embedding backend returned an unexpected response shape.");
             }
 
-            foreach (var vector in parsed.Embeddings)
+            // Ordered by the entry's own index, never by arrival: a vector paired with the wrong
+            // chunk is an index that retrieves confidently and wrongly, with nothing to show for it.
+            var ordered = new float[inputs.Count][];
+            foreach (var datum in parsed.Data)
             {
-                if (vector is null || vector.Length == 0)
+                if (datum.Index < 0 || datum.Index >= inputs.Count || ordered[datum.Index] is not null)
+                {
+                    _logger.LogError(
+                        "llama-server embed returned an out-of-range or duplicated index {Index} for {Expected} inputs.",
+                        datum.Index, inputs.Count);
+                    return Result.Failure<IReadOnlyList<float[]>>(
+                        "Embedding backend returned an unexpected response shape.");
+                }
+
+                if (datum.Embedding is null || datum.Embedding.Length == 0)
                     return Result.Failure<IReadOnlyList<float[]>>(
                         "Embedding backend returned an empty vector.");
+
+                ordered[datum.Index] = datum.Embedding;
             }
 
-            return Result<IReadOnlyList<float[]>>.Success(parsed.Embeddings);
+            return Result<IReadOnlyList<float[]>>.Success(ordered);
         }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger.LogError("Ollama embed timed out after {Timeout}s", _options.TimeoutSeconds);
+            _logger.LogError("llama-server embed timed out after {Timeout}s", _options.TimeoutSeconds);
             return Result.Failure<IReadOnlyList<float[]>>("The embedding backend took too long to respond.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error calling Ollama embed endpoint");
+            _logger.LogError(ex, "Error calling llama-server embed endpoint");
             return Result.Failure<IReadOnlyList<float[]>>("Could not reach the embedding backend.");
         }
     }

@@ -117,14 +117,14 @@ public sealed class HealthCheckLiveTests : IClassFixture<WebApplicationFactory<P
         _factory.WithWebHostBuilder(b =>
         {
             b.UseSetting("KGSM:Path", DevKgsm);
-            b.UseSetting("Ollama:Model", DefaultModel);
+            b.UseSetting("Llm:Model", DefaultModel);
         });
 
     private WebApplicationFactory<Program> BuildFactory(ToolCallRecorder recorder, string model) =>
         _factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("KGSM:Path", DevKgsm);
-            builder.UseSetting("Ollama:Model", model);
+            builder.UseSetting("Llm:Model", model);
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton(recorder);

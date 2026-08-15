@@ -28,7 +28,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Blueprints;
 public sealed class LlmBlueprintSynthesizer : IBlueprintSynthesizer
 {
     // Per-page text budget fed to the model: enough to carry a setup guide's command block, bounded so a
-    // few large pages can't blow the context window (Ollama NumCtx is a fixed VRAM reservation).
+    // few large pages can't blow the context window (Llm:ContextWindow is a fixed VRAM reservation).
     private const int MaxCharsPerPage = 8000;
 
     private const string SystemPrompt =

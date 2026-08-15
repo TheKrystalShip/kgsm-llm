@@ -3,7 +3,7 @@
   //
   // This file declares the service's WHOLE configurable surface, each key with its default. It is
   // the floor; an environment variable overrides one key of it by spelling that key's path with
-  // "__" — Ollama__Model, Rag__Enabled, Logging__LogLevel__Default. A variable naming a key that is
+  // "__" — Llm__Model, Rag__Enabled, Logging__LogLevel__Default. A variable naming a key that is
   // not declared here binds to nothing.
   //
   // Every key maps onto a property of the options class the service binds that section into, and a
@@ -15,14 +15,26 @@
   // they exist; their real values belong in the root-owned /etc/kgsm-assistant/service.env, which is
   // not in version control.
   "Urls": "http://localhost:5180",
-  "Ollama": {
+  // Which local server runs the model, and how it is asked. "Provider" is the only key that decides
+  // WHICH server; every other key here means the same thing to both. On LlamaCpp the context window
+  // is fixed when llama-server starts (-c) and this value has to match it — it is what token counts
+  // are measured against, not something a request can change.
+  "Llm": {
+    "Provider": "Ollama",
     "Endpoint": "http://localhost:11434",
     "Model": "gemma4:12b",
-    "NumCtx": 32768,
+    "ContextWindow": 32768,
     "TimeoutSeconds": 300,
     "Temperature": 0.3,
     "Seed": null,
-    "Think": false
+    "Think": false,
+    // Only read when Provider is LlamaCpp. The API key is declared blank: a llama-server on loopback
+    // is started without one, and a host that does start one puts the value in service.env.
+    "LlamaCpp": {
+      "ApiKey": "",
+      "ParallelToolCalls": false,
+      "ThinkingTemplateKwarg": "enable_thinking"
+    }
   },
   // Reading an answer aloud, for a surface that asks to hear one. The models are NOT this leaf's:
   // kgsm-speech holds them — one engine per host, serving every surface, with the voice set there —
@@ -168,6 +180,9 @@
     "LocalMinScore": 0.50,
     "MaxContextChars": 6000,
     "EmbeddingModel": "embeddinggemma",
+    // Chosen independently of the chat model's server: the index is its own model, and may be
+    // served from somewhere else entirely.
+    "Provider": "Ollama",
     "Endpoint": "http://localhost:11434",
     "TimeoutSeconds": 120,
     "Sources": [],

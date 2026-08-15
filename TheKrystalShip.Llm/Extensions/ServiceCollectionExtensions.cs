@@ -2,9 +2,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 using TheKrystalShip.Llm.Agent;
+using TheKrystalShip.Llm.Backends;
+using TheKrystalShip.Llm.Backends.LlamaCpp;
+using TheKrystalShip.Llm.Backends.Ollama;
 using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
-using TheKrystalShip.Llm.Ollama;
 
 namespace TheKrystalShip.Llm.Extensions;
 
@@ -14,9 +16,13 @@ namespace TheKrystalShip.Llm.Extensions;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the Ollama-backed LLM client, the durable SQLite conversation store,
+    /// Registers the LLM client for the configured backend, the durable SQLite conversation store,
     /// and the agent loop. Options are bound from the configuration sections
-    /// "Ollama", "Conversation", and "LlmAgent".
+    /// "Llm", "Conversation", and "LlmAgent".
+    ///
+    /// <c>Llm:Provider</c> selects which inference server answers — Ollama or llama.cpp. It is the
+    /// only place the choice appears: the agent loop, the compactor and every tool see
+    /// <see cref="ILlmClient"/> and nothing below it.
     ///
     /// The consumer MUST additionally register an <see cref="IToolDispatcher"/>
     /// (the application's tool implementations); the agent depends on it. Tools,
@@ -27,11 +33,27 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.Configure<OllamaOptions>(configuration.GetSection(OllamaOptions.Section));
+        var backendSection = configuration.GetSection(LlmBackendOptions.Section);
+
+        services.Configure<LlmBackendOptions>(backendSection);
+        services.Configure<LlamaCppOptions>(configuration.GetSection(LlamaCppOptions.Section));
         services.Configure<ConversationOptions>(configuration.GetSection(ConversationOptions.Section));
         services.Configure<LlmAgentOptions>(configuration.GetSection(LlmAgentOptions.Section));
 
-        services.AddSingleton<ILlmClient, OllamaLlmClient>();
+        // Read once at registration: a backend swap is a restart, and resolving it per request
+        // would mean holding two clients open against two servers to no purpose.
+        var provider = backendSection.GetValue("Provider", LlmProvider.Ollama);
+
+        switch (provider)
+        {
+            case LlmProvider.LlamaCpp:
+                services.AddSingleton<ILlmClient, LlamaCppLlmClient>();
+                break;
+            default:
+                services.AddSingleton<ILlmClient, OllamaLlmClient>();
+                break;
+        }
+
         // The canonical conversation history: SQLite-backed, append-only (per-turn deltas + checkpoints).
         // It is BOTH the model's continuity memory AND the durable record mined for self-improvement —
         // one log, never trimmed. Path comes from ConversationOptions.DatabasePath (a host points it at

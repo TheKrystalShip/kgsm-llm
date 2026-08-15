@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Console;
 
 using TheKrystalShip.Rag.Indexer;
 using TheKrystalShip.Rag.Indexing;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 // Exit codes: 0 ok · 1 runtime failure · 2 usage error · 130 cancelled (one-shot SIGINT). A --watch
 // daemon stopping on a signal is its intended end-of-life, so it exits 0 (not 130) — that keeps a

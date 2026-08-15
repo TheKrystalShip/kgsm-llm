@@ -1,0 +1,43 @@
+[Unit]
+# llama.cpp serving the RAG embedding model. Separate from the chat unit because it is a separate
+# model in its own process — which is also how Ollama runs the pair. Opt-in, reached through
+# Rag:Provider. Setup: ../llama-server/README.md
+Description=llama.cpp embedding model for the KGSM assistant
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kgsm
+Group=kgsm
+
+EnvironmentFile=/etc/kgsm-assistant/llama-server.env
+
+# --embedding is REQUIRED: without it /v1/embeddings answers an error and no vector is produced,
+#   which surfaces as every search scoring as unrelated rather than as an outage.
+# The context here bounds one chunk, not a conversation, so it is far smaller than the chat model's.
+# No --jinja: embeddings run no chat template and have no tools.
+ExecStart=${LLAMA_SERVER_BIN} \
+    --model ${LLAMA_EMBED_MODEL} \
+    --host 127.0.0.1 --port ${LLAMA_EMBED_PORT} \
+    --embedding \
+    -c ${LLAMA_EMBED_CTX} \
+    -np 1 \
+    -ngl 999 \
+    --cache-type-k q8_0 --cache-type-v q8_0 \
+    --flash-attn on \
+    -b ${LLAMA_EMBED_CTX} -ub ${LLAMA_EMBED_CTX} \
+    --no-webui
+
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/llama
+
+[Install]
+WantedBy=multi-user.target

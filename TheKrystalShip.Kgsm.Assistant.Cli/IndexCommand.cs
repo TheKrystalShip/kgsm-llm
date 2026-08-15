@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging.Console;
 
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.Rag.Indexing;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Kgsm.Assistant.Cli;
 

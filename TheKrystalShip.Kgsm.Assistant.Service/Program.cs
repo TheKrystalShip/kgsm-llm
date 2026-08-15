@@ -34,7 +34,7 @@ using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Extensions;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
-using TheKrystalShip.Llm.Ollama;
+using TheKrystalShip.Llm.Backends;
 
 // Writing the command manifest is a build step, not a service: the build runs the binary it just
 // produced so the shipped file is generated from this build's own catalog. Handled before anything
@@ -831,7 +831,7 @@ secured.MapPost("/commands/{name}", async (
     IPromptOverrides promptOverrides,
     IConversationEventBus bus,
     IOptions<SearchOptions> searchOptions,
-    IOptions<OllamaOptions> ollamaOptions,
+    IOptions<LlmBackendOptions> llmOptions,
     CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
@@ -875,7 +875,7 @@ secured.MapPost("/commands/{name}", async (
             ConversationStream.Switches,
             new SwitchesChanged(
                 chatScope ?? string.Empty, origin,
-                standing.Think ?? ollamaOptions.Value.Think,
+                standing.Think ?? llmOptions.Value.Think,
                 standing.Autorun ?? false)));
     }
 
@@ -958,7 +958,7 @@ secured.MapPost("/commands/{name}", async (
 
         case "think":
         {
-            var standing = conversations.GetPreferences(conversationId).Think ?? ollamaOptions.Value.Think;
+            var standing = conversations.GetPreferences(conversationId).Think ?? llmOptions.Value.Think;
             var next = requested ?? !standing;
             conversations.SetPreferences(conversationId, new ConversationPreferences(next, null));
             PublishSwitches();
@@ -1001,11 +1001,11 @@ secured.MapPost("/commands/{name}", async (
 // chat is set to. A surface that showed a remembered value would be reporting its own history back to
 // the person: the switches live here, and any other surface may have moved them since.
 secured.MapGet("/conversations", (
-    HttpContext http, IConversationStore store, IOptions<OllamaOptions> ollamaOptions) =>
+    HttpContext http, IConversationStore store, IOptions<LlmBackendOptions> llmOptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var conversations = store.ListConversations($"{WebSurface}:{principal.UserId}")
-        .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.UserId, ollamaOptions.Value.Think))
+        .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.UserId, llmOptions.Value.Think))
         .ToArray();
     return Results.Ok(conversations);
 });
@@ -1016,7 +1016,7 @@ secured.MapGet("/conversations", (
 // OWN conversation. An unknown id ⇒ an empty transcript (still 200), never another user's data.
 secured.MapGet("/conversations/{id}", (
     string id, HttpContext http, IConversationStore store, IPendingConfirmationStore pending,
-    IOptions<OllamaOptions> ollamaOptions) =>
+    IOptions<LlmBackendOptions> llmOptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
@@ -1043,7 +1043,7 @@ secured.MapGet("/conversations/{id}", (
     return Results.Ok(new ConversationHistoryDto(
         chatScope ?? string.Empty,
         entries,
-        preferences.Think ?? ollamaOptions.Value.Think,
+        preferences.Think ?? llmOptions.Value.Think,
         preferences.Autorun ?? false,
         waiting));
 });
@@ -1182,7 +1182,7 @@ review.MapGet("/conversations/users", (IConversationStore store, string? surface
 // the transcripts come from, so a figure here can never disagree with the turns behind it.
 review.MapGet("/conversations/stats", (
     IConversationStore store,
-    IOptions<OllamaOptions> ollama,
+    IOptions<LlmBackendOptions> llm,
     IOptions<LlmAgentOptions> agent,
     IOptions<AssistantServiceOptions> assistant,
     string? surface) =>
@@ -1217,7 +1217,7 @@ review.MapGet("/conversations/stats", (
                 p.Hash, p.Turns, p.OkTurns, p.MedianMs, p.NegativeTurns, p.RatedTurns)).ToArray(),
         stats.Activity.Select(a => new AdminDailyTurnsDto(a.Date, a.Turns)).ToArray(),
         new AdminAssistantRuntimeDto(
-            ollama.Value.Model, ollama.Value.NumCtx, agent.Value.MaxIterations,
+            llm.Value.Model, llm.Value.ContextWindow, agent.Value.MaxIterations,
             assistant.Value.ActionsEnabled),
         stats.RatedTurns, stats.PositiveTurns, stats.NegativeTurns, stats.SatisfactionPercent,
         // The store reports the raw stored id; the handle a reviewer can actually open one by is minted
@@ -1422,7 +1422,7 @@ secured.MapPost("/turn", async (
     // this turn actually runs.
     var preferences = conversations.GetPreferences(conversationId);
     var think = preferences.Think
-        ?? http.RequestServices.GetRequiredService<IOptions<OllamaOptions>>().Value.Think;
+        ?? http.RequestServices.GetRequiredService<IOptions<LlmBackendOptions>>().Value.Think;
     var wantsAutoRun = preferences.Autorun ?? false;
 
     bool canPerform;

@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.Llm.Models;
 using TheKrystalShip.Rag.Index;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 

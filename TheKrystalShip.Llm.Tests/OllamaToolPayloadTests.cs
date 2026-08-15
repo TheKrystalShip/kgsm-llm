@@ -3,7 +3,8 @@ using System.Text.Json;
 using FluentAssertions;
 
 using TheKrystalShip.Llm.Models;
-using TheKrystalShip.Llm.Ollama;
+using TheKrystalShip.Llm.Backends;
+using TheKrystalShip.Llm.Backends.Ollama;
 
 using Xunit;
 
@@ -18,7 +19,7 @@ namespace TheKrystalShip.Llm.Tests;
 public class OllamaToolPayloadTests
 {
     private static JsonElement Properties(LlmToolDefinition def) =>
-        JsonSerializer.SerializeToElement(OllamaLlmClient.BuildToolPayload(def))
+        JsonSerializer.SerializeToElement(ToolSchema.BuildFunction(def))
             .GetProperty("function").GetProperty("parameters").GetProperty("properties");
 
     [Fact]
@@ -54,7 +55,7 @@ public class OllamaToolPayloadTests
             new LlmToolParameter("instance_name", "required"),
             new LlmToolParameter("verb", "optional", Required: false));
 
-        var required = JsonSerializer.SerializeToElement(OllamaLlmClient.BuildToolPayload(def))
+        var required = JsonSerializer.SerializeToElement(ToolSchema.BuildFunction(def))
             .GetProperty("function").GetProperty("parameters").GetProperty("required")
             .EnumerateArray().Select(e => e.GetString()).ToArray();
 

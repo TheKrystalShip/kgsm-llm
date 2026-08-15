@@ -168,7 +168,7 @@ internal sealed record CliOptions
         CONFIG (low → high precedence):
           embedded defaults  →  appsettings.json beside the binary  →  $KGSM_ASSISTANT_CONFIG
           or ~/.config/kgsm-assistant/appsettings.json  →  environment (Section__Key, e.g.
-          KGSM__Path, Ollama__Model, WebSearch__ApiKey)  →  --model
+          KGSM__Path, Llm__Model, WebSearch__ApiKey)  →  --model
 
         """;
 }

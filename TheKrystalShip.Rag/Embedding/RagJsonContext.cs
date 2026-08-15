@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace TheKrystalShip.Rag.Ollama;
+namespace TheKrystalShip.Rag.Embedding;
 
 /// <summary>
 /// Source-generated JSON context for the embedding wire DTOs. This is what keeps the RAG core
@@ -9,4 +9,5 @@ namespace TheKrystalShip.Rag.Ollama;
 /// </summary>
 [JsonSerializable(typeof(EmbedRequest))]
 [JsonSerializable(typeof(EmbedResponse))]
+[JsonSerializable(typeof(OpenAiEmbedResponse))]
 internal sealed partial class RagJsonContext : JsonSerializerContext;

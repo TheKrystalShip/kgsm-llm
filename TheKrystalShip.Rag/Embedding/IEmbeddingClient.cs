@@ -1,6 +1,6 @@
 using TheKrystalShip.Rag.Models;
 
-namespace TheKrystalShip.Rag.Ollama;
+namespace TheKrystalShip.Rag.Embedding;
 
 /// <summary>
 /// Produces embedding vectors via Ollama. The document/query split is first-class because most

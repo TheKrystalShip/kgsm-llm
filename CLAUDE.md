@@ -3,8 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 `kgsm-llm` is the **LLM / assistant** leaf of the KGSM ecosystem: a local, tool-calling AI
-assistant (runs on a local **Ollama** model — no cloud LLM) that answers questions about, and with
-authorization acts on, the game servers a `kgsm` engine manages. The workspace keystone is
+assistant (runs on a model served from this host — no cloud LLM) that answers questions about, and
+with authorization acts on, the game servers a `kgsm` engine manages. The workspace keystone is
 `../system-architecture.md`; this repo's own orientation doc is **`docs/ARCHITECTURE.md`** — read it
 first for the mental model.
 
@@ -19,13 +19,13 @@ dotnet test --filter "FullyQualifiedName~SomeTestName"     # one test / class
 dotnet test TheKrystalShip.Kgsm.Assistant.Eval.Tests/*.csproj   # one suite by project
 ```
 
-- **Live-Ollama smoke tests are inert by default** — they no-op unless `KGSM_LIVE_OLLAMA=1` (and
+- **Live-model smoke tests are inert by default** — they no-op unless `KGSM_LIVE_OLLAMA=1` (and
   some need a kgsm host / pulled models). The default `dotnet test` is fully hermetic:
   `KGSM_LIVE_OLLAMA=1 dotnet test --filter FullyQualifiedName~CliLiveSmokeTests`.
 - **`TheKrystalShip.Rag*` must publish Native-AOT-clean** — expect **0 ILC warnings**:
   `dotnet publish TheKrystalShip.Rag.Indexer -c Release -r linux-x64`.
 
-Running the deployables (each is a thin host over the same backend; needs a reachable Ollama, and
+Running the deployables (each is a thin host over the same backend; needs a reachable model server, and
 the assistant surfaces also need `KGSM__Path` → a real `kgsm.sh`):
 
 ```bash
@@ -33,7 +33,7 @@ the assistant surfaces also need `KGSM__Path` → a real `kgsm.sh`):
 KGSM__Path=/usr/local/bin/kgsm dotnet run -c Release --project TheKrystalShip.Kgsm.Assistant.Cli -- "what's installed?"
 # Service — HTTP/SSE; /health needs no secrets
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Service   # then curl http://127.0.0.1:5180/health
-# Eval — reproducible benchmark (live run needs Ollama; routing mode also needs a kgsm host)
+# Eval — reproducible benchmark (live run needs a model server; routing mode also needs a kgsm host)
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --shipped-prompts --transcript
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --seed 42   # ground-truth RAG lift chart
 ```
@@ -80,7 +80,7 @@ carries this same pattern. Cold-start runbook: `docs/DEPLOYMENT.md`.
 
 The layer cake — **one brain, many surfaces** (full diagram + rationale in `docs/ARCHITECTURE.md`):
 
-- **`TheKrystalShip.Llm`** — generic Ollama tool-calling **agent loop**. Knows nothing about KGSM;
+- **`TheKrystalShip.Llm`** — generic tool-calling **agent loop**. Knows nothing about KGSM;
   publishable standalone (a sibling Discord bot consumes it as a package). Owns the model
   round-trip, iteration cap, tool-output truncation, and conversation memory.
 - **`TheKrystalShip.Kgsm.Assistant`** — the **brain**: tool catalog, system prompt, action policy,
@@ -143,15 +143,28 @@ Things that bite if you don't know them:
   *failure* is "couldn't search," never "nothing exists" (the measured-or-unknown rule).
 - **Fail-closed null adapters compose the graph.** `DisabledRetrieval` / `DisabledWebSearch` are
   registered by default; the real adapter registers *after* and wins only when configured. This is
-  why the Service boots with nothing but Ollama + kgsm.
+  why the Service boots with nothing but a model server + kgsm.
 - **RAG is producer/consumer coupled by one on-disk `.krag` file.** The indexer writes a *versioned*
   index (format version + embedding model + dimension + chunk params); a mismatch is **rejected on
   load** (a different embedder = a different vector space). The read path **hot-reloads** on atomic
   swap and degrades to last-good on a bad read.
-- **Two Ollama clients by design.** Chat lives in `TheKrystalShip.Llm` (JIT); embeddings live in
+- **Two client stacks by design.** Chat lives in `TheKrystalShip.Llm` (JIT); embeddings live in
   `TheKrystalShip.Rag` (Native-AOT). The indexer is a resident daemon on a VRAM-budgeted box, so it
   must be AOT — which forces the RAG core AOT-clean (source-generated JSON, zero reflection).
   Embeddings deliberately do **not** live on `ILlmClient`. Justified duplication, not an accident.
+- **The inference server is one registration, and nothing above it knows which answered.**
+  `Llm:Provider` picks Ollama or llama.cpp behind `ILlmClient`; `Rag:Provider` does the same behind
+  `IEmbeddingClient`, independently. Both are read **once at startup** — a swap is a restart.
+  The wire formats differ in ways that live entirely inside the two clients: llama.cpp streams a
+  tool call's arguments as fragments (accumulated in `LlamaCppStreamParser`), addresses a tool
+  result by call id rather than tool name (assigned per request in `LlamaCppRequestBuilder`), and
+  fixes the context window at launch so `Llm:ContextWindow` is never sent to it — only used to
+  stamp token accounting, and it must match the server's `-c`.
+  ⚠ **llama-server needs `--jinja` and a tools-capable template.** Without it the `tools` array is
+  accepted and no tool call is ever emitted: the assistant answers and silently never acts. Ollama
+  does *not* use that path — it runs llama-server with `--no-jinja --chat-template chatml` and
+  parses tool calls itself — so the two backends encode tool calls differently and a switch is a
+  measurable change to routing, not a transport detail. Units: `deploy/llama-server/`.
 
 ## Repo-specific invariants
 
@@ -180,7 +193,7 @@ Things that bite if you don't know them:
   reply then narrates a staging that never happened (measured on `gemma4:12b`: reproducible on the
   very next turn). A past call's **output** is not replayed — a stale reading offered as current is a
   fabricated status — so each replayed call stands against a placeholder asking for a fresh call.
-- **This leaf depends only on kgsm-lib + a local Ollama** and runs fully standalone — no other
+- **This leaf depends only on kgsm-lib + a local model server** and runs fully standalone — no other
   ecosystem service. Don't add a dependency on the API or a sibling leaf.
 - **Authority is the ecosystem's ordered tier, and it comes from the KGSM account store.** A Discord
   login and a password login are answered from the same record, so a person holds the same tier here
@@ -214,7 +227,7 @@ Things that bite if you don't know them:
 | Doc | For |
 |-----|-----|
 | `docs/ARCHITECTURE.md` | The mental model: layers, agent turn, ports/adapters, RAG split, ecosystem boundary |
-| `docs/DEPLOYMENT.md` | Cold-start runbook (prereqs → build → publish → run → verify), incl. Ollama/VRAM tuning |
+| `docs/DEPLOYMENT.md` | Cold-start runbook (prereqs → build → publish → run → verify), incl. model-server/VRAM tuning |
 | `docs/CONFIGURATION.md` | Every config section/key/default, env-var form (`Section__Key`), the secrets list |
 | `docs/wire-contract.md` | The versioned public wire contract: the `/turn` stream, the `/confirm` channel, and what a client may rely on |
 | Per-project `README.md` | Surface-specific usage (`.Cli`, `.Service`, `.Llm`, `.Rag.Indexer`) |
@@ -225,7 +238,7 @@ Config is layered (the settings file beside the binary < host file < `Section__K
 flags); the Service's is `kgsm-assistant.settings.json` and declares its whole surface, while the
 CLI and Eval — interactive tools, not leaves — keep `appsettings.json`;
 **secrets are environment-only** (`docs/CONFIGURATION.md`). The default model is `gemma4:12b`;
-`Ollama:NumCtx` is a **fixed VRAM reservation**, not a ceiling.
+`Llm:ContextWindow` is a **fixed VRAM reservation**, not a ceiling.
 
 ## Version tracking
 

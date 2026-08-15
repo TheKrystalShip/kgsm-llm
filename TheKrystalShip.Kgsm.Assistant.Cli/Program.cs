@@ -71,7 +71,7 @@ builder.Configuration.AddJsonFile(userConfigPath, optional: true, reloadOnChange
 builder.Configuration.AddEnvironmentVariables();
 // 5. An explicit --model flag beats config + env.
 if (!string.IsNullOrWhiteSpace(cli.Model))
-    builder.Configuration["Ollama:Model"] = cli.Model;
+    builder.Configuration["Llm:Model"] = cli.Model;
 
 // The index verb needs only the resolved config — not the chat/KGSM backend. Dispatch here, before
 // any recording/prompt/KGSM setup or backend wiring, so a host with Ollama but no kgsm can index.
@@ -180,8 +180,8 @@ using (host)
         color: colorErr,
         stderrTty: stderrTty,
         // --think/--no-think win; absent either, fall back to the Ollama:Think config default
-        // (so the REPL's "/think (default: from config)" is accurate and Ollama__Think is honored).
-        think: cli.Think ?? builder.Configuration.GetValue("Ollama:Think", false));
+        // (so the REPL's "/think (default: from config)" is accurate and Llm__Think is honored).
+        think: cli.Think ?? builder.Configuration.GetValue("Llm:Think", false));
 
     // Ctrl-C cancels the running turn (aborts Ollama generation, L3) rather than the process.
     using var interruptor = new TurnInterruptor();

@@ -89,7 +89,7 @@ public sealed class WebSearchLiveTests : IClassFixture<WebApplicationFactory<Pro
         _factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("KGSM:Path", "/home/heisen/tks/kgsm/kgsm.sh");
-            builder.UseSetting("Ollama:Model", model);
+            builder.UseSetting("Llm:Model", model);
             builder.UseSetting("WebSearch:ApiKey", apiKey);
             builder.ConfigureTestServices(services =>
             {

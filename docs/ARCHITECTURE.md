@@ -5,7 +5,7 @@ The mental model for understanding this repo cold. For *running* it see
 
 ## The one-paragraph version
 
-A local LLM (Ollama) runs a **tool-calling agent loop**. The loop itself is generic and lives in
+A local LLM runs a **tool-calling agent loop**. The loop itself is generic and lives in
 `TheKrystalShip.Llm` — it knows how to talk to the model and round-trip tool calls, but nothing
 about KGSM. `TheKrystalShip.Kgsm.Assistant` is the **brain**: it defines the tool catalog, the
 system prompt, the action policy, and a set of **ports** (interfaces) for the things tools need.
@@ -30,7 +30,7 @@ an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, se
                            ▼ (generic loop)                         ▼ (adapters)
             ┌──────────────────────────┐      ┌──────────────────────────────────────┐
  loop/core  │   TheKrystalShip.Llm      │      │  *.Infrastructure                     │
-            │   Ollama client · agent   │      │  kgsm-lib graph · Tavily · fetch ·    │
+            │   LLM client · agent      │      │  kgsm-lib graph · Tavily · fetch ·    │
             │   loop · conversation mem │      │  RAG read                             │
             └──────────────────────────┘      └───────────────┬──────────────────────┘
                                                                │
@@ -57,7 +57,7 @@ an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, se
   provides concrete adapters. Disabled capabilities get **fail-closed null adapters**
   (`DisabledRetrieval`, `DisabledWebSearch`, `DisabledWebFetch`) registered by default, so the graph
   composes even when RAG/Tavily/fetch are off — the real adapter is registered *after* and wins only
-  when configured. This is why the Service boots fine with nothing but Ollama + kgsm configured.
+  when configured. This is why the Service boots fine with nothing but a model server + kgsm configured.
 - **One brain, many surfaces.** The Service and CLI both compose the same three DI calls —
   `AddLocalLlm` + `AddKgsmAssistant` + `AddKgsmAdapters` — and differ only in how they get the
   prompt in and the answer out, and in *who the user is* (see [auth](#authentication--authority)).
@@ -73,7 +73,7 @@ Every turn, the **host** (Service or CLI) decides policy and hands it to the loo
    set *is* the whitelist.
 3. **Provide a per-call gate** — a closure that authorizes each tool call (and can hold state, e.g.
    an actions-per-message cap).
-4. The loop calls Ollama, dispatches any tool calls through the `IToolDispatcher` (which refuses
+4. The loop calls the model, dispatches any tool calls through the `IToolDispatcher` (which refuses
    unknown tools and never throws — failures come back as strings the model can recover from),
    feeds results back, and iterates up to `MaxIterations`.
 
@@ -145,7 +145,7 @@ file**:
 
 - **Producer — `TheKrystalShip.Rag.Indexer`** (standalone Native-AOT binary): walks a docs corpus,
   chunks structure-aware (markdown headings → breadcrumbs, code fences kept intact), embeds via
-  Ollama, and writes a **versioned `.krag`** index. Incremental by content hash; `--watch` rebuilds
+  the configured embedding server, and writes a **versioned `.krag`** index. Incremental by content hash; `--watch` rebuilds
   on change and **atomically swaps** the file.
 - **Consumer — `TheKrystalShip.Rag` (read path)**, used by the Service/CLI via the `IRetrieval`
   adapter: loads the index, **hot-reloads** on swap, and degrades to the last-good index on a
@@ -160,7 +160,31 @@ servers, so it's Native-AOT (low idle RSS, no JIT warmup) — which forces `TheK
 AOT-clean (source-generated JSON, zero reflection). The JIT assistant references the same core for
 the read path (AOT-safe code runs fine under JIT). Embeddings deliberately live here, **not** on
 `ILlmClient`: chat doesn't need them, and the AOT daemon can't depend on the JIT Llm package — two
-Ollama clients (chat = JIT, embed = AOT) is intentional, justified duplication.
+client stacks (chat = JIT, embed = AOT) is intentional, justified duplication. Each stack carries
+its own provider switch, so the chat model and the embedder are pointed at their servers separately.
+
+## The inference backend is one registration
+
+`ILlmClient` (chat) and `IEmbeddingClient` (embeddings) are the only things the rest of the code
+sees. Two implementations stand behind each — Ollama's native API and llama.cpp's
+OpenAI-compatible one — and `Llm:Provider` / `Rag:Provider` decide which is registered, once, at
+startup. The agent loop, the compactor, the tool catalog and the eval harness are identical either
+way.
+
+The wire formats are not equivalent, and the differences live entirely in the two clients:
+
+- **Tool calls.** Ollama returns them complete in one frame. The OpenAI format streams a call's
+  arguments as string fragments keyed by index, so `LlamaCppStreamParser` accumulates them and
+  emits the assembled set in one frame, matching Ollama's shape.
+- **Tool results.** Ollama addresses one by tool name; OpenAI addresses it by the id of the call it
+  answers. `LlmMessage` carries no id, so `LlamaCppRequestBuilder` assigns them per request by
+  walking the history — the same history always yields the same ids, so nothing is persisted.
+- **The context window.** Ollama takes it per request. llama-server fixes it at launch and ignores
+  a per-request value, so `Llm:ContextWindow` is not sent there; it is read to stamp token
+  accounting, and must match the server's `-c`.
+- **Tool calling has to be switched on.** llama-server needs `--jinja` and a tools-capable chat
+  template. Without it the `tools` array is accepted and no tool call is ever emitted, which reads
+  as an unhelpful model rather than a broken configuration.
 
 ## Authentication & authority
 
@@ -190,7 +214,7 @@ and observed sizes.
 
 This repo is a **leaf** in the KGSM ecosystem. It reaches the engine **only** through **kgsm-lib**
 (the single C#↔engine chokepoint) — it never shells out to `kgsm.sh` itself, and never opens the
-watchdog socket directly. It depends on nothing but kgsm-lib + a local Ollama, and runs fully
+watchdog socket directly. It depends on nothing but kgsm-lib + a local model server, and runs fully
 standalone (no other ecosystem service required). It also honors the ecosystem's **measured-or-
 unknown** rule: the assistant never fabricates a status or metric — if it can't determine
 something, it says so. The workspace-level `system-architecture.md` is the keystone map for how all

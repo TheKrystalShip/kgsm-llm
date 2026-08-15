@@ -11,7 +11,7 @@ using NSubstitute.ExceptionExtensions;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
-using TheKrystalShip.Llm.Ollama;
+using TheKrystalShip.Llm.Backends.Ollama;
 
 namespace TheKrystalShip.Llm.Tests;
 

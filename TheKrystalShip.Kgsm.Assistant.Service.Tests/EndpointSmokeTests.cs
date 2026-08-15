@@ -2387,8 +2387,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             configure: b =>
             {
                 b.UseSetting("Assistant:Relay:Secret", "relay-secret");
-                b.UseSetting("Ollama:Model", "gemma4:12b");
-                b.UseSetting("Ollama:NumCtx", "32768");
+                b.UseSetting("Llm:Model", "gemma4:12b");
+                b.UseSetting("Llm:ContextWindow", "32768");
                 b.UseSetting("LlmAgent:MaxIterations", "16");
             },
             withStore: store);

@@ -1,6 +1,6 @@
 using FluentAssertions;
 
-using TheKrystalShip.Llm.Ollama;
+using TheKrystalShip.Llm.Backends.Ollama;
 
 using Xunit;
 

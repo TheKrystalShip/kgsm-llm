@@ -446,8 +446,8 @@ internal sealed class TurnRegistry : ITurnRegistry
     {
         using var scope = _scopes.CreateScope();
         var conversations = scope.ServiceProvider.GetRequiredService<IConversationStore>();
-        var ollama = scope.ServiceProvider.GetRequiredService<IOptions<Llm.Ollama.OllamaOptions>>();
-        return conversations.GetPreferences(session.ConversationId).Think ?? ollama.Value.Think;
+        var llm = scope.ServiceProvider.GetRequiredService<IOptions<Llm.Backends.LlmBackendOptions>>();
+        return conversations.GetPreferences(session.ConversationId).Think ?? llm.Value.Think;
     }
 
     /// <summary>Record the frame on the session, hand it to its direct consumers, and put it on the

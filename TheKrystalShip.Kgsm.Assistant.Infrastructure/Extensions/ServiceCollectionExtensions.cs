@@ -19,7 +19,7 @@ using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Services;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
 
@@ -256,7 +256,14 @@ public static class ServiceCollectionExtensions
         if (rag.Enabled)
         {
             services.Configure<RagEmbeddingOptions>(config.GetSection(RagEmbeddingOptions.Section));
-            services.AddSingleton<IEmbeddingClient, OllamaEmbeddingClient>();
+            // The embedding backend is chosen the same way the chat backend is: read once at
+            // registration, because swapping it invalidates the index and is therefore a restart.
+            var embedding = config.GetSection(RagEmbeddingOptions.Section).Get<RagEmbeddingOptions>()
+                ?? new RagEmbeddingOptions();
+            if (embedding.Provider == EmbeddingProvider.LlamaCpp)
+                services.AddSingleton<IEmbeddingClient, LlamaCppEmbeddingClient>();
+            else
+                services.AddSingleton<IEmbeddingClient, OllamaEmbeddingClient>();
             services.AddSingleton<RagIndexProvider>();
             services.AddSingleton<IRetrieval, RagRetrieval>();
         }

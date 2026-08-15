@@ -2,7 +2,7 @@ using System.Text.Json;
 
 using FluentAssertions;
 
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Rag.Tests;
 

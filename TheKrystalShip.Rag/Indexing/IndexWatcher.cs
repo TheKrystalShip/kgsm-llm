@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Rag.Index;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Rag.Indexing;
 
@@ -81,8 +81,7 @@ public sealed class IndexWatcher
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        var embeddings = _embeddingsOverride ?? new OllamaEmbeddingClient(
-            Options.Create(_embedding), _loggerFactory.CreateLogger<OllamaEmbeddingClient>());
+        var embeddings = _embeddingsOverride ?? EmbeddingClientFactory.Create(_embedding, _loggerFactory);
         var builder = new IndexBuilder(embeddings, _loggerFactory.CreateLogger<IndexBuilder>());
 
         var loop = new CoalescingRebuildLoop(

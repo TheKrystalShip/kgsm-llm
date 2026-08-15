@@ -2,7 +2,7 @@ using System.Text.Json;
 
 using TheKrystalShip.Llm.Models;
 
-namespace TheKrystalShip.Llm.Ollama;
+namespace TheKrystalShip.Llm.Backends.Ollama;
 
 /// <summary>
 /// Pure, HTTP-free parsing of Ollama <c>/api/chat</c> response frames. A non-streaming response
@@ -121,52 +121,11 @@ public static class OllamaStreamParser
 
             var arguments = new Dictionary<string, string?>();
             if (function.TryGetProperty("arguments", out var argsElement))
-                ExtractArguments(argsElement, arguments);
+                JsonArgumentReader.Read(argsElement, arguments);
 
             toolCalls.Add(new LlmToolCall(new Tool(name), arguments));
         }
 
         return toolCalls;
     }
-
-    /// <summary>
-    /// Arguments usually arrive as a JSON object, but some models emit a JSON string that itself
-    /// contains an object. Handle both, coercing each value to a string. Malformed stringified
-    /// arguments are skipped (best-effort, as before).
-    /// </summary>
-    private static void ExtractArguments(JsonElement argsElement, Dictionary<string, string?> into)
-    {
-        if (argsElement.ValueKind == JsonValueKind.String)
-        {
-            var raw = argsElement.GetString();
-            if (string.IsNullOrWhiteSpace(raw))
-                return;
-            try
-            {
-                using var parsed = JsonDocument.Parse(raw);
-                if (parsed.RootElement.ValueKind == JsonValueKind.Object)
-                    foreach (var prop in parsed.RootElement.EnumerateObject())
-                        into[prop.Name] = JsonValueToString(prop.Value);
-            }
-            catch (JsonException)
-            {
-                // Best-effort: a model that emits non-JSON stringified arguments just yields no args.
-            }
-            return;
-        }
-
-        if (argsElement.ValueKind == JsonValueKind.Object)
-            foreach (var prop in argsElement.EnumerateObject())
-                into[prop.Name] = JsonValueToString(prop.Value);
-    }
-
-    private static string? JsonValueToString(JsonElement element) => element.ValueKind switch
-    {
-        JsonValueKind.String => element.GetString(),
-        JsonValueKind.Null => null,
-        JsonValueKind.True => "true",
-        JsonValueKind.False => "false",
-        JsonValueKind.Number => element.GetRawText(),
-        _ => element.GetRawText()
-    };
 }

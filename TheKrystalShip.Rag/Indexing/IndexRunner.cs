@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Rag.Index;
 using TheKrystalShip.Rag.Models;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Rag.Indexing;
 
@@ -28,8 +28,7 @@ public static class IndexRunner
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
         ArgumentNullException.ThrowIfNull(loggerFactory);
 
-        var embeddings = new OllamaEmbeddingClient(
-            Options.Create(embedding), loggerFactory.CreateLogger<OllamaEmbeddingClient>());
+        var embeddings = EmbeddingClientFactory.Create(embedding, loggerFactory);
         var builder = new IndexBuilder(embeddings, loggerFactory.CreateLogger<IndexBuilder>());
 
         RagIndex? previous = null;

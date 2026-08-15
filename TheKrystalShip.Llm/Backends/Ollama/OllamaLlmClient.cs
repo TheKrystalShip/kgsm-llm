@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
-namespace TheKrystalShip.Llm.Ollama;
+namespace TheKrystalShip.Llm.Backends.Ollama;
 
 /// <summary>
 /// Raised when the Ollama backend can't be reached or returns an error while streaming. The
@@ -27,11 +27,11 @@ public sealed class OllamaBackendException : Exception
 public class OllamaLlmClient : ILlmClient
 {
     private readonly HttpClient _httpClient;
-    private readonly OllamaOptions _options;
+    private readonly LlmBackendOptions _options;
     private readonly ILogger<OllamaLlmClient> _logger;
 
     public OllamaLlmClient(
-        IOptions<OllamaOptions> options,
+        IOptions<LlmBackendOptions> options,
         ILogger<OllamaLlmClient> logger)
     {
         _options = options.Value;
@@ -79,7 +79,7 @@ public class OllamaLlmClient : ILlmClient
                 : null;
 
             var toolCalls = OllamaStreamParser.ParseToolCalls(messageElement);
-            var usage = OllamaStreamParser.ParseUsage(document.RootElement, _options.NumCtx);
+            var usage = OllamaStreamParser.ParseUsage(document.RootElement, _options.ContextWindow);
 
             return Result.Success(new LlmResponse(replyContent, toolCalls, usage));
         }
@@ -121,7 +121,7 @@ public class OllamaLlmClient : ILlmClient
         string? line;
         while ((line = await reader.ReadLineAsync(cancellationToken)) is not null)
         {
-            var chunk = OllamaStreamParser.ParseFrame(line, _options.NumCtx);
+            var chunk = OllamaStreamParser.ParseFrame(line, _options.ContextWindow);
             if (chunk is null)
                 continue;
             yield return chunk;
@@ -164,7 +164,7 @@ public class OllamaLlmClient : ILlmClient
     {
         var options = new Dictionary<string, object?>
         {
-            ["num_ctx"] = _options.NumCtx,
+            ["num_ctx"] = _options.ContextWindow,
             ["temperature"] = _options.Temperature
         };
         // Only sent when explicitly configured (the eval harness's reproducible-run mode); an
@@ -182,7 +182,7 @@ public class OllamaLlmClient : ILlmClient
         };
 
         if (tools is { Count: > 0 })
-            body["tools"] = tools.Select(BuildToolPayload).ToArray();
+            body["tools"] = tools.Select(ToolSchema.BuildFunction).ToArray();
 
         return body;
     }
@@ -209,36 +209,4 @@ public class OllamaLlmClient : ILlmClient
         return payload;
     }
 
-    internal static object BuildToolPayload(LlmToolDefinition tool) => new
-    {
-        type = "function",
-        function = new
-        {
-            name = tool.Name,
-            description = tool.Description,
-            parameters = new
-            {
-                type = "object",
-                properties = tool.Parameters.ToDictionary(p => p.Name, BuildParameterSchema),
-                required = tool.Parameters.Where(p => p.Required).Select(p => p.Name).ToArray()
-            }
-        }
-    };
-
-    /// <summary>
-    /// Builds one parameter's JSON-schema object. A parameter with
-    /// <see cref="LlmToolParameter.AllowedValues"/> gains an <c>enum</c> constraint,
-    /// which steers the model to a valid value (the small-model reliability lever).
-    /// </summary>
-    private static object BuildParameterSchema(LlmToolParameter p)
-    {
-        var schema = new Dictionary<string, object>
-        {
-            ["type"] = p.Type,
-            ["description"] = p.Description,
-        };
-        if (p.AllowedValues is { Count: > 0 })
-            schema["enum"] = p.AllowedValues;
-        return schema;
-    }
 }

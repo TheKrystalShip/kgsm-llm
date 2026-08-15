@@ -22,7 +22,7 @@ All three deployables use the standard .NET configuration stack. Later layers wi
 Replace each `:` in a config path with a double underscore `__`:
 
 ```bash
-Ollama__Model=mistral:7b          # Ollama:Model
+Llm__Model=mistral:7b             # Llm:Model
 Rag__Enabled=true                 # Rag:Enabled
 ```
 
@@ -57,7 +57,7 @@ any committed settings file — which declares each of them blank so the Control
 
 | Section | CLI | Service | Indexer | Purpose |
 |---------|:---:|:-------:|:-------:|---------|
-| `Ollama` | ✅ | ✅ | — | Chat model client |
+| `Llm` | ✅ | ✅ | — | Chat model client and which server serves it |
 | `Conversation` | ✅ | ✅ | — | Per-turn short-term memory |
 | `LlmAgent` | ✅ | ✅ | — | Agent-loop safety caps |
 | `Recording` | ✅ (on) | ✅ (off) | — | Transcript corpus (opt-in) |
@@ -83,17 +83,34 @@ The **indexer takes CLI flags, not a config file** — its row maps to `--model`
 
 ## Sections
 
-### `Ollama` — chat model client (`OllamaOptions`)
+### `Llm` — chat model client (`LlmBackendOptions`)
+
+`Provider` picks which local inference server answers. It is the only key that differs between
+them; every other key here means the same thing either way, and nothing above `ILlmClient` sees the
+choice at all.
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `Endpoint` | `http://localhost:11434` | `Ollama__Endpoint` | Ollama base URL |
-| `Model` | `gemma4:12b` | `Ollama__Model` | Chat model tag (CLI `--model` overrides) |
-| `NumCtx` | `32768` | `Ollama__NumCtx` | Context window — a **fixed VRAM reservation** |
-| `TimeoutSeconds` | `300` | `Ollama__TimeoutSeconds` | Per-request generation timeout |
-| `Temperature` | `0.3` | `Ollama__Temperature` | Low keeps tool routing reliable |
-| `Seed` | _(unset)_ | `Ollama__Seed` | Reproducible sampling (eval/testing) |
-| `Think` | `true` (CLI) | `Ollama__Think` | Gemma "thinking" mode; CLI `--think/--no-think` overrides |
+| `Provider` | `Ollama` | `Llm__Provider` | `Ollama` or `LlamaCpp`. Read once at startup — a swap is a restart |
+| `Endpoint` | `http://localhost:11434` | `Llm__Endpoint` | Base URL of the inference server |
+| `Model` | `gemma4:12b` | `Llm__Model` | Ollama resolves it as a pulled tag; llama-server only echoes it back (CLI `--model` overrides) |
+| `ContextWindow` | `32768` | `Llm__ContextWindow` | A **fixed VRAM reservation**. Ollama takes it per request; llama-server fixes it at launch (`-c`) and this must match that flag |
+| `TimeoutSeconds` | `300` | `Llm__TimeoutSeconds` | Per-request generation timeout |
+| `Temperature` | `0.3` | `Llm__Temperature` | Low keeps tool routing reliable |
+| `Seed` | _(unset)_ | `Llm__Seed` | Reproducible sampling (eval/testing) |
+| `Think` | `true` (CLI) | `Llm__Think` | Reasoning mode, on models that support it; CLI `--think/--no-think` overrides |
+
+**`Llm:LlamaCpp`** — read only when `Provider` is `LlamaCpp` (`LlamaCppOptions`):
+
+| Key | Default | Env | Notes |
+|-----|---------|-----|-------|
+| `ApiKey` | _(blank)_ | `Llm__LlamaCpp__ApiKey` | Sent as a bearer token when llama-server was started with `--api-key`. Blank sends no header |
+| `ParallelToolCalls` | `false` | `Llm__LlamaCpp__ParallelToolCalls` | Lets one step request several tools. Off matches how the assistant is prompted and measured |
+| `ThinkingTemplateKwarg` | `enable_thinking` | `Llm__LlamaCpp__ThinkingTemplateKwarg` | The chat-template variable `Think` sets. A template declaring no such variable ignores it |
+
+> llama-server must be started with `--jinja` and a tools-capable chat template. Without it the
+> `tools` array is accepted and no tool call is ever emitted — the assistant answers and never acts.
+> Units and setup: [`deploy/llama-server/README.md`](../deploy/llama-server/README.md).
 
 ### `Conversation` — the history and what the model replays (`ConversationOptions`)
 
@@ -230,7 +247,8 @@ baseline is **off**, but the shipped Service env template
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
 | `EmbeddingModel` | `embeddinggemma` | `Rag__EmbeddingModel` | **Must match the model the index was built with** (mismatch rejected on load) |
-| `Endpoint` | `http://localhost:11434` | `Rag__Endpoint` | Ollama URL for embeds (may differ from chat) |
+| `Provider` | `Ollama` | `Rag__Provider` | `Ollama` or `LlamaCpp`. Set independently of `Llm:Provider` — the index is its own model |
+| `Endpoint` | `http://localhost:11434` | `Rag__Endpoint` | Embedding server URL (may differ from chat) |
 | `TimeoutSeconds` | `120` | `Rag__TimeoutSeconds` | Embed request timeout |
 | `Sources` | `[]` | `Rag__Sources__0…` | Docs to index (files/dirs, recursive) |
 | `SourcePattern` | `*.md` | `Rag__SourcePattern` | Glob when walking directories |

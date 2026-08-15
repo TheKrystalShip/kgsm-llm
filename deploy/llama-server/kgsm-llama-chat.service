@@ -1,0 +1,60 @@
+[Unit]
+# llama.cpp serving the assistant's chat model. Opt-in: the assistant reaches a model through
+# Llm:Provider, and this unit is what "LlamaCpp" points at. A host running Ollama instead needs
+# none of this. Setup and the flag rationale: ../llama-server/README.md
+Description=llama.cpp chat model for the KGSM assistant
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network-online.target
+Wants=network-online.target
+# One GPU holds one set of weights. A host that runs both this and Ollama with the same model
+# loaded is reserving the VRAM twice, and the second one to start fails to allocate.
+Conflicts=ollama.service
+
+[Service]
+Type=simple
+User=kgsm
+Group=kgsm
+
+# Binary, model paths and the port. Everything a host has to choose lives here rather than in this
+# file, so a model swap is an edit to the env file and a restart.
+EnvironmentFile=/etc/kgsm-assistant/llama-server.env
+
+# --jinja is REQUIRED and is not a detail: without it llama-server accepts the tools array and
+#   never emits a tool call, so the assistant answers normally and silently never acts. The model
+#   also needs a tools-capable chat template — GET /props reports the one that loaded.
+# -c must match Llm:ContextWindow. It is fixed here, at launch; a request cannot change it, and the
+#   configured value is what token accounting is measured against.
+# --cache-type-k/v q8_0 halves KV-cache VRAM. It is also the knob to reach for first if tool calling
+#   degrades — llama.cpp's own docs warn that quantized KV hurts it, and f16 is affordable here.
+# -np is the number of concurrent slots. One turn at a time is what the agent loop does today.
+ExecStart=${LLAMA_SERVER_BIN} \
+    --model ${LLAMA_CHAT_MODEL} \
+    --mmproj ${LLAMA_CHAT_MMPROJ} \
+    --host 127.0.0.1 --port ${LLAMA_CHAT_PORT} \
+    --jinja \
+    -c ${LLAMA_CHAT_CTX} \
+    -np 1 \
+    -ngl 999 \
+    --cache-type-k q8_0 --cache-type-v q8_0 \
+    --flash-attn on \
+    -b 512 -ub 512 \
+    --context-shift --keep 4 \
+    --no-webui
+
+# Multi-token prediction: the model's own draft head verifies several tokens per step, with output
+# identical to greedy decoding from the big model. Add the drafter to ExecStart to enable it:
+#     --spec-type draft-mtp --model-draft ${LLAMA_CHAT_DRAFT}
+# It costs the drafter's own weights in VRAM and pays off on long, predictable generations. Measure
+# it; short tool-call JSON is the case where it pays least.
+
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/llama
+
+[Install]
+WantedBy=multi-user.target

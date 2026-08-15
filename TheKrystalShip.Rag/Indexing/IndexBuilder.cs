@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TheKrystalShip.Rag.Chunking;
 using TheKrystalShip.Rag.Index;
 using TheKrystalShip.Rag.Models;
-using TheKrystalShip.Rag.Ollama;
+using TheKrystalShip.Rag.Embedding;
 
 namespace TheKrystalShip.Rag.Indexing;
 

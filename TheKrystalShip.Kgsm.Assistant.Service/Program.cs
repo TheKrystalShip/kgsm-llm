@@ -16,6 +16,7 @@ using TheKrystalShip.Kgsm.Assistant.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
+using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
@@ -138,16 +139,25 @@ builder.Services.AddSingleton<IConversationEventBus, ConversationEventBus>();
 // that asked for it — which is what lets a second surface watch one, lets any of them stop it, and
 // lets it survive the surface that started it going away. Also in memory: a turn that was interrupted
 // by a restart is over, and nothing here is owed durability the conversation store does not give.
-// Reading an answer aloud. The null one is registered FIRST and unconditionally, so an assistant on a
-// host with no speech leaf has a working port that reports itself unavailable — the same fail-closed
-// shape as DisabledRetrieval. The real adapter replaces it only when this host is configured to speak,
-// and even then it answers "unavailable" until the leaf's socket is actually there.
+// Reading an answer aloud, and hearing one asked. The null ones are registered FIRST and
+// unconditionally, so an assistant on a host with no speech leaf has working ports that report
+// themselves unavailable — the same fail-closed shape as DisabledRetrieval. The real adapters replace
+// them only when this host is configured to use the engine, and even then they answer "unavailable"
+// until the leaf's socket is actually there.
+//
+// One switch covers both directions because one leaf serves both: a host either has kgsm-speech or it
+// does not, and a surface that could be heard but not answered aloud is a configuration nobody wants.
 builder.Services.AddSingleton<ISpokenAudio, NoSpokenAudio>();
+builder.Services.AddSingleton<ISpokenWords, NoSpokenWords>();
 if (builder.Configuration.GetValue("Speech:Enabled", true))
 {
     builder.Services.AddSingleton<ISpokenAudio>(sp => new LeafSpokenAudio(
         builder.Configuration["Speech:SocketPath"],
         sp.GetRequiredService<ILogger<LeafSpokenAudio>>()));
+    builder.Services.AddSingleton<ISpokenWords>(sp => new LeafSpokenWords(
+        builder.Configuration["Speech:SocketPath"],
+        sp.GetRequiredService<IServerInventory>(),
+        sp.GetRequiredService<ILogger<LeafSpokenWords>>()));
 }
 
 builder.Services.AddSingleton<ITurnRegistry, TurnRegistry>();
@@ -735,6 +745,65 @@ secured.MapGet("/tools", async (HttpContext http, AuthService auth, IPromptOverr
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     return Results.Ok(await AuthorizedToolsAsync(principal, auth, promptOverrides, searchOptions, ct));
+});
+
+// Three minutes of 16kHz mono 16-bit audio, which is the ceiling a recording is refused above.
+const int MaxUtteranceBytes = 3 * 60 * 16000 * 2;
+
+// Whether this host can hear and whether it can speak, asked before a surface offers a microphone or
+// a Read-aloud toggle. Both are one leaf, so both answers move together — but they are reported
+// separately because a surface acts on them separately, and reporting one derived from the other
+// would be this service holding an opinion about a leaf it only talks to.
+//
+// It is a question about the HOST, not the caller, and it is cheap: the socket is bound by systemd
+// whether or not the daemon is running, so this starts nothing and loads nothing. Secured all the
+// same — everything else on this leaf is, and what is installed on a host is not public.
+secured.MapGet("/speech", (ISpokenAudio audio, ISpokenWords words) =>
+    Results.Ok(new SpeechResponse(words.Available, audio.Available)));
+
+// One utterance in, the words in it out. The audio is 16kHz mono signed 16-bit PCM — whisper's native
+// input, which the browser has already resampled to, because doing it there costs one pass over a
+// buffer the browser already holds decoded and doing it here would need an audio codec in this
+// service. Raw rather than a container: the sample rate is the contract, and a header restating it is
+// a second place for the two to disagree.
+//
+// The transcript is returned, never sent. What somebody says into a microphone is a draft until they
+// look at it — recognition is wrong often enough that a surface which turned a voice note straight
+// into a turn would ask the assistant things nobody said.
+secured.MapPost("/transcribe", async (HttpContext http, ISpokenWords words, CancellationToken ct) =>
+{
+    if (!words.Available)
+        return Results.Json(
+            new { error = "This host has no speech engine, so it cannot transcribe anything." },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    // Read with a hard ceiling rather than trusting Content-Length, which is a claim. The cap is about
+    // three minutes of audio: long enough for anything anybody dictates at a chat box, short enough
+    // that one note cannot hold the recogniser — a single pass at a time — against everyone else.
+    using var buffer = new MemoryStream();
+    await http.Request.Body.CopyToAsync(buffer, ct);
+    byte[] pcm = buffer.ToArray();
+
+    if (pcm.Length == 0)
+        return Results.BadRequest(new { error = "No audio was sent." });
+    if (pcm.Length > MaxUtteranceBytes)
+        return Results.BadRequest(new { error = "That recording is too long — keep it under three minutes." });
+    // A 16-bit sample is two bytes, so an odd length is not the format this endpoint documents. It
+    // would still transcribe, off by half a sample for the whole run, which is worse than refusing.
+    if (pcm.Length % 2 != 0)
+        return Results.BadRequest(new { error = "The audio is not 16-bit samples." });
+
+    string? heard = await words.HearAsync(pcm, ct);
+
+    // Null is the pass not happening; an empty string is a pass that ran and found nothing. Told
+    // apart, because "we could not listen" and "you did not say anything" send somebody to different
+    // places — and a recording of a quiet room is a real thing to have made.
+    if (heard is null)
+        return Results.Json(
+            new { error = "The speech engine could not read that recording." },
+            statusCode: StatusCodes.Status502BadGateway);
+
+    return Results.Ok(new TranscriptResponse(heard));
 });
 
 // The commands this caller may type at the assistant, filtered to their tier — a command above it is

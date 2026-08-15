@@ -66,17 +66,17 @@ using TheKrystalShip.KGSM.LeafConfig;
     Description = "Directory of editable prompt files that replace the assistant's built-in system prompt and tool descriptions. Blank uses the built-in text. A file here outranks every other way of setting the same prompt.",
     Group = "general", Type = LeafType.Path, Risk = LeafRisk.Wiring, NoDefault = true)]
 
-// ── Reading answers aloud ────────────────────────────────────────────────────
+// ── Speaking and listening ───────────────────────────────────────────────────
 // The models are not this leaf's — kgsm-speech holds them, one engine per host serving every surface,
 // and the voice is set there. What is settable here is only whether this assistant asks it for
 // anything, and where to find it.
 
-[assembly: LeafFrameworkField("speechEnabled", "Speech__Enabled", "Read answers aloud",
-    Description = "Whether this assistant synthesises an answer as it writes it, for surfaces that ask to hear one. Each sentence is spoken while the next is still being written, so the first plays before the answer is finished. Costs nothing on a turn that did not ask, and nothing at all on a host with no speech engine installed.",
+[assembly: LeafFrameworkField("speechEnabled", "Speech__Enabled", "Use the host's speech engine",
+    Description = "Whether this assistant reads answers aloud and transcribes voice notes. An answer is synthesised as it is written — each sentence spoken while the next is still being composed, so the first plays before the answer is finished — and a recording sent from a browser is transcribed by the same engine, primed with this host's server names. One switch because one engine does both. Costs nothing on a turn that asked for neither, and nothing at all on a host with no speech engine installed.",
     Group = "speech")]
 
 [assembly: LeafFrameworkField("speechSocket", "Speech__SocketPath", "Speech engine socket",
-    Description = "The socket the host's speech engine (kgsm-speech) listens on. Blank uses the standard path. Without that leaf installed this assistant still answers — in text, as it does for every surface that asks for no audio.",
+    Description = "The socket the host's speech engine (kgsm-speech) listens on. Blank uses the standard path. Without that leaf installed this assistant still answers — in text, to people who typed the question, as it does for every surface that asks for no audio.",
     Group = "speech", Type = LeafType.Path, Risk = LeafRisk.Wiring, NoDefault = true)]
 
 [assembly: LeafFrameworkField("ollamaEndpoint", "Ollama__Endpoint", "Ollama endpoint",

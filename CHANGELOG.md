@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] - 2026-08-15
+
+### Added — the assistant listens, so a browser can speak to it
+
+`GET /speech` reports what this host's engine can do (`{ hear, speak }`) and `POST /transcribe` takes
+one recorded utterance — 16kHz mono signed 16-bit PCM, raw — and answers with the words in it. The
+Control Panel's chat and the standalone assistant both record voice notes; until now the only thing
+that could read one was the browser's own `SpeechRecognition`, which exists in Chrome, sends the audio
+to Google to do it, and has never heard of a server called `factorio`.
+
+Now the host reads it: the same whisper, primed with the same server names, that hears a request
+spoken into a Discord channel. Measured live on hotrod — "Restart the factorio server please" and
+"How much memory is the terraria server using?" both came back exact, including the server names, in
+0.17s warm.
+
+- **The transcript is returned, never sent.** Recognition is wrong often enough that turning a voice
+  note straight into a turn would ask the assistant things nobody said, so the words land in the
+  composer for the person to look at and starting the turn stays their decision.
+- **Raw PCM, not a container.** The browser has a decoder for what it just recorded and resamples in
+  one pass over a buffer it already holds; the leaf carries no audio codec and does not grow one. The
+  sample rate is the contract — a header restating it is a second place for the two to disagree.
+- **An empty transcript is a `200`.** The pass ran and found nothing recognisable, which is what a
+  recording of a quiet room is. `502` is the pass not happening and `503` is a host with no engine —
+  folding those together tells somebody they said nothing when the truth is that nobody listened.
+- **Three minutes is the ceiling**, and an odd byte count is refused rather than transcribed half a
+  sample out for its whole length.
+- **`Speech:Enabled` now governs both directions**, because one leaf serves both: a host that could
+  be heard but not answered aloud is a configuration nobody wants.
+
+### Changed — what the recogniser is primed with is the speech package's answer
+
+`SpokenVocabulary` comes from `TheKrystalShip.KGSM.Speech` (1.3.0), so this leaf and the Discord bot
+send the recogniser the same names and catch the same failure — whisper handing the primed context
+back as though somebody had read a list of server names aloud. What this owns is reading the
+inventory and how often.
+
 ## [1.17.1] - 2026-08-15
 
 ### Changed — where a sentence ends is the speech package's answer, not this service's

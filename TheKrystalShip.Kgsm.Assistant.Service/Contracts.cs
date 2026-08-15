@@ -285,6 +285,27 @@ public sealed record LoginRequest(string? Username, string? Password);
 public sealed record MeResponse(
     string UserId, string DisplayName, string Tier, bool CanPerformActions, string Status);
 
+/// <summary>
+/// What this host's speech engine can do, from <c>GET /speech</c>.
+/// </summary>
+/// <remarks>
+/// Two booleans rather than one, because a surface acts on them separately: <see cref="Hear"/> decides
+/// whether there is a microphone worth offering, <see cref="Speak"/> whether a Read-aloud toggle does
+/// anything. They move together in practice — one leaf serves both directions — and are still reported
+/// apart, so a surface never infers one from the other.
+/// </remarks>
+public sealed record SpeechResponse(bool Hear, bool Speak);
+
+/// <summary>
+/// What was heard in one recording, from <c>POST /transcribe</c>.
+/// </summary>
+/// <remarks>
+/// <see cref="Text"/> is empty when the pass ran and found nothing recognisable — a recording of a
+/// quiet room. That is a 200, not an error: it answers the question that was asked. A pass that could
+/// not happen at all is a status code instead, because the two are different things to tell somebody.
+/// </remarks>
+public sealed record TranscriptResponse(string Text);
+
 // --- Conversation history read-back (the reverse path) ----------------------------------------
 // The write path keys per-user, per-chat memory web:{userId}[:{chatId}] from the verified identity.
 // These read endpoints close the loop: a surface (the SPA via the api relay) lists the caller's own

@@ -473,7 +473,45 @@ logout that was meant to end it.
 
 ---
 
-## 6 · Compatibility
+## 6 · The speech surface — `GET /speech`, `POST /transcribe`
+
+The other direction of `audio.delta`: a person speaking to the assistant rather than being read to.
+Both are the same optional leaf (`kgsm-speech`), one engine per host, so a host has both or neither.
+
+`GET /speech` answers `{ "hear": bool, "speak": bool }` — whether this host can transcribe, and
+whether it can synthesise. **Ask before offering the control, not after the attempt fails**: a
+microphone button on a host with no engine is a recording nobody can read. The two are reported
+separately because a client acts on them separately, and neither is derived from the other. The
+answer is about the **host**, costs nothing to produce, and starts nothing — the leaf's socket exists
+whether or not its daemon is running.
+
+`POST /transcribe` takes **one whole utterance as a raw request body** and answers `{ "text": "…" }`.
+
+- **The body is 16kHz mono signed 16-bit PCM, little-endian** — whisper's native input — sent as
+  `application/octet-stream`. Raw rather than a container: the sample rate is the contract, and a
+  header restating it is a second place for the two to disagree. A browser has the decoded samples
+  already and resamples in one pass over a buffer it holds; the leaf carries no audio codec and will
+  not grow one to accept a `.webm`.
+- **The ceiling is three minutes** (5,760,000 bytes). Above it, and on an odd byte count — which is
+  not the documented format, and would transcribe half a sample out for the whole run rather than
+  fail — the answer is `400`.
+- **An empty `text` is a `200` and a real answer**: the pass ran and found nothing recognisable,
+  which is what a recording of a quiet room is. `502` is the pass not happening, `503` is a host with
+  no engine. A client that folds those together tells somebody they said nothing when the truth is
+  that nobody listened.
+- **The transcript is returned, never sent.** Recognition is wrong often enough that a surface
+  turning a voice note straight into a turn would ask the assistant things nobody said — so what
+  comes back is a draft for the person to look at, and starting a turn is a separate call they make.
+- **The recogniser is primed with this host's server names**, composed by
+  `TheKrystalShip.KGSM.Speech.SpokenVocabulary` — the same names the Discord surface sends, because a
+  recogniser knows English and not that a server here is called `Ketchup`. It is not a client input:
+  which names to name is the host's answer, and a client supplying one could steer a transcript.
+  Nothing rewrites a transcript afterwards; correcting a misheard name means guessing which server
+  somebody meant and then acting on the guess.
+
+---
+
+## 7 · Compatibility
 
 The contract version at the top of this document changes when a client must change with it.
 

@@ -1,3 +1,5 @@
+using TheKrystalShip.Rag.Embedding;
+
 namespace TheKrystalShip.Rag.Indexer;
 
 /// <summary>
@@ -11,6 +13,14 @@ internal sealed record IndexerArgs
     public string? IndexPath { get; init; }
     public string Model { get; init; } = "embeddinggemma";
     public string Endpoint { get; init; } = "http://localhost:11434";
+
+    /// <summary>
+    /// Which server serves the embedding model. It has to be stated rather than inferred from the
+    /// endpoint: the two speak different routes (<c>/api/embed</c> against Ollama,
+    /// <c>/v1/embeddings</c> against llama-server), and asking the wrong one produces a failed
+    /// build rather than a wrong index — but only because it fails outright.
+    /// </summary>
+    public EmbeddingProvider Provider { get; init; } = EmbeddingProvider.Ollama;
     public string Pattern { get; init; } = "*.md";
     public int ChunkSize { get; init; } = 2000;
     public int ChunkOverlap { get; init; } = 200;
@@ -27,6 +37,7 @@ internal sealed record IndexerArgs
         var sources = new List<string>();
         string? indexPath = null;
         string model = "embeddinggemma", endpoint = "http://localhost:11434", pattern = "*.md";
+        var provider = EmbeddingProvider.Ollama;
         int chunkSize = 2000, chunkOverlap = 200, timeout = 120, debounceMs = 750;
         bool once = false, watch = false, full = false, verbose = false, help = false;
         error = null;
@@ -54,6 +65,15 @@ internal sealed record IndexerArgs
                     break;
                 case "--endpoint":
                     if (!Value(args, ref i, inlineValue, name, out endpoint!, out error)) { options = Empty; return false; }
+                    break;
+                case "--provider":
+                    if (!Value(args, ref i, inlineValue, name, out var providerRaw, out error)) { options = Empty; return false; }
+                    if (!Enum.TryParse(providerRaw, ignoreCase: true, out provider))
+                    {
+                        error = $"--provider expects Ollama or LlamaCpp, got '{providerRaw}'.";
+                        options = Empty;
+                        return false;
+                    }
                     break;
                 case "--pattern":
                     if (!Value(args, ref i, inlineValue, name, out pattern!, out error)) { options = Empty; return false; }
@@ -84,6 +104,7 @@ internal sealed record IndexerArgs
             IndexPath = indexPath,
             Model = model,
             Endpoint = endpoint,
+            Provider = provider,
             Pattern = pattern,
             ChunkSize = chunkSize,
             ChunkOverlap = chunkOverlap,
@@ -141,7 +162,10 @@ internal sealed record IndexerArgs
 
         OPTIONS:
           --model <tag>        embedding model (default: embeddinggemma)
-          --endpoint <url>     Ollama base URL (default: http://localhost:11434)
+          --endpoint <url>     embedding server base URL (default: http://localhost:11434)
+          --provider <name>    Ollama or LlamaCpp — which server is at --endpoint
+                               (default: Ollama). They speak different routes, so this
+                               has to match or the build fails outright.
           --pattern <glob>     file glob when walking a directory (default: *.md)
           --chunk-size <n>     chunk target size in characters (default: 2000)
           --chunk-overlap <n>  chunk overlap in characters (default: 200)

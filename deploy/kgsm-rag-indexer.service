@@ -34,9 +34,15 @@ ExecStart=/opt/kgsm-assistant/indexer/kgsm-rag-indexer \
     --source /opt/kgsm/docs/knowledge \
     --index ${STATE_DIRECTORY}/rag-index.krag \
     --model embeddinggemma \
+    --endpoint ${RAG_EMBED_ENDPOINT} \
+    --provider ${RAG_EMBED_PROVIDER} \
     --debounce-ms 750
-# Override the embedder endpoint here if Ollama isn't on localhost:
-# Environment=... (the indexer takes --endpoint http://host:11434)
+# Which embedding server to build against. The indexer holds no provider switch of its own — it is
+# told, because Ollama and llama-server expose different routes and guessing produces a failed build.
+# use-backend.sh rewrites this file when the backend moves; these are the fallbacks if it never has.
+Environment=RAG_EMBED_ENDPOINT=http://localhost:11434
+Environment=RAG_EMBED_PROVIDER=Ollama
+EnvironmentFile=-/etc/kgsm-assistant/rag-indexer.env
 
 # Graceful stop: the daemon handles SIGTERM and exits 0, so on-failure won't respawn an intended stop.
 Restart=on-failure

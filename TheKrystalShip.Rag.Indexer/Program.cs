@@ -75,6 +75,7 @@ using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => {
 var embedding = new RagEmbeddingOptions
 {
     Endpoint = opts.Endpoint,
+    Provider = opts.Provider,
     EmbeddingModel = opts.Model,
     TimeoutSeconds = opts.TimeoutSeconds,
 };

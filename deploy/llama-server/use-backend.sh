@@ -11,6 +11,9 @@
 set -euo pipefail
 
 ENV_FILE=/etc/kgsm-assistant/service.env
+# The indexer is a separate unit taking CLI flags, so pointing the assistant at a backend does not
+# move it. Left behind it rebuilds against the OTHER server — or fails, which is the good case.
+INDEXER_ENV=/etc/kgsm-assistant/rag-indexer.env
 ASSISTANT_UNIT=kgsm-assistant-service.service
 LLAMA_UNITS=(kgsm-llama-chat.service kgsm-llama-embed.service)
 LLAMA_ENV=/etc/kgsm-assistant/llama-server.env
@@ -47,6 +50,15 @@ set_key() {
     fi
 }
 
+# The index records the embedding model's NAME, which does not change when the server behind it
+# does, so a rebuilt index can silently hold the previous embedder's vectors. Restarting the indexer
+# here only re-points it; the vectors are the operator's call, which is what the warning is for.
+write_indexer_env() {
+    printf 'RAG_EMBED_PROVIDER=%s\nRAG_EMBED_ENDPOINT=%s\n' "$1" "$2" > "$INDEXER_ENV"
+    chmod 0644 "$INDEXER_ENV"
+    systemctl try-restart kgsm-rag-indexer.service 2>/dev/null || true
+}
+
 require_root() { [[ $EUID -eq 0 ]] || { echo "run me with sudo: sudo $0 $*" >&2; exit 1; }; }
 
 case "${1:-}" in
@@ -64,6 +76,7 @@ ollama)
     set_key Llm__Endpoint http://localhost:11434
     set_key Rag__Provider Ollama
     set_key Rag__Endpoint http://localhost:11434
+    write_indexer_env Ollama http://localhost:11434
     systemctl restart "$ASSISTANT_UNIT"
     echo "switched to Ollama"
     ;;
@@ -88,6 +101,7 @@ llamacpp)
     set_key Llm__ContextWindow "${ctx:-32768}"
     set_key Rag__Provider LlamaCpp
     set_key Rag__Endpoint "http://127.0.0.1:${embed_port:-8082}"
+    write_indexer_env LlamaCpp "http://127.0.0.1:${embed_port:-8082}"
     systemctl restart "$ASSISTANT_UNIT"
     echo "switched to llama.cpp"
     echo

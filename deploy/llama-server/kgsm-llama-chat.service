@@ -28,6 +28,13 @@ EnvironmentFile=/etc/kgsm-assistant/llama-server.env
 # --cache-type-k/v q8_0 halves KV-cache VRAM. It is also the knob to reach for first if tool calling
 #   degrades — llama.cpp's own docs warn that quantized KV hurts it, and f16 is affordable here.
 # -np is the number of concurrent slots. One turn at a time is what the agent loop does today.
+# --n-predict bounds ONE generation. It is not tuning: loading this model, llama.cpp reports
+#   "special_eog_ids contains '<|tool_response>', removing '</s>' token from EOG list" — it drops
+#   </s> from the stop set, so a reply that ends on </s> is never recognised as finished and runs
+#   until the client gives up. Measured here at 1.3% of generations (7 of 533), each burning the
+#   full 300s client timeout while normal replies top out around 2000 tokens. The cap turns that
+#   into a bounded reply with finish_reason "length" in seconds, which is visible and diagnosable
+#   instead of a hang. Raise it if a legitimate reply is ever cut short.
 # NOTE: systemd expands ${VAR} in ARGUMENTS but never in the executable position, so the binary is
 # written literally here and install.sh rewrites this line to whatever llama-server it found. A
 # variable here fails at exec with 203/EXEC and no useful message.
@@ -38,6 +45,7 @@ ExecStart=/usr/bin/llama-server \
     --jinja \
     -c ${LLAMA_CHAT_CTX} \
     -np 1 \
+    --n-predict ${LLAMA_CHAT_MAX_TOKENS} \
     -ngl 999 \
     --cache-type-k q8_0 --cache-type-v q8_0 \
     --flash-attn on \

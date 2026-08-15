@@ -3,12 +3,17 @@
 # Native-AOT standalone binary (no .NET runtime needed). Full runbook: ../docs/DEPLOYMENT.md
 Description=KGSM RAG indexer (watch mode)
 Documentation=https://github.com/TheKrystalShip/kgsm-llm
-# IMPORTANT: order AFTER Ollama. The indexer embeds via Ollama at startup; if Ollama is down
-# when it boots, the initial build fails and there is NO periodic retry (the index stays stale
-# until the next doc edit). Ordering after ollama.service is the fix for that startup gap.
-After=network-online.target ollama.service
+# IMPORTANT: order AFTER whichever embedding server this host runs. The indexer embeds at startup;
+# if the server is down when it boots, the initial build fails and there is NO periodic retry (the
+# index stays stale until the next doc edit). Ordering is the fix for that startup gap.
+#
+# Both backends are listed and NEITHER is required. After= only orders units that are being started
+# anyway, so a host running one of them gets the ordering and a host running the other is unaffected.
+# A Requires= on a specific backend would be worse than useless here: it STARTS that backend, and on
+# a llama.cpp host starting Ollama trips the Conflicts= on kgsm-llama-chat and takes the chat model
+# down — rebuilding the index would silently switch the assistant's backend out from under it.
+After=network-online.target ollama.service kgsm-llama-embed.service
 Wants=network-online.target
-Requires=ollama.service
 
 [Service]
 Type=simple

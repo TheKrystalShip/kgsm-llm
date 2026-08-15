@@ -20,14 +20,18 @@ Group=kgsm
 EnvironmentFile=/etc/kgsm-assistant/llama-server.env
 
 # --jinja is REQUIRED and is not a detail: without it llama-server accepts the tools array and
-#   never emits a tool call, so the assistant answers normally and silently never acts. The model
-#   also needs a tools-capable chat template — GET /props reports the one that loaded.
+#   never emits a tool call, so the assistant answers normally and silently never acts. It also
+#   selects the model's own tool format — Gemma 4 ships a native one, and llama.cpp parses it with a
+#   constrained grammar rather than the generic fallback. GET /props reports what loaded.
 # -c must match Llm:ContextWindow. It is fixed here, at launch; a request cannot change it, and the
 #   configured value is what token accounting is measured against.
 # --cache-type-k/v q8_0 halves KV-cache VRAM. It is also the knob to reach for first if tool calling
 #   degrades — llama.cpp's own docs warn that quantized KV hurts it, and f16 is affordable here.
 # -np is the number of concurrent slots. One turn at a time is what the agent loop does today.
-ExecStart=${LLAMA_SERVER_BIN} \
+# NOTE: systemd expands ${VAR} in ARGUMENTS but never in the executable position, so the binary is
+# written literally here and install.sh rewrites this line to whatever llama-server it found. A
+# variable here fails at exec with 203/EXEC and no useful message.
+ExecStart=/usr/bin/llama-server \
     --model ${LLAMA_CHAT_MODEL} \
     --mmproj ${LLAMA_CHAT_MMPROJ} \
     --host 127.0.0.1 --port ${LLAMA_CHAT_PORT} \

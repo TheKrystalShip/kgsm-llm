@@ -18,7 +18,10 @@ EnvironmentFile=/etc/kgsm-assistant/llama-server.env
 #   which surfaces as every search scoring as unrelated rather than as an outage.
 # The context here bounds one chunk, not a conversation, so it is far smaller than the chat model's.
 # No --jinja: embeddings run no chat template and have no tools.
-ExecStart=${LLAMA_SERVER_BIN} \
+# NOTE: systemd expands ${VAR} in ARGUMENTS but never in the executable position, so the binary is
+# written literally here and install.sh rewrites this line to whatever llama-server it found. A
+# variable here fails at exec with 203/EXEC and no useful message.
+ExecStart=/usr/bin/llama-server \
     --model ${LLAMA_EMBED_MODEL} \
     --host 127.0.0.1 --port ${LLAMA_EMBED_PORT} \
     --embedding \

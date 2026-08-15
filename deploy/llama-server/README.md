@@ -27,13 +27,23 @@ dotnet run --project ../../TheKrystalShip.Kgsm.Assistant.Eval -- --model gemma4:
 ## Setup
 
 ```bash
-sudo install -d -o kgsm -g kgsm /var/lib/llama/models
-# put the GGUFs there, then:
-sudo cp llama-server.env.example /etc/kgsm-assistant/llama-server.env
-sudo $EDITOR /etc/kgsm-assistant/llama-server.env      # paths, ports, context sizes
-sudo cp kgsm-llama-chat.service kgsm-llama-embed.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now kgsm-llama-chat kgsm-llama-embed
+sudo ./install.sh     # units + env template, templated to the assistant's user and the llama-server found
+```
+
+Then put the GGUFs where `/etc/kgsm-assistant/llama-server.env` points.
+
+⚠ **Take the models from their published GGUF repo, not from Ollama's blob store.** Ollama's blobs
+are not portable: its embeddinggemma blob fails to load in mainline llama.cpp with *wrong number of
+tensors; expected 316, got 314*, even though Ollama's own bundled server reads it happily.
+`ggml-org` and `unsloth` publish ones that work.
+
+Switching is one command, because the units and the assistant's configuration have to move
+together — pointing one at llama.cpp while the other still expects Ollama is how the assistant ends
+up talking to a port nothing is listening on:
+
+```bash
+sudo ./use-backend.sh llamacpp     # or: ollama
+./use-backend.sh status
 ```
 
 Confirm the chat server loaded a template that can call tools — an empty
@@ -44,17 +54,21 @@ misconfiguration:
 curl -s localhost:8081/props | jq '{chat_template, chat_template_tool_use}'
 ```
 
-Then point the assistant at them, in `/etc/kgsm-assistant/service.env`:
+`use-backend.sh` writes those keys into `/etc/kgsm-assistant/service.env` itself, including
+`Llm__ContextWindow` — the server fixes the window at launch and the assistant measures token usage
+against the configured number, so the two disagreeing makes every usage figure wrong with nothing
+reporting an error.
 
-```ini
-Llm__Provider=LlamaCpp
-Llm__Endpoint=http://127.0.0.1:8081
-Llm__ContextWindow=32768        # must equal LLAMA_CHAT_CTX
-Rag__Provider=LlamaCpp
-Rag__Endpoint=http://127.0.0.1:8082
+⚠ **Rebuild the RAG index after switching the embedding backend.** The indexer is incremental by
+content hash, and the index header records the embedding model's *name* — which does not change when
+the server behind it does. A switch therefore reports `0 embedded, N reused` and quietly keeps the
+previous embedder's vectors. Force it:
+
+```bash
+sudo systemctl stop kgsm-rag-indexer
+sudo rm /var/lib/kgsm-assistant/rag-index.krag
+sudo systemctl start kgsm-rag-indexer      # expect "N embedded, 0 reused"
 ```
-
-and restart: `systemctl restart kgsm-assistant-service`.
 
 ## VRAM
 

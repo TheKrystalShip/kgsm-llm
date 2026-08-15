@@ -18,6 +18,13 @@ namespace TheKrystalShip.Llm.Backends.LlamaCpp;
 /// outstanding call of the same name. The conversation is rebuilt on every request, so the same
 /// history always produces the same ids and none of this has to be persisted.
 /// </para>
+/// <para>
+/// A Gemma 4 template pairs a result with its call by <b>position</b> — llama.cpp folds the
+/// assistant/tool run into one turn and matches the nth result to the nth call, reading the id only
+/// to recover a missing name. So the order results are appended in is what actually carries the
+/// pairing there, and the agent loop guarantees it by walking one index over both the calls and
+/// their outputs. The ids remain correct for a server that does match on them.
+/// </para>
 /// </summary>
 public static class LlamaCppRequestBuilder
 {

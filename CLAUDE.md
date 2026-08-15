@@ -160,11 +160,22 @@ Things that bite if you don't know them:
   result by call id rather than tool name (assigned per request in `LlamaCppRequestBuilder`), and
   fixes the context window at launch so `Llm:ContextWindow` is never sent to it — only used to
   stamp token accounting, and it must match the server's `-c`.
-  ⚠ **llama-server needs `--jinja` and a tools-capable template.** Without it the `tools` array is
-  accepted and no tool call is ever emitted: the assistant answers and silently never acts. Ollama
-  does *not* use that path — it runs llama-server with `--no-jinja --chat-template chatml` and
-  parses tool calls itself — so the two backends encode tool calls differently and a switch is a
-  measurable change to routing, not a transport detail. Units: `deploy/llama-server/`.
+  ⚠ **llama-server needs `--jinja`.** Without it the `tools` array is accepted and no tool call is
+  ever emitted: the assistant answers and silently never acts. With it, Gemma 4's own template and
+  llama.cpp's native `PEG_GEMMA4` format handle tool calls under a constrained grammar — not the
+  generic fallback. Ollama does *not* use that path at all (it runs llama-server with `--no-jinja
+  --chat-template chatml` and parses tool calls in its own Go layer), so the two backends encode
+  tool calls differently and a switch is a measurable change to routing. Units and the
+  one-command switch: `deploy/llama-server/`.
+
+- ⚠ **A GGUF lifted from Ollama's blob store is not a portable GGUF.** Ollama's embeddinggemma blob
+  fails to load in mainline llama.cpp (`wrong number of tensors; expected 316, got 314`) while
+  Ollama's own bundled server accepts it. Take embedding models from their published GGUF repo.
+- ⚠ **Changing the embedding backend does not rebuild the RAG index.** The indexer is incremental by
+  content hash and the index header records the model *name*, which does not change when the server
+  behind it does — so a switch reports "0 embedded, N reused" and keeps vectors from the previous
+  embedder. Nothing detects it and retrieval degrades quietly. Delete the `.krag` and re-run the
+  indexer, which `deploy/llama-server/use-backend.sh` warns about on every switch.
 
 ## Repo-specific invariants
 

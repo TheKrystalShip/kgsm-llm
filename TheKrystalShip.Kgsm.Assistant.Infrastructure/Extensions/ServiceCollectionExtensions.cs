@@ -94,8 +94,8 @@ public static class ServiceCollectionExtensions
         // record that does not contain the crash, and report honestly that it found nothing.
         //
         // It also registers the federated IEventSource, which AddKgsmEventListener then builds its
-        // IEventService on. That call must stay AFTER this one; it no longer registers a source of its
-        // own, because a later single-journal registration would win and quietly undo this.
+        // IEventService on. The two calls are order-independent: both register the same resolution
+        // rule, so whether the source is federated is decided from what the container holds.
         services.AddKgsmJournalFederation(
             cursorPath: null,
             startPosition: EventStartPosition.Tail,

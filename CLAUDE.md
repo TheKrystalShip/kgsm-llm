@@ -155,6 +155,11 @@ Things that bite if you don't know them:
 - **The inference server is one registration, and nothing above it knows which answered.**
   `Llm:Provider` picks Ollama or llama.cpp behind `ILlmClient`; `Rag:Provider` does the same behind
   `IEmbeddingClient`, independently. Both are read **once at startup** — a swap is a restart.
+  **llama.cpp is the default**, on measurement: the same model at the same raw speed (38 tok/s
+  either way), the KV-cache/batching/speculative controls Ollama chooses for you, and with the
+  Gemma 4 draft head ~1.8x on structured output — which is what tool arguments and file bodies are.
+  Switch either way with `deploy/llama-server/use-backend.sh`, which moves the units, the service's
+  config AND the indexer's together; moving one alone points something at a dead port.
   The wire formats differ in ways that live entirely inside the two clients: llama.cpp streams a
   tool call's arguments as fragments (accumulated in `LlamaCppStreamParser`), addresses a tool
   result by call id rather than tool name (assigned per request in `LlamaCppRequestBuilder`), and
@@ -171,6 +176,9 @@ Things that bite if you don't know them:
 - ⚠ **A GGUF lifted from Ollama's blob store is not a portable GGUF.** Ollama's embeddinggemma blob
   fails to load in mainline llama.cpp (`wrong number of tensors; expected 316, got 314`) while
   Ollama's own bundled server accepts it. Take embedding models from their published GGUF repo.
+- ⚠ **The indexer is told its backend, never infers it.** It is a separate unit taking CLI flags
+  (`--provider`, `--endpoint`), because Ollama and llama-server expose different embedding routes
+  and guessing would trade a failed build for a wrong index.
 - ⚠ **Changing the embedding backend does not rebuild the RAG index.** The indexer is incremental by
   content hash and the index header records the model *name*, which does not change when the server
   behind it does — so a switch reports "0 embedded, N reused" and keeps vectors from the previous

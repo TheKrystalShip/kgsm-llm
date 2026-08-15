@@ -42,15 +42,15 @@ public static class ServiceCollectionExtensions
 
         // Read once at registration: a backend swap is a restart, and resolving it per request
         // would mean holding two clients open against two servers to no purpose.
-        var provider = backendSection.GetValue("Provider", LlmProvider.Ollama);
+        var provider = backendSection.GetValue("Provider", LlmProvider.LlamaCpp);
 
         switch (provider)
         {
-            case LlmProvider.LlamaCpp:
-                services.AddSingleton<ILlmClient, LlamaCppLlmClient>();
+            case LlmProvider.Ollama:
+                services.AddSingleton<ILlmClient, OllamaLlmClient>();
                 break;
             default:
-                services.AddSingleton<ILlmClient, OllamaLlmClient>();
+                services.AddSingleton<ILlmClient, LlamaCppLlmClient>();
                 break;
         }
 

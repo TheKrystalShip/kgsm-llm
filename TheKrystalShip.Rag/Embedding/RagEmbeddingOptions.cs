@@ -29,13 +29,13 @@ public sealed class RagEmbeddingOptions
     /// the index is its own model and may be served from somewhere else entirely.</panel>
     [LeafField("ragEmbeddingProvider", "Embedding server", Group = "rag", Risk = LeafRisk.Wiring,
         DependsOn = "ragEnabled")]
-    public EmbeddingProvider Provider { get; set; } = EmbeddingProvider.Ollama;
+    public EmbeddingProvider Provider { get; set; } = EmbeddingProvider.LlamaCpp;
 
     /// <summary>Base URL of the embedding server, e.g. http://localhost:11434</summary>
     /// <panel>Where the embedding model is served from. Usually the same server as the chat model.</panel>
     [LeafField("ragEmbeddingEndpoint", "Embedding endpoint", Group = "rag", Risk = LeafRisk.Wiring,
         DependsOn = "ragEnabled")]
-    public string Endpoint { get; set; } = "http://localhost:11434";
+    public string Endpoint { get; set; } = "http://127.0.0.1:8082";
 
     /// <summary>
     /// Embedding model tag. Default <c>embeddinggemma</c> — Google's Gemma-native on-device

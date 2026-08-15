@@ -265,3 +265,14 @@ if [[ -f "$ENV_FILE" ]]; then
         "$([[ "$ENV_SEEDED" -eq 1 ]] && printf '  ← FRESH FROM TEMPLATE, EDIT IT' || printf '  (untouched)')"
 fi
 printf '\n   deploy from now on with:  %s/deploy/deploy.sh   (no sudo, no prompts)\n' "$REPO_DIR"
+
+# The assistant defaults to llama.cpp, which is a pair of host units this script deliberately does
+# not install: they decide what occupies the GPU, and that is a choice, not a consequence of
+# provisioning. Everything needed to make it is right here.
+if [[ ! -s /var/lib/llama/models/gemma4-12b-q4_k_m.gguf ]]; then
+    printf '\n   ⚠  no model yet — the assistant is configured for llama.cpp and will not answer until:\n'
+    printf '        %s/deploy/llama-server/fetch-models.sh          # ~7.5 GB, as %s\n' "$REPO_DIR" "$DEPLOY_USER"
+    printf '        sudo %s/deploy/llama-server/install.sh\n' "$REPO_DIR"
+    printf '        sudo %s/deploy/llama-server/use-backend.sh llamacpp\n' "$REPO_DIR"
+    printf '      To run Ollama instead:  sudo %s/deploy/llama-server/use-backend.sh ollama\n' "$REPO_DIR"
+fi

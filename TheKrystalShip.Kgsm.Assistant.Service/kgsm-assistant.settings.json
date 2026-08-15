@@ -20,8 +20,8 @@
   // is fixed when llama-server starts (-c) and this value has to match it — it is what token counts
   // are measured against, not something a request can change.
   "Llm": {
-    "Provider": "Ollama",
-    "Endpoint": "http://localhost:11434",
+    "Provider": "LlamaCpp",
+    "Endpoint": "http://127.0.0.1:8081",
     "Model": "gemma4:12b",
     "ContextWindow": 32768,
     "TimeoutSeconds": 300,
@@ -182,8 +182,8 @@
     "EmbeddingModel": "embeddinggemma",
     // Chosen independently of the chat model's server: the index is its own model, and may be
     // served from somewhere else entirely.
-    "Provider": "Ollama",
-    "Endpoint": "http://localhost:11434",
+    "Provider": "LlamaCpp",
+    "Endpoint": "http://127.0.0.1:8082",
     "TimeoutSeconds": 120,
     "Sources": [],
     "SourcePattern": "*.md",

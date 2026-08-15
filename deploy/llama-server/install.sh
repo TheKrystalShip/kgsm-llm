@@ -38,6 +38,20 @@ LLAMA_BIN=${LLAMA_SERVER_BIN:-$(command -v llama-server || true)}
 [[ -x $LLAMA_BIN ]] || { echo "no llama-server found; install llama.cpp or set LLAMA_SERVER_BIN" >&2; exit 1; }
 echo "llama-server binary: $LLAMA_BIN"
 
+# Every model the env file names must exist. llama-server's failure for a missing path is an exit
+# during startup with the reason buried in the journal; checking here turns that into one line now.
+missing=0
+while IFS='=' read -r key value; do
+    [[ $key == LLAMA_*MODEL || $key == LLAMA_CHAT_MMPROJ || $key == LLAMA_ARG_SPEC_DRAFT_MODEL ]] || continue
+    [[ -n $value && -s $value ]] && continue
+    echo "  missing: $key=$value" >&2
+    missing=1
+done < <(grep -E '^[A-Z_]+=' "$ENV_FILE")
+if (( missing )); then
+    echo "run ./fetch-models.sh (as the service user) before installing, or edit $ENV_FILE" >&2
+    exit 1
+fi
+
 for unit in "${UNITS[@]}"; do
     sed -e "s/^User=.*/User=${RUN_USER}/" -e "s/^Group=.*/Group=${RUN_GROUP}/" \
         -e "s|^ExecStart=.*llama-server |ExecStart=${LLAMA_BIN} |" \

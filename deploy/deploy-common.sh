@@ -100,6 +100,14 @@ setup_project_extras() {
         log "symlinking CLI → ${CLI_LINK}"
         $SUDO ln -sfn "$PREFIX/cli/kgsm-assistant-cli" "$CLI_LINK"
     fi
+
+    # The model directory, owned by the service user so fetch-models.sh needs no privilege. The
+    # models themselves are gigabytes and are NOT downloaded here: provisioning a host stays fast
+    # and offline-safe, and the summary tells the operator the one command that gets them.
+    if [[ ! -d /var/lib/llama/models ]]; then
+        log "creating /var/lib/llama/models (owned by ${DEPLOY_USER})"
+        $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" /var/lib/llama /var/lib/llama/models
+    fi
 }
 # ── END PROJECT BLOCK ─────────────────────────────────────────────────────────
 

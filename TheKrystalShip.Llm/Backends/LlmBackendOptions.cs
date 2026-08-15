@@ -26,11 +26,16 @@ public class LlmBackendOptions
 {
     public const string Section = "Llm";
 
-    /// <summary>Which inference server to talk to.</summary>
-    public LlmProvider Provider { get; set; } = LlmProvider.Ollama;
+    /// <summary>
+    /// Which inference server to talk to. llama.cpp is the default: it runs the same model at the
+    /// same speed, exposes the KV-cache, batching and speculative-decoding controls Ollama chooses
+    /// for you, and with a draft head reaches roughly 1.8x on the structured output tool arguments
+    /// and file bodies are made of.
+    /// </summary>
+    public LlmProvider Provider { get; set; } = LlmProvider.LlamaCpp;
 
-    /// <summary>Base URL of the inference server, e.g. http://localhost:11434 (Ollama) or http://localhost:8081 (llama-server).</summary>
-    public string Endpoint { get; set; } = "http://localhost:11434";
+    /// <summary>Base URL of the inference server — llama-server on 8081, or Ollama on 11434.</summary>
+    public string Endpoint { get; set; } = "http://127.0.0.1:8081";
 
     /// <summary>
     /// Model identifier. Ollama resolves it as a pulled tag (<c>gemma4:12b</c>) and loads it on

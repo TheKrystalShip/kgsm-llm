@@ -152,7 +152,7 @@
         "Ollama",
         "LlamaCpp"
       ],
-      "default": "Ollama",
+      "default": "LlamaCpp",
       "risk": "wiring"
     },
     {
@@ -162,7 +162,7 @@
       "description": "Where the language model is served from. Everything the assistant says comes through here, so an unreachable endpoint leaves it unable to answer at all.",
       "group": "model",
       "type": "string",
-      "default": "http://localhost:11434",
+      "default": "http://127.0.0.1:8081",
       "risk": "wiring"
     },
     {
@@ -876,7 +876,7 @@
         "Ollama",
         "LlamaCpp"
       ],
-      "default": "Ollama",
+      "default": "LlamaCpp",
       "risk": "wiring",
       "dependsOn": "ragEnabled"
     },
@@ -887,7 +887,7 @@
       "description": "Where the embedding model is served from. Usually the same server as the chat model.",
       "group": "rag",
       "type": "string",
-      "default": "http://localhost:11434",
+      "default": "http://127.0.0.1:8082",
       "risk": "wiring",
       "dependsOn": "ragEnabled"
     },

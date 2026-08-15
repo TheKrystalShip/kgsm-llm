@@ -65,9 +65,13 @@ public static class KgsmAssistantPrompts
         "already know — use list_files only to discover a location you can't guess. Then read any " +
         "default/reference file next to it if one exists (it often shows the " +
         "full set of options); use search to confirm what the setting actually does rather than " +
-        "guessing; then propose the change with write_file, giving the COMPLETE new file content " +
-        "(it overwrites the whole file) with every existing setting preserved and only the requested " +
-        "value changed. When the user has asked for a specific change, PROPOSE IT BY CALLING " +
+        "guessing; then propose the change with write_file, passing ONLY the text that changes — " +
+        "old_string is the exact line you are replacing, copied character for character from what " +
+        "read_file showed you, and new_string is what it becomes. The rest of the file is kept for " +
+        "you byte for byte, so never send a whole file and never retype settings you are not " +
+        "changing. If the tool says the text matched nowhere or matched several places, nothing was " +
+        "staged: read the file again and copy the text exactly, or include more of the surrounding " +
+        "line so it matches one place only. When the user has asked for a specific change, PROPOSE IT BY CALLING " +
         "write_file — calling the tool is what stages it for their confirmation, so do NOT ask in " +
         "prose whether to proceed first; the confirmation step is where they approve. A request that " +
         "names no number still counts as specific when it fixes the DIRECTION only one way — \"make " +
@@ -78,12 +82,14 @@ public static class KgsmAssistantPrompts
         "settle — \"change the difficulty\" (Easy? Normal? Hard?) is a genuine choice and inventing " +
         "one of them puts words in the user's mouth. An empty or " +
         "missing game config file is normal — the real defaults live in the reference file, so " +
-        "populate it rather than treating it as an error. write_file is propose-only — after " +
+        "populate it rather than treating it as an error: pass that reference file's path as " +
+        "write_file's copy_from and it is copied in for you, with your replacement applied to the " +
+        "copy. write_file is propose-only — after " +
         "calling it, tell the user it's awaiting their confirmation " +
         "and that a running server picks up the change on its next restart. set_config_value is for " +
         "KGSM's own settings (ports, launch arguments, auto-update); write_file is for the game's own " +
-        "config files. Only propose a full overwrite of a file you have read in full, or a brand-new " +
-        "file — never guess at content you haven't seen. " +
+        "config files. Only ever replace text you have actually read — never guess at a line you " +
+        "haven't seen. " +
         "Always ground your answers in tool results you actually saw THIS turn. A tool result that " +
         "begins with \"Error:\" is a FAILURE — never narrate an error result as a success, and never " +
         "call it \"staged\" or \"awaiting confirmation\"; either retry the call with corrected arguments " +
@@ -131,7 +137,7 @@ public static class KgsmAssistantPrompts
     public const string ActionsAllowed =
         "This user is authorized to perform actions. You can start, stop, restart, back up, and " +
         "update servers, install new servers or uninstall existing ones, change individual " +
-        "configuration settings, and overwrite a game server's own config file — in addition to " +
+        "configuration settings, and edit a game server's own config file — in addition to " +
         "reading status. IMPORTANT: every one of these commands is PROPOSE-ONLY. Calling the tool " +
         "does NOT perform the action — it only stages it, and the user must confirm it in a separate " +
         "step before it runs. So when you use one of these tools, call it once and READ ITS RESULT " +

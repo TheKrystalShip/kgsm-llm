@@ -28,7 +28,21 @@ internal static class Build
         RecordedToolCall[]? tools = null,
         PendingConfirmation[]? staged = null,
         int iterations = 1,
-        TurnOutcome outcome = TurnOutcome.Ok) =>
+        TurnOutcome outcome = TurnOutcome.Ok,
+        Func<string, string, string?>? fileSnapshot = null) =>
         new("prompt", tools ?? Array.Empty<RecordedToolCall>(), staged ?? Array.Empty<PendingConfirmation>(),
-            iterations, outcome, final);
+            iterations, outcome, final)
+        {
+            FileSnapshot = fileSnapshot,
+        };
+
+    /// <summary>A staged write, as the dispatcher builds one: the path on ConfigKey, the resolved new
+    /// content on ConfigValue.</summary>
+    public static PendingConfirmation StagedWrite(string path, string content, string instance = "factorio-test") =>
+        new(ConfirmationKind.WriteFile, Target: instance, InstanceName: null, ConfigKey: path, ConfigValue: content);
+
+    /// <summary>A host whose files are the given (path → content) pairs, for scoring a staged payload
+    /// against the file it claims to be an edit of. Any other path reads as unreadable.</summary>
+    public static Func<string, string, string?> Host(params (string path, string content)[] files) =>
+        (_, path) => files.FirstOrDefault(f => f.path == path) is { path: not null } hit ? hit.content : null;
 }

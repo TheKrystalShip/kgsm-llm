@@ -1374,12 +1374,24 @@ public class ToolDispatcher : IToolDispatcher
     private const int MaxWriteBytes = 10 * 1024 * 1024;
 
     /// <summary>
-    /// Propose-only: resolves the instance and validates a non-blank path/content, then STAGES a
-    /// whole-file overwrite for human confirmation — nothing is written here. The size cap is
-    /// enforced at stage time (not just in <see cref="IServerOperations.WriteInstanceFileAsync"/>) so
-    /// an oversized body is refused before it ever reaches a confirmation token or the Service's
-    /// pending-write store. ALWAYS stages, even on an auto-accept turn (like set_config/install) — a
-    /// whole-file overwrite is too consequential to run without a human looking at the diff.
+    /// Propose-only: resolves the instance, then asks
+    /// <see cref="IServerOperations.PrepareInstanceFileEditAsync"/> to apply the model's one
+    /// replacement to what is on disk, and STAGES the resulting content for human confirmation —
+    /// nothing is written here.
+    /// <para>
+    /// The call carries an edit, not a file. Only the replaced text crosses the model boundary; every
+    /// other byte of the staged content comes from the file itself, which is what makes a large config
+    /// survive a change to one of its settings. An edit that does not apply cleanly — the anchor is
+    /// missing, or matches several places — stages NOTHING and returns the reason, so the model
+    /// re-reads and copies the text exactly instead of proposing something approximate.
+    /// </para>
+    /// <para>
+    /// The size cap is enforced here too (not just in
+    /// <see cref="IServerOperations.WriteInstanceFileAsync"/>) so an oversized body never reaches a
+    /// confirmation token or the Service's pending-write store. ALWAYS stages, even on an auto-accept
+    /// turn (like set_config/install) — replacing a config file's content is too consequential to run
+    /// without a human looking at the diff.
+    /// </para>
     /// </summary>
     private async Task<string> StageWriteFileAsync(LlmToolCall call, CancellationToken cancellationToken)
     {
@@ -1391,23 +1403,45 @@ public class ToolDispatcher : IToolDispatcher
         if (string.IsNullOrWhiteSpace(path))
             return "Error: no path was provided.";
 
-        // Content is NOT trimmed (leading/trailing whitespace can be meaningful in a config file),
-        // but it must be present — an empty write is almost certainly a model mistake, not intent.
-        var content = call.Arg("content");
-        if (string.IsNullOrEmpty(content))
-            return "Error: no content was provided.";
+        var copyFrom = call.Arg("copy_from")?.Trim();
+        var seeded = !string.IsNullOrWhiteSpace(copyFrom);
+
+        // Neither side of the edit is trimmed — leading/trailing whitespace is part of the text being
+        // matched and of what replaces it. An absent new_string is a mistake rather than a deletion:
+        // deleting text is spelled as an explicit empty string.
+        var oldText = call.Arg("old_string");
+        var newText = call.Arg("new_string");
+
+        if (newText is null)
+            return "Error: no new_string was provided. Pass the text old_string becomes (an empty " +
+                   "string deletes it).";
+        if (string.IsNullOrEmpty(oldText) && !seeded)
+            return "Error: no old_string was provided. Pass the exact text to replace, copied from " +
+                   "read_file's output — the rest of the file is kept for you, so never send the whole file.";
+
+        var prepared = await _operations.PrepareInstanceFileEditAsync(
+            resolved!, path, oldText ?? string.Empty, newText, copyFrom, cancellationToken);
+        if (!prepared.IsSuccess)
+            return $"Error: {prepared.Error ?? "the edit could not be applied."} Nothing was staged.";
+
+        var content = prepared.Value ?? string.Empty;
+        if (content.Length == 0)
+            return "Error: that edit would leave the file empty, which is almost certainly not what " +
+                   "was meant. Nothing was staged.";
 
         var byteCount = System.Text.Encoding.UTF8.GetByteCount(content);
         if (byteCount > MaxWriteBytes)
-            return $"Error: the content is {byteCount:N0} bytes, over the {MaxWriteBytes / (1024 * 1024)} MB limit.";
+            return $"Error: the resulting file is {byteCount:N0} bytes, over the {MaxWriteBytes / (1024 * 1024)} MB limit.";
 
         _confirmations.Stage(new PendingConfirmation(
             ConfirmationKind.WriteFile, resolved!, InstanceName: null, ConfigKey: path, ConfigValue: content));
 
-        return $"Staged writing '{path}' on '{resolved}' for confirmation. A confirmation prompt with a " +
-               "preview has been shown to the user. This is NOT done yet and will only run if a permitted " +
-               "human confirms it — tell the user it's awaiting their confirmation, and that a running " +
-               "server picks up the change on its next restart.";
+        var how = seeded ? $", filled in from '{copyFrom}'" : "";
+        return $"Staged an edit to '{path}' on '{resolved}'{how} for confirmation — your replacement " +
+               "applied to the file's current content, everything else untouched. A confirmation prompt " +
+               "with a preview has been shown to the user. This is NOT done yet and will only run if a " +
+               "permitted human confirms it — tell the user it's awaiting their confirmation, and that " +
+               "a running server picks up the change on its next restart.";
     }
 
     /// <summary>

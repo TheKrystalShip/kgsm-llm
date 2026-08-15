@@ -86,7 +86,13 @@ internal static class BenchmarkSuite
     /// has every incentive to fold. The cases are two turns because the property only exists on the
     /// second, and the load-bearing check there is that a tool ran at all: a reply assembled without
     /// one was assembled from what the user just asserted.
-    public const string Version = "v15";
+    /// v16 scores the write_file PAYLOAD, not just that something was staged. W4 asserted a staged
+    /// write naming the instance and the path, which a payload of any content whatsoever satisfies —
+    /// so the one thing a config edit can get catastrophically wrong went unmeasured. It now also
+    /// re-derives the staged content from the real file and the call's own old_string/new_string
+    /// (<see cref="C.StagesFaithfulFileEdit"/>), so a payload that is not that file with that one
+    /// replacement fails.
+    public const string Version = "v16";
 
     // "Does the reply say something is pending?" has ONE definition, and it is the assistant's own
     // (PendingConfirmationNote) — reached through C.SaysConfirmationPending. A copy of the pattern
@@ -336,10 +342,12 @@ internal static class BenchmarkSuite
 
         // write_file (staged, propose-only): editing a GAME's own config file, as opposed to
         // set_config_value (KGSM's .config.ini). W1 is the full intended flow — read the file first,
-        // then stage a full-content overwrite. W2/W3 are a disambiguation pair guarding the two writers
+        // then stage an edit to it. W2/W3 are a disambiguation pair guarding the two writers
         // from routing collisions: a KGSM-own setting must route to SetConfig (never WriteFile) and a
-        // game-own setting must route to WriteFile (never SetConfig). Trajectory-only, per invariant #1
-        // (Eval/CLAUDE.md) — never asserts the file content is correct, only which writer was staged.
+        // game-own setting must route to WriteFile (never SetConfig). What the staged payload is
+        // scored on (W4) is that it IS the real file with the model's one replacement applied, which
+        // is a property of what the turn produced — never whether the value it chose is the right one
+        // for the game, which would be the world fact invariant #1 keeps out.
         // W1/W4/W3 are one taxonomy over how much of the change the REQUEST settles, because that is
         // what decides between proposing and asking:
         //   W4  names the value outright                     → propose
@@ -362,6 +370,7 @@ internal static class BenchmarkSuite
             C.StagesWith(ConfirmationKind.WriteFile,
                 s => !string.IsNullOrWhiteSpace(s.Target) && !string.IsNullOrWhiteSpace(s.ConfigKey),
                 "stages a write_file naming the resolved instance and the file path"),
+            C.StagesFaithfulFileEdit(),
             C.SaysConfirmationPending(),
             C.Completes(),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0] - 2026-08-15
+
+### Changed — `write_file` carries an edit, so a config file's other settings never go through the model
+
+A proposed change to a game's own config file names only the text that changes: `old_string` is the
+exact text to replace, copied from what `read_file` returned, and `new_string` is what it becomes. The
+replacement is applied server-side to the file's current content, so every byte the model did not send
+comes off disk unchanged, and the staged confirmation carries the resulting file exactly as it would
+be written.
+
+The edit must land in exactly one place. An anchor that matches nowhere, matches several places, is
+empty, or equals its own replacement stages **nothing** and returns why — the model re-reads and
+copies the text rather than proposing something approximate. Reading the file to resolve an edit is
+capped at 1 MB, larger than the 64 KB model-facing read cap, because those bytes go to the
+confirmation and never into a prompt: a file too big to read in full can still have one setting
+changed.
+
+`copy_from` covers the config that is empty or absent while its defaults sit in a reference file
+beside it (Palworld's `DefaultPalWorldSettings.ini`): the reference is copied server-side and the
+replacement applied to that copy.
+
+Everything downstream is unchanged — the confirmation still carries the complete new content, the
+`command.proposed` frame still carries `file.proposedContent` for a diff, and the write still runs
+only after a person confirms.
+
+The benchmark scores the payload (corpus `v16`). W4 asserted a staged write naming the instance and
+the path, which any content at all satisfies; it now also re-derives the staged content from the real
+file and the call's own `old_string`/`new_string`, so a payload that is not that file with that one
+replacement fails.
+
 ## [1.20.0] - 2026-08-15
 
 ### Changed — a spoken answer is as long as the question needs

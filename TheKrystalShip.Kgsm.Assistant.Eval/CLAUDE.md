@@ -22,6 +22,13 @@ version of the one-off hand-eval (`~/tks/gemma-assistant-eval.md`); the memory
    report `status:false`), so any `FinalMatches(/running|up/)`-style check would stay red forever
    regardless of tuning, and the scorecard's noise floor would become the ecosystem's bugs. If you
    catch yourself asserting reality, stop — assert the trajectory instead.
+   **What a turn PRODUCED is not a world fact.** `StagesFaithfulFileEdit` reads the file a staged
+   `write_file` edited and re-derives the payload from it and the call's own arguments — the
+   assertion is that the staged content is that file with that replacement, which is a property of
+   the turn's own output, not of whether anything the model said about the world is true. It is also
+   the one place a host read belongs in scoring: the harness stages and never confirms
+   (invariant #2), so the file still holds the pre-image the edit was resolved against. A payload
+   that cannot be verified fails — an unverifiable staged write is what the check exists to catch.
 2. **Non-destructive by construction.** The harness only ever calls `IServerAssistant.RunAsync`
    (which *stages* destructive ops); it must **never** call `ConfirmAsync`. There is no code path to
    execution and there must not be — a full run touches no server. Do not add one "to test confirm".

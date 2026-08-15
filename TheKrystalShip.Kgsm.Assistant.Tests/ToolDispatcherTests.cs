@@ -122,12 +122,15 @@ public class ToolDispatcherTests
     private static LlmToolCall FetchUrlCall(string? url) =>
         new(LlmTools.FetchUrl, new Dictionary<string, string?> { ["url"] = url });
 
-    private static LlmToolCall WriteFileCall(string instance, string? path, string? content) =>
+    private static LlmToolCall WriteFileCall(
+        string instance, string? path, string? oldText, string? newText, string? copyFrom = null) =>
         new(LlmTools.WriteFile, new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["path"] = path,
-            ["content"] = content,
+            ["old_string"] = oldText,
+            ["new_string"] = newText,
+            ["copy_from"] = copyFrom,
         });
 
     [Fact]
@@ -1343,19 +1346,39 @@ public class ToolDispatcherTests
 
     // --- write_file staging ------------------------------------------------------------------
 
+    /// <summary>Stands in for the file on disk: the edit is resolved against it by the port, exactly
+    /// as the adapter does, so the dispatcher is tested on what it stages, not on how it edits.</summary>
+    private void FileHolds(string instance, string path, string content) =>
+        _operations.PrepareInstanceFileEditAsync(
+                instance, path, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var edit = TheKrystalShip.Kgsm.Assistant.Files.FileEdit.Apply(
+                    content, ci.ArgAt<string>(2), ci.ArgAt<string>(3));
+                return edit.IsApplied
+                    ? Result.Success(edit.Content!)
+                    : Result.Failure<string>($"the text to replace is not in '{path}'.");
+            });
+
     [Fact]
-    public async Task WriteFile_StagesConfirmation_WithPathAndContent_AndDoesNotWrite()
+    public async Task WriteFile_StagesTheFileWithTheEditApplied_AndDoesNotWrite()
     {
+        FileHolds("minecraft", "server.properties", "motd=old\nmax-players=20\npvp=true\n");
+
         using (_confirmations.BeginTurn())
         {
             var result = await Summary(
-                WriteFileCall("minecraft", "server.properties", "motd=hello world"));
+                WriteFileCall("minecraft", "server.properties", "motd=old", "motd=hello world"));
 
             result.Should().Contain("Staged").And.Contain("confirm");
+
+            // The staged payload is the WHOLE file with one line changed — the settings the model
+            // never sent are still there, which is the point of carrying an edit.
             _confirmations.Staged.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new PendingConfirmation(
                     ConfirmationKind.WriteFile, "minecraft",
-                    InstanceName: null, ConfigKey: "server.properties", ConfigValue: "motd=hello world"));
+                    InstanceName: null, ConfigKey: "server.properties",
+                    ConfigValue: "motd=hello world\nmax-players=20\npvp=true\n"));
         }
 
         // Propose-only: nothing is written inline (the write runs only after a human confirms).
@@ -1364,11 +1387,45 @@ public class ToolDispatcherTests
     }
 
     [Fact]
+    public async Task WriteFile_PassesTheEditAndTheSeedFileThrough()
+    {
+        _operations.PrepareInstanceFileEditAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success("Difficulty=Hard\n"));
+
+        using (_confirmations.BeginTurn())
+        {
+            await Summary(WriteFileCall(
+                "minecraft", "live.ini", "Difficulty=None", "Difficulty=Hard", "defaults.ini"));
+        }
+
+        await _operations.Received(1).PrepareInstanceFileEditAsync(
+            "minecraft", "live.ini", "Difficulty=None", "Difficulty=Hard", "defaults.ini",
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WriteFile_EditThatDoesNotApply_IsRefused_AndStagesNothing()
+    {
+        FileHolds("minecraft", "server.properties", "motd=old\n");
+
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(
+                WriteFileCall("minecraft", "server.properties", "mtod=old", "motd=new"));
+
+            result.Should().StartWith("Error:").And.Contain("Nothing was staged");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
     public async Task WriteFile_BlankPath_DoesNotStage()
     {
         using (_confirmations.BeginTurn())
         {
-            var result = await Summary(WriteFileCall("minecraft", "   ", "content"));
+            var result = await Summary(WriteFileCall("minecraft", "   ", "a", "b"));
 
             result.Should().Contain("no path");
             _confirmations.Staged.Should().BeEmpty();
@@ -1376,14 +1433,48 @@ public class ToolDispatcherTests
     }
 
     [Fact]
-    public async Task WriteFile_EmptyContent_DoesNotStage()
+    public async Task WriteFile_MissingOldString_DoesNotStage()
     {
         using (_confirmations.BeginTurn())
         {
-            var result = await Summary(WriteFileCall("minecraft", "server.properties", ""));
+            var result = await Summary(WriteFileCall("minecraft", "server.properties", null, "motd=new"));
 
-            result.Should().Contain("no content");
+            result.Should().Contain("no old_string");
             _confirmations.Staged.Should().BeEmpty();
+        }
+
+        // Refused before the file is even read — an editless call is not a proposal.
+        await _operations.DidNotReceive().PrepareInstanceFileEditAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WriteFile_MissingNewString_DoesNotStage()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(WriteFileCall("minecraft", "server.properties", "motd=old", null));
+
+            result.Should().Contain("no new_string");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task WriteFile_AnEmptyAnchorIsAllowedWhenSeedingFromAReferenceFile()
+    {
+        _operations.PrepareInstanceFileEditAsync(
+                "minecraft", "live.ini", "", "", "defaults.ini", Arg.Any<CancellationToken>())
+            .Returns(Result.Success("Difficulty=None\n"));
+
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(WriteFileCall("minecraft", "live.ini", "", "", "defaults.ini"));
+
+            result.Should().Contain("Staged").And.Contain("defaults.ini");
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.ConfigValue.Should().Be("Difficulty=None\n");
         }
     }
 
@@ -1392,7 +1483,7 @@ public class ToolDispatcherTests
     {
         using (_confirmations.BeginTurn())
         {
-            var result = await Summary(WriteFileCall("doesnotexist", "server.properties", "content"));
+            var result = await Summary(WriteFileCall("doesnotexist", "server.properties", "a", "b"));
 
             result.Should().Contain("no instance named");
             _confirmations.Staged.Should().BeEmpty();
@@ -1400,13 +1491,31 @@ public class ToolDispatcherTests
     }
 
     [Fact]
-    public async Task WriteFile_OversizedContent_IsRefused_BeforeStaging()
+    public async Task WriteFile_AnEditThatEmptiesTheFile_IsRefused_BeforeStaging()
     {
+        FileHolds("minecraft", "server.properties", "motd=old\n");
+
         using (_confirmations.BeginTurn())
         {
-            var huge = new string('a', 10 * 1024 * 1024 + 1); // one byte over the 10 MB cap
+            var result = await Summary(WriteFileCall("minecraft", "server.properties", "motd=old\n", ""));
 
-            var result = await Summary(WriteFileCall("minecraft", "big.txt", huge));
+            result.Should().Contain("empty");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task WriteFile_OversizedResult_IsRefused_BeforeStaging()
+    {
+        var huge = new string('a', 10 * 1024 * 1024 + 1); // one byte over the 10 MB cap
+        _operations.PrepareInstanceFileEditAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(huge));
+
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(WriteFileCall("minecraft", "big.txt", "a", "b"));
 
             result.Should().Contain("MB limit");
             _confirmations.Staged.Should().BeEmpty();

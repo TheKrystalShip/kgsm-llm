@@ -371,6 +371,210 @@ public sealed class KgsmServerOperationsTests
         result.IsSuccess.Should().BeFalse();
     }
 
+    // --- PrepareInstanceFileEditAsync (read the file, apply ONE replacement, refuse anything unclear) ---
+
+    private const string Config =
+        "[/Script/Pal.PalGameWorldSettings]\n" +
+        "OptionSettings=(Difficulty=None,ExpRate=1.000000,bIsMultiplay=False,DeathPenalty=All)\n";
+
+    private void FileHolds(string path, string content) =>
+        _files.Read("inst", path, Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Ok(new FileContent { Content = content }));
+
+    [Fact]
+    public async Task PrepareEdit_AppliesTheReplacementToTheFileOnDisk()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "Difficulty=None", "Difficulty=Difficulty_Hard");
+
+        result.IsSuccess.Should().BeTrue();
+        // Only the named text moved: every other setting comes off disk, never through the caller.
+        result.Value.Should().Be(Config.Replace("Difficulty=None", "Difficulty=Difficulty_Hard"));
+    }
+
+    [Fact]
+    public async Task PrepareEdit_ReadsUnderItsOwnCap_NotTheModelFacingReadCap()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        await Create().PrepareInstanceFileEditAsync("inst", "PalWorldSettings.ini", "ExpRate=1.000000", "ExpRate=2.000000");
+
+        _files.Received(1).Read("inst", "PalWorldSettings.ini", 1024 * 1024);
+    }
+
+    [Fact]
+    public async Task PrepareEdit_WritesNothing()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        await Create().PrepareInstanceFileEditAsync("inst", "PalWorldSettings.ini", "Difficulty=None", "Difficulty=Difficulty_Hard");
+
+        _files.DidNotReceive().Write(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<WriteOptions>());
+    }
+
+    [Fact]
+    public async Task PrepareEdit_AnchorMatchesNowhere_Fails()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "bIsMultipla=True", "bIsMultiplay=True");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("not in");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_AnchorMatchesSeveralPlaces_Fails()
+    {
+        FileHolds("server.properties", "pvp=true\nspawn-npcs=true\nallow-flight=true\n");
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "server.properties", "=true", "=false");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("more than one place");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_NoAnchorAndNoSeed_Fails()
+    {
+        FileHolds("server.properties", "pvp=true\n");
+
+        var result = await Create().PrepareInstanceFileEditAsync("inst", "server.properties", "", "pvp=false");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("old_string");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_ReplacementIdenticalToTheAnchor_Fails()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "Difficulty=None", "Difficulty=None");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("identical");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_AnEmptyFile_PointsAtTheReferenceFile()
+    {
+        FileHolds("PalWorldSettings.ini", "\n");
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "Difficulty=None", "Difficulty=Difficulty_Hard");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("empty").And.Contain("copy_from");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_MissingTarget_PointsAtTheReferenceFile()
+    {
+        _files.Read("inst", "PalWorldSettings.ini", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.NotFound));
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "Difficulty=None", "Difficulty=Difficulty_Hard");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("copy_from");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_SeedsFromTheReferenceFile_AndAppliesTheEditToIt()
+    {
+        FileHolds("DefaultPalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "Difficulty=None", "Difficulty=Difficulty_Hard",
+            copyFromPath: "DefaultPalWorldSettings.ini");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Be(Config.Replace("Difficulty=None", "Difficulty=Difficulty_Hard"));
+        // The target was never read — the reference file IS the source of the proposal.
+        _files.DidNotReceive().Read("inst", "PalWorldSettings.ini", Arg.Any<long>());
+    }
+
+    [Fact]
+    public async Task PrepareEdit_SeedWithNoAnchor_CopiesTheReferenceVerbatim()
+    {
+        FileHolds("DefaultPalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "", "", copyFromPath: "DefaultPalWorldSettings.ini");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Be(Config);
+    }
+
+    [Fact]
+    public async Task PrepareEdit_MissingSeedFile_Fails()
+    {
+        _files.Read("inst", "DefaultPalWorldSettings.ini", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.NotFound));
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "PalWorldSettings.ini", "a", "b", copyFromPath: "DefaultPalWorldSettings.ini");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("nothing to copy from");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_OutOfJail_Fails()
+    {
+        _files.Read("inst", "../outside/secret.txt", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.OutOfJail));
+
+        var result = await Create().PrepareInstanceFileEditAsync("inst", "../outside/secret.txt", "a", "b");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("outside the instance directory");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_Binary_Fails()
+    {
+        _files.Read("inst", "blob.bin", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.Binary));
+
+        var result = await Create().PrepareInstanceFileEditAsync("inst", "blob.bin", "a", "b");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("text file");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_TooLarge_Fails()
+    {
+        _files.Read("inst", "huge.log", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.TooLarge));
+
+        var result = await Create().PrepareInstanceFileEditAsync("inst", "huge.log", "a", "b");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("edit limit");
+    }
+
+    [Fact]
+    public async Task PrepareEdit_UnknownInstance_Fails()
+    {
+        _files.Read("ghost", "x.txt", Arg.Any<long>())
+            .Returns(FileOpResult<FileContent>.Fail(FileOpOutcome.InstanceUnavailable));
+
+        var result = await Create().PrepareInstanceFileEditAsync("ghost", "x.txt", "a", "b");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("not a known instance");
+    }
+
     [Fact]
     public async Task GetFleetStatus_PreservesMeasuredVsUnavailable()
     {

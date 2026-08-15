@@ -136,11 +136,12 @@ public static class LlmTools
     public static readonly Tool UninstallServer = new("uninstall_server");
     public static readonly Tool SetConfigValue = new("set_config_value");
 
-    // Propose overwriting a text file inside a server's OWN directory with COMPLETE new content —
-    // e.g. a game's own config (Palworld's PalWorldSettings.ini), never KGSM's .config.ini (that's
-    // set_config_value). Staged for human confirmation like every command; the confirm step shows a
-    // preview/diff before it replaces the file. Game-agnostic: it handles whatever text the model
-    // composes (a game's own INI/JSON/tuple format), so there is no per-game structure to parse.
+    // Propose one anchored replacement inside a text file in a server's OWN directory — e.g. a game's
+    // own config (Palworld's PalWorldSettings.ini), never KGSM's .config.ini (that's set_config_value).
+    // The model sends the text to replace and its replacement; the file's other bytes are read from
+    // disk and never routed through it. Staged for human confirmation like every command; the confirm
+    // step shows a preview/diff before it replaces the file. Game-agnostic — an anchor is just text, so
+    // there is no per-game structure to parse.
     public static readonly Tool WriteFile = new("write_file");
 
     /// <summary>

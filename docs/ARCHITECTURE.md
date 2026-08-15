@@ -117,6 +117,29 @@ never happened. A past call's OUTPUT is not replayed: each is a reading of a wor
 and a stale reading offered as current is a fabricated status, so every replayed call stands against
 a placeholder that says so and asks for a fresh call.
 
+### The `write_file` tool (an edit, not a file)
+
+Two tools change a server's settings and they are not interchangeable: `set_config_value` writes one
+key in KGSM's own `.config.ini`, and `write_file` changes the **game's** own config — Palworld's
+`PalWorldSettings.ini`, `server.properties`, a mod's settings file.
+
+`write_file` carries an **edit**. The model sends `old_string` (the exact text to replace, as
+`read_file` returned it) and `new_string`; `PrepareInstanceFileEditAsync` reads the file through the
+jail and applies that one replacement, and the resolved content is what gets staged. The file's other
+bytes never enter the model's context in either direction, which is the property the tool exists for:
+a model asked to reproduce a 3.5 KB config will drop settings, truncate keys and flip values, and a
+confirmation is only as safe as the payload behind it.
+
+The anchor must match **exactly once**. No match, several matches, an empty anchor, or a replacement
+identical to what it replaces stages nothing and returns the reason, so an approximate edit never
+becomes a proposal. `copy_from` covers the empty-or-absent config whose defaults live in a reference
+file beside it: the reference is copied server-side and the replacement applied to the copy.
+
+Reading a file to resolve an edit is capped at 1 MB rather than the 64 KB model-facing read cap —
+those bytes go to the confirmation, not into a prompt — so a file too large to read in full can still
+have one setting changed. Downstream nothing is special: the staged confirmation holds the complete
+new content, the `command.proposed` frame carries it for a diff, and only a confirmation writes it.
+
 ### The `search` tool (RAG + web)
 
 There is a single model-facing `search` tool backed by a deterministic **aggregator** (no nested

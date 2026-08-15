@@ -261,7 +261,10 @@ internal sealed class Harness
                 result.IsSuccess ? result.Confirmations : Array.Empty<PendingConfirmation>(),
                 record?.Iterations ?? 0,
                 record?.Outcome ?? TurnOutcome.Error,
-                result.IsSuccess ? result.Text : record?.Final ?? "");
+                result.IsSuccess ? result.Text : record?.Final ?? "")
+            {
+                FileSnapshot = ReadInstanceFile,
+            };
 
             // Before scoring: a turn that errored outright measured nothing, and enough of them in a
             // row means the endpoint is gone rather than the model being wrong.
@@ -282,6 +285,20 @@ internal sealed class Harness
         }
 
         return (new RepResultDto(rep, steps), sysHash);
+    }
+
+    /// <summary>
+    /// Reads one of the host's instance files back through the assistant's own jailed read port, so a
+    /// check can hold a staged file payload against the file it was derived from. Read-only, and the
+    /// only host read the scoring side does: the harness stages and never confirms, so the file still
+    /// holds exactly what the turn edited against. An unreadable file returns null and the check that
+    /// asked for it fails rather than passing unverified.
+    /// </summary>
+    private string? ReadInstanceFile(string instance, string relativePath)
+    {
+        var ops = _provider.GetRequiredService<IServerOperations>();
+        var result = ops.ReadInstanceFileAsync(instance, relativePath).GetAwaiter().GetResult();
+        return result.IsSuccess ? result.Value : null;
     }
 
     // --- scoring -----------------------------------------------------------------------------------

@@ -225,6 +225,114 @@ public class ChecksTests
         C.ChecksAgain().Evaluate(Obs(final: "You're right, it is running."), Fx).Should().BeFalse();
     }
 
+    // --- StagesFaithfulFileEdit: the staged payload IS the file, edited ------------------------
+    //
+    // The corruption this scores against, measured on a real 3.5 KB Palworld config: asked to
+    // reproduce the file, the model dropped roughly half the settings, truncated a key, and
+    // inverted its value. Every payload below is checked against the same source file.
+
+    private const string LiveConfig =
+        "[/Script/Pal.PalGameWorldSettings]\n" +
+        "OptionSettings=(Difficulty=None,ExpRate=1.000000,bIsMultiplay=False," +
+        "bIsRandomizerPalLevelRandom=False,DeathPenalty=All)\n";
+
+    private const string ConfigPath = "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini";
+
+    private static RecordedToolCall EditCall(string oldText, string newText, string? copyFrom = null) =>
+        Tool(LlmTools.WriteFile,
+            ("instance_name", "factorio-test"), ("path", ConfigPath),
+            ("old_string", oldText), ("new_string", newText), ("copy_from", copyFrom));
+
+    [Fact]
+    public void StagesFaithfulFileEdit_passes_when_the_payload_is_the_file_with_one_line_changed()
+    {
+        var obs = Obs(
+            tools: new[] { EditCall("Difficulty=None", "Difficulty=Difficulty_Hard") },
+            staged: new[]
+            {
+                StagedWrite(ConfigPath, LiveConfig.Replace("Difficulty=None", "Difficulty=Difficulty_Hard")),
+            },
+            fileSnapshot: Host((ConfigPath, LiveConfig)));
+
+        C.StagesFaithfulFileEdit().Evaluate(obs, Fx).Should().BeTrue();
+    }
+
+    [Fact]
+    public void StagesFaithfulFileEdit_fails_when_settings_are_dropped()
+    {
+        // The measured failure: the file comes back regenerated, missing most of what it held.
+        var obs = Obs(
+            tools: new[] { EditCall("Difficulty=None", "Difficulty=Difficulty_Hard") },
+            staged: new[]
+            {
+                StagedWrite(ConfigPath,
+                    "[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(Difficulty=Difficulty_Hard)\n"),
+            },
+            fileSnapshot: Host((ConfigPath, LiveConfig)));
+
+        C.StagesFaithfulFileEdit().Evaluate(obs, Fx).Should().BeFalse();
+    }
+
+    [Fact]
+    public void StagesFaithfulFileEdit_fails_on_a_truncated_key_with_an_inverted_value()
+    {
+        var corrupted = LiveConfig
+            .Replace("Difficulty=None", "Difficulty=Difficulty_Hard")
+            .Replace("bIsMultiplay=False", "bIsMultipla=True");
+        var obs = Obs(
+            tools: new[] { EditCall("Difficulty=None", "Difficulty=Difficulty_Hard") },
+            staged: new[] { StagedWrite(ConfigPath, corrupted) },
+            fileSnapshot: Host((ConfigPath, LiveConfig)));
+
+        C.StagesFaithfulFileEdit().Evaluate(obs, Fx).Should().BeFalse();
+    }
+
+    [Fact]
+    public void StagesFaithfulFileEdit_fails_when_the_edit_does_not_apply_to_the_file()
+    {
+        // An anchor that isn't in the file cannot have produced any payload honestly.
+        var obs = Obs(
+            tools: new[] { EditCall("Difficulty=Casual", "Difficulty=Difficulty_Hard") },
+            staged: new[] { StagedWrite(ConfigPath, LiveConfig) },
+            fileSnapshot: Host((ConfigPath, LiveConfig)));
+
+        C.StagesFaithfulFileEdit().Evaluate(obs, Fx).Should().BeFalse();
+    }
+
+    [Fact]
+    public void StagesFaithfulFileEdit_scores_a_seeded_write_against_the_reference_file()
+    {
+        const string reference = "Difficulty=None\nExpRate=1.000000\n";
+        var obs = Obs(
+            tools: new[] { EditCall("Difficulty=None", "Difficulty=Difficulty_Hard", copyFrom: "defaults.ini") },
+            staged: new[] { StagedWrite(ConfigPath, "Difficulty=Difficulty_Hard\nExpRate=1.000000\n") },
+            fileSnapshot: Host(("defaults.ini", reference), (ConfigPath, "")));
+
+        C.StagesFaithfulFileEdit().Evaluate(obs, Fx).Should().BeTrue();
+    }
+
+    [Fact]
+    public void StagesFaithfulFileEdit_fails_when_the_file_cannot_be_read_back()
+    {
+        // Unverifiable is not a pass — that is the whole reason this check exists.
+        var obs = Obs(
+            tools: new[] { EditCall("Difficulty=None", "Difficulty=Difficulty_Hard") },
+            staged: new[] { StagedWrite(ConfigPath, LiveConfig) },
+            fileSnapshot: Host(("some/other/file.ini", "x")));
+
+        C.StagesFaithfulFileEdit().Evaluate(obs, Fx).Should().BeFalse();
+    }
+
+    [Fact]
+    public void StagesFaithfulFileEdit_fails_when_nothing_was_staged()
+    {
+        var obs = Obs(
+            tools: new[] { EditCall("Difficulty=None", "Difficulty=Difficulty_Hard") },
+            fileSnapshot: Host((ConfigPath, LiveConfig)));
+
+        C.StagesFaithfulFileEdit().Evaluate(obs, Fx).Should().BeFalse();
+    }
+
     [Fact]
     public void MakesNoCompletedActionClaim_uses_the_assistants_own_detector()
     {

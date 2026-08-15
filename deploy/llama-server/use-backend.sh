@@ -15,7 +15,13 @@ ENV_FILE=/etc/kgsm-assistant/service.env
 # move it. Left behind it rebuilds against the OTHER server — or fails, which is the good case.
 INDEXER_ENV=/etc/kgsm-assistant/rag-indexer.env
 ASSISTANT_UNIT=kgsm-assistant-service.service
-LLAMA_UNITS=(kgsm-llama-chat.service kgsm-llama-embed.service)
+# The socket is what the assistant connects to and it must move with the backend: left enabled
+# under Ollama it would keep listening on the chat port and activate a second model server
+# behind Ollama's back. The proxy follows the socket and needs no separate handling.
+LLAMA_UNITS=(kgsm-llama-chat.socket kgsm-llama-chat-proxy.service kgsm-llama-chat.service kgsm-llama-embed.service)
+# What switching TO llama.cpp turns on. The chat model is not here on purpose — the socket activates
+# it, and its enabled state is the residency mode use-chat-mode.sh owns.
+LLAMA_ACTIVATION_UNITS=(kgsm-llama-chat.socket kgsm-llama-embed.service)
 LLAMA_ENV=/etc/kgsm-assistant/llama-server.env
 
 usage() { sed -n '2,9p' "$0" | sed 's/^# \?//'; exit "${1:-1}"; }
@@ -88,8 +94,12 @@ llamacpp)
     # order explicit rather than leaving it to unit ordering.
     systemctl stop ollama.service 2>/dev/null || true
     systemctl disable ollama.service 2>/dev/null || true
-    systemctl enable "${LLAMA_UNITS[@]}" 2>/dev/null || true
-    systemctl start "${LLAMA_UNITS[@]}"
+    # The chat MODEL unit is deliberately absent from both lists: whether it is enabled is the
+    # always-hot/on-demand choice and belongs to use-chat-mode.sh. Enabling it here would pin every
+    # host to always-hot on each backend switch. The socket is what has to be up — it listens on the
+    # assistant's endpoint and brings the model in on the first request either way.
+    systemctl enable "${LLAMA_ACTIVATION_UNITS[@]}" 2>/dev/null || true
+    systemctl start "${LLAMA_ACTIVATION_UNITS[@]}"
     # shellcheck disable=SC1090
     chat_port=$(awk -F= '/^LLAMA_CHAT_PORT=/{print $2}' "$LLAMA_ENV")
     embed_port=$(awk -F= '/^LLAMA_EMBED_PORT=/{print $2}' "$LLAMA_ENV")

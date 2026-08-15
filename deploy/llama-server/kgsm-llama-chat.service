@@ -6,9 +6,22 @@ Description=llama.cpp chat model for the KGSM assistant
 Documentation=https://github.com/ggml-org/llama.cpp
 After=network-online.target
 Wants=network-online.target
+# This unit holds the model. It binds LLAMA_CHAT_INTERNAL_PORT, not the port the assistant is
+# configured with — kgsm-llama-chat.socket owns that one and kgsm-llama-chat-proxy.service forwards
+# to here. Whether the model is resident all the time or only while it is being used is decided by
+# whether this unit is ENABLED:
+#   systemctl enable  kgsm-llama-chat.service   → loaded at boot, never unloaded (always hot)
+#   systemctl disable kgsm-llama-chat.service   → loaded on first request, unloaded when idle
+# Disabled is what StopWhenUnneeded= below acts on: with nothing wanting the unit, it lives exactly
+# as long as the proxy needs it. deploy/llama-server/use-chat-mode.sh sets either one.
 # One GPU holds one set of weights. A host that runs both this and Ollama with the same model
 # loaded is reserving the VRAM twice, and the second one to start fails to allocate.
 Conflicts=ollama.service
+# Only meaningful while this unit is disabled: with no target wanting it, the proxy's Requires= is
+# the one thing keeping it alive, so it unloads when the proxy exits idle and gives the VRAM back.
+# This is a [Unit] setting — in [Service] it parses as an unknown key and silently does nothing,
+# which looks exactly like an idle timeout that fires but never unloads the model.
+StopWhenUnneeded=yes
 
 [Service]
 Type=simple
@@ -56,7 +69,7 @@ EnvironmentFile=/etc/kgsm-assistant/llama-server.env
 ExecStart=/usr/bin/llama-server \
     --model ${LLAMA_CHAT_MODEL} \
     --mmproj ${LLAMA_CHAT_MMPROJ} \
-    --host 127.0.0.1 --port ${LLAMA_CHAT_PORT} \
+    --host 127.0.0.1 --port ${LLAMA_CHAT_INTERNAL_PORT} \
     --jinja \
     -c ${LLAMA_CHAT_CTX} \
     -np 1 \
@@ -74,6 +87,15 @@ ExecStart=/usr/bin/llama-server \
 #     --spec-type draft-mtp --model-draft ${LLAMA_CHAT_DRAFT}
 # It costs the drafter's own weights in VRAM and pays off on long, predictable generations. Measure
 # it; short tool-call JSON is the case where it pays least.
+
+# The model answers nothing for the first few seconds while it loads into VRAM, and Type=simple
+# calls the unit started the moment the process is spawned. The proxy orders itself After= this
+# unit, so without a readiness gate it would start forwarding into a socket nobody is listening on
+# yet and the first request of a cold start would fail rather than wait. Blocking here holds the
+# activating connection in the socket's backlog until the model can actually answer, which is the
+# whole point of putting a socket in front of it. Measured cold start is ~4.3s.
+ExecStartPost=/bin/sh -c 'until curl -sf -o /dev/null http://127.0.0.1:${LLAMA_CHAT_INTERNAL_PORT}/health; do sleep 0.2; done'
+TimeoutStartSec=180
 
 Restart=on-failure
 RestartSec=5

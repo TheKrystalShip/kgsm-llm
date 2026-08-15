@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] - 2026-08-15
+
+### Added — the chat model loads on demand and unloads when idle
+
+`kgsm-llama-chat.socket` owns the port the assistant connects to and listens whether or not a model
+is loaded, so a request is what brings the model up. `deploy/llama-server/use-chat-mode.sh` picks
+between the two residencies:
+
+```bash
+sudo ./use-chat-mode.sh on-demand 15min     # unload after 15 idle minutes
+sudo ./use-chat-mode.sh always-hot          # resident from boot, never unloaded
+```
+
+On-demand returns ~8.7GB of VRAM and up to ~1.6GB of host RAM through idle stretches — measured, the
+GPU goes from 2624 MiB free to 11393 MiB on unload. The first request after one pays a ~4.9s cold
+start; a warm request is unchanged at 0.09s to first frame, the same as connecting to the model
+directly.
+
+Two settings decide residency and both must say stay: `LLAMA_CHAT_IDLE_TIMEOUT` in the env file
+(`infinity` never unloads) and whether `kgsm-llama-chat.service` is enabled (which is what loads it
+at boot rather than on first request). `use-chat-mode.sh` sets them together.
+
+`llama-server` accepts no socket from systemd and has no idle timer, so unlike `kgsm-speech` and
+`kgsm-firewall` it cannot be activated directly: `kgsm-llama-chat-proxy.service` accepts the
+connection, forwards it to `LLAMA_CHAT_INTERNAL_PORT`, and exits on idle, with `StopWhenUnneeded=`
+unloading the model behind it. The hop is transparent to streaming — a streamed tool call through it
+reassembles byte-identical arguments.
+
+`use-backend.sh` moves the socket with the backend and deliberately does not enable the model unit,
+which would pin every host to always-hot on each switch.
+
 ## [1.22.1] - 2026-08-15
 
 ### Fixed — the embedding server no longer inherits the chat model's MTP settings

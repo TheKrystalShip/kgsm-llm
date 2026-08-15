@@ -9,7 +9,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE=/etc/kgsm-assistant/llama-server.env
 ASSISTANT_UNIT=/etc/kgsm-assistant/systemd/kgsm-assistant-service.service
-UNITS=(kgsm-llama-chat.service kgsm-llama-embed.service)
+UNITS=(kgsm-llama-chat.service kgsm-llama-embed.service kgsm-llama-chat-proxy.service
+       kgsm-llama-chat.socket)
 
 [[ $EUID -eq 0 ]] || { echo "run me with sudo: sudo $0" >&2; exit 1; }
 
@@ -52,9 +53,16 @@ if (( missing )); then
     exit 1
 fi
 
+# A socket unit reads no EnvironmentFile, so the port the assistant connects to has to be written
+# into it here. The env file stays the one place a host chooses it.
+CHAT_PORT=$(awk -F= '/^LLAMA_CHAT_PORT=/{print $2}' "$ENV_FILE" | tail -1)
+CHAT_PORT=${CHAT_PORT:-8081}
+echo "chat socket listens on 127.0.0.1:${CHAT_PORT}"
+
 for unit in "${UNITS[@]}"; do
     sed -e "s/^User=.*/User=${RUN_USER}/" -e "s/^Group=.*/Group=${RUN_GROUP}/" \
         -e "s|^ExecStart=.*llama-server |ExecStart=${LLAMA_BIN} |" \
+        -e "s|^ListenStream=127.0.0.1:.*|ListenStream=127.0.0.1:${CHAT_PORT}|" \
         "$HERE/$unit" > "/etc/systemd/system/$unit"
     chmod 0644 "/etc/systemd/system/$unit"
     echo "installed $unit"

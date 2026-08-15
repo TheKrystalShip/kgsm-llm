@@ -1,0 +1,40 @@
+[Unit]
+# Bridges kgsm-llama-chat.socket to the model. llama-server speaks TCP and reads no socket systemd
+# hands it, and it has no idle timer of its own, so both of those live here: the proxy accepts the
+# activating connection, forwards it to LLAMA_CHAT_INTERNAL_PORT, and exits after
+# LLAMA_CHAT_IDLE_TIMEOUT with no traffic. Requires= then makes the model unneeded and it unloads
+# with the proxy, returning ~8.7GB of VRAM.
+#
+# The hop is transparent to streaming, which is the property that matters here — a streamed tool
+# call measured through it against the same call made directly reassembles byte-identical
+# arguments, with first-frame latency of 0.09s against 0.10s.
+Description=KGSM llama.cpp chat model on-demand proxy
+Documentation=https://github.com/TheKrystalShip
+Requires=kgsm-llama-chat.socket
+After=kgsm-llama-chat.socket
+# Ordering, not just dependency: the model unit blocks in ExecStartPost until it answers /health, so
+# After= is what holds the first connection until forwarding it can succeed.
+Requires=kgsm-llama-chat.service
+After=kgsm-llama-chat.service
+
+[Service]
+Type=simple
+User=kgsm
+Group=kgsm
+
+EnvironmentFile=/etc/kgsm-assistant/llama-server.env
+
+# --exit-idle-time=infinity keeps the model resident once loaded while still loading it on demand.
+# Residency from boot is a separate question, answered by whether kgsm-llama-chat.service is
+# enabled — see the comment at the top of that unit.
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=${LLAMA_CHAT_IDLE_TIMEOUT} 127.0.0.1:${LLAMA_CHAT_INTERNAL_PORT}
+
+# An idle exit is a success, not a fault: restarting on it would defeat the whole arrangement by
+# immediately reloading the model the exit just unloaded.
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

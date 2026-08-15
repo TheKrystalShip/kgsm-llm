@@ -70,6 +70,52 @@ sudo rm /var/lib/kgsm-assistant/rag-index.krag
 sudo systemctl start kgsm-rag-indexer      # expect "N embedded, 0 reused"
 ```
 
+## Residency: always hot, or only while in use
+
+The assistant connects to `LLAMA_CHAT_PORT`, and `kgsm-llama-chat.socket` is what listens there —
+whether or not a model is loaded. A connection to it brings the model up. That makes residency a
+setting rather than a fact:
+
+```bash
+sudo ./use-chat-mode.sh status                 # what is set now
+sudo ./use-chat-mode.sh on-demand 15min        # unload after 15 idle minutes
+sudo ./use-chat-mode.sh always-hot             # resident from boot, never unloaded
+```
+
+`on-demand` gives back **~8.7GB of VRAM** and up to ~1.6GB of host RAM through idle stretches. The
+first request after an unload pays a **~4.9s** cold start; every request after it is served by a
+loaded model at the usual speed. `always-hot` is the choice when that pause matters more than the
+memory — on a host that also runs game servers, it usually does not.
+
+The two knobs are independent, and both have to say "stay" for the model to stay:
+
+| | set by | what it decides |
+|---|---|---|
+| `LLAMA_CHAT_IDLE_TIMEOUT` | the env file | how long a loaded model survives with no traffic (`infinity` = never unload) |
+| whether `kgsm-llama-chat.service` is **enabled** | `systemctl enable`/`disable` | whether the model is loaded at boot rather than on first request |
+
+`use-chat-mode.sh` sets both together, which is the reason to use it rather than either one alone.
+
+### Why there is a proxy in front of the model
+
+`kgsm-speech` and `kgsm-firewall` are socket-activated too, and they accept the socket systemd hands
+them. `llama-server` cannot — it has no `sd_listen_fds` support and no idle timer of its own — so the
+socket hands the connection to `kgsm-llama-chat-proxy.service`, which forwards it to
+`LLAMA_CHAT_INTERNAL_PORT` and exits after the idle timeout. `StopWhenUnneeded=` on the model unit
+then unloads it along with the proxy.
+
+The hop is transparent to streaming, which is the property that had to hold before this was worth
+doing: a streamed tool call measured through it reassembles byte-identical arguments, and
+time-to-first-frame is **0.09s through the proxy against 0.10s direct**.
+
+⚠ `StopWhenUnneeded=` is a `[Unit]` setting. Put it in `[Service]` and systemd parses it as an
+unknown key and does nothing — which presents as an idle timeout that fires, a proxy that exits, and
+a model that stays loaded forever.
+
+⚠ A socket unit reads no `EnvironmentFile`, so `ListenStream=` cannot reference `LLAMA_CHAT_PORT`.
+`install.sh` writes the port into the socket unit from the env file; change the port there and
+re-run `install.sh`.
+
 ## Multi-token prediction
 
 A draft head proposes several tokens at once and the 12B verifies them in a single pass. The output

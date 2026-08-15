@@ -1,0 +1,20 @@
+[Unit]
+# The address the assistant is configured with (Llm:Endpoint). Holding it here rather than in the
+# model unit is what lets the model be absent: systemd listens whether or not anything is loaded,
+# and a connection is what brings the model up. Same shape as kgsm-speech.socket and
+# kgsm-firewall.socket, with one difference that is forced rather than chosen — those two daemons
+# accept the socket systemd passes them, and llama-server cannot, so the connection is handed to
+# kgsm-llama-chat-proxy.service instead of straight to the model. Rationale: ../llama-server/README.md
+Description=KGSM llama.cpp chat model socket
+Documentation=https://github.com/TheKrystalShip
+
+[Socket]
+# A socket unit cannot read an EnvironmentFile, so this port is written literally and install.sh
+# rewrites it from LLAMA_CHAT_PORT. The env file stays the single place a host chooses a port.
+ListenStream=127.0.0.1:8081
+# Without this, systemd would activate kgsm-llama-chat.service (name-matched) and hand the model a
+# socket it cannot read. The proxy is what accepts connections; the model never sees this socket.
+Service=kgsm-llama-chat-proxy.service
+
+[Install]
+WantedBy=sockets.target

@@ -89,7 +89,11 @@
   "LlmAgent": {
     "MaxIterations": 25,
     "MaxToolOutputChars": 1500,
-    "IterationLimitReply": "I wasn't able to finish that after a few steps — could you rephrase or break it down?"
+    "IterationLimitReply": "I wasn't able to finish that after a few steps — could you rephrase or break it down?",
+    // Said when the model finishes having written no answer at all — it exhausts the context, or spends
+    // the whole budget reasoning. An empty string is not deliverable: it reaches a person as silence,
+    // indistinguishable from being ignored.
+    "EmptyReplyReply": "I got tangled up and didn't manage to answer that — could you ask me again?"
   },
   "InventoryCache": {
     "InstancesTtlSeconds": 300,

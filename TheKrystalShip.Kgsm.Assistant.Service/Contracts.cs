@@ -400,8 +400,8 @@ public sealed record AdminConversationUserDto(
 /// the transcript endpoint, not a key the client composes — the stored id is the store's business, and
 /// keeping it opaque is what stops a client addressing conversations by construction.
 /// <see cref="Deleted"/> marks one its owner hid (the transcript is retained regardless);
-/// <see cref="ErrorTurns"/>/<see cref="CapHitTurns"/> are the tuning signal — where the assistant
-/// failed or ran out of iterations without answering.
+/// <see cref="ErrorTurns"/>/<see cref="CapHitTurns"/>/<see cref="EmptyTurns"/> are the tuning signal —
+/// where the assistant failed, ran out of iterations, or finished having written nothing at all.
 /// </summary>
 public sealed record AdminConversationDto(
     string Id,
@@ -412,6 +412,7 @@ public sealed record AdminConversationDto(
     bool Deleted,
     int ErrorTurns,
     int CapHitTurns,
+    int EmptyTurns,
     int NegativeTurns);
 
 /// <summary>
@@ -473,6 +474,7 @@ public sealed record AdminConversationStatsDto(
     int ErrorTurns,
     int CapHitTurns,
     int CancelledTurns,
+    int EmptyTurns,
     int UnrecordedOutcomeTurns,
     long? MedianTurnMs,
     long? P95TurnMs,
@@ -553,7 +555,7 @@ public sealed record TurnFeedbackRequest(string? Rating, string? Note);
 /// One completed turn, in the §5·a vocabulary: the user <see cref="Prompt"/>, the assistant
 /// <see cref="Final"/> reply, whether <see cref="Think"/> was on + the <see cref="Thinking"/> text it
 /// produced, the ordered <see cref="Tools"/> trajectory, the token <see cref="Usage"/>, and the
-/// <see cref="Outcome"/> ("ok"/"error"/"capHit"/"cancelled", lower-cased).
+/// <see cref="Outcome"/> ("ok"/"error"/"capHit"/"cancelled"/"empty", lower-cased).
 /// </summary>
 public sealed record ConversationTurnDto(
     string Prompt,

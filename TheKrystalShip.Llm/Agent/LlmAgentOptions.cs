@@ -28,4 +28,14 @@ public class LlmAgentOptions
     /// </summary>
     public string IterationLimitReply { get; set; } =
         "I wasn't able to finish that after a few steps — could you rephrase or break it down?";
+
+    /// <summary>
+    /// Reply returned when the model finishes a turn having produced no answer at all. A backend can
+    /// end a generation with empty content — it exhausts the context mid-sentence, or spends the
+    /// whole budget reasoning and never writes a reply — and an empty string is not something a
+    /// surface can deliver: it reaches a person as silence, indistinguishable from the assistant
+    /// ignoring them. Saying so is what makes the failure visible.
+    /// </summary>
+    public string EmptyReplyReply { get; set; } =
+        "I got tangled up and didn't manage to answer that — could you ask me again?";
 }

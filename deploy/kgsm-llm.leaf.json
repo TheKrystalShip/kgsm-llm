@@ -351,6 +351,16 @@
       "risk": "safe"
     },
     {
+      "key": "agentEmptyReplyReply",
+      "env": "LlmAgent__EmptyReplyReply",
+      "label": "No-answer reply",
+      "description": "What the assistant says when it finishes without writing an answer at all. Without something to say it would simply go quiet, which is indistinguishable from it ignoring you.",
+      "group": "agent",
+      "type": "string",
+      "default": "I got tangled up and didn't manage to answer that — could you ask me again?",
+      "risk": "safe"
+    },
+    {
       "key": "conversationDbPath",
       "env": "Conversation__DatabasePath",
       "label": "Conversation database",

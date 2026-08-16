@@ -2607,7 +2607,7 @@ internal sealed class RecordingConversationStore : Llm.Interfaces.IConversationS
     internal static Llm.Models.ConversationStats EmptyStats => new()
     {
         Conversations = 0, DeletedConversations = 0, Actors = 0, Turns = 0,
-        OkTurns = 0, ErrorTurns = 0, CapHitTurns = 0, CancelledTurns = 0, UnrecordedOutcomeTurns = 0,
+        OkTurns = 0, ErrorTurns = 0, CapHitTurns = 0, CancelledTurns = 0, EmptyTurns = 0, UnrecordedOutcomeTurns = 0,
         ThinkingTurns = 0, TurnsWithoutTool = 0, ToolCalls = 0,
         Tools = Array.Empty<Llm.Models.ToolStat>(),
         PromptVersions = Array.Empty<Llm.Models.PromptVersionStat>(),

@@ -140,6 +140,7 @@ next one still needs room for a fresh system prompt, the injected server lists, 
 | `MaxIterations` | `8` | `LlmAgent__MaxIterations` | Cap on model↔tool round-trips per turn |
 | `MaxToolOutputChars` | `1500` | `LlmAgent__MaxToolOutputChars` | Tool output truncated before feeding back |
 | `IterationLimitReply` | _(built-in)_ | `LlmAgent__IterationLimitReply` | Fallback reply when the cap is hit |
+| `EmptyReplyReply` | _(built-in)_ | `LlmAgent__EmptyReplyReply` | Reply when the model finishes having written no answer at all. An empty string is not deliverable — it reaches a person as silence |
 
 ### `Recording` — transcript corpus (`RecordingOptions`)
 

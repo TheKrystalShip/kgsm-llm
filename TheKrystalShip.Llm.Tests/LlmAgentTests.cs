@@ -267,6 +267,26 @@ public class LlmAgentTests
         result.Value!.Text.Should().Be(new LlmAgentOptions().IterationLimitReply);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   \n  ")]
+    public async Task EmptyReply_IsAnsweredAndRecordedAsEmpty_NotAsSuccess(string? content)
+    {
+        // A backend can end a generation having written nothing — it exhausts the context, or spends
+        // the whole budget reasoning. Handing that on as an empty string reaches a person as silence.
+        ScriptLlm(Result.Success(new LlmResponse(content, Array.Empty<LlmToolCall>())));
+
+        var result = await CreateAgent().RunAsync(Turn());
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Text.Should().Be(new LlmAgentOptions().EmptyReplyReply);
+
+        var recorded = _store.Turns.Should().ContainSingle().Which;
+        recorded.Outcome.Should().Be(TurnOutcome.Empty);
+        recorded.Final.Should().Be(new LlmAgentOptions().EmptyReplyReply);
+    }
+
     [Fact]
     public async Task BufferedResult_CarriesUsageFromTheFinalResponse()
     {

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0] - 2026-08-16
+
+### Fixed — a turn that answers nothing says so
+
+A turn whose model wrote no reply was recorded as `outcome: "ok"` with an empty `final`, and the
+surface delivered the empty string. On a voice channel that is silence — indistinguishable from the
+assistant ignoring the person who asked. The failure existed nowhere a reader would look: the record
+claimed success.
+
+A turn that runs to completion having written nothing is now `TurnOutcome.Empty` and answers with
+`LlmAgent:EmptyReplyReply` ("I got tangled up and didn't manage to answer that — could you ask me
+again?"). `Empty` is its own outcome rather than `Ok`, because a turn nobody got an answer from is not
+a success, and rather than `Error`, because nothing failed — the backend returned normally, having
+written no reply. It is the shape a runaway generation takes once it exhausts the context.
+
+Both agent paths are covered. On the streaming path the reply is emitted as a **token** as well as in
+the `Final`, because no token has been streamed at all in this case and a client that renders the live
+stream without re-reading the final text would otherwise still show nothing.
+
+The fix sits in the agent loop, so every surface — voice, Discord text, the SPA, the CLI — gets it
+without changing any of them.
+
+`EmptyTurns` joins `ErrorTurns`/`CapHitTurns` on the conversation summary and the admin stats, so an
+empty turn is visible in the tuning signal instead of being counted as either a success or an
+outcome nobody recorded.
+
 ## [1.25.0] - 2026-08-16
 
 ### Fixed — reasoning is turned off by saying so, and a repetition loop is bounded

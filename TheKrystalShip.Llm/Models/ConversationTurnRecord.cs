@@ -3,14 +3,24 @@ namespace TheKrystalShip.Llm.Models;
 /// <summary>
 /// How a recorded turn ended. <see cref="Ok"/> reached a final reply; <see cref="Error"/> failed in
 /// the backend; <see cref="CapHit"/> exhausted the iteration cap without a final answer;
-/// <see cref="Cancelled"/> was abandoned mid-turn (e.g. Ctrl-C / client disconnect).
+/// <see cref="Cancelled"/> was abandoned mid-turn (e.g. Ctrl-C / client disconnect);
+/// <see cref="Empty"/> ran to completion but produced no answer.
+/// <para>
+/// <see cref="Empty"/> is separate from <see cref="Ok"/> because a turn that answers nothing is not a
+/// success, and separate from <see cref="Error"/> because nothing failed — the backend returned
+/// normally, having written no reply. It is the shape a runaway generation takes: the model spends
+/// the whole context and stops mid-sentence, leaving empty content. Recorded as <see cref="Ok"/> it
+/// is invisible, and the surface delivers an empty string, which a person experiences as being
+/// ignored rather than as a failure.
+/// </para>
 /// </summary>
 public enum TurnOutcome
 {
     Ok,
     Error,
     CapHit,
-    Cancelled
+    Cancelled,
+    Empty
 }
 
 /// <summary>

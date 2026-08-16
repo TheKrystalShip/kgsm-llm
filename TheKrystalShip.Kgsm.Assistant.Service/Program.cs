@@ -1248,7 +1248,7 @@ review.MapGet("/conversations/stats", (
 
     return Results.Ok(new AdminConversationStatsDto(
         stats.Conversations, stats.DeletedConversations, stats.Actors, stats.Turns,
-        stats.OkTurns, stats.ErrorTurns, stats.CapHitTurns, stats.CancelledTurns,
+        stats.OkTurns, stats.ErrorTurns, stats.CapHitTurns, stats.CancelledTurns, stats.EmptyTurns,
         stats.UnrecordedOutcomeTurns,
         stats.MedianTurnMs, stats.P95TurnMs, stats.MaxTurnMs,
         stats.MedianIterations, stats.MaxIterations,

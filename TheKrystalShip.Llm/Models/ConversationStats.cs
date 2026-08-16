@@ -133,8 +133,16 @@ public sealed record ConversationStats
     public required int CancelledTurns { get; init; }
 
     /// <summary>
+    /// Turns that ran to completion and produced no answer (<see cref="TurnOutcome.Empty"/>). Counted
+    /// apart from <see cref="OkTurns"/> because a turn nobody got an answer from is not a success,
+    /// and apart from <see cref="ErrorTurns"/> because nothing failed — this is what a runaway
+    /// generation looks like from the outside.
+    /// </summary>
+    public required int EmptyTurns { get; init; }
+
+    /// <summary>
     /// Turns whose payload carries no outcome at all — recorded before the field existed. They are
-    /// counted apart from the four outcomes rather than folded into one, because assuming they
+    /// counted apart from the named outcomes rather than folded into one, because assuming they
     /// succeeded would overstate the success rate.
     /// </summary>
     public required int UnrecordedOutcomeTurns { get; init; }

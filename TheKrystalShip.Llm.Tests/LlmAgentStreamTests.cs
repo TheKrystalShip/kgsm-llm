@@ -261,6 +261,34 @@ public class LlmAgentStreamTests
     }
 
     [Fact]
+    public async Task EmptyStream_YieldsTheGiveUpReplyAsBothTokenAndFinal()
+    {
+        // A generation that ends having emitted no content at all — the shape a runaway takes once it
+        // exhausts the context. The turn must not resolve to an empty answer, and because no token was
+        // ever streamed, the give-up has to arrive as a token too: a client that renders the live
+        // stream and never re-reads the final text would otherwise display nothing.
+        var client = new ScriptedStreamClient(new[] { new[] { DoneFrame() } });
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
+
+        var expected = new LlmAgentOptions().EmptyReplyReply;
+        events[^1].Kind.Should().Be(AgentEventKind.Final);
+        events[^1].Text.Should().Be(expected);
+        events.Where(e => e.Kind == AgentEventKind.Token).Select(e => e.Text)
+            .Should().ContainSingle().Which.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task StreamThatWroteSomething_IsNeverTreatedAsEmpty()
+    {
+        var client = new ScriptedStreamClient(new[] { new[] { Content("Seven are installed."), DoneFrame() } });
+
+        var events = await DrainAsync(CreateAgent(client).RunStreamAsync(Turn()));
+
+        events[^1].Text.Should().Be("Seven are installed.");
+    }
+
+    [Fact]
     public async Task IterationCap_YieldsConfiguredReplyAsFinal()
     {
         // Model keeps requesting tools; loop must bail at MaxIterations with the configured reply.

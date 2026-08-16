@@ -110,6 +110,18 @@ public class LlmAgent : ILlmAgent
                     if (review.HasAmendment)
                         text += review.Amendment;
 
+                    // A turn that ran to completion and wrote nothing is not a success. Handing an
+                    // empty string to a surface is indistinguishable from being ignored, so it is
+                    // recorded as Empty and answered with something a person can hear.
+                    if (string.IsNullOrWhiteSpace(text))
+                    {
+                        _logger.LogWarning(
+                            "Model produced an empty reply for conversation {Conversation} after {Iterations} iteration(s)",
+                            turn.ConversationId, iterationsRun);
+                        var emptyTurnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Empty, _options.EmptyReplyReply, message.Usage, null, null);
+                        return Result.Success(new AgentRunResult(_options.EmptyReplyReply, message.Usage, emptyTurnId));
+                    }
+
                     // Usage of the producing (final) call — the turn's context occupancy.
                     var turnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, message.Usage, null, null);
                     return Result.Success(new AgentRunResult(text, message.Usage, turnId));
@@ -310,6 +322,22 @@ public class LlmAgent : ILlmAgent
 
                 if (shown.Length > 0)
                     text = shown + text;
+
+                // Nothing written across the whole turn — see the buffered path. The canned reply is
+                // streamed as a token as well as carried in the Final, because no token has been
+                // emitted at all here and a client that renders the live stream and never re-reads
+                // the final text would otherwise show an empty answer.
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    _logger.LogWarning(
+                        "Model produced an empty reply (stream) for conversation {Conversation} after {Iterations} iteration(s)",
+                        turn.ConversationId, iterationsRun);
+                    var emptyTurnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Empty, _options.EmptyReplyReply, usage, null, thinking.ToString());
+                    recorded = true;
+                    yield return AgentEvent.Token(_options.EmptyReplyReply);
+                    yield return AgentEvent.Final(_options.EmptyReplyReply, usage, emptyTurnId);
+                    yield break;
+                }
 
                 var turnId = PersistTurn(turn, startedAt, trajectory, iterationsRun, TurnOutcome.Ok, text, usage, null, thinking.ToString());
                 recorded = true;

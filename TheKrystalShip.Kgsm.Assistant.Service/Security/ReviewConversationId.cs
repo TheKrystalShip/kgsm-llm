@@ -105,5 +105,5 @@ internal static class ReviewConversationId
     /// <summary>Projects a store summary into the review DTO, minting its opaque handle.</summary>
     public static AdminConversationDto ToDto(ConversationSummary s) =>
         new(Encode(s.ConversationId), s.Title, s.CreatedAt, s.LastActivityAt, s.TurnCount,
-            s.Deleted, s.ErrorTurns, s.CapHitTurns, s.NegativeTurns);
+            s.Deleted, s.ErrorTurns, s.CapHitTurns, s.EmptyTurns, s.NegativeTurns);
 }

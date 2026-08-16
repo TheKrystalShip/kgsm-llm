@@ -168,7 +168,7 @@ public sealed class SqliteConversationStore : IConversationStore
         // migration is needed for a field it already carries). Ordered most-recently-active first so
         // the surface's list reads newest-down.
         var summaries = new List<(string Id, DateTimeOffset Created, DateTimeOffset Last, int Turns,
-            bool Deleted, int Errors, int CapHits, string? Display, bool? Think, bool? Autorun)>();
+            bool Deleted, int Errors, int CapHits, int Empties, string? Display, bool? Think, bool? Autorun)>();
         using (var agg = connection.CreateCommand())
         {
             // The newest entry that said anything about one switch — the same latest-non-null-wins fold
@@ -205,6 +205,8 @@ public sealed class SqliteConversationStore : IConversationStore
                                 THEN 1 ELSE 0 END) AS errors,
                        SUM(CASE WHEN kind = $turn AND json_extract(payload, '$.outcome') = 'capHit'
                                 THEN 1 ELSE 0 END) AS cap_hits,
+                       SUM(CASE WHEN kind = $turn AND json_extract(payload, '$.outcome') = 'empty'
+                                THEN 1 ELSE 0 END) AS empties,
                        -- The newest name any turn recorded; null when none carries one.
                        (SELECT json_extract(n.payload, '$.userDisplay')
                         FROM conversation_entries n
@@ -238,9 +240,10 @@ public sealed class SqliteConversationStore : IConversationStore
                     reader.GetInt64(4) != 0,
                     reader.GetInt32(5),
                     reader.GetInt32(6),
-                    reader.IsDBNull(7) ? null : reader.GetString(7),
-                    reader.IsDBNull(8) ? null : reader.GetInt64(8) != 0,
-                    reader.IsDBNull(9) ? null : reader.GetInt64(9) != 0));
+                    reader.GetInt32(7),
+                    reader.IsDBNull(8) ? null : reader.GetString(8),
+                    reader.IsDBNull(9) ? null : reader.GetInt64(9) != 0,
+                    reader.IsDBNull(10) ? null : reader.GetInt64(10) != 0));
             }
         }
 
@@ -304,6 +307,7 @@ public sealed class SqliteConversationStore : IConversationStore
             Deleted = s.Deleted,
             ErrorTurns = s.Errors,
             CapHitTurns = s.CapHits,
+            EmptyTurns = s.Empties,
             NegativeTurns = negatives.TryGetValue(s.Id, out var n) ? n : 0,
             Preferences = new ConversationPreferences(s.Think, s.Autorun),
         }).ToList();
@@ -435,7 +439,7 @@ public sealed class SqliteConversationStore : IConversationStore
         var iterations = new List<int>();
         var contextPercents = new List<double>();
         var windows = new HashSet<int>();
-        int turns = 0, ok = 0, error = 0, capHit = 0, cancelled = 0, unrecorded = 0, thinking = 0, toolless = 0;
+        int turns = 0, ok = 0, error = 0, capHit = 0, cancelled = 0, empty = 0, unrecorded = 0, thinking = 0, toolless = 0;
         var byPrompt = new Dictionary<string, (int Turns, int Ok, List<long> Durations, int Rated, int Negative)>(StringComparer.Ordinal);
         var byDay = new SortedDictionary<string, int>(StringComparer.Ordinal);
         // A prompt hash is nullable, and a dictionary cannot key on null — this stands in for "no hash
@@ -504,6 +508,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     case "error": error++; break;
                     case "capHit": capHit++; break;
                     case "cancelled": cancelled++; break;
+                    case "empty": empty++; break;
                     // Recorded before the field existed. Counted on its own rather than assumed to be a
                     // success — assuming would inflate the clean rate this whole view is judged on.
                     default: unrecorded++; break;
@@ -636,6 +641,7 @@ public sealed class SqliteConversationStore : IConversationStore
             ErrorTurns = error,
             CapHitTurns = capHit,
             CancelledTurns = cancelled,
+            EmptyTurns = empty,
             UnrecordedOutcomeTurns = unrecorded,
             MedianTurnMs = Percentile(durations, 50),
             P95TurnMs = Percentile(durations, 95),

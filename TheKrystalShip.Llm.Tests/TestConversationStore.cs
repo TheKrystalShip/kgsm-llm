@@ -85,6 +85,7 @@ internal sealed class TestConversationStore : IConversationStore
             Deleted = _deleted.Contains(id),
             ErrorTurns = turns.Count(t => t.Turn!.Outcome == TurnOutcome.Error),
             CapHitTurns = turns.Count(t => t.Turn!.Outcome == TurnOutcome.CapHit),
+            EmptyTurns = turns.Count(t => t.Turn!.Outcome == TurnOutcome.Empty),
         };
     }
 

@@ -157,6 +157,10 @@ using TheKrystalShip.KGSM.LeafConfig;
     Description = "What the assistant says when it hits the tool-step limit without reaching an answer.",
     Group = "agent")]
 
+[assembly: LeafFrameworkField("agentEmptyReplyReply", "LlmAgent__EmptyReplyReply", "No-answer reply",
+    Description = "What the assistant says when it finishes without writing an answer at all. Without something to say it would simply go quiet, which is indistinguishable from it ignoring you.",
+    Group = "agent")]
+
 [assembly: LeafFrameworkField("conversationDbPath", "Conversation__DatabasePath", "Conversation database",
     Description = "File holding past conversations, which is both the assistant's memory and the record the Control Panel reads. Pointing it elsewhere starts an empty history and leaves the old one behind.",
     Group = "conversation", Type = LeafType.Path, Risk = LeafRisk.Destructive)]

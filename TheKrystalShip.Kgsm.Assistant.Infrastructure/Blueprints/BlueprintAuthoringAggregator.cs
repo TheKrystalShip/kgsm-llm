@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 
 using Microsoft.Extensions.Logging;
@@ -44,6 +45,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     private readonly IInventoryInvalidation _invalidation;
     private readonly IBlueprintAttemptStore _attempts;
     private readonly IInvocationContext _invocation;
+    private readonly IAssistantJournal _journal;
     private readonly ITurnProgress _progress;
     private readonly ILogger<BlueprintAuthoringAggregator> _logger;
 
@@ -59,6 +61,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         IInventoryInvalidation invalidation,
         IBlueprintAttemptStore attempts,
         IInvocationContext invocation,
+        IAssistantJournal journal,
         ITurnProgress progress,
         ILogger<BlueprintAuthoringAggregator> logger)
     {
@@ -73,6 +76,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         _invalidation = invalidation;
         _attempts = attempts;
         _invocation = invocation;
+        _journal = journal;
         _progress = progress;
         _logger = logger;
     }
@@ -298,7 +302,72 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     /// verified boot: the autonomous path (false) ends at <see cref="BlueprintAuthoringOutcome.Failed"/>;
     /// the review path (true) hands the last draft plus its boot evidence back as an editable
     /// <see cref="BlueprintAuthoringOutcome.DraftReady"/> so the user can fix it and save again.</para></summary>
+    /// <summary>
+    /// Brackets one authoring run in this leaf's journal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A run installs, starts and uninstalls a real game server, and the engine records every step of
+    /// that in full — roughly twenty-five events naming a server that never existed, attributed to
+    /// whoever asked a question. What the engine cannot say is that they belong to one run: the probe
+    /// naming convention lives here, and no consumer has heard of it. The pair carries the probe name so
+    /// a reader can fold those rows into a span instead of reading them as somebody's new server.
+    /// </para>
+    /// <para>
+    /// ⚠ <b>Wrapped rather than hooked at each return.</b> The run below ends at a dozen places — a
+    /// persist failure, a readback throw, an exhausted repair loop, success — and a bracket that opens
+    /// and does not always close is worse than none: a reader cannot tell a run still going from one
+    /// that ended without saying so.
+    /// </para>
+    /// </remarks>
     private async Task<ToolResult<BlueprintAuthoringData>> RunFinalizeAsync(
+        DraftContext ctx, bool reviewable, CancellationToken cancellationToken)
+    {
+        string probe = BlueprintProbeNaming.ForSlug(ctx.Slug);
+        long startedAt = Stopwatch.GetTimestamp();
+
+        _journal.BlueprintAuthoringStarted(ctx.Game, probe);
+
+        ToolResult<BlueprintAuthoringData> result;
+        try
+        {
+            result = await RunFinalizeCoreAsync(ctx, reviewable, cancellationToken);
+        }
+        catch
+        {
+            // A run that threw still ended, and the probe it installed is still what the engine's rows
+            // name. Recording the close and rethrowing keeps the span honest.
+            _journal.BlueprintAuthored(
+                ctx.Game, probe, AuthoringOutcome.Failed, Elapsed(startedAt));
+            throw;
+        }
+
+        _journal.BlueprintAuthored(
+            ctx.Game, probe, Concluded(result.Data?.Outcome), Elapsed(startedAt));
+
+        return result;
+    }
+
+    private static long Elapsed(long startedAt) =>
+        (long)Stopwatch.GetElapsedTime(startedAt).TotalSeconds;
+
+    /// <summary>
+    /// How the run ended, in the journal's three words.
+    /// </summary>
+    /// <remarks>
+    /// The outcomes that stop before anything is installed — disabled, already in the catalog, not
+    /// feasible — never reach here, because the bracket only wraps the half that installs a probe.
+    /// Everything that is not a verified blueprint or a draft handed back is a run that did not produce
+    /// one, which is what <see cref="AuthoringOutcome.Failed"/> says.
+    /// </remarks>
+    private static AuthoringOutcome Concluded(BlueprintAuthoringOutcome? outcome) => outcome switch
+    {
+        BlueprintAuthoringOutcome.Verified => AuthoringOutcome.Verified,
+        BlueprintAuthoringOutcome.DraftReady => AuthoringOutcome.DraftReady,
+        _ => AuthoringOutcome.Failed,
+    };
+
+    private async Task<ToolResult<BlueprintAuthoringData>> RunFinalizeCoreAsync(
         DraftContext ctx, bool reviewable, CancellationToken cancellationToken)
     {
         var game = ctx.Game;

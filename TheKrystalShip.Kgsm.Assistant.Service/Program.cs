@@ -1,5 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
+using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Extensions;
+using TheKrystalShip.KGSM.Lifecycle;
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
@@ -122,6 +125,46 @@ builder.Services.AddKgsmEventListener(builder.Configuration);
 // The startup orphan sweep for create_blueprint test-install probes (plan step 10's backstop) — the
 // first IHostedService in this repo. Runs once at startup and exits; see its own doc comment.
 builder.Services.AddHostedService<BlueprintProbeSweepService>();
+
+// --- This leaf's own journal -------------------------------------------------
+// The WRITE half. AddKgsmAdapters above registers the federated READ of every producer's journal,
+// which is a different thing: that one answers questions about the fleet, this one records what this
+// leaf has to say about itself.
+//
+// ⚠ Registered HERE and not in AddKgsmAdapters, which the CLI, the Eval harness and several test
+// fixtures also compose. A writer there would put a ready/stopping pair in the live journal on every
+// `kgsm-assistant-cli` invocation and hundreds of turn-quality lines in it on every eval run.
+//
+// No state root is named: the default places it under the unit's StateDirectory=kgsm-assistant, which
+// is where a reader scanning for producers looks. The version comes off THIS assembly — the
+// deployable that carries <Version> — because a class library carries none and would stamp every line
+// with a version no release was ever numbered.
+builder.Services.AddKgsmJournal(
+    AssistantJournal.Producer, typeof(AssistantLifecycleReporter).Assembly);
+
+// What this leaf says about its own state, as opposed to what it records about the people using it.
+// Its own recorder: these lines are this process reporting on itself with nobody behind them, where
+// everything else the assistant journals carries the person whose turn it was.
+builder.Services.AddSingleton(sp => new LeafLifecycle(
+    sp.GetRequiredService<IEventJournalWriter>(),
+    sp.GetRequiredService<ILogger<LeafLifecycle>>()));
+
+builder.Services.AddSingleton<AssistantJournal>();
+builder.Services.AddSingleton<IAssistantJournal>(sp => sp.GetRequiredService<AssistantJournal>());
+builder.Services.AddHostedService<AssistantLifecycleReporter>();
+
+// The model backend, measured by being used rather than pinged — connecting to a socket-activated
+// model is what loads it, so a probe on a timer would pin its VRAM resident forever. Decorates the one
+// call that actually reaches the model, so a tool that threw or a turn somebody stopped is never
+// reported as a dead backend. Wraps whichever ILlmClient AddLocalLlm registered above.
+ServiceDescriptor? llmClient = builder.Services.LastOrDefault(d => d.ServiceType == typeof(ILlmClient));
+if (llmClient?.ImplementationType is { } backend)
+{
+    builder.Services.Remove(llmClient);
+    builder.Services.AddSingleton(backend);
+    builder.Services.AddSingleton<ILlmClient>(sp => new MeasuredLlmClient(
+        (ILlmClient)sp.GetRequiredService(backend), sp.GetRequiredService<LeafLifecycle>()));
+}
 
 // --- Security ----------------------------------------------------------------
 // Every action the assistant proposes is held here and surfaced to the client as an opaque handle;

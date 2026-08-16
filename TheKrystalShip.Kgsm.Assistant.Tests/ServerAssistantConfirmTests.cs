@@ -26,6 +26,9 @@ public class ServerAssistantConfirmTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
+    /// <summary>What the brain recorded about its own conduct this test.</summary>
+    protected RecordingAssistantJournal Journal { get; } = new();
+
     private ServerAssistant Create() => new(
         Substitute.For<ILlmAgent>(),
         Substitute.For<ISystemPromptBuilder>(),
@@ -40,6 +43,7 @@ public class ServerAssistantConfirmTests
         Options.Create(new FetchOptions()),
         Options.Create(new BlueprintAuthoringFlags()),
         SettlementTiming.Default,
+        Journal,
         NullLogger<ServerAssistant>.Instance);
 
     private void Instances(params string[] names) =>

@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] - 2026-08-16
+
+### Added — the assistant reports on itself
+
+The last leaf with no journal now has one: `/var/lib/kgsm-assistant/events`, the ninth producer on a
+host. Two halves.
+
+**Lifecycle** — the four shared `leaf_*` events, with components `llm-backend`, `rag-index`,
+`conversation-store` and `web-search`.
+
+⚠ **The model backend is measured by being used, never probed.** It is socket-activated: connecting to
+`Llm:Endpoint` is what *loads* it, and the proxy in front unloads it after 15 minutes idle to return
+~8.7GB of VRAM. A liveness probe on a timer would reset that timer before it could expire and pin the
+model resident forever — defeating the on-demand design to answer a question every turn already
+answers. `MeasuredLlmClient` decorates the one call that reaches the model, so a tool that threw, an
+iteration cap or somebody pressing stop is never reported as a dead backend.
+
+`Lifecycle:ResidentBackendPort` is the one free probe: the model binds its own port only while loaded,
+and that is not the port activation listens on, so a connect attempt tells an unloaded model from a
+broken one without starting anything. ⚠ Pointed at the activating port it does the exact opposite,
+which is why it defaults to 0.
+
+**Conduct** — what the assistant did that nothing else can see. Deliberately *not* a log of what it
+did: every action runs through kgsm with provenance, so the engine's journal already records it
+attributed to the person who asked. These are the turn that did **not** act.
+
+- `assistant_claim_corrected` — the model described work the turn never did. The checks already ran and
+  stopped at a log line; 30 days of production traffic holds 22 of them. The only measurement of the
+  deployed model's fabrication rate on real prompts.
+- `assistant_action_declined` — somebody reached past their tier. Previously recorded nowhere at all:
+  the refusal went back to the model as a tool result and stopped. ⚠ Authorization only — the
+  blast-radius caps are loop guards, and journalling them would bury these.
+- `assistant_action_proposed` — a mutation staged and waiting on a person. Recorded in the store, which
+  every staging path comes through. ⚠ Never carries the handle: the handle *is* the capability.
+- `assistant_blueprint_authoring_started` / `assistant_blueprint_authored` — brackets around a run whose
+  ~25 probe install/uninstall events the engine records in full without being able to say they belong
+  together, or how the run ended. On a failed run the close is the only event either way.
+
+⚠ **`IAssistantJournal` is a port with a no-op default, and that is what keeps the CLI and the
+benchmark silent.** Both compose the same graph as the resident service and neither is a leaf; only the
+service registers a real implementation, so the other two write nothing by construction.
+
+### Fixed — the test suite wrote 474 leaf_ready/leaf_stopping pairs into the LIVE journal
+
+Found by looking at the file, not by a test. `WebApplicationFactory<Program>` is deliberately fake-free,
+so the host it boots inherits this machine's paths — and the service now writes a `leaf_ready` on start.
+One run recorded a leaf starting and stopping five hundred times on a host where it did no such thing,
+in the file the incident tools read back.
+
+`JournalIsolation` redirects the whole assembly to a temp root from a module initializer — not a
+fixture, because a dozen classes take a bare `WebApplicationFactory<Program>` with no shared base, and
+a thirteenth added later would silently write to the real journal again. `JournalIsolationTests` guards
+the guard.
+
 ## [1.23.1] - 2026-08-16
 
 ### Fixed — federation cannot be registered in the wrong order

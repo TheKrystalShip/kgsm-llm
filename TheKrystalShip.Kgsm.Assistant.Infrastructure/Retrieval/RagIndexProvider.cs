@@ -28,7 +28,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Retrieval;
 /// migrate). Never throws; every unavailable state is a failed <see cref="Result"/>.
 /// </para>
 /// </summary>
-internal sealed class RagIndexProvider
+public sealed class RagIndexProvider
 {
     private readonly RagOptions _options;
     private readonly string _expectedModel;
@@ -54,6 +54,24 @@ internal sealed class RagIndexProvider
     /// Returns the loaded index, or a failure describing why it is unavailable (no path configured,
     /// the file is missing/unreadable, a format/version mismatch, or an embedding-model mismatch).
     /// </summary>
+    /// <summary>
+    /// Why this is answering from a previously-loaded index rather than what is on disk, or
+    /// <see langword="null"/> when the two agree.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ <b>The state a success cannot express.</b> When a reload fails, <see cref="Get"/> deliberately
+    /// keeps serving the last good index rather than going dark — so it returns success while answering
+    /// from something that is no longer what the indexer wrote. That is working, and not with the
+    /// current corpus, which no caller can tell from the result alone. Retrieval reads this and does not
+    /// care; a leaf reporting its own health does.
+    /// </remarks>
+    public string? ServingLastGoodBecause
+    {
+        get { lock (_gate) { return _staleReason; } }
+    }
+
+    private string? _staleReason;
+
     public Result<RagIndex> Get()
     {
         lock (_gate)
@@ -70,7 +88,10 @@ internal sealed class RagIndexProvider
 
             var loaded = Load();
             if (loaded.IsSuccess)
+            {
+                _staleReason = null;
                 return loaded;
+            }
 
             // The new on-disk version is unreadable (mid-swap, corrupt, model-mismatched). If we have
             // a previously-loaded index, keep serving it rather than going dark; a later good build,
@@ -80,6 +101,7 @@ internal sealed class RagIndexProvider
                 _logger.LogWarning(
                     "Reload of the changed retrieval index failed ({Error}); continuing with the previously loaded index.",
                     loaded.Error);
+                _staleReason = loaded.Error;
                 return Result.Success(_cached);
             }
 

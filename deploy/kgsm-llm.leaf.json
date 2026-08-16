@@ -260,6 +260,16 @@
       "risk": "safe"
     },
     {
+      "key": "lifecycleResidentBackendPort",
+      "env": "Assistant__Lifecycle__ResidentBackendPort",
+      "label": "Model residency port",
+      "description": "The model server's own port, used to tell an unloaded model from a broken one without loading it. Leave at 0 unless the model listens on a different port from the one the assistant connects to.",
+      "group": "model",
+      "type": "int",
+      "default": "0",
+      "risk": "safe"
+    },
+    {
       "key": "agentMaxIterations",
       "env": "LlmAgent__MaxIterations",
       "label": "Maximum tool steps",

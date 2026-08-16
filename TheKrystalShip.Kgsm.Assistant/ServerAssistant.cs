@@ -72,6 +72,7 @@ public class ServerAssistant : IServerAssistant
     private readonly FetchOptions _fetchOptions;
     private readonly BlueprintAuthoringFlags _blueprintAuthoringFlags;
     private readonly SettlementTiming _settlement;
+    private readonly IAssistantJournal _journal;
     private readonly ILogger<ServerAssistant> _logger;
 
     public ServerAssistant(
@@ -88,6 +89,7 @@ public class ServerAssistant : IServerAssistant
         IOptions<FetchOptions> fetchOptions,
         IOptions<BlueprintAuthoringFlags> blueprintAuthoringFlags,
         SettlementTiming settlement,
+        IAssistantJournal journal,
         ILogger<ServerAssistant> logger)
     {
         _agent = agent;
@@ -103,6 +105,7 @@ public class ServerAssistant : IServerAssistant
         _fetchOptions = fetchOptions.Value;
         _blueprintAuthoringFlags = blueprintAuthoringFlags.Value;
         _settlement = settlement;
+        _journal = journal;
         _logger = logger;
     }
 
@@ -486,6 +489,10 @@ public class ServerAssistant : IServerAssistant
             "Reply claimed an action on a turn that staged and ran nothing; correction appended. "
             + "Conversation {ConversationId}", conversationId);
 
+        _journal.ClaimCorrected(
+            ClaimCheck.UnbackedAction, ClaimResolution.Corrected,
+            ClaimNet.Outer, conversationId);
+
         return text + UnbackedActionClaim.Correction;
     }
 
@@ -519,6 +526,9 @@ public class ServerAssistant : IServerAssistant
                     _logger.LogWarning(
                         "The user asked for the web and the turn called no tool; re-prompting once. "
                         + "Conversation {ConversationId}", conversationId);
+                    _journal.ClaimCorrected(
+                        ClaimCheck.UnsearchedWeb, ClaimResolution.RePrompted,
+                        ClaimNet.Review, conversationId);
                     return ReplyReview.Retry(
                         UnsearchedWebRequest.NudgeFor(userPrompt), UnsearchedWebRequest.RetryNotice);
                 }
@@ -526,6 +536,9 @@ public class ServerAssistant : IServerAssistant
                 _logger.LogWarning(
                     "The user asked for the web and the turn still searched nothing; note appended. "
                     + "Conversation {ConversationId}", conversationId);
+                _journal.ClaimCorrected(
+                    ClaimCheck.UnsearchedWeb, ClaimResolution.Corrected,
+                    ClaimNet.Review, conversationId);
                 return ReplyReview.Amend(UnsearchedWebRequest.Correction);
             }
 
@@ -541,6 +554,9 @@ public class ServerAssistant : IServerAssistant
                 _logger.LogWarning(
                     "Reply claimed an action on a turn that has staged and run nothing; re-prompting once. "
                     + "Conversation {ConversationId}", conversationId);
+                _journal.ClaimCorrected(
+                    ClaimCheck.UnbackedAction, ClaimResolution.RePrompted,
+                    ClaimNet.Review, conversationId);
                 return ReplyReview.Retry(
                     UnbackedActionClaim.NudgeFor(userPrompt), UnbackedActionClaim.RetryNotice);
             }
@@ -548,6 +564,9 @@ public class ServerAssistant : IServerAssistant
             _logger.LogWarning(
                 "Reply claimed an action on a turn that staged and ran nothing; correction appended. "
                 + "Conversation {ConversationId}", conversationId);
+            _journal.ClaimCorrected(
+                ClaimCheck.UnbackedAction, ClaimResolution.Corrected,
+                ClaimNet.Review, conversationId);
             return ReplyReview.Amend(UnbackedActionClaim.Correction);
         };
     }
@@ -967,7 +986,29 @@ public class ServerAssistant : IServerAssistant
     ///    proposed this message — at <see cref="MaxStagedCommandsPerMessage"/>.
     /// The closure holds the per-message staging counter.
     /// </summary>
-    private static Func<LlmToolCall, ToolGate> BuildGate(bool canPerformActions)
+    /// <summary>
+    /// The per-call authorization and blast-radius gate for one message.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ <b>Only the authorization refusals are recorded.</b> The caps below — staged commands,
+    /// searches, fetches, a repeated lookup — are loop guards firing on ordinary model over-eagerness,
+    /// and journalling them would bury the ones that mean somebody reached past their tier under a
+    /// stream of the model being enthusiastic.
+    /// </remarks>
+    /// <summary>
+    /// Refuses a call for want of authority, and records that somebody reached for it.
+    /// </summary>
+    /// <remarks>
+    /// One helper so the record and the refusal cannot come apart: a refusal added later without its
+    /// line would be a permission check that leaves no trace, which is the gap this closes.
+    /// </remarks>
+    private ToolGate Declined(LlmToolCall call, string message)
+    {
+        _journal.ActionDeclined(call.Name.Name, call.Arg("instance_name")?.Trim());
+        return ToolGate.Refuse(message);
+    }
+
+    private Func<LlmToolCall, ToolGate> BuildGate(bool canPerformActions)
     {
         var staged = 0;
         var searches = 0;
@@ -983,7 +1024,7 @@ public class ServerAssistant : IServerAssistant
             if (call.Name == LlmTools.CreateBlueprint)
             {
                 if (!canPerformActions)
-                    return ToolGate.Refuse("Refused: you don't have permission to perform server actions.");
+                    return Declined(call, "Refused: you don't have permission to perform server actions.");
 
                 if (authored >= MaxBlueprintAuthoringsPerMessage)
                     return ToolGate.Refuse(
@@ -1054,13 +1095,13 @@ public class ServerAssistant : IServerAssistant
             if (LlmTools.IsAuthorizedRead(call.Name))
                 return canPerformActions
                     ? ToolGate.Allow
-                    : ToolGate.Refuse("Refused: you don't have permission to read server files.");
+                    : Declined(call, "Refused: you don't have permission to read server files.");
 
             if (!LlmTools.IsStagedCommand(call.Name))
                 return ToolGate.Allow; // read-only
 
             if (!canPerformActions)
-                return ToolGate.Refuse("Refused: you don't have permission to perform server actions.");
+                return Declined(call, "Refused: you don't have permission to perform server actions.");
 
             if (staged >= MaxStagedCommandsPerMessage)
                 return ToolGate.Refuse(

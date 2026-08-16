@@ -29,6 +29,35 @@ public sealed class AssistantServiceOptions
     public WebhookOptions Webhook { get; set; } = new();
     public RelayOptions Relay { get; set; } = new();
     public PushOptions Push { get; set; } = new();
+    public LifecycleOptions Lifecycle { get; set; } = new();
+}
+
+/// <summary>
+/// What this leaf is allowed to measure about itself.
+/// </summary>
+/// <remarks>
+/// One knob, and it exists because the honest default is to measure nothing. The model backend is
+/// socket-activated: connecting to the endpoint the assistant talks to is what <em>loads</em> the
+/// model, so a leaf that probed its own backend on a timer would pin gigabytes of VRAM resident and
+/// defeat the on-demand design. A turn is the measurement instead.
+/// </remarks>
+public sealed class LifecycleOptions
+{
+    /// <summary>
+    /// The port the model server itself binds once loaded — <b>not</b> the activating socket.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Set this only when the two are genuinely different ports. Bound to the model's own port, a
+    /// connect attempt answers "is it loaded?" for free: it starts nothing, and it does not reset the
+    /// idle timer that unloads it, because that timer counts traffic through the activating socket.
+    /// Pointed at the activating socket it would do the exact opposite. 0 asks nothing, which is why it
+    /// is the default.
+    /// </remarks>
+    /// <panel>The model server's own port, used to tell an unloaded model from a broken one without
+    /// loading it. Leave at 0 unless the model listens on a different port from the one the assistant
+    /// connects to.</panel>
+    [LeafField("lifecycleResidentBackendPort", "Model residency port", Group = "model")]
+    public int ResidentBackendPort { get; set; }
 }
 
 /// <summary>

@@ -23,6 +23,29 @@ public sealed class DailyCallBudget
         _day = DateOnly.FromDateTime(DateTime.UtcNow);
     }
 
+    /// <summary>Whether a ceiling is in force at all.</summary>
+    public bool Configured => _maxPerDay > 0;
+
+    /// <summary>
+    /// How many calls today's budget still allows, reserving none.
+    /// </summary>
+    /// <remarks>
+    /// A read, and it stays one: the rollover is computed rather than applied, because a caller asking
+    /// how much is left must not be what rolls the day over for the caller that then spends it.
+    /// </remarks>
+    public int Remaining
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return DateOnly.FromDateTime(DateTime.UtcNow) != _day
+                    ? _maxPerDay
+                    : Math.Max(0, _maxPerDay - _count);
+            }
+        }
+    }
+
     /// <summary>
     /// Reserves one call against today's budget. Returns false (reserving nothing) once today's
     /// ceiling is reached; the counter rolls over on the first call of a new UTC day.

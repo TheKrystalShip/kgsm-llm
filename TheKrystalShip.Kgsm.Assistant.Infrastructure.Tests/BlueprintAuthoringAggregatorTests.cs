@@ -50,10 +50,13 @@ public sealed class BlueprintAuthoringAggregatorTests
                 Entries = [new FileEntry("server.x86_64", FileKind.File, 1000, null)],
             }));
 
+    /// <summary>What this leaf recorded about the authoring run.</summary>
+    protected RecordingAuthoringJournal Journal { get; } = new();
+
     private BlueprintAuthoringAggregator Create(BlueprintAuthoringOptions? options = null) => new(
         Options.Create(options ?? FastOptions()),
         _research, _files, _instanceFiles, _repair, _blueprints, _instances, _operations, _invalidation, _attempts,
-        _invocation, _progress,
+        _invocation, Journal, _progress,
         NullLogger<BlueprintAuthoringAggregator>.Instance);
 
     /// <summary>Short timeouts so a verify loop that never succeeds still finishes fast in tests.</summary>
@@ -304,6 +307,68 @@ public sealed class BlueprintAuthoringAggregatorTests
     }
 
     // --- Steps 7-8: test-install + verify (boots + listens) --------------------------------------------
+
+    /// <summary>
+    /// A run is bracketed in this leaf's journal, naming the probe the engine's own rows name.
+    /// </summary>
+    /// <remarks>
+    /// The engine records the probe install, start and uninstall in full — roughly twenty-five events
+    /// naming a server that never existed. It cannot say they belong to one run: the naming convention
+    /// lives in this leaf and no consumer has heard of it. The probe name is the correlation key that
+    /// lets a reader fold them into a span.
+    /// </remarks>
+    [Fact]
+    public async Task AVerifiedRun_IsBracketed_NamingTheProbe()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(0));
+        WithInstalledFiles();
+        _operations.GetHealthSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Success(RunningAndListening()));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        await Create().AuthorAsync("Terraria");
+
+        string probe = BlueprintProbeNaming.ForSlug("terraria");
+
+        Journal.Starts.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo(new RecordingAuthoringJournal.Started("Terraria", probe));
+
+        Journal.Conclusions.Should().ContainSingle();
+        Journal.Conclusions[0].Outcome.Should().Be(AuthoringOutcome.Verified);
+        Journal.Conclusions[0].Probe.Should().Be(probe);
+    }
+
+    /// <summary>
+    /// ⚠ A run that produced nothing still closes its bracket.
+    /// </summary>
+    /// <remarks>
+    /// This is the case the engine cannot report at all: on failure no blueprint is created, so its
+    /// <c>blueprint_created</c> never fires and the run is twenty-five install-and-uninstall rows with
+    /// no conclusion anywhere. A bracket that opens and does not close is worse than none — a reader
+    /// cannot tell a run still going from one that ended without saying so.
+    /// </remarks>
+    [Fact]
+    public async Task AFailedRun_StillClosesItsBracket()
+    {
+        _blueprints.GetInfo("terraria").Returns((Blueprint?)null, new Blueprint { Name = "terraria" });
+        _research.ResearchAsync("Terraria", Arg.Any<CancellationToken>()).Returns(FeasibleFindings());
+        _files.Create(Arg.Any<NativeBlueprintDraft>(), Arg.Any<bool>())
+            .Returns(FileOpResult<FileStat>.Ok(new FileStat()));
+        _instances.Install(default!, default, default, default, default, default, default, default)
+            .ReturnsForAnyArgs(new KgsmResult(1, string.Empty, "install failed"));
+        _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
+
+        await Create().AuthorAsync("Terraria");
+
+        Journal.Starts.Should().ContainSingle();
+        Journal.Conclusions.Should().ContainSingle()
+            .Which.Outcome.Should().Be(AuthoringOutcome.Failed);
+    }
 
     [Fact]
     public async Task VerifySucceeds_KeepsTheBlueprint_AndAlwaysTearsDown()

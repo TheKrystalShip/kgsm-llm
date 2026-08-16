@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant.Ports;
 using System.Net;
 
 using FluentAssertions;
@@ -81,7 +82,7 @@ public sealed class ConfirmationPushTests : IDisposable
     {
         var actions = new SqlitePushActionStore(Db());
         var subscriptions = new SqlitePushSubscriptionStore(Db(), actions);
-        var pending = new SqlitePendingConfirmationStore(Db());
+        var pending = new SqlitePendingConfirmationStore(Db(), new NoAssistantJournal());
         var bus = new StubBus(present);
         var handler = new StubHandler(status);
         var sender = new WebPushSender(new HttpClient(handler));

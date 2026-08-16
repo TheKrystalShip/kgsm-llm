@@ -32,6 +32,9 @@ public class ServerAssistantStreamTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
+    /// <summary>What the brain recorded about its own conduct this test.</summary>
+    protected RecordingAssistantJournal Journal { get; } = new();
+
     private ServerAssistant Create(ILlmAgent agent, IConfirmationContext confirmations, ITurnProgress? progress = null)
     {
         _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -41,7 +44,7 @@ public class ServerAssistantStreamTests
             new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), Substitute.For<IBlueprintAuthoring>(),
             Options.Create(new SearchOptions { WebEnabled = true }), Options.Create(new FetchOptions { Available = true }),
             Options.Create(new BlueprintAuthoringFlags { Available = true }),
-            SettlementTiming.Default, NullLogger<ServerAssistant>.Instance);
+            SettlementTiming.Default, Journal, NullLogger<ServerAssistant>.Instance);
     }
 
     private static async Task<List<AssistantStreamEvent>> DrainAsync(IAsyncEnumerable<AssistantStreamEvent> events)

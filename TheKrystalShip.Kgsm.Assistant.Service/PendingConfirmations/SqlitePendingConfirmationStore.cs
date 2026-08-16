@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Kgsm.Assistant.Ports;
+
 using TheKrystalShip.Llm.Conversation;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
@@ -25,9 +27,13 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
     private readonly string _connectionString;
     private readonly object _writeGate = new();
 
-    public SqlitePendingConfirmationStore(IOptions<ConversationOptions> options)
+    private readonly IAssistantJournal _journal;
+
+    public SqlitePendingConfirmationStore(
+        IOptions<ConversationOptions> options, IAssistantJournal journal)
     {
         _connectionString = StateDatabase.ConnectionString(options.Value);
+        _journal = journal;
         Initialize();
     }
 
@@ -117,6 +123,20 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
             cmd.Parameters.AddWithValue("$expires", expiry.ToString("O"));
             cmd.ExecuteNonQuery();
         }
+
+        // Recorded HERE rather than at each caller, because every staging path — the streamed turn, the
+        // buffered one, and a blueprint draft re-staged at confirm time — comes through this one method.
+        // A proposal is otherwise invisible: nothing has run, so the engine has no record of it, and one
+        // that expires unapproved leaves no trace anywhere on the host.
+        //
+        // ⚠ The handle is deliberately not passed. It IS the capability that redeems the action, and the
+        // journal is readable by anything that can open the directory.
+        _journal.ActionProposed(
+            confirmation.Kind.ToString(),
+            tool: null,
+            confirmation.InstanceName ?? confirmation.Target,
+            (long)Math.Max(0, (expiry - DateTimeOffset.UtcNow).TotalSeconds));
+
         return id;
     }
 

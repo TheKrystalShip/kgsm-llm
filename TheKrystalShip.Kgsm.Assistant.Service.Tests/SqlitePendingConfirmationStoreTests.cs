@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant.Ports;
 using System.Text.RegularExpressions;
 
 using FluentAssertions;
@@ -28,8 +29,11 @@ public sealed class SqlitePendingConfirmationStoreTests : IDisposable
     private readonly string _dbPath =
         Path.Combine(Path.GetTempPath(), $"kgsm-pending-confirmations-{Guid.NewGuid():N}.db");
 
+    /// <summary>What this leaf recorded about the proposals staged here.</summary>
+    private RecordingProposalJournal Journal { get; } = new();
+
     private SqlitePendingConfirmationStore Create() =>
-        new(Options.Create(new ConversationOptions { DatabasePath = _dbPath }));
+        new(Options.Create(new ConversationOptions { DatabasePath = _dbPath }), Journal);
 
     private static DateTimeOffset InFiveMinutes => DateTimeOffset.UtcNow.AddMinutes(5);
 
@@ -268,4 +272,58 @@ public sealed class SqlitePendingConfirmationStoreTests : IDisposable
 
         store.PendingFor(Someone, Chat).Should().BeEmpty();
     }
+    /// <summary>
+    /// A staged action is recorded, because until somebody confirms it nothing else has heard of it.
+    /// </summary>
+    /// <remarks>
+    /// The engine has no record of a proposal — nothing ran — and one that expires unapproved leaves no
+    /// trace anywhere on the host. Recorded in the store rather than at the callers because all three
+    /// staging paths come through here, so none can be missed.
+    /// </remarks>
+    [Fact]
+    public void StagingAnAction_IsRecorded()
+    {
+        Create().Put(new PendingConfirmation(ConfirmationKind.Backup, "Ketchup"), "u1", InFiveMinutes);
+
+        var proposal = Journal.Proposals.Should().ContainSingle().Subject;
+        proposal.Kind.Should().Be(nameof(ConfirmationKind.Backup));
+        proposal.Instance.Should().Be("Ketchup");
+        proposal.ExpiresInSec.Should().BePositive();
+    }
+
+    /// <summary>
+    /// ⚠ The record carries no handle.
+    /// </summary>
+    /// <remarks>
+    /// The handle IS the capability that redeems the action, and the journal is readable by anything on
+    /// the host that can open the directory — writing one there would make approving somebody else's
+    /// mutation a matter of reading a file.
+    /// </remarks>
+    [Fact]
+    public void StagingAnAction_RecordsNoHandle()
+    {
+        string handle = Create().Put(
+            new PendingConfirmation(ConfirmationKind.Backup, "Ketchup"), "u1", InFiveMinutes);
+
+        var proposal = Journal.Proposals.Should().ContainSingle().Subject;
+        string recorded = $"{proposal.Kind} {proposal.Tool} {proposal.Instance} {proposal.ExpiresInSec}";
+        recorded.Should().NotContain(handle);
+    }
+
+    /// <summary>
+    /// ⚠ The kind is recorded by NAME, never by ordinal.
+    /// </summary>
+    /// <remarks>
+    /// Members of that enum have been retired, leaving gaps. An ordinal written today reads as a
+    /// different action after the next removal, and the journal is a permanent record.
+    /// </remarks>
+    [Fact]
+    public void StagingAnAction_RecordsTheKindByName()
+    {
+        Create().Put(new PendingConfirmation(ConfirmationKind.Backup, "Ketchup"), "u1", InFiveMinutes);
+
+        Journal.Proposals.Should().ContainSingle()
+            .Which.Kind.Should().Be("Backup").And.NotBe(((int)ConfirmationKind.Backup).ToString());
+    }
+
 }

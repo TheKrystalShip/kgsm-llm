@@ -34,6 +34,9 @@ public class ServerAssistantTests
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
     private readonly IBlueprintAuthoring _blueprintAuthoring = Substitute.For<IBlueprintAuthoring>();
 
+    /// <summary>What the brain recorded about its own conduct this test.</summary>
+    protected RecordingAssistantJournal Journal { get; } = new();
+
     // Default: search, fetch, AND blueprint authoring are all AVAILABLE, so the offered set is the
     // unfiltered catalog (BeSameAs holds) and the gate's per-message caps are exercisable. Availability
     // tests pass their own.
@@ -48,7 +51,7 @@ public class ServerAssistantTests
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
             Options.Create(fetch ?? new FetchOptions { Available = true }),
             Options.Create(blueprint ?? new BlueprintAuthoringFlags { Available = true }),
-            SettlementTiming.Default, NullLogger<ServerAssistant>.Instance);
+            SettlementTiming.Default, Journal, NullLogger<ServerAssistant>.Instance);
     }
 
     /// <summary>Runs a turn and returns the AgentTurn the assistant handed to the loop.</summary>
@@ -121,6 +124,47 @@ public class ServerAssistantTests
 
         decision.Allowed.Should().BeFalse();
         decision.RefusalMessage.Should().Contain("permission");
+    }
+
+    /// <summary>
+    /// A refusal for want of authority is recorded, because it exists nowhere else.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ The engine's journal cannot hold this: nothing ran, so from its side nothing happened.
+    /// Somebody reaching for an action their tier does not carry currently leaves no trace on the host
+    /// at all — the refusal goes back to the model as a tool result and stops there.
+    /// </remarks>
+    [Fact]
+    public async Task UnauthorizedCaller_HasTheRefusalRecorded()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: false);
+
+        turn.Gate!(Call(LlmTools.ServerCommand));
+
+        Journal.Declines.Should().ContainSingle()
+            .Which.Tool.Should().Be(LlmTools.ServerCommand.Name);
+    }
+
+    /// <summary>
+    /// ⚠ A blast-radius cap is not a refusal worth recording.
+    /// </summary>
+    /// <remarks>
+    /// The caps fire on ordinary model over-eagerness — a runaway loop, an over-keen refine — and
+    /// nobody reached past anything. Recording them would bury the refusals that mean somebody tried
+    /// to exceed their permissions under a stream of the model being enthusiastic.
+    /// </remarks>
+    [Fact]
+    public async Task Gate_CapsAreNotRecordedAsRefusals()
+    {
+        var turn = await CaptureTurnAsync(canPerformActions: true);
+        var stop = Call(LlmTools.ServerCommand);
+
+        for (var i = 0; i < 6; i++)
+            turn.Gate!(stop);
+
+        Journal.Declines.Should().BeEmpty(
+            "the sixth call was refused by the per-message cap, which is a loop guard rather than "
+            + "somebody reaching past their tier");
     }
 
     [Fact]
@@ -586,5 +630,53 @@ public class ServerAssistantTests
             "I can't find a server called Ketchup — check the name?");
 
         text.Should().NotContain("Correction");
+    }
+
+    /// <summary>
+    /// A corrected claim is recorded, because nothing else on the host can see it.
+    /// </summary>
+    /// <remarks>
+    /// The correction reaches the person who was talking to it and nobody else. This is the only
+    /// measurement of the deployed model's fabrication rate on real prompts — the benchmark scores the
+    /// same check against a fixed corpus, which is a different question from what the shipped prompt
+    /// does with what people actually ask.
+    /// </remarks>
+    [Fact]
+    public async Task ACorrectedClaimIsRecorded()
+    {
+        await ReplyAfterTurnAsync("I've staged a backup for Ketchup. Just confirm it on your end.");
+
+        Journal.Claims.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new RecordingAssistantJournal.Claim(
+                ClaimCheck.UnbackedAction, ClaimResolution.Corrected, ClaimNet.Outer, Conversation));
+    }
+
+    /// <summary>
+    /// ⚠ The record carries no transcript.
+    /// </summary>
+    /// <remarks>
+    /// The journal is readable by anything on the host that can open the directory, and what somebody
+    /// said to the assistant is theirs. The conversation id is enough to find it; the words are not
+    /// this record's to hold.
+    /// </remarks>
+    [Fact]
+    public async Task ACorrectedClaimRecordsNoTranscript()
+    {
+        const string reply = "I've staged a backup for Ketchup. Just confirm it on your end.";
+
+        await ReplyAfterTurnAsync(reply);
+
+        string recorded = string.Join(" ", Journal.Claims.Select(c => $"{c.Check} {c.Resolution} {c.Net} {c.ConversationId}"));
+        recorded.Should().NotContain("Ketchup");
+        recorded.Should().NotContain("back up");
+    }
+
+    /// <summary>An honest turn records nothing — the count is a measurement, not a heartbeat.</summary>
+    [Fact]
+    public async Task AnHonestReplyRecordsNothing()
+    {
+        await ReplyAfterTurnAsync("I can't find a server called Ketchup — check the name?");
+
+        Journal.Claims.Should().BeEmpty();
     }
 }

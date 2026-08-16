@@ -106,7 +106,11 @@ choice at all.
 |-----|---------|-----|-------|
 | `ApiKey` | _(blank)_ | `Llm__LlamaCpp__ApiKey` | Sent as a bearer token when llama-server was started with `--api-key`. Blank sends no header |
 | `ParallelToolCalls` | `false` | `Llm__LlamaCpp__ParallelToolCalls` | Lets one step request several tools. Off matches how the assistant is prompted and measured |
-| `ThinkingTemplateKwarg` | `enable_thinking` | `Llm__LlamaCpp__ThinkingTemplateKwarg` | The chat-template variable `Think` sets. A template declaring no such variable ignores it |
+| `ThinkingTemplateKwarg` | `enable_thinking` | `Llm__LlamaCpp__ThinkingTemplateKwarg` | The chat-template variable `Think` sets, sent on every request in both states. `--reasoning auto` enables reasoning when the request says nothing, so "off" has to be said. A template declaring no such variable ignores it |
+| `DryMultiplier` | `0.8` | `Llm__LlamaCpp__DryMultiplier` | DRY sampling strength — the backstop against a repetition loop that generates until the context is full and answers nothing. `0` disables it, leaving a loop bounded only by the context window |
+| `DryBase` | `1.75` | `Llm__LlamaCpp__DryBase` | How steeply the DRY penalty grows as a repeated sequence gets longer |
+| `DryAllowedLength` | `4` | `Llm__LlamaCpp__DryAllowedLength` | How long a verbatim repeat may run before DRY penalises extending it. Four clears the short repeats structured output is full of |
+| `DryPenaltyLastN` | `1024` | `Llm__LlamaCpp__DryPenaltyLastN` | How far back DRY looks for a repeat; `-1` scans the whole context |
 
 > llama-server must be started with `--jinja` and a tools-capable chat template. Without it the
 > `tools` array is accepted and no tool call is ever emitted — the assistant answers and never acts.

@@ -63,11 +63,38 @@ public static class LlamaCppRequestBuilder
 
         // Reasoning is a property of the chat template, reached through the variable it declares.
         // A template that declares none ignores this, which is the same outcome as not sending it.
-        if (think && !string.IsNullOrWhiteSpace(llamaCpp.ThinkingTemplateKwarg))
+        //
+        // The value is sent on EVERY request, including when reasoning is off. Omitting it does not
+        // mean "off": llama-server's --reasoning defaults to `auto`, which detects that the template
+        // supports reasoning and turns it on itself, so an absent variable reads as ENABLED. Measured
+        // on gemma4:12b answering "what blueprints do we have installed": absent, every reply carried
+        // a reasoning channel and cost 384 completion tokens for a 103-character answer; sent as
+        // false, the channel is empty and the same answer costs 29. Tool calls are unaffected either
+        // way (identical arguments, 152 tokens against 21).
+        if (!string.IsNullOrWhiteSpace(llamaCpp.ThinkingTemplateKwarg))
             body["chat_template_kwargs"] = new Dictionary<string, object?>
             {
-                [llamaCpp.ThinkingTemplateKwarg] = true
+                [llamaCpp.ThinkingTemplateKwarg] = think
             };
+
+        // DRY penalises only VERBATIM repetition of a sequence already generated, which is what a
+        // degenerate loop is made of; llama-server disables it by default and leaves no other
+        // repetition control on either, so nothing bounds a loop but the context window. A run that
+        // fills the window produces an empty reply after minutes of generation, which reaches a
+        // person as silence.
+        //
+        // It is safe on the structured output tool arguments and file bodies are made of because the
+        // default sequence breakers ('\n', ':', '"', '*') reset matching at every line and key —
+        // measured on a 20-key .ini body, which came back byte-identical in shape with every key
+        // present. This is why DRY is the backstop rather than repeat_penalty, which cannot tell a
+        // loop from a config file's legitimately repeated punctuation.
+        if (llamaCpp.DryMultiplier > 0)
+        {
+            body["dry_multiplier"] = llamaCpp.DryMultiplier;
+            body["dry_base"] = llamaCpp.DryBase;
+            body["dry_allowed_length"] = llamaCpp.DryAllowedLength;
+            body["dry_penalty_last_n"] = llamaCpp.DryPenaltyLastN;
+        }
 
         return body;
     }

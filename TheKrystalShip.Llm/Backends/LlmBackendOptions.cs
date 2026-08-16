@@ -77,6 +77,10 @@ public class LlmBackendOptions
     /// chain-of-thought before producing its final answer. Thinking content streams as
     /// <see cref="Models.LlmStreamChunk.ThinkingDelta"/> and is never persisted to conversation
     /// history. Off by default — thinking adds latency and token cost.
+    /// <para>
+    /// The value is sent to the backend on every request, in both states. A backend left to its own
+    /// default enables reasoning, so "off" has to be said rather than left unsaid.
+    /// </para>
     /// </summary>
     public bool Think { get; set; }
 }

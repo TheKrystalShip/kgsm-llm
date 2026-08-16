@@ -250,6 +250,54 @@
       "risk": "wiring"
     },
     {
+      "key": "llamaCppDryMultiplier",
+      "env": "Llm__LlamaCpp__DryMultiplier",
+      "label": "Repetition backstop",
+      "description": "Stops the model getting stuck repeating itself. Without it a model that starts looping keeps going until it has filled its whole context, which takes minutes and ends with no answer at all. Zero turns it off. Ignored unless the inference server is LlamaCpp.",
+      "group": "model",
+      "type": "float",
+      "default": "0.8",
+      "min": 0,
+      "max": 10,
+      "risk": "safe"
+    },
+    {
+      "key": "llamaCppDryBase",
+      "env": "Llm__LlamaCpp__DryBase",
+      "label": "Repetition backstop growth",
+      "description": "How much harder the repetition backstop pushes back as a repeated passage gets longer. Ignored unless the inference server is LlamaCpp.",
+      "group": "model",
+      "type": "float",
+      "default": "1.75",
+      "min": 1,
+      "max": 8,
+      "risk": "wiring"
+    },
+    {
+      "key": "llamaCppDryAllowedLength",
+      "env": "Llm__LlamaCpp__DryAllowedLength",
+      "label": "Repetition allowance",
+      "description": "How many words the model may repeat word-for-word before the backstop steps in. Too low and it interferes with things that repeat for good reason, like the keys in a config file. Ignored unless the inference server is LlamaCpp.",
+      "group": "model",
+      "type": "int",
+      "default": "4",
+      "min": 1,
+      "unit": "tokens",
+      "risk": "wiring"
+    },
+    {
+      "key": "llamaCppDryPenaltyLastN",
+      "env": "Llm__LlamaCpp__DryPenaltyLastN",
+      "label": "Repetition lookback",
+      "description": "How far back the model looks for something it has already said. -1 checks everything it has written so far. Ignored unless the inference server is LlamaCpp.",
+      "group": "model",
+      "type": "int",
+      "default": "1024",
+      "min": -1,
+      "unit": "tokens",
+      "risk": "wiring"
+    },
+    {
       "key": "llamaCppParallelToolCalls",
       "env": "Llm__LlamaCpp__ParallelToolCalls",
       "label": "Allow parallel tool calls",

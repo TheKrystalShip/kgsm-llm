@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] - 2026-08-16
+
+### Fixed — reasoning is turned off by saying so, and a repetition loop is bounded
+
+A voice turn asking "what blueprints do we have installed" generated for five minutes and fifty-one
+seconds and answered nothing. The model spent 21,893 tokens inside a reasoning channel repeating one
+sentence — *"Actually, I'll just list the available ones."* — roughly two thousand times, until it
+filled the whole 32,768-token context. The reply came back empty, so the surface had nothing to say
+and the person heard silence.
+
+Two independent causes, both fixed here.
+
+**The thinking variable is sent on every request, in both states.** Omitting it never meant "off":
+llama-server's `--reasoning` defaults to `auto`, which sees the template supports reasoning and
+enables it itself, so the absent variable read as ENABLED and the model reasoned on every turn while
+`Llm:Think` said false. Measured on `gemma4:12b`: absent, a 103-character answer costs 384 completion
+tokens and carries a reasoning channel every time; sent as false, the channel is empty and the same
+answer costs 29. Tool calls are unaffected — identical arguments, 152 tokens against 21. A template
+declaring no such variable is still told nothing at all.
+
+**DRY sampling is on by default** (`Llm:LlamaCpp:DryMultiplier`, with `DryBase`, `DryAllowedLength`
+and `DryPenaltyLastN`). llama-server disables every repetition control by default and the request set
+none, so nothing bounded a degenerate loop but the context window — and a run that fills the window
+is minutes of generation ending in an empty reply. DRY acts on repeated *sequences* rather than
+repeated tokens, which is what leaves structured output alone: a 20-key `.ini` body comes back with
+its shape and every key intact. That is why it is the backstop rather than `repeat_penalty`, which
+cannot tell a loop from a config file's legitimately repeated punctuation. It sits on the llama.cpp
+options because Ollama's option set has no DRY.
+
 ## [1.24.2] - 2026-08-16
 
 ### Fixed — the selected backend is the one that comes up at boot

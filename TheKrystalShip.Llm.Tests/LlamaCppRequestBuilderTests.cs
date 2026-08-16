@@ -188,18 +188,48 @@ public class LlamaCppRequestBuilderTests
     }
 
     [Fact]
-    public void Thinking_ReachesTheTemplateVariableOnlyWhenAsked()
+    public void Thinking_ReachesTheTemplateVariableInBothStates()
     {
-        Build([LlmMessage.User("hi")], think: false)
-            .TryGetProperty("chat_template_kwargs", out _).Should().BeFalse();
-
         Build([LlmMessage.User("hi")], think: true)
             .GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean()
             .Should().BeTrue();
+
+        // Off is SENT, not left unsaid. llama-server's --reasoning defaults to `auto`, which turns
+        // reasoning on when the template supports it, so an absent variable reads as enabled and the
+        // model reasons on every turn regardless of this flag.
+        Build([LlmMessage.User("hi")], think: false)
+            .GetProperty("chat_template_kwargs").GetProperty("enable_thinking").GetBoolean()
+            .Should().BeFalse();
 
         // A template that spells it differently is configured, not code-changed.
         Build([LlmMessage.User("hi")], think: true, llamaCpp: new LlamaCppOptions { ThinkingTemplateKwarg = "reasoning" })
             .GetProperty("chat_template_kwargs").GetProperty("reasoning").GetBoolean()
             .Should().BeTrue();
+
+        // A template declaring no such variable is told nothing at all.
+        Build([LlmMessage.User("hi")], think: false, llamaCpp: new LlamaCppOptions { ThinkingTemplateKwarg = "" })
+            .TryGetProperty("chat_template_kwargs", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Dry_IsSentByDefault_SoARepetitionLoopIsBounded()
+    {
+        var body = Build([LlmMessage.User("hi")]);
+
+        body.GetProperty("dry_multiplier").GetDouble().Should().Be(0.8);
+        body.GetProperty("dry_base").GetDouble().Should().Be(1.75);
+        body.GetProperty("dry_allowed_length").GetInt32().Should().Be(4);
+        body.GetProperty("dry_penalty_last_n").GetInt32().Should().Be(1024);
+    }
+
+    [Fact]
+    public void Dry_IsOmittedEntirely_WhenTurnedOff()
+    {
+        var body = Build([LlmMessage.User("hi")], llamaCpp: new LlamaCppOptions { DryMultiplier = 0 });
+
+        body.TryGetProperty("dry_multiplier", out _).Should().BeFalse();
+        body.TryGetProperty("dry_base", out _).Should().BeFalse();
+        body.TryGetProperty("dry_allowed_length", out _).Should().BeFalse();
+        body.TryGetProperty("dry_penalty_last_n", out _).Should().BeFalse();
     }
 }

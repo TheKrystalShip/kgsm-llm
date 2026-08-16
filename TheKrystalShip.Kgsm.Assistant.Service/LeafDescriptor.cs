@@ -120,6 +120,26 @@ using TheKrystalShip.KGSM.LeafConfig;
     Description = "The name llama-server's chat template gives the variable that turns reasoning on. Templates spell it differently, and a template declaring no such variable ignores it — thinking is a property of the template the server was started with, not something a request can add. Ignored unless the inference server is LlamaCpp.",
     Group = "model", Risk = LeafRisk.Wiring)]
 
+[assembly: LeafFrameworkField("llamaCppDryMultiplier", "Llm__LlamaCpp__DryMultiplier",
+    "Repetition backstop",
+    Description = "Stops the model getting stuck repeating itself. Without it a model that starts looping keeps going until it has filled its whole context, which takes minutes and ends with no answer at all. Zero turns it off. Ignored unless the inference server is LlamaCpp.",
+    Group = "model", Type = LeafType.Float, Min = 0, Max = 10)]
+
+[assembly: LeafFrameworkField("llamaCppDryBase", "Llm__LlamaCpp__DryBase",
+    "Repetition backstop growth",
+    Description = "How much harder the repetition backstop pushes back as a repeated passage gets longer. Ignored unless the inference server is LlamaCpp.",
+    Group = "model", Type = LeafType.Float, Min = 1, Max = 8, Risk = LeafRisk.Wiring)]
+
+[assembly: LeafFrameworkField("llamaCppDryAllowedLength", "Llm__LlamaCpp__DryAllowedLength",
+    "Repetition allowance",
+    Description = "How many words the model may repeat word-for-word before the backstop steps in. Too low and it interferes with things that repeat for good reason, like the keys in a config file. Ignored unless the inference server is LlamaCpp.",
+    Group = "model", Type = LeafType.Int, Min = 1, Unit = "tokens", Risk = LeafRisk.Wiring)]
+
+[assembly: LeafFrameworkField("llamaCppDryPenaltyLastN", "Llm__LlamaCpp__DryPenaltyLastN",
+    "Repetition lookback",
+    Description = "How far back the model looks for something it has already said. -1 checks everything it has written so far. Ignored unless the inference server is LlamaCpp.",
+    Group = "model", Type = LeafType.Int, Min = -1, Unit = "tokens", Risk = LeafRisk.Wiring)]
+
 [assembly: LeafFrameworkField("llamaCppParallelToolCalls", "Llm__LlamaCpp__ParallelToolCalls",
     "Allow parallel tool calls",
     Description = "Lets the model ask for several tools at once in a single step. Off matches how the assistant is prompted and measured — it works one step at a time — so turning this on changes behaviour that nothing else expects. Ignored unless the inference server is LlamaCpp.",

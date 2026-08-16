@@ -35,4 +35,33 @@ public class LlamaCppOptions
     /// was launched with, not something a request can add.
     /// </summary>
     public string ThinkingTemplateKwarg { get; set; } = "enable_thinking";
+
+    /// <summary>
+    /// DRY ("don't repeat yourself") sampling strength — the backstop against a degenerate
+    /// repetition loop, where the model emits one sentence over and over until it exhausts the
+    /// context and the turn ends with an empty reply after minutes of generation. 0 disables it,
+    /// which is llama-server's own default; with no repetition control on either, nothing bounds
+    /// such a loop but the context window.
+    /// <para>
+    /// It lives here rather than beside the temperature because Ollama's option set has no DRY —
+    /// only the coarser <c>repeat_penalty</c>, which cannot tell a loop from the legitimately
+    /// repeated punctuation a config file is full of.
+    /// </para>
+    /// </summary>
+    public double DryMultiplier { get; set; } = 0.8;
+
+    /// <summary>Growth base for the DRY penalty as a repeated sequence gets longer.</summary>
+    public double DryBase { get; set; } = 1.75;
+
+    /// <summary>
+    /// How long a verbatim repeat may run before DRY penalises extending it. Four tokens clears the
+    /// short repeats structured output is legitimately full of.
+    /// </summary>
+    public int DryAllowedLength { get; set; } = 4;
+
+    /// <summary>
+    /// How far back DRY looks for a repeat. A loop's period can be long, so this is wider than the
+    /// 64-token window llama-server defaults its penalties to; -1 scans the whole context.
+    /// </summary>
+    public int DryPenaltyLastN { get; set; } = 1024;
 }

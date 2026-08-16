@@ -33,7 +33,15 @@
     "LlamaCpp": {
       "ApiKey": "",
       "ParallelToolCalls": false,
-      "ThinkingTemplateKwarg": "enable_thinking"
+      "ThinkingTemplateKwarg": "enable_thinking",
+      // DRY sampling, the backstop against a repetition loop. llama-server leaves every repetition
+      // control off, so without this a model that starts repeating itself generates until it has
+      // filled the whole context and the turn answers nothing. DRY acts on repeated sequences rather
+      // than repeated tokens, which is what keeps a tool call's JSON and a config file's keys intact.
+      "DryMultiplier": 0.8,
+      "DryBase": 1.75,
+      "DryAllowedLength": 4,
+      "DryPenaltyLastN": 1024
     }
   },
   // Reading an answer aloud, for a surface that asks to hear one. The models are NOT this leaf's:

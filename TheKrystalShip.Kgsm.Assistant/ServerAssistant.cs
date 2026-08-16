@@ -66,7 +66,7 @@ public class ServerAssistant : IServerAssistant
     private readonly IServerInventory _inventory;
     private readonly IServerOperations _operations;
     private readonly IToolRelevanceFilter _toolFilter;
-    private readonly IPromptOverrides _promptOverrides;
+    private readonly IToolCatalog _toolCatalog;
     private readonly IBlueprintAuthoring _blueprintAuthoring;
     private readonly SearchOptions _searchOptions;
     private readonly FetchOptions _fetchOptions;
@@ -83,7 +83,7 @@ public class ServerAssistant : IServerAssistant
         IServerInventory inventory,
         IServerOperations operations,
         IToolRelevanceFilter toolFilter,
-        IPromptOverrides promptOverrides,
+        IToolCatalog toolCatalog,
         IBlueprintAuthoring blueprintAuthoring,
         IOptions<SearchOptions> searchOptions,
         IOptions<FetchOptions> fetchOptions,
@@ -99,7 +99,7 @@ public class ServerAssistant : IServerAssistant
         _inventory = inventory;
         _operations = operations;
         _toolFilter = toolFilter;
-        _promptOverrides = promptOverrides;
+        _toolCatalog = toolCatalog;
         _blueprintAuthoring = blueprintAuthoring;
         _searchOptions = searchOptions.Value;
         _fetchOptions = fetchOptions.Value;
@@ -137,14 +137,14 @@ public class ServerAssistant : IServerAssistant
         string userPrompt, bool canPerformActions, IReadOnlyList<string>? requestedTools, bool draftOpen = false,
         string? leaf = null)
     {
-        var authorized = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+        var authorized = canPerformActions ? _toolCatalog.All : _toolCatalog.ReadOnly;
 
         // revise_blueprint is kept OUT of the default catalog (so All keeps its unfiltered-reference
         // identity and the model can't revise nothing). It's APPENDED only for an authorized caller on a
         // turn that actually carries an open draft, with authoring enabled — the one situation where there
         // is a draft to change and its content is injected into this turn's context.
         if (draftOpen && canPerformActions && _blueprintAuthoringFlags.Available)
-            authorized = authorized.Append(LlmTools.ReviseBlueprintTool).ToArray();
+            authorized = authorized.Append(_toolCatalog.ReviseBlueprintTool).ToArray();
 
         // Omit-when-disabled: the unified `search` tool is offered only when at least one source
         // backs it (RAG enabled and/or a web provider configured). Removed BEFORE the requested-tool
@@ -194,9 +194,10 @@ public class ServerAssistant : IServerAssistant
                 .ToArray();
         }
 
-        var selected = _toolFilter.GetToolsFor(new ToolSelectionContext(userPrompt, canPerformActions), authorized);
-        // Apply hot-editable description overrides last (names stay structural; prose is tunable).
-        return Result.Success(_promptOverrides.OverlayTools(selected, leaf));
+        // The prose the model routes on already came off disk with the catalog, so there is nothing
+        // to overlay here — one file, read once, is the whole story.
+        return Result.Success(_toolFilter.GetToolsFor(
+            new ToolSelectionContext(userPrompt, canPerformActions), authorized));
     }
 
     public async Task<AssistantResult> RunAsync(

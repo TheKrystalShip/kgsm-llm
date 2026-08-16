@@ -37,7 +37,7 @@ public class ServerAssistantConfirmTests
         _inventory,
         _operations,
         new NoopToolRelevanceFilter(),
-        new PassthroughPromptOverrides(),
+        ShippedText.Catalog,
         Substitute.For<IBlueprintAuthoring>(),
         Options.Create(new SearchOptions()),
         Options.Create(new FetchOptions()),

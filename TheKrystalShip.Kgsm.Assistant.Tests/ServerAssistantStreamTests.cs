@@ -41,7 +41,7 @@ public class ServerAssistantStreamTests
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             agent, _prompt, confirmations, progress ?? new TurnProgress(), _inventory, _operations,
-            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), Substitute.For<IBlueprintAuthoring>(),
+            new NoopToolRelevanceFilter(), ShippedText.Catalog, Substitute.For<IBlueprintAuthoring>(),
             Options.Create(new SearchOptions { WebEnabled = true }), Options.Create(new FetchOptions { Available = true }),
             Options.Create(new BlueprintAuthoringFlags { Available = true }),
             SettlementTiming.Default, Journal, NullLogger<ServerAssistant>.Instance);
@@ -234,7 +234,7 @@ public class ServerAssistantStreamTests
 
         await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "hi", canPerformActions: false));
 
-        agent.LastTurn!.Tools.Should().BeSameAs(LlmTools.ReadOnly);
+        agent.LastTurn!.Tools.Should().BeSameAs(ShippedText.Catalog.ReadOnly);
     }
 
     [Fact]

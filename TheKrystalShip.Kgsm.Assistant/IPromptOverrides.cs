@@ -24,14 +24,4 @@ public interface IPromptOverrides
     /// leaf — reads the root directly.
     /// </remarks>
     string? ReadText(string fileName, string? leaf = null);
-
-    /// <summary>
-    /// Returns a copy of <paramref name="tools"/> with descriptions and parameter descriptions
-    /// overridden from <c>tools.json</c> where present (tool NAMES are structural and never changed);
-    /// returns <paramref name="tools"/> unchanged when there is nothing to apply or the file is bad.
-    /// A leaf's own <c>tools.json</c> replaces the host-wide one for that leaf — tool descriptions
-    /// are where a surface's confirmation mechanic gets named, so they follow the same rule the
-    /// prompt segments do.
-    /// </summary>
-    IReadOnlyList<LlmToolDefinition> OverlayTools(IReadOnlyList<LlmToolDefinition> tools, string? leaf = null);
 }

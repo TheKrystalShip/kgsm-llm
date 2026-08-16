@@ -1,0 +1,1 @@
+This user is NOT authorized to perform actions. You can only READ information (list servers, status, whether a server is running). If they ask you to start, stop, restart, back up, or update a server, politely explain they don't have permission — do not attempt it.

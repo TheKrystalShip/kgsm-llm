@@ -31,9 +31,6 @@ internal sealed record CliOptions
     /// <summary>Experiment label stamped on every recorded turn this run (for A/B-ing prompt edits).</summary>
     public string? Label { get; init; }
 
-    /// <summary>Seed editable default prompt/tool-description files into the prompts dir, then exit.</summary>
-    public bool DumpPrompts { get; init; }
-
     /// <summary>The positional one-shot prompt, or null when none was given (→ REPL / stdin).</summary>
     public string? Prompt { get; init; }
 
@@ -43,7 +40,7 @@ internal sealed record CliOptions
     /// </summary>
     public static bool TryParse(string[] args, out CliOptions options, out string? error)
     {
-        bool readOnly = false, verbose = false, help = false, noColor = false, dumpPrompts = false;
+        bool readOnly = false, verbose = false, help = false, noColor = false;
         bool? think = null;
         string? model = null, configPath = null, label = null;
         var positional = new List<string>();
@@ -82,9 +79,6 @@ internal sealed record CliOptions
                 case "--label":
                     if (!TryTakeValue(args, ref i, out label, out error)) { options = Empty; return false; }
                     break;
-                case "--dump-prompts":
-                    dumpPrompts = true;
-                    break;
                 default:
                     if (arg.StartsWith("--model=", StringComparison.Ordinal))
                         model = arg["--model=".Length..];
@@ -117,7 +111,6 @@ internal sealed record CliOptions
             Model = model,
             ConfigPath = configPath,
             Label = label,
-            DumpPrompts = dumpPrompts,
             Prompt = positional.Count > 0 ? string.Join(' ', positional) : null,
         };
         return true;
@@ -155,15 +148,16 @@ internal sealed record CliOptions
           --model <tag>      override the Ollama model (e.g. gemma4:12b)
           --config <path>    use this config file instead of the default location
           --label <name>     tag this run's recorded turns (to A/B a prompt/tool edit)
-          --dump-prompts     write editable default prompt + tool-description files, then exit
           --no-color         disable colored output (also honored: NO_COLOR)
           --verbose          show debug logs on stderr (default is quiet)
           -h, --help         show this help and exit
 
         TUNING (edit without recompiling; applies on the next turn):
-          prompt text + tool descriptions live under
-          ~/.config/kgsm-assistant/prompts/ (preamble.md, actions-allowed.md,
-          actions-denied.md, tools.json). Run --dump-prompts to seed them.
+          the prompt text and tool definitions the assistant runs on are FILES,
+          installed by deploy/deploy.sh (preamble.md, actions-allowed.md,
+          actions-auto.md, actions-denied.md, voice.md, tools.json). Edit one and
+          the next turn uses it; tools.json is re-read on restart. Point
+          Prompts:Directory at them.
 
         CONFIG (low → high precedence):
           embedded defaults  →  appsettings.json beside the binary  →  $KGSM_ASSISTANT_CONFIG

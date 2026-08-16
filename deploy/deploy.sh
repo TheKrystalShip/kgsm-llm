@@ -113,6 +113,17 @@ log "syncing publish trees → ${PREFIX}"
 rsync -a --delete --exclude='*.pdb' --exclude='*.xml' --exclude='/wwwroot/' \
     "$PUB/service/" "$PREFIX/service/"
 rsync -a --delete --exclude='*.pdb' --exclude='*.xml' "$PUB/cli/"     "$PREFIX/cli/"
+
+# The prompts and tool definitions the assistant runs on. They are SHIPPED ARTIFACTS, not state:
+# --delete and no exceptions, so what is installed is exactly what this commit says. That is also
+# why they live under the prefix rather than the state directory — the state directory is for what
+# must SURVIVE a deploy (the conversation database, the RAG index), and these must not.
+#
+# ⚠ A local edit here is overwritten by the next deploy. That is the intended loop: tune the file on
+# the running host, confirm it, then paste the wording back into deploy/prompts/ so it ships. The
+# deploy is the commit.
+log "installing prompts + tool definitions → ${PREFIX}/prompts"
+rsync -a --delete "$REPO_DIR/deploy/prompts/" "$PREFIX/prompts/"
 [[ "$WITH_INDEXER" -eq 1 ]] && rsync -a --delete "$PUB/indexer/" "$PREFIX/indexer/"
 
 # The CLI symlink on PATH points at a stable path inside the prefix, so replacing the binary

@@ -47,7 +47,7 @@ public class ServerAssistantTests
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             _agent, _prompt, _confirmations, _progress, _inventory, _operations,
-            new NoopToolRelevanceFilter(), new PassthroughPromptOverrides(), _blueprintAuthoring,
+            new NoopToolRelevanceFilter(), ShippedText.Catalog, _blueprintAuthoring,
             Options.Create(search ?? new SearchOptions { WebEnabled = true }),
             Options.Create(fetch ?? new FetchOptions { Available = true }),
             Options.Create(blueprint ?? new BlueprintAuthoringFlags { Available = true }),
@@ -86,7 +86,7 @@ public class ServerAssistantTests
         var turn = await CaptureTurnAsync(canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = true });
 
         turn.Tools.Should().NotContain(t => t.Tool == LlmTools.ReviseBlueprint);
-        turn.Tools.Should().BeSameAs(LlmTools.All);   // no draft ⇒ the unfiltered catalog reference holds
+        turn.Tools.Should().BeSameAs(ShippedText.Catalog.All);   // no draft ⇒ the unfiltered catalog reference holds
     }
 
     [Fact]
@@ -105,14 +105,14 @@ public class ServerAssistantTests
     public async Task AuthorizedCaller_IsOfferedAllTools()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        turn.Tools.Should().BeSameAs(LlmTools.All);
+        turn.Tools.Should().BeSameAs(ShippedText.Catalog.All);
     }
 
     [Fact]
     public async Task UnauthorizedCaller_IsOfferedOnlyReadOnlyTools()
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
-        turn.Tools.Should().BeSameAs(LlmTools.ReadOnly);
+        turn.Tools.Should().BeSameAs(ShippedText.Catalog.ReadOnly);
     }
 
     [Fact]

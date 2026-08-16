@@ -87,16 +87,20 @@ It records *your own* chats on *your own* host; no secrets transit tool argument
 env/config, never an argument). To turn it off, set `Recording:Enabled` to `false` (or
 `Recording__Enabled=false`); to relocate the corpus, set `Recording:Directory`.
 
-### Tuning prompts & tool descriptions (no recompile)
+### Tuning prompts & tool definitions (no recompile)
 
-The text that steers the model — the system prompt and the tool/parameter descriptions — lives in
-editable files so you can tune it against the recorded corpus without rebuilding. Seed the defaults:
+The text that steers the model — the system prompt and the tool definitions — **is** files. Nothing
+equivalent is compiled in, so the CLI reads the set installed by `deploy/deploy.sh` at
+`<prefix>/prompts` (`/opt/kgsm-assistant/prompts` on a deployed host) and refuses to run without them.
+A personal copy at `~/.config/kgsm-assistant/prompts/` (`$XDG_CONFIG_HOME` honored) wins when it
+contains a `tools.json`, for trying wording out without touching the installed set.
 
-```bash
-kgsm-assistant-cli --dump-prompts        # writes editable copies, never clobbering your edits
-```
+Edit a `.md` and the next turn uses it — no restart, no rebuild. `tools.json` is re-read on restart,
+because it is the contract between the model and the dispatcher and must not change under a turn in
+flight; a tool it names that nothing implements (or omits that something does) refuses startup with a
+message naming it.
 
-That creates, under `~/.config/kgsm-assistant/prompts/` (`$XDG_CONFIG_HOME` honored):
+The files:
 
 | File | What it steers |
 |---|---|
@@ -126,7 +130,6 @@ model's behavior → iterate. Two things make experiments comparable in the corp
 | `--model <tag>` | Override the Ollama model (e.g. `gemma4:12b`). |
 | `--config <path>` | Use this config file instead of the default location. |
 | `--label <name>` | Tag this run's recorded turns, to A/B a prompt/tool-description edit. |
-| `--dump-prompts` | Write editable default prompt + `tools.json` files (then exit); never clobbers edits. |
 | `--no-color` | Disable color (also honored: the `NO_COLOR` env var). |
 | `--verbose` | Show debug logs on stderr (default is quiet — warnings only). |
 | `-h`, `--help` | Show usage and exit. |

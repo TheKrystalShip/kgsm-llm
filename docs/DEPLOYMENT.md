@@ -254,7 +254,7 @@ You have 2 game servers installed:
 
 Exit code `0`. Other entry points: `echo "…" | kgsm-assistant-cli` (pipe), or `kgsm-assistant-cli`
 with no args in a TTY (REPL). Full usage, config layering, the `index` verb, and the
-`--dump-prompts` tuning surface are in [`../TheKrystalShip.Kgsm.Assistant.Cli/README.md`](../TheKrystalShip.Kgsm.Assistant.Cli/README.md).
+on-disk prompt/tool tuning surface are in [`../TheKrystalShip.Kgsm.Assistant.Cli/README.md`](../TheKrystalShip.Kgsm.Assistant.Cli/README.md).
 
 To install it for a user, copy `out/cli/` somewhere and symlink the launcher:
 

@@ -244,12 +244,19 @@ internal sealed class EvalOptions
         return true;
     }
 
-    // An empty, throwaway dir forces SystemPromptBuilder to fall back past file overrides to the
-    // shipped constants — so --shipped-prompts measures KgsmAssistantPrompts, not local edits.
+    // The text that SHIPS: deploy/prompts/ in the repo when running from a build tree, else the set
+    // installed beside the binary. Measuring the shipped prompt means reading the shipped files —
+    // there is no compiled-in copy to fall back to, and an empty directory now means "no prompt at
+    // all" rather than "the defaults".
     private static string ShippedPromptsDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "kgsm-eval-shipped-prompts");
-        Directory.CreateDirectory(dir);
-        return dir;
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "deploy", "prompts");
+            if (File.Exists(Path.Combine(candidate, "tools.json")))
+                return candidate;
+        }
+
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "prompts"));
     }
 }

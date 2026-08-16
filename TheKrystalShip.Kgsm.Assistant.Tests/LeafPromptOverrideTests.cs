@@ -140,45 +140,12 @@ public sealed class LeafPromptOverrideTests : IDisposable
 
     // ------------------------------------------------------------------ tools.json ---------------
 
-    private static IReadOnlyList<LlmToolDefinition> SampleTools() => new[]
-    {
-        LlmToolDefinition.Create(new Tool("get_status"), "BASE status desc"),
-    };
-
-    /// <summary>
+/// <summary>
     /// Tool prose is where a surface's confirmation mechanic gets named, so a leaf's catalog follows
     /// the same rule its prompts do.
     /// </summary>
-    [Fact]
-    public void LeafToolsJson_WinsOverTheHostWideOne()
-    {
-        Write(FilePromptOverrides.ToolsFileName, """{"get_status":{"description":"HOST WIDE"}}""");
-        Write(Path.Combine(Leaf, FilePromptOverrides.ToolsFileName),
-            """{"get_status":{"description":"THE BOT'S OWN"}}""");
-
-        Make().OverlayTools(SampleTools(), Leaf)[0].Description.Should().Be("THE BOT'S OWN");
-    }
-
     /// <summary>
     /// Whole-file precedence, unlike the per-segment fall-through: a merged catalog would be half
     /// worded for a button and half for a card, which is worse than either alone.
     /// </summary>
-    [Fact]
-    public void LeafToolsJson_ReplacesTheHostWideOne_RatherThanMergingWithIt()
-    {
-        Write(FilePromptOverrides.ToolsFileName, """{"get_status":{"description":"HOST WIDE"}}""");
-        Write(Path.Combine(Leaf, FilePromptOverrides.ToolsFileName), """{"list_blueprints":{"description":"UNRELATED"}}""");
-
-        // The leaf's file answers and says nothing about get_status, so the in-code default stands —
-        // the host-wide override is not consulted underneath it.
-        Make().OverlayTools(SampleTools(), Leaf)[0].Description.Should().Be("BASE status desc");
-    }
-
-    [Fact]
-    public void NoLeafToolsJson_FallsBackToTheHostWideOne()
-    {
-        Write(FilePromptOverrides.ToolsFileName, """{"get_status":{"description":"HOST WIDE"}}""");
-
-        Make().OverlayTools(SampleTools(), Leaf)[0].Description.Should().Be("HOST WIDE");
-    }
 }

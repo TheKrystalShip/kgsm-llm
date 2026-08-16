@@ -218,531 +218,72 @@ public static class LlmTools
             _ => null,
         };
 
-    private static readonly LlmToolParameter InstanceName = new(
-        "instance_name", "The exact name of the server instance.");
+    // ── Tier membership: the AUTHORIZATION boundary ──────────────────────────────
+    //
+    // Which tier a tool sits in decides who is offered it and whether it is staged, so it stays in
+    // code. The prose and schema live on disk and are edited freely; moving a staged command into
+    // the read-only tier would be a privilege escalation, and that is not an edit a text file gets
+    // to make. Each name here must have a handler in ToolDispatcher and an entry in tools.json —
+    // DiskToolCatalog refuses to start the service if either is missing.
 
-    private static readonly LlmToolParameter PerformanceRange = new(
-        "range",
-        "Optional. OMIT for a live snapshot of current usage. Provide a time window to get the TREND " +
-        "over that period instead (a chart of how CPU/memory changed) — use this for \"how has X been " +
-        "doing over the last hour/day?\", \"is X's memory climbing?\", \"CPU trend for X\".",
-        Required: false,
-        AllowedValues: new[] { "1h", "24h", "7d", "30d" });
+    /// <summary>Read-only tools, offered to everyone.</summary>
+    public static readonly IReadOnlyList<Tool> ReadOnlyTier =
+    [
+        ServerInfo, HostInfo, BlueprintInfo, Events, RunHealthCheck,
+        GetPerformance, GetNetwork, TraceRootCause, Search, FetchUrl,
+    ];
 
-    private static readonly LlmToolParameter EventsInstanceName = new(
-        "instance_name",
-        "Optional. Scope the events to this one server. OMIT to get events across every server on " +
-        "this host — do that for questions like \"what happened recently?\" / \"any errors lately?\".",
-        Required: false);
+    /// <summary>Reads that expose file or console contents — authorized callers only.</summary>
+    public static readonly IReadOnlyList<Tool> AuthorizedReadOnlyTier =
+    [
+        ReadFile, ListFiles, FindFiles, SearchFiles, ReadConsole,
+    ];
 
-    private static readonly LlmToolParameter EventsScope = new(
-        "scope",
-        "Optional, defaults to \"all\". Use \"all\" for the full feed — starts, stops, crashes, " +
-        "installs, updates, backups, port changes, player activity. Use \"changes\" to narrow it to " +
-        "durable CHANGES only (installs, uninstalls, updates, version changes, backups, port " +
-        "changes), which is the right scope for \"what changed on X?\" or \"when was X last updated?\".",
-        Required: false,
-        AllowedValues: EventScopes);
+    /// <summary>Authorized, mutating and confirm-free — run inline, never staged.</summary>
+    public static readonly IReadOnlyList<Tool> AuthorizedActionsTier =
+    [
+        CreateBlueprint, ReviseBlueprint,
+    ];
 
-    private static readonly LlmToolParameter EventsWindow = new(
-        "window",
-        "Optional. How far back to look. Defaults to 24h if omitted.",
-        Required: false,
-        AllowedValues: AuditWindow.AllowedValues);
-
-    private static readonly LlmToolParameter RootCauseRange = new(
-        "range",
-        "Optional. How far back to look for evidence. Defaults to 24h if omitted.",
-        Required: false,
-        AllowedValues: AuditWindow.AllowedValues);
-
-    private static readonly LlmToolParameter ServerInfoInstanceName = new(
-        "instance_name",
-        "The server to report on. OMIT this to cover EVERY server at once — always do that for " +
-        "questions like \"which servers are running?\" instead of checking servers one at a time.",
-        Required: false);
-
-    private static readonly LlmToolParameter ServerInfoAspect = new(
-        "aspect",
-        "Optional, defaults to \"status\" (is it running, and its headline detail). Pick another to " +
-        "answer a narrower question: \"config\" a summary of its KGSM settings (to see the raw " +
-        "configuration file, use read_file), \"version\" the installed version and whether an update " +
-        "is available, \"players\" who is connected right now, \"backups\" the backups it has, " +
-        "\"note\" its operator note, \"autostart\" whether it starts at boot.",
-        Required: false,
-        AllowedValues: ServerInfoAspects);
-
-    private static readonly LlmToolParameter HostInfoAspect = new(
-        "aspect",
-        "Optional, defaults to \"vitals\" (uptime, load, memory, disk, external IP, whether a reboot " +
-        "is pending). Use \"ports\" for what is currently bound on the host, or \"conflicts\" for " +
-        "servers configured to want the same port.",
-        Required: false,
-        AllowedValues: HostInfoAspects);
-
-    private static readonly LlmToolParameter BlueprintName = new(
-        "blueprint_name", "The game to install, by the name it is listed under (e.g. \"Project Zomboid\").");
-
-    private static readonly LlmToolParameter BlueprintInfoName = new(
-        "blueprint_name",
-        "Optional. A game to describe in detail — its ports, resource needs, and what it supports — " +
-        "by the name it is listed under. OMIT it to list every game that can be installed.",
-        Required: false);
-
-    private static readonly LlmToolParameter OptionalInstanceName = new(
-        "instance_name", "Optional custom name for the new instance. Omit to let the system name it.",
-        Required: false);
-
-    private static readonly LlmToolParameter InstallVersion = new(
-        "version",
-        "Optional. A specific version to install. Omit for the latest, which is almost always right.",
-        Required: false);
-
-    private static readonly LlmToolParameter InstallPort = new(
-        "port",
-        "Optional. Override the blueprint's primary game port. Omit unless the user asked for a " +
-        "specific port or a conflict needs avoiding.",
-        Required: false);
-
-    private static readonly LlmToolParameter ConfigKey = new(
-        "config_key",
-        "The configuration key to set, e.g. \"auto_update\", \"executable_arguments\", or " +
-        "\"stop_command_timeout_seconds\".");
-
-    private static readonly LlmToolParameter ConfigValue = new(
-        "config_value",
-        "The new value for the key. Pass an empty string to clear the setting.");
-
-    private static readonly LlmToolParameter ServerVerb = new(
-        "verb",
-        "Which action to take on the server: start, stop, restart, update, backup (take one now), " +
-        "enable_autostart (make it start when the host boots), or disable_autostart. Note that " +
-        "start and enable_autostart are different: start runs it NOW, enable_autostart only affects " +
-        "the next boot.",
-        AllowedValues: ServerCommandVerbs);
-
-    private static readonly LlmToolParameter BackupVerb = new(
-        "verb",
-        "What to do with the server's existing backups: restore (replace the server's current data " +
-        "with a backup), delete (remove one backup), or prune (delete the oldest, keeping the most " +
-        "recent few). To CREATE a backup use server_command with verb=backup instead.",
-        AllowedValues: BackupCommandVerbs);
-
-    private static readonly LlmToolParameter BackupName = new(
-        "backup_name",
-        "Which backup to act on, by its id from server_info(aspect=backups). Required for restore " +
-        "and delete; omit it for prune.",
-        Required: false);
-
-    private static readonly LlmToolParameter BackupKeep = new(
-        "keep",
-        "For prune only: how many of the most recent backups to keep. Omit for the server's " +
-        "configured retention.",
-        Required: false);
-
-    private static readonly LlmToolParameter PlayerVerb = new(
-        "verb",
-        "What to do with the player: kick (disconnect them now), ban (disconnect and block them), " +
-        "or unban (lift a ban).",
-        AllowedValues: PlayerCommandVerbs);
-
-    private static readonly LlmToolParameter PlayerTarget = new(
-        "target",
-        "Which player, exactly as the user named them. Use server_info(aspect=players) first if you " +
-        "need to see who is connected. Do NOT convert the name into an id or invent one — the game " +
-        "decides which form it needs and the system supplies it.");
-
-    private static readonly LlmToolParameter ReadPath = new(
-        "path",
-        "Optional. The file to read, as a path relative to the server's own directory — e.g. " +
-        "\"server.properties\" or \"logs/latest.log\". OMIT it to read the server's main " +
-        "configuration (its .config.ini). Use list_files first if you don't know the file name.",
-        Required: false);
-
-    private static readonly LlmToolParameter ListSubdir = new(
-        "subdir",
-        "Optional. A subdirectory to list, relative to the server's own directory — e.g. \"logs\" " +
-        "or \"install\". OMIT it to list the server's top level.",
-        Required: false);
-
-    private static readonly LlmToolParameter FindPattern = new(
-        "pattern",
-        "The file name to look for, as a glob — e.g. \"PalWorldSettings.ini\", \"*.ini\", " +
-        "\"server.properties\", or \"*Settings*\". Include a \"/\" to match on the path instead of " +
-        "just the name (e.g. \"*/Config/*.ini\"). Prefer the most specific pattern you can: a broad " +
-        "one can match hundreds of files.");
-
-    private static readonly LlmToolParameter FindSubdir = new(
-        "subdir",
-        "Optional. Search only inside this subdirectory of the server's folder. OMIT it to search the " +
-        "whole server directory, which is usually what you want.",
-        Required: false);
-
-    // Named "text", not "pattern", because find_files takes a "pattern" that is a filename GLOB: one
-    // argument name across two tools carrying two syntaxes had the model feeding "*Player*" to the
-    // content searcher, where a leading quantifier is not a valid expression at all.
-    private static readonly LlmToolParameter SearchFilesText = new(
-        "text",
-        "The text to look for inside the files — a setting name like \"MaxPlayers\" or " +
-        "\"DayTimeSpeedRate\". Matching ignores case. This is text, NOT a filename pattern: do not " +
-        "wrap it in \"*\". A regular expression works too. Prefer a distinctive string: a common word " +
-        "can match hundreds of lines.");
-
-    private static readonly LlmToolParameter ConsoleLines = new(
-        "lines",
-        "Optional. How many of the most recent console lines to read. Defaults to a recent tail.",
-        Required: false);
-
-    private static readonly LlmToolParameter ConsoleRun = new(
-        "run",
-        "Optional. Which run of the server to read, newest first: 0 is the current run (the default), "
-        + "1 the run before it, and so on. A server's log restarts from empty every time it starts, so "
-        + "after a crash-restart the crash is in run 1 while run 0 holds only the clean boot that "
-        + "followed it.",
-        Required: false);
-
-    private static readonly LlmToolParameter WritePath = new(
-        "path",
-        "The file to change, as a path relative to the server's own directory — e.g. " +
-        "\"install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini\" or \"server.properties\". Use " +
-        "list_files/read_file first to find and read it.");
-
-    private static readonly LlmToolParameter EditOldString = new(
-        "old_string",
-        "The EXACT text to replace, copied character for character from what read_file showed you — " +
-        "normally just the one setting you're changing, e.g. \"Difficulty=None\". It must appear " +
-        "EXACTLY ONCE in the file; if it appears more than once, include a little of the surrounding " +
-        "text so it matches one place only. Everything else in the file is kept for you, so NEVER put " +
-        "the whole file here.");
-
-    private static readonly LlmToolParameter EditNewString = new(
-        "new_string",
-        "What that text becomes, e.g. \"Difficulty=Difficulty_Hard\". To ADD a setting, put a nearby " +
-        "existing line in old_string and that same line plus your new one here. An empty value deletes " +
-        "the old text.");
-
-    private static readonly LlmToolParameter EditCopyFrom = new(
-        "copy_from",
-        "Only for a file that is empty or does not exist yet, when the game ships a default/reference " +
-        "file beside it (e.g. \"install/DefaultPalWorldSettings.ini\"): its content is copied into the " +
-        "file server-side and your old_string/new_string replacement applied to that copy, so you never " +
-        "reproduce it yourself. Leave it out when editing a file that already has content.",
-        Required: false);
-
-    private static readonly LlmToolParameter SearchQuery = new(
-        "query",
-        "What to look up. Searches the operator's own indexed documentation first, then falls back " +
-        "to the public web. For OUTSIDE/background facts that help with the games or servers — e.g. " +
-        "a game's latest version, release notes, or what a config option means. NOT for anything " +
-        "about this host's own servers (status/config/health) — use the KGSM tools for those.");
-
-    private static readonly LlmToolParameter SearchScopeParam = new(
-        "scope",
-        "Where to look. Use \"web\" whenever the user asked you to check ONLINE or on the internet, " +
-        "or when the answer depends on what is true right now — a release date, a current version, " +
-        "recent news, anything that changes over time. Use \"local\" to stay inside the operator's " +
-        "own documentation. OMIT it (or \"auto\") otherwise, which tries the documentation first. " +
-        "NOTE: local guides about a game will match a question about that game even when they say " +
-        "nothing about what was asked, so \"auto\" is the wrong choice for anything time-sensitive.",
-        Required: false,
-        AllowedValues: ["auto", "local", "web"]);
-
-    private static readonly LlmToolParameter FetchUrlParam = new(
-        "url",
-        "The exact web address to read, including scheme — e.g. an official server-setup doc, a " +
-        "Steam store page, or a raw Dockerfile URL. Only public http/https pages can be fetched.");
-
-    private static readonly LlmToolParameter BlueprintGame = new(
-        "game",
-        "The game to add, by its common name (e.g. \"Terraria\", \"Rust\") — not a blueprint slug.");
-
-    private static readonly LlmToolParameter ReviseYaml = new(
-        "revised_yaml",
-        "The COMPLETE updated blueprint YAML — the whole document (the current draft with the requested " +
-        "change applied), not a fragment or a diff. Base it on the open draft's current content shown to " +
-        "you this turn; change only what the user asked for and keep every other field as-is.");
-
-    public static readonly IReadOnlyList<LlmToolDefinition> ReadOnly = new[]
-    {
-        LlmToolDefinition.Create(ServerInfo,
-            "Look up a game server. With NO instance_name: covers every server at once — this is the " +
-            "right tool for \"what's running?\" / \"list the servers\". With instance_name: reports on " +
-            "that one server. The 'aspect' parameter picks WHAT to report (status by default, or its " +
-            "config, version, connected players, backups, note, or autostart setting) — use it instead " +
-            "of reading files to answer those.",
-            ServerInfoInstanceName, ServerInfoAspect),
-
-        LlmToolDefinition.Create(HostInfo,
-            "Report on the HOST MACHINE itself rather than any one server — its uptime, load, memory, " +
-            "disk space, external IP address and whether a reboot is pending. Use \"ports\" to see " +
-            "what is bound on the host and \"conflicts\" to find servers configured to want the same " +
-            "port. Use this for \"is the machine running out of space/memory?\", \"how busy is the " +
-            "host?\", or \"is anything fighting over a port?\".",
-            HostInfoAspect),
-
-        LlmToolDefinition.Create(BlueprintInfo,
-            "Look up the game types (blueprints) that can be installed. With NO blueprint_name: lists " +
-            "all of them. With one: describes that game type in detail — the ports it needs, its " +
-            "resource requirements, and what it supports. Use this to answer \"what games can I run?\" " +
-            "or \"what does Valheim need?\" BEFORE proposing an install.",
-            BlueprintInfoName),
-
-        LlmToolDefinition.Create(Events,
-            "Get the history of what has happened, read straight from KGSM's own event log — most " +
-            "recent first. Covers one server (with instance_name) or every server (without). Use the " +
-            "default scope for \"what happened to X?\" / \"has X crashed recently?\", and " +
-            "scope=changes for \"what changed on X?\" or \"when was X last updated?\".",
-            EventsInstanceName, EventsScope, EventsWindow),
-
-        LlmToolDefinition.Create(RunHealthCheck,
-            "Run a quick health check on ONE server and get a ranked summary. Checks whether it's " +
-            "running, scans its recent logs for errors, reports whether an update is available, and " +
-            "checks host disk space. Use this for \"is X healthy / OK?\" or \"what's wrong with X?\" " +
-            "instead of fetching status, logs and disk separately.",
-            InstanceName),
-
-        LlmToolDefinition.Create(GetPerformance,
-            "Get ONE server's resource usage — CPU (as % of one core), memory, network and disk-I/O " +
-            "throughput, process count. Without a range it's a LIVE snapshot of current values (\"how " +
-            "much is X using?\", \"is X hammering the CPU/RAM?\"); with a range it's the TREND over that " +
-            "window as a chart (\"how has X been doing over the last hour/day?\", \"is X's memory " +
-            "climbing?\"). A stopped server has no live snapshot but may still have recent history.",
-            InstanceName, PerformanceRange),
-
-        LlmToolDefinition.Create(GetNetwork,
-            "Report the network reachability of ONE server across two layers: the HOST FIREWALL (the ports " +
-            "KGSM has opened, the firewall backend, and whether it's enforcing) AND the ROUTER / UPnP port " +
-            "forwards it has on the local router. Use this for \"what ports are open for X?\", \"is X's port " +
-            "allowed through the firewall?\", \"is X forwarded on the router?\", or \"is X reachable from the " +
-            "internet?\". Both layers are reported honestly and separately — an unreachable firewall or router " +
-            "is 'couldn't check', never 'nothing open'.",
-            InstanceName),
-
-        LlmToolDefinition.Create(TraceRootCause,
-            "Investigate WHY one server crashed, won't stay up, or has been misbehaving recently — " +
-            "an incident/history question, not a right-now check (use run_health_check for \"is X " +
-            "healthy now?\"). Automatically pulls together its event history, resource usage, and " +
-            "health checks and matches them against known failure patterns (port conflicts, " +
-            "update-triggered crash loops, disk-full failures, event-log/live-state mismatches), " +
-            "returning a ranked explanation with the evidence behind it. Use this for \"why did X " +
-            "crash?\" or \"why did X stop working?\" instead of calling events/get_performance " +
-            "separately and reasoning it out yourself. If no known pattern matches, it honestly " +
-            "reports a correlation instead of guessing a cause.",
-            InstanceName, RootCauseRange),
-
-        LlmToolDefinition.Create(Search,
-            "Look something up in the knowledge base: the operator's indexed documentation first, then " +
-            "the public web as a fallback. Returns short passages, each with its source (a doc path or " +
-            "a URL). Use it ONLY for outside facts that help with the games/servers — a game's latest " +
-            "version, patch notes, or what a setting does. Results may be external and out of date, so " +
-            "cite the sources and don't state them as certain. Do NOT use this for anything about this " +
-            "host's own servers (status, config, health) — the KGSM tools are authoritative for those. " +
-            "When the user asks you to look something up ONLINE, pass scope=\"web\" — otherwise a local " +
-            "guide about the same game will answer instead, and it will not know anything current.",
-            SearchQuery, SearchScopeParam),
-
-        LlmToolDefinition.Create(FetchUrl,
-            "Fetch and read the full text of ONE specific web page by its exact URL — an official docs " +
-            "page, a Steam store page, a GitHub raw file (like a Dockerfile), and so on. Use this when " +
-            "you already HAVE a URL (from the user, or from a prior search result) and need its actual " +
-            "content. Do NOT use this to find a page in the first place — use `search` for that (it " +
-            "looks things up by topic and returns short summaries, not full page content). Only public " +
-            "http/https pages can be fetched; large pages may be truncated.",
-            FetchUrlParam),
-    };
-
-    /// <summary>
-    /// Reads that expose file or console contents — offered only to action-authorized callers.
-    /// They mutate nothing (no per-message cap, no staging), but reading a server's files reveals
-    /// more than the read-only tier, so the gate refuses them for unauthorized callers as
-    /// defense-in-depth. (Conservative on purpose: tightening after exposure is the harder
-    /// direction.)
-    /// </summary>
-    public static readonly IReadOnlyList<LlmToolDefinition> AuthorizedReadOnly = new[]
-    {
-        LlmToolDefinition.Create(ReadFile,
-            "Read a text file from inside a game server's own directory — its configuration, logs, " +
-            "server.properties, mod settings, and so on. Read-only and confined to that server's " +
-            "folder. Give the file's path relative to the server's directory (use list_files first " +
-            "if you don't know it), or OMIT the path to read the server's main configuration (its " +
-            ".config.ini). Large files are truncated and binary files aren't shown. To CHANGE a " +
-            "config setting, propose it with set_config_value instead.",
-            InstanceName, ReadPath),
-
-        LlmToolDefinition.Create(ListFiles,
-            "List the files and folders inside a game server's own directory, so you can find a file " +
-            "to read with read_file. Optionally pass a subdirectory (e.g. \"logs\") to look inside it; " +
-            "omit it for the server's top level.",
-            InstanceName, ListSubdir),
-
-        LlmToolDefinition.Create(FindFiles,
-            "Find a file inside a game server's folder by name, searching every subdirectory at once. " +
-            "USE THIS INSTEAD OF list_files when you know roughly what the file is called — a game's " +
-            "own config is often several directories deep, and stepping down one directory at a time " +
-            "wastes the turn. Give a glob like \"PalWorldSettings.ini\", \"*.ini\" or " +
-            "\"server.properties\"; it returns matching paths ready to hand to read_file. Archived " +
-            "copies under a backups folder are excluded, so what you get is the live file.",
-            InstanceName, FindPattern, FindSubdir),
-
-        LlmToolDefinition.Create(SearchFiles,
-            "Search INSIDE a game server's files for text, across every subdirectory at once — use " +
-            "this when you know the SETTING you want but not which file holds it (e.g. " +
-            "\"MaxPlayers\", \"DayTimeSpeedRate\"). Returns each matching file with the line number " +
-            "and the line itself, ready to hand to read_file. Use find_files instead when you know " +
-            "the file's NAME. Archived copies under a backups folder are excluded, and binary files " +
-            "are skipped.",
-            InstanceName, SearchFilesText, FindSubdir),
-
-        LlmToolDefinition.Create(ReadConsole,
-            "Read what a server itself printed — its console output. Use this for what a server is " +
-            "saying right now, or for what it said on its way down. A stopped server's last output is " +
-            "still readable. The reply says which run it came from and whether the server restarted " +
-            "recently; if it did, the reason it went down is in the previous run, which you read by " +
-            "calling this again with run=1.",
-            InstanceName, ConsoleLines, ConsoleRun),
-    };
-
-    /// <summary>
-    /// Authorized, autonomous actions — offered only to action-authorized callers, like the staged
-    /// commands below, but NEVER staged: the dispatcher runs these inline and returns the real outcome,
-    /// because they touch nothing of the user's to confirm (today: <see cref="CreateBlueprint"/>, which
-    /// only researches and test-installs a disposable probe of its own, torn down before it returns).
-    /// A separate tier from <see cref="AuthorizedReadOnly"/> (which mutates nothing at all) and from
-    /// <see cref="StagedCommands"/> (which always needs a human confirm) — this is authorized AND
-    /// mutating AND confirm-free, a combination none of the existing tiers express honestly.
-    /// </summary>
-    public static readonly IReadOnlyList<LlmToolDefinition> AuthorizedActions = new[]
-    {
-        LlmToolDefinition.Create(CreateBlueprint,
-            "AUTHORS a game type that is genuinely MISSING from the catalog: researches it online and " +
-            "DRAFTS a server config, then shows it to the user in an editor to review and tweak. The " +
-            "test-install + verification runs LATER, only when they save the config — so calling this " +
-            "does NOT add the game yet. It does its OWN online research, so call it DIRECTLY, in the same " +
-            "turn the user asks — do NOT run a separate search/fetch_url or blueprint_info first, and do " +
-            "NOT announce that you'll go research it and come back; calling this tool IS how the research " +
-            "and drafting start. After it returns, tell the user a draft is ready for them to " +
-            "review and save; do NOT claim the game is added or installed. Use this ONLY when the game " +
-            "is not in blueprint_info / not offered by install_server — for a game that's already " +
-            "installable, propose install_server instead. Not every game can be self-hosted or has a native " +
-            "Linux server — relay the outcome honestly either way.",
-            BlueprintGame),
-    };
-
-    /// <summary>
-    /// revise_blueprint — authorized + inline like <see cref="AuthorizedActions"/>, but offered ONLY on a
-    /// turn that carries an open draft (its content is injected into that turn), so it is NOT part of
-    /// <see cref="All"/>; <c>ServerAssistant.SelectTools</c> appends it when a draft is present. Kept out of
-    /// the default catalog so the model can't call it with nothing to revise, and so the unfiltered-catalog
-    /// reference identity of <see cref="All"/> holds on an ordinary turn.
-    /// </summary>
-    public static readonly LlmToolDefinition ReviseBlueprintTool =
-        LlmToolDefinition.Create(ReviseBlueprint,
-            "UPDATES the blueprint draft the user is CURRENTLY reviewing in the editor. Use this whenever " +
-            "they ask to change, populate, fix, or add anything to the open draft — a metadata field " +
-            "(min/recommended RAM, max players, disk), a port, the launch args, anything. The draft's " +
-            "current YAML is given to you in THIS turn's context: take it, apply ONLY the requested change " +
-            "(research any values first with search if you need them), and pass the COMPLETE updated YAML " +
-            "as revised_yaml. It re-validates and shows the user the updated draft to review and save — " +
-            "nothing is installed. You have NO other way to change the draft: NEVER say you updated, " +
-            "populated, or added to it unless you called this tool and it succeeded.",
-            ReviseYaml);
-
-    /// <summary>
-    /// Every server command — all propose-only. The dispatcher STAGES each for human confirmation;
-    /// none runs in the agent loop. Descriptions say so explicitly, so the model narrates
-    /// "I've proposed…", never "I've done it."
-    /// </summary>
-    public static readonly IReadOnlyList<LlmToolDefinition> StagedCommands = new[]
-    {
-        LlmToolDefinition.Create(ServerCommand,
-            "Propose an action on an EXISTING server instance — choose it with the 'verb' parameter: " +
-            "start (a stopped server), stop (a running one), restart (stop then start), update (to its " +
-            "latest version), backup (create one now), enable_autostart / disable_autostart (whether it " +
-            "starts when the host boots). Staged for human confirmation — it does not run until a " +
-            "person confirms.",
-            InstanceName, ServerVerb),
-
-        LlmToolDefinition.Create(BackupCommand,
-            "Propose acting on a server's EXISTING backups: restore one over the server's current data, " +
-            "delete one, or prune the old ones. List them with server_info(aspect=backups) first so you " +
-            "name a backup that exists. Restoring REPLACES the server's current data and deleting is " +
-            "permanent. Staged for human confirmation — it does not run until a person confirms.",
-            InstanceName, BackupVerb, BackupName, BackupKeep),
-
-        LlmToolDefinition.Create(PlayerCommand,
-            "Propose moderating a player on a server: kick, ban, or unban them. Staged for human " +
-            "confirmation — it does not run until a person confirms. Only works on games whose server " +
-            "supports moderation commands; if it doesn't, say so rather than suggesting a workaround.",
-            InstanceName, PlayerVerb, PlayerTarget),
-
-        LlmToolDefinition.Create(InstallServer,
-            "Propose installing a NEW game server from a blueprint. Heavy and slow; staged for " +
-            "human confirmation — it does not run until a person confirms.",
-            BlueprintName, OptionalInstanceName, InstallVersion, InstallPort),
-
-        LlmToolDefinition.Create(UninstallServer,
-            "Propose PERMANENTLY deleting a server instance and all its data. Irreversible; staged " +
-            "for human confirmation — it does not run until a person confirms.", InstanceName),
-
-        LlmToolDefinition.Create(SetConfigValue,
-            "Propose setting one key=value in a server's configuration file (its .config.ini), e.g. " +
-            "auto_update, executable_arguments, or a timeout setting. Staged for human confirmation — " +
-            "it does not run until a person confirms. kgsm refuses identity/structural keys, path keys " +
-            "(*_dir/*_file), ports, and the integration toggles (enable_firewall_management/_port_" +
-            "forwarding/_command_shortcuts) — those have dedicated flows — so proposing one of those is " +
-            "rejected when confirmed; tell the user rather than retrying.",
-            InstanceName, ConfigKey, ConfigValue),
-
-        LlmToolDefinition.Create(WriteFile,
-            "Propose a CHANGE to a text file inside a game server's OWN directory — e.g. its actual " +
-            "game config file (Palworld's PalWorldSettings.ini, server.properties, a mod's settings " +
-            "file). This is for the GAME's own config; for KGSM's own settings (ports, launch " +
-            "arguments, auto-update) use set_config_value instead. You send ONLY the text that " +
-            "changes: old_string is the exact text to replace, copied from read_file's output, and " +
-            "new_string is what it becomes. The rest of the file is preserved for you byte for byte — " +
-            "never send the whole file and never retype settings you aren't changing. If old_string " +
-            "matches nowhere, or matches more than one place, NOTHING is staged and you get an error " +
-            "saying so: read the file again and copy the text exactly rather than guessing at it. " +
-            "Staged for human confirmation against a preview; it does not run until a person confirms, " +
-            "and a running server picks up the change on its next restart. Never claim to have written " +
-            "the file yourself.",
-            InstanceName, WritePath, EditOldString, EditNewString, EditCopyFrom),
-    };
-
-    /// <summary>All tools, offered to callers authorized for actions.</summary>
-    public static readonly IReadOnlyList<LlmToolDefinition> All =
-        ReadOnly.Concat(AuthorizedReadOnly).Concat(StagedCommands).Concat(AuthorizedActions).ToArray();
+    /// <summary>Every server command — propose-only, always staged for a human confirmation.</summary>
+    public static readonly IReadOnlyList<Tool> StagedCommandsTier =
+    [
+        ServerCommand, BackupCommand, PlayerCommand, InstallServer,
+        UninstallServer, SetConfigValue, WriteFile,
+    ];
 
     /// <summary>Tools of authorized-only reads; refused for unauthorized callers, but not capped.</summary>
-    public static readonly IReadOnlySet<Tool> AuthorizedReadTools =
-        AuthorizedReadOnly.Select(t => t.Tool).ToHashSet();
+    public static readonly IReadOnlySet<Tool> AuthorizedReadTools = AuthorizedReadOnlyTier.ToHashSet();
 
     /// <summary>
     /// Tools of the propose-only commands; offered only to authorized callers, staged
     /// (never executed inline), and counted against the per-message staging cap.
     /// </summary>
-    public static readonly IReadOnlySet<Tool> StagedCommandTools =
-        StagedCommands.Select(t => t.Tool).ToHashSet();
+    public static readonly IReadOnlySet<Tool> StagedCommandTools = StagedCommandsTier.ToHashSet();
 
     /// <summary>Tools of the authorized, autonomous (confirm-free) actions; refused for unauthorized
-    /// callers, run inline (never staged) — see <see cref="AuthorizedActions"/>. Includes the
-    /// draft-only <see cref="ReviseBlueprint"/> (offered conditionally, but the same authorized+inline
-    /// tier as create_blueprint when it IS offered).</summary>
-    public static readonly IReadOnlySet<Tool> AuthorizedActionTools =
-        AuthorizedActions.Select(t => t.Tool).Append(ReviseBlueprint).ToHashSet();
+    /// callers, run inline (never staged). Includes the draft-only <see cref="ReviseBlueprint"/>
+    /// (offered conditionally, but the same authorized+inline tier when it IS offered).</summary>
+    public static readonly IReadOnlySet<Tool> AuthorizedActionTools = AuthorizedActionsTier.ToHashSet();
 
-    /// <summary>All valid tool names, for validating client requests against the server catalog.</summary>
-    public static IReadOnlySet<Tool> AllToolNames => All.Select(t => t.Tool).ToHashSet();
+    /// <summary>
+    /// The ordinary-turn OFFER: every tool an authorized caller is given on a turn carrying no draft.
+    /// <see cref="ReviseBlueprint"/> is excluded because it is offered only alongside an open draft.
+    /// </summary>
+    public static IReadOnlySet<Tool> AllToolNames =>
+        ReadOnlyTier.Concat(AuthorizedReadOnlyTier).Concat(StagedCommandsTier)
+            .Concat(AuthorizedActionsTier).Where(t => t != ReviseBlueprint).ToHashSet();
 
     /// <summary>
     /// Every tool this assistant can EVER dispatch, including the ones offered only in context —
-    /// today just <see cref="ReviseBlueprint"/>, appended by <c>ServerAssistant.SelectTools</c> on a
-    /// turn that carries an open draft. Distinct from <see cref="AllToolNames"/>, which is the
-    /// ordinary-turn OFFER: asking "did this tool ever exist?" of the offer set would report a
-    /// conditionally-offered tool as one the model invented.
+    /// today just <see cref="ReviseBlueprint"/>, appended on a turn that carries an open draft.
+    /// Distinct from <see cref="AllToolNames"/>, which is the ordinary-turn OFFER: asking "did this
+    /// tool ever exist?" of the offer set would report a conditionally-offered tool as one the model
+    /// invented. This is also the set a tools.json entry has to name to be accepted.
     /// </summary>
     public static IReadOnlySet<Tool> EveryToolName =>
-        All.Select(t => t.Tool).Append(ReviseBlueprint).ToHashSet();
+        ReadOnlyTier.Concat(AuthorizedReadOnlyTier).Concat(StagedCommandsTier)
+            .Concat(AuthorizedActionsTier).ToHashSet();
 
     public static bool IsStagedCommand(Tool tool) => StagedCommandTools.Contains(tool);
 

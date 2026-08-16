@@ -84,7 +84,8 @@ setup_project_extras() {
     # root ONCE at startup: a directory that appears later is invisible until the service restarts.
     # Creating it here means kgsm-web's deploy-assistant.sh can publish into a running service and
     # have the page live immediately, the same way every other deploy in the ecosystem behaves.
-    for d in "$PREFIX/service" "$PREFIX/service/wwwroot" "$PREFIX/cli" "$PREFIX/indexer" "$PREFIX/docs"; do
+    for d in "$PREFIX/service" "$PREFIX/service/wwwroot" "$PREFIX/cli" "$PREFIX/indexer" "$PREFIX/docs" \
+             "$PREFIX/prompts"; do
         if [[ ! -d "$d" ]]; then
             log "creating ${d} (owned by ${DEPLOY_USER})"
             $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" "$d"

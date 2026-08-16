@@ -69,7 +69,7 @@ any committed settings file — which declares each of them blank so the Control
 | `BlueprintAuthoring` | ✅ | ✅ | — | Autonomous catalog authoring (`create_blueprint`) |
 | `Rag` (retrieval) | ✅ | ✅ | — | Local doc retrieval (consumer) |
 | `Rag` (embedder + build) | ✅ (`index` verb) | reads only | ✅ | Embedding model + chunking |
-| `Prompts` | ✅ | (built-in) | — | Editable persona/tool prompts |
+| `Prompts` | ✅ | ✅ | — | The persona + tool definitions, on disk. **Required** |
 | `Assistant` | — | ✅ | — | Action policy, confirm/webhook/relay |
 | `KgsmAuth` | — | ✅ | — | The host's Discord application (shared) |
 | `DiscordOAuth` | — | ✅ | — | This surface's sign-in callback |
@@ -260,11 +260,38 @@ baseline is **off**, but the shipped Service env template
 | `ChunkSize` | `2000` | `Rag__ChunkSize` | Chunk target (chars); changing forces a full rebuild |
 | `ChunkOverlap` | `200` | `Rag__ChunkOverlap` | Chunk overlap (chars) |
 
-### `Prompts` — editable persona/tool text (CLI)
+### `Prompts` — the persona and tool definitions
+
+**This is not an override layer; it is where the assistant's text lives.** The prompt segments and the
+tool catalog are files, installed by `deploy/deploy.sh` from `deploy/prompts/` in this repo. Nothing
+equivalent is compiled into the binary, so a service pointed at a directory that lacks them **refuses
+to start**, naming the file it wants.
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `Directory` | _(CLI: XDG config home)_ | `Prompts__Directory` | `preamble.md`, `actions-*.md`, `voice.md`, `tools.json`; seed with `kgsm-assistant-cli --dump-prompts`; re-read every turn |
+| `Directory` | `<prefix>/prompts` | `Prompts__Directory` | `preamble.md`, `actions-allowed.md`, `actions-auto.md`, `actions-denied.md`, `voice.md`, `tools.json` |
+
+The two kinds of file are read on different schedules, and the difference is deliberate:
+
+- **The `.md` segments are re-read every turn.** Edit one and the next question uses it — no restart,
+  no rebuild, no deploy. A blank or half-saved file counts as absent for that turn rather than
+  blanking the prompt.
+- **`tools.json` is read once, at startup.** It is the contract between the model and the dispatcher;
+  swapping it under a turn already in flight would let a tool be offered and then not exist when it is
+  called. Editing it takes a restart, and the restart is what validates it.
+
+`tools.json` carries each tool's description, and each parameter's description, type, `required` flag
+and `enum`. What it does **not** carry is which tier a tool belongs to — that decides who is offered it
+and whether it is staged for confirmation, and it stays in code. A file that could move a staged
+command into the read-only tier would be a privilege escalation.
+
+Startup refuses a catalog that disagrees with the code: a tool the dispatcher can run and the file
+omits (the model silently loses a capability), a tool the file invents and nothing implements (the
+model calls it and the turn fails), a blank description, or an unknown parameter type.
+
+⚠ **A deploy overwrites this directory** (`rsync --delete`). That is the intended loop — tune the file
+on the running host, confirm the wording, then paste it back into `deploy/prompts/` so it ships. The
+deploy is the commit. Anything not copied back is lost on the next one.
 
 `voice.md` (inline: `Llm:Voice`) is the spoken-delivery segment, appended after the injected instance
 and blueprint lists only for a turn whose caller asked for `style: "voice"`. It is last so it is the

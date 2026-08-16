@@ -112,10 +112,19 @@ public class SystemPromptBuilder : ISystemPromptBuilder
 
     /// <summary>Resolves a segment: the calling leaf's file > the host-wide file > inline config >
     /// lib-owned constant default.</summary>
+    /// <summary>
+    /// The text for one segment: its file, else the inline config key. There is no third fallback —
+    /// a missing segment is a fault, not a turn answered from something the operator cannot see.
+    /// The startup check makes this unreachable in practice; it throws rather than returning empty
+    /// because a blank segment does not fail, it silently changes what the assistant is.
+    /// </summary>
     private string Effective(PromptSegment segment, string? leaf) =>
         _overrides.ReadText(segment.FileName, leaf)
         ?? NullIfBlank(_configuration[segment.ConfigKey])
-        ?? segment.Default;
+        ?? throw new AssistantTextUnavailableException(
+            $"The prompt segment '{segment.FileName}' is missing or empty, and '{segment.ConfigKey}' " +
+            "is not set either. The assistant's prompts live on disk — run deploy/deploy.sh to " +
+            "install them.");
 
     private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 }

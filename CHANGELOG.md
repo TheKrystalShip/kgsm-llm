@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0] - 2026-08-16
+
+### Changed — the prompts and the tool catalog are files, not code
+
+`TheKrystalShip.Kgsm.Assistant` **2.0.0** (breaking): the system-prompt text and the tool definitions
+no longer exist in C#. They live in `deploy/prompts/` — five `.md` segments and a `tools.json` —
+which `deploy.sh` installs to `<prefix>/prompts`. `KgsmAssistantPrompts`, `PromptScaffold` and
+`IPromptOverrides.OverlayTools` are gone; `IToolCatalog` (`DiskToolCatalog`) is new and required.
+
+Prompt text is edited far more often than the code around it, and a constant compiled into an
+assembly can only be changed by a rebuild and a redeploy. The precedence that made this possible
+already existed — it just had nothing to read, because nothing ever installed the files, so every host
+silently ran the compiled-in text.
+
+**The two file kinds are read on different schedules, deliberately.** The `.md` segments are re-read
+every turn: edit one and the next question uses it, no restart. `tools.json` is read once, at startup,
+because it is the contract between the model and the dispatcher — swapping it under a turn in flight
+would let a tool be offered and then not exist when it is called.
+
+**`tools.json` carries full schemas**: each tool's description, and every parameter's description,
+type, `required` flag and `enum`. It does **not** carry tier membership. Which tier a tool is in
+decides who is offered it and whether it is staged for confirmation, so it stays in code
+(`LlmTools.*Tier`) — a text file that could move a staged command into the read-only tier would be a
+privilege escalation.
+
+**Nothing falls back to a constant, so startup validates instead.** The service refuses to start —
+naming the file and what to do — on a missing or blank prompt segment, a missing/malformed
+`tools.json`, a tool the dispatcher can run that the file omits (the model would silently lose a
+capability), a tool the file invents that nothing implements (the model would call it and the turn
+would fail), a blank description, or an unknown parameter type. Both hosts report it as one line
+rather than a stack trace.
+
+⚠ **A deploy overwrites `<prefix>/prompts` (`rsync --delete`).** Tuning on a live host is the intended
+loop, but the wording has to be pasted back into `deploy/prompts/` or the next deploy discards it —
+the deploy is the commit.
+
+⚠ **A pre-existing `~/.config/kgsm-assistant/prompts/tools.json` is in the old format** (`params` as an
+object of name→description) and is now rejected. Delete it; the CLI then reads the installed set. A
+personal copy still wins when it contains a `tools.json` in the current format.
+
+`kgsm-assistant-cli --dump-prompts` is removed — the files are installed by the deploy.
+
+### Fixed — the assistant is told what a blueprint is
+
+The two runaway turns of 1.25.0 were the same confusion, 77 minutes apart: "what blueprints do we have
+installed" and "filter out the game servers that we already have installed" both mix a word for the
+catalog with a word for what is installed, and the model spent its whole context deliberating over
+which was meant. The prompt listed both sets and never said how they differ.
+
+It now defines them: a blueprint is a game type that CAN be installed and has no state of its own; an
+instance is a server that IS installed and has its own name. A question that mixes the words is about
+the instances and the game types they were made from — answer and move on. Both prompts now answer
+correctly and immediately.
+
 ## [1.26.0] - 2026-08-16
 
 ### Fixed — a turn that answers nothing says so

@@ -99,13 +99,27 @@ Things that bite if you don't know them:
   means. Every turn the *host* hands it an `AgentTurn` { prompt, fresh system prompt, the tool
   whitelist, a per-call `Gate` closure }. The offered tool set *is* the whitelist; the `Gate`
   authorizes each call and can hold state (e.g. an actions-per-message cap).
+- **The prompts and the tool catalog are FILES, not code.** `deploy/prompts/` in this repo is the
+  source; `deploy.sh` installs it to `<prefix>/prompts` with `rsync --delete` and the service reads it
+  from there. Nothing equivalent is compiled in: a host without those files **refuses to start**,
+  naming the file. The `.md` segments are re-read **every turn** (edit one, ask again — no restart);
+  `tools.json` is read **once at startup**, because it is the contract between the model and the
+  dispatcher and must not change under a turn in flight.
+  ⚠ **A deploy overwrites that directory.** Tuning on a live host is the intended loop, but paste the
+  wording back into `deploy/prompts/` or the next deploy discards it — the deploy is the commit.
+  ⚠ **Tier membership stays in code** (`LlmTools.*Tier`). `tools.json` carries descriptions, parameter
+  prose, types, `required` and `enum`; it does NOT carry which tier a tool is in, because that decides
+  who is offered it and whether it is staged. A file that could move a staged command into the
+  read-only tier would be a privilege escalation. `DiskToolCatalog` refuses a catalog that disagrees
+  with the dispatcher in either direction — a tool the code can run and the file omits, or a tool the
+  file invents and nothing implements.
 - **Inject the live instance/blueprint list into the system prompt every turn.** This is
   load-bearing, not cosmetic — without it the model wastes a round-trip calling `list_instances` to
   "ground" itself before acting (a measured finding; see `kgsm-llm.md §7a`). The prompt is rebuilt
   fresh each turn for this reason.
 - **A reply's shape is a per-turn input, and presentation only.** `POST /turn` takes an optional
-  `style`; `"voice"` appends the spoken-delivery segment (`KgsmAssistantPrompts.Voice`,
-  overridable as `voice.md` / `Llm:Voice`) after the injected lists, so it is the last thing the
+  `style`; `"voice"` appends the spoken-delivery segment (`voice.md`, or `Llm:Voice`)
+  after the injected lists, so it is the last thing the
   model reads. It rides the **turn**, not the leaf, because it describes where the answer lands and
   one leaf carries both surfaces — kgsm-bot sends it from a voice channel and omits it from a text
   channel under one identity. It reaches the system prompt and nothing else: the tools offered, the

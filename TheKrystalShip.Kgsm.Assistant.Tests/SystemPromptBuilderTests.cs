@@ -12,10 +12,10 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
-/// The prompt text lives in the library (<see cref="KgsmAssistantPrompts"/>) so every host shares it
-/// without copy-pasting config. These verify the precedence — editable file > inline Llm:* config >
-/// lib constant — and that the recorded <see cref="BuiltPrompt.TemplateHash"/> tracks the EDITABLE
-/// template (it moves when the persona changes, not when the injected live lists do).
+/// The prompt text is FILES, installed beside the service. These verify the precedence — editable
+/// file > inline Llm:* config, with no third fallback — and that the recorded
+/// <see cref="BuiltPrompt.TemplateHash"/> tracks the EDITABLE template (it moves when the persona
+/// changes, not when the injected live lists do).
 /// </summary>
 public sealed class SystemPromptBuilderTests : IDisposable
 {
@@ -30,6 +30,10 @@ public sealed class SystemPromptBuilderTests : IDisposable
             .Returns(Task.FromResult<IReadOnlyCollection<string>>(Array.Empty<string>()));
         _inventory.GetBlueprintCatalogAsync(Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<BlueprintSummary>>(Array.Empty<BlueprintSummary>()));
+
+        // The state a deploy leaves behind. Seeded once so a test that writes a segment afterwards is
+        // writing OVER the shipped text, which is what an operator's edit actually is.
+        ShippedText.SeedInto(_dir);
     }
 
     /// <summary>The catalog as the engine hands it over: an identifier and the game's real name.</summary>
@@ -44,11 +48,16 @@ public sealed class SystemPromptBuilderTests : IDisposable
         catch { /* best-effort temp cleanup */ }
     }
 
-    private SystemPromptBuilder Build(bool withDir = false, params (string key, string value)[] config)
+    /// <summary>
+    /// A builder over a directory seeded with the SHIPPED text, which is the state a deploy leaves
+    /// behind. <paramref name="seed"/> false leaves the directory empty, for the missing-file cases.
+    /// </summary>
+    private SystemPromptBuilder Build(bool seed = true, params (string key, string value)[] config)
     {
         var settings = config.ToDictionary(c => c.key, c => (string?)c.value);
-        if (withDir)
-            settings[FilePromptOverrides.DirectoryKey] = _dir;
+        settings[FilePromptOverrides.DirectoryKey] = _dir;
+        if (!seed && Directory.Exists(_dir))
+            Directory.Delete(_dir, recursive: true);
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var overrides = new FilePromptOverrides(configuration, NullLogger<FilePromptOverrides>.Instance);
@@ -62,22 +71,22 @@ public sealed class SystemPromptBuilderTests : IDisposable
     }
 
     [Fact]
-    public async Task NoConfig_UsesLibDefaultPreambleAndDeniedText()
+    public async Task ShippedFiles_ProvideThePreambleAndDeniedText()
     {
         var prompt = await Build().BuildAsync(canPerformActions: false);
 
-        prompt.Text.Should().StartWith(KgsmAssistantPrompts.Preamble);
-        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsDenied);
-        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsAllowed);
+        prompt.Text.Should().StartWith(ShippedText.Segment("preamble.md"));
+        prompt.Text.Should().Contain(ShippedText.Segment("actions-denied.md"));
+        prompt.Text.Should().NotContain(ShippedText.Segment("actions-allowed.md"));
     }
 
     [Fact]
-    public async Task NoConfig_AuthorizedCaller_UsesLibDefaultAllowedText()
+    public async Task ShippedFiles_AuthorizedCaller_GetTheAllowedText()
     {
         var prompt = await Build().BuildAsync(canPerformActions: true);
 
-        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsAllowed);
-        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsDenied);
+        prompt.Text.Should().Contain(ShippedText.Segment("actions-allowed.md"));
+        prompt.Text.Should().NotContain(ShippedText.Segment("actions-denied.md"));
     }
 
     [Fact]
@@ -85,9 +94,9 @@ public sealed class SystemPromptBuilderTests : IDisposable
     {
         var prompt = await Build().BuildAsync(canPerformActions: true, autoExecute: true);
 
-        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsAuto);
-        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsAllowed);
-        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsDenied);
+        prompt.Text.Should().Contain(ShippedText.Segment("actions-auto.md"));
+        prompt.Text.Should().NotContain(ShippedText.Segment("actions-allowed.md"));
+        prompt.Text.Should().NotContain(ShippedText.Segment("actions-denied.md"));
     }
 
     [Fact]
@@ -96,29 +105,31 @@ public sealed class SystemPromptBuilderTests : IDisposable
         // autoExecute can never widen authority: with canPerformActions=false it's still read-only.
         var prompt = await Build().BuildAsync(canPerformActions: false, autoExecute: true);
 
-        prompt.Text.Should().Contain(KgsmAssistantPrompts.ActionsDenied);
-        prompt.Text.Should().NotContain(KgsmAssistantPrompts.ActionsAuto);
+        prompt.Text.Should().Contain(ShippedText.Segment("actions-denied.md"));
+        prompt.Text.Should().NotContain(ShippedText.Segment("actions-auto.md"));
     }
 
     [Fact]
-    public async Task ConfigOverride_TakesPrecedenceOverLibDefault()
+    public async Task ConfigOverride_IsOutrankedByTheInstalledFile()
     {
+        // The file is what the host runs on. A config key set beside an installed file is the
+        // less specific of the two, and silently winning over the file an operator just edited is
+        // exactly the confusion this precedence exists to avoid.
         var prompt = await Build(config: new[]
         {
             ("Llm:Preamble", "CUSTOM PREAMBLE"),
             ("Llm:ActionsDenied", "CUSTOM DENIED"),
         }).BuildAsync(canPerformActions: false);
 
-        prompt.Text.Should().StartWith("CUSTOM PREAMBLE");
-        prompt.Text.Should().Contain("CUSTOM DENIED");
-        prompt.Text.Should().NotContain(KgsmAssistantPrompts.Preamble);
+        prompt.Text.Should().StartWith(ShippedText.Segment("preamble.md"));
+        prompt.Text.Should().NotContain("CUSTOM PREAMBLE");
     }
 
     [Fact]
     public async Task FileOverride_BeatsConfigAndConstant()
     {
         WriteSegment("preamble.md", "FILE PREAMBLE");
-        var prompt = await Build(withDir: true, config: new[] { ("Llm:Preamble", "CONFIG PREAMBLE") })
+        var prompt = await Build(seed: true, config: new[] { ("Llm:Preamble", "CONFIG PREAMBLE") })
             .BuildAsync(canPerformActions: false);
 
         prompt.Text.Should().StartWith("FILE PREAMBLE");
@@ -129,7 +140,7 @@ public sealed class SystemPromptBuilderTests : IDisposable
     public async Task BlankFile_FallsBackToConfigThenConstant()   // mid-save safety
     {
         WriteSegment("preamble.md", "   \n");   // whitespace-only ⇒ treated as absent
-        var prompt = await Build(withDir: true, config: new[] { ("Llm:Preamble", "CONFIG PREAMBLE") })
+        var prompt = await Build(seed: true, config: new[] { ("Llm:Preamble", "CONFIG PREAMBLE") })
             .BuildAsync(canPerformActions: false);
 
         prompt.Text.Should().StartWith("CONFIG PREAMBLE");
@@ -139,7 +150,7 @@ public sealed class SystemPromptBuilderTests : IDisposable
     public async Task EditingAFile_AppliesOnTheNextBuild_SameInstance()   // hot reload, no restart
     {
         WriteSegment("preamble.md", "VERSION ONE");
-        var builder = Build(withDir: true);
+        var builder = Build(seed: true);
 
         var first = await builder.BuildAsync(canPerformActions: false);
         first.Text.Should().StartWith("VERSION ONE");
@@ -217,9 +228,9 @@ public sealed class SystemPromptBuilderTests : IDisposable
         var afterInstall = (await Build().BuildAsync(canPerformActions: false)).TemplateHash;
         afterInstall.Should().Be(baseline);
 
-        // Edited persona → DIFFERENT hash.
-        var edited = (await Build(config: new[] { ("Llm:Preamble", "REWORDED") })
-            .BuildAsync(canPerformActions: false)).TemplateHash;
+        // Edited persona → DIFFERENT hash. Edited where an operator actually edits it: the file.
+        WriteSegment("preamble.md", "REWORDED");
+        var edited = (await Build().BuildAsync(canPerformActions: false)).TemplateHash;
         edited.Should().NotBe(baseline);
     }
 
@@ -242,7 +253,7 @@ public sealed class SystemPromptBuilderTests : IDisposable
         var prompt = await Build().BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
 
         prompt.Text.Should().Contain("READ ALOUD");
-        prompt.Text.TrimEnd().Should().EndWith(KgsmAssistantPrompts.Voice);
+        prompt.Text.TrimEnd().Should().EndWith(ShippedText.Segment("voice.md"));
         prompt.Text.IndexOf("READ ALOUD", StringComparison.Ordinal)
             .Should().BeGreaterThan(prompt.Text.IndexOf("terraria", StringComparison.Ordinal));
     }
@@ -250,11 +261,11 @@ public sealed class SystemPromptBuilderTests : IDisposable
     [Fact]
     public async Task VoiceStyle_IsAnEditableSegmentLikeTheOthers()
     {
-        var prompt = await Build(withDir: true).BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
+        var prompt = await Build(seed: true).BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
         prompt.Text.Should().Contain("READ ALOUD");
 
         WriteSegment("voice.md", "SAY IT SHORT");
-        var overridden = await Build(withDir: true).BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
+        var overridden = await Build(seed: true).BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
 
         overridden.Text.TrimEnd().Should().EndWith("SAY IT SHORT");
         overridden.Text.Should().NotContain("READ ALOUD");
@@ -279,7 +290,29 @@ public sealed class SystemPromptBuilderTests : IDisposable
         var denied = await Build().BuildAsync(canPerformActions: false, style: ReplyStyle.Voice);
         var allowed = await Build().BuildAsync(canPerformActions: true, style: ReplyStyle.Voice);
 
-        denied.Text.Should().Contain(KgsmAssistantPrompts.ActionsDenied);
-        allowed.Text.Should().Contain(KgsmAssistantPrompts.ActionsAllowed);
+        denied.Text.Should().Contain(ShippedText.Segment("actions-denied.md"));
+        allowed.Text.Should().Contain(ShippedText.Segment("actions-allowed.md"));
+    }
+
+    [Fact]
+    public async Task MissingSegmentFile_IsRefused_RatherThanAnsweredFromNothing()
+    {
+        // No fallback exists any more: a segment that is not on disk and not configured is a fault.
+        // Silently answering without the persona would not look like a failure — it would look like
+        // the assistant changing its mind about what it is.
+        var act = async () => await Build(seed: false).BuildAsync(canPerformActions: false);
+
+        await act.Should().ThrowAsync<AssistantTextUnavailableException>()
+            .WithMessage("*preamble.md*");
+    }
+
+    [Fact]
+    public async Task InlineConfig_StillAnswersWhenTheFileIsAbsent()
+    {
+        var prompt = await Build(seed: false,
+            ("Llm:Preamble", "CONFIGURED PREAMBLE"),
+            ("Llm:ActionsDenied", "CONFIGURED DENIED")).BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().StartWith("CONFIGURED PREAMBLE");
     }
 }

@@ -315,6 +315,24 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
 
 var app = builder.Build();
 
+// The prompts and tool definitions are files, installed beside the service. Prove they are there and
+// coherent HERE, at startup, rather than on the first question: a tool the catalog and the dispatcher
+// disagree about fails the turn it is called on, and a missing prompt segment does not look like a
+// fault at all — it looks like the assistant having changed its mind about what it is.
+try
+{
+    var promptsDir = AssistantTextCheck.Validate(app.Services);
+    app.Logger.LogInformation("Assistant text: prompts and tool definitions read from {Directory}", promptsDir);
+}
+catch (AssistantTextUnavailableException ex)
+{
+    // Exit rather than throw: systemd reports a clean failure code and the journal carries the one
+    // line that says what to fix, instead of an unhandled-exception dump around it.
+    app.Logger.LogCritical("Assistant text unusable: {Reason}", ex.Message);
+    Environment.Exit(1);
+    return;
+}
+
 app.UseCors();
 
 // The assistant's own web client, when one is installed: wwwroot/ under the content root
@@ -764,17 +782,16 @@ secured.MapGet("/auth/me", async (
 // The tools the caller is authorized to use, with names/descriptions/parameters. Fully server-derived
 // — no client input. Lets the SPA populate a tool picker, and backs the /tools chat command.
 static async Task<ToolDto[]> AuthorizedToolsAsync(
-    AuthPrincipal principal, AuthService auth, IPromptOverrides promptOverrides,
+    AuthPrincipal principal, AuthService auth, IToolCatalog catalog,
     IOptions<SearchOptions> searchOptions, CancellationToken ct)
 {
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
 
-    var tools = canPerform ? LlmTools.All : LlmTools.ReadOnly;
+    var tools = canPerform ? catalog.All : catalog.ReadOnly;
     // Mirror ServerAssistant.SelectTools: omit `search` when no source backs it (§D7), so the SPA's
     // picker never lists a tool the turn would reject.
     if (!searchOptions.Value.Available)
         tools = tools.Where(t => t.Tool != LlmTools.Search).ToArray();
-    tools = promptOverrides.OverlayTools(tools);
 
     return [.. tools.Select(t => new ToolDto(
         t.Name,
@@ -783,11 +800,11 @@ static async Task<ToolDto[]> AuthorizedToolsAsync(
             p.Name, p.Description, p.Required, p.Type, p.AllowedValues))]))];
 }
 
-secured.MapGet("/tools", async (HttpContext http, AuthService auth, IPromptOverrides promptOverrides,
+secured.MapGet("/tools", async (HttpContext http, AuthService auth, IToolCatalog catalog,
     IOptions<SearchOptions> searchOptions, CancellationToken ct) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    return Results.Ok(await AuthorizedToolsAsync(principal, auth, promptOverrides, searchOptions, ct));
+    return Results.Ok(await AuthorizedToolsAsync(principal, auth, catalog, searchOptions, ct));
 });
 
 // Three minutes of 16kHz mono 16-bit audio, which is the ceiling a recording is refused above.
@@ -871,7 +888,7 @@ secured.MapPost("/commands/{name}", async (
     AuthService auth,
     IConversationStore conversations,
     IConversationCompactor compactor,
-    IPromptOverrides promptOverrides,
+    IToolCatalog catalog,
     IConversationEventBus bus,
     IOptions<SearchOptions> searchOptions,
     IOptions<LlmBackendOptions> llmOptions,
@@ -934,7 +951,7 @@ secured.MapPost("/commands/{name}", async (
             return Results.Ok(new CommandResultDto(
                 command.Name,
                 "Here's what I can do for you.",
-                Tools: await AuthorizedToolsAsync(principal, auth, promptOverrides, searchOptions, ct)));
+                Tools: await AuthorizedToolsAsync(principal, auth, catalog, searchOptions, ct)));
 
         case "new":
         {

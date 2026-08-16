@@ -1,9 +1,5 @@
-using System.Text.Json;
-
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-
-using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant;
 
@@ -17,9 +13,6 @@ namespace TheKrystalShip.Kgsm.Assistant;
 public sealed class FilePromptOverrides : IPromptOverrides
 {
     public const string DirectoryKey = "Prompts:Directory";
-    public const string ToolsFileName = "tools.json";
-
-    private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
 
     private readonly string? _directory;
     private readonly ILogger<FilePromptOverrides> _logger;
@@ -73,67 +66,5 @@ public sealed class FilePromptOverrides : IPromptOverrides
             yield return Path.Combine(_directory!, validLeaf, fileName);
 
         yield return Path.Combine(_directory!, fileName);
-    }
-
-    public IReadOnlyList<LlmToolDefinition> OverlayTools(IReadOnlyList<LlmToolDefinition> tools, string? leaf = null)
-    {
-        if (_directory is null)
-            return tools;
-
-        // Whole-file precedence, unlike the per-segment fall-through above: a leaf that ships a
-        // tools.json owns the tool prose for its surface. Merging the two would produce a catalog
-        // half-worded for a button and half for a card, which is worse than either alone.
-        var path = CandidatePaths(ToolsFileName, leaf).FirstOrDefault(File.Exists);
-        if (path is null)
-            return tools;
-
-        Dictionary<Tool, ToolTextOverride?>? overrides;
-        try
-        {
-            var json = File.ReadAllText(path);
-            if (string.IsNullOrWhiteSpace(json))
-                return tools;
-
-            // JSON keys are strings; convert to Tool instances for typed lookup.
-            var raw = JsonSerializer.Deserialize<Dictionary<string, ToolTextOverride?>>(json, Json);
-            overrides = raw?.ToDictionary(kv => new Tool(kv.Key), kv => kv.Value);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not read tool-description overrides {File}; using defaults", path);
-            return tools;
-        }
-
-        if (overrides is null || overrides.Count == 0)
-            return tools;
-
-        return tools.Select(t => Apply(t, overrides)).ToArray();
-    }
-
-    /// <summary>Overlays a single tool's description/param-descriptions; the name is never touched.</summary>
-    private static LlmToolDefinition Apply(LlmToolDefinition tool, IReadOnlyDictionary<Tool, ToolTextOverride?> overrides)
-    {
-        if (!overrides.TryGetValue(tool.Tool, out var o) || o is null)
-            return tool;
-
-        var description = string.IsNullOrWhiteSpace(o.Description) ? tool.Description : o.Description!.Trim();
-
-        var parameters = tool.Parameters;
-        if (o.Params is { Count: > 0 })
-        {
-            parameters = tool.Parameters
-                .Select(p => o.Params.TryGetValue(p.Name, out var pd) && !string.IsNullOrWhiteSpace(pd)
-                    ? p with { Description = pd!.Trim() }
-                    : p)
-                .ToArray();
-        }
-
-        return tool with { Description = description, Parameters = parameters };
-    }
-
-    private sealed class ToolTextOverride
-    {
-        public string? Description { get; set; }
-        public Dictionary<string, string?>? Params { get; set; }
     }
 }

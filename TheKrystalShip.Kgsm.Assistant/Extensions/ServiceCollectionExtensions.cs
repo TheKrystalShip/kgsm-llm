@@ -36,9 +36,13 @@ public static class ServiceCollectionExtensions
         // window without waiting out the real one.
         services.TryAddSingleton(SettlementTiming.Default);
         services.AddSingleton<IToolDispatcher, ToolDispatcher>();
-        // The hot-editable prompt/tool-description layer (off unless Prompts:Directory is set). Used
-        // by the prompt builder (segments) and the assistant (tool-description overlay).
+        // The prompt segments, read from Prompts:Directory on every turn so an edit applies to the
+        // next question with no restart.
         services.TryAddSingleton<IPromptOverrides, FilePromptOverrides>();
+        // The tool catalog, read from the same directory ONCE — a turn must not have the contract
+        // change underneath it. Its constructor validates the file against the dispatcher, so a host
+        // that resolves it at startup (AssistantTextCheck) fails to come up on a bad edit.
+        services.TryAddSingleton<IToolCatalog, DiskToolCatalog>();
         services.AddSingleton<ISystemPromptBuilder, SystemPromptBuilder>();
         // The relevance seam: a deliberate no-op today (coarse/bulk tools are the
         // small-model fix). A host can override with its own filter before this call.

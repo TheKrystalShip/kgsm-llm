@@ -97,26 +97,6 @@ if (string.IsNullOrWhiteSpace(builder.Configuration["Prompts:Directory"]))
 if (!string.IsNullOrWhiteSpace(cli.Label))
     builder.Configuration["Recording:Label"] = cli.Label;
 
-// --dump-prompts: seed editable DEFAULT prompt + tool-description files (never clobbering edits),
-// then exit. Pure file IO — needs neither kgsm nor Ollama, so it runs before any validation below.
-if (cli.DumpPrompts)
-{
-    var promptsDir = builder.Configuration["Prompts:Directory"]!;
-    try
-    {
-        var dump = TheKrystalShip.Kgsm.Assistant.PromptScaffold.WriteDefaults(promptsDir);
-        foreach (var p in dump.Written) Console.Error.WriteLine($"wrote   {p}");
-        foreach (var p in dump.Skipped) Console.Error.WriteLine($"exists  {p}  (kept)");
-        Console.Error.WriteLine($"\nEdit these under {promptsDir}; changes apply on the next turn.");
-        return ExitOk;
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"kgsm-assistant: could not write prompt files to '{promptsDir}' — {ex.Message}");
-        return ExitRuntime;
-    }
-}
-
 // --- Logging: quiet by DEFAULT (floor at Warning), everything to stderr so stdout is the reply.
 var noColor = cli.NoColor || Environment.GetEnvironmentVariable("NO_COLOR") is not null;
 builder.Logging.ClearProviders();
@@ -163,6 +143,19 @@ catch (Exception ex)
 
 using (host)
 {
+    // The prompts and tool definitions are files. Prove they are there and coherent before asking a
+    // question, so a missing or mis-edited one is a sentence on stderr rather than a stack trace —
+    // or, worse for a prompt segment, an assistant quietly behaving like something else.
+    try
+    {
+        AssistantTextCheck.Validate(host.Services);
+    }
+    catch (AssistantTextUnavailableException ex)
+    {
+        Console.Error.WriteLine($"kgsm-assistant: {ex.Message}");
+        return ExitRuntime;
+    }
+
     // Provenance once per process: every kgsm mutation this session runs is attributed to cli:<osuser>.
     var invocation = host.Services.GetRequiredService<IInvocationContext>();
     using var provenance = invocation.Begin(Invocation.ForCli(Environment.UserName));
@@ -215,12 +208,12 @@ using (host)
     var store = host.Services.GetRequiredService<IConversationStore>();
 
     // What /tools lists, resolved the same way the turn selects them — the authorized set, minus
-    // `search` when nothing backs it, with any prompt override applied. Listing a tool the turn would
-    // reject would be the surface lying about its own reach.
-    var offered = canPerformActions ? LlmTools.All : LlmTools.ReadOnly;
+    // `search` when nothing backs it. Listing a tool the turn would reject would be the surface lying
+    // about its own reach.
+    var catalog = host.Services.GetRequiredService<IToolCatalog>();
+    var offered = canPerformActions ? catalog.All : catalog.ReadOnly;
     if (!host.Services.GetRequiredService<IOptions<SearchOptions>>().Value.Available)
         offered = [.. offered.Where(t => t.Tool != LlmTools.Search)];
-    offered = host.Services.GetRequiredService<IPromptOverrides>().OverlayTools(offered);
 
     return await Repl.RunAsync(
         runner, interruptor, compactor, store, offered, canPerformActions, colorErr);
@@ -259,12 +252,22 @@ static string DefaultRecordingDir()
     return Path.Combine(dataHome, "kgsm-assistant", "transcripts");
 }
 
-// Editable prompt/tool-description files are settings, so they live under the XDG *config* home.
+// The prompts and tool definitions the assistant RUNS on, installed by deploy.sh beside the binary
+// (../prompts, since the CLI lands in <prefix>/cli). A personal copy under the XDG config home still
+// wins when one exists, so a developer can try wording out without touching the installed set — but
+// the installed set is the default, because the CLI and the service answering the same question
+// differently, because one of them found a stale file in a home directory, is not a difference
+// anybody would think to look for.
 static string DefaultPromptsDir()
 {
     var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
     var configHome = !string.IsNullOrWhiteSpace(xdg)
         ? xdg
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
-    return Path.Combine(configHome, "kgsm-assistant", "prompts");
+
+    var personal = Path.Combine(configHome, "kgsm-assistant", "prompts");
+    if (File.Exists(Path.Combine(personal, DiskToolCatalog.FileName)))
+        return personal;
+
+    return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "prompts"));
 }

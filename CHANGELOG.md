@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.2] - 2026-08-16
+
+### Fixed — the selected backend is the one that comes up at boot
+
+`use-backend.sh` moves Ollama's whole boot surface, not just its daemon, and masks `ollama.service`
+while llama.cpp is selected.
+
+`disable` decides only whether a *target* wants a unit; a `Requires=ollama.service` from any enabled
+unit starts a disabled Ollama at boot regardless. `ollama-preload.service` is such a unit and was
+outside what the switch touched, so a llama.cpp host booted Ollama anyway and pinned `gemma4:12b`
+into VRAM with `keep_alive:-1` — a second copy of the weights on the card the chat model is sized
+for. `kgsm-llama-chat`'s `Conflicts=ollama.service` reclaimed it, but only once something started
+the chat unit, which under the on-demand chat mode is the first request and not boot.
+
+The switch now stops and disables both `ollama.service` and `ollama-preload.service`, and masks the
+daemon so nothing can pull it in; the Ollama branch unmasks before enabling. `status` reports both
+units, so a masked backend is visible rather than inferred. Preload is left disabled on a switch to
+Ollama — residency is the operator's call there for the same reason `use-chat-mode.sh` owns it on the
+llama.cpp side — and the switch prints how to turn it on.
+
 ## [1.24.0] - 2026-08-16
 
 ### Added — the assistant reports on itself

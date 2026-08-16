@@ -149,3 +149,12 @@ anything else on the card (`kgsm-speech` holds whisper and kokoro while it is ru
 `kgsm-llama-chat` declares `Conflicts=ollama.service`: one GPU holds one copy of the weights, and
 two services each reserving them is how the second one fails to allocate. Drop that line on a host
 with the headroom to run both.
+
+`Conflicts=` only settles which backend wins **once the chat unit starts**, so it is the last line of
+defence and not the mechanism. Under the on-demand chat mode nothing starts the chat unit until the
+first request, and a copy of the model loaded at boot holds the card for as long as nobody chats.
+Boot state is what `use-backend.sh` owns: it disables the losing backend's units and additionally
+**masks `ollama.service`** while llama.cpp is selected. Masking is what makes the choice hold —
+`disable` governs only whether a *target* wants a unit, so any unit declaring `Requires=ollama.service`
+starts a disabled Ollama at boot regardless. `ollama-preload.service` is exactly such a unit, which is
+why the switch stops and disables it as part of Ollama's boot surface rather than the daemon alone.

@@ -889,6 +889,7 @@ secured.MapPost("/commands/{name}", async (
     IConversationStore conversations,
     IConversationCompactor compactor,
     IToolCatalog catalog,
+    IMemoryStore memories,
     IConversationEventBus bus,
     IOptions<SearchOptions> searchOptions,
     IOptions<LlmBackendOptions> llmOptions,
@@ -952,6 +953,20 @@ secured.MapPost("/commands/{name}", async (
                 command.Name,
                 "Here's what I can do for you.",
                 Tools: await AuthorizedToolsAsync(principal, auth, catalog, searchOptions, ct)));
+
+        case "memory":
+        {
+            // Resolved through the same key the turn uses, so typing this in a room shows what that
+            // ROOM remembers rather than what the person asking does.
+            var owner = MemoryScope.OwnerOf(conversationId);
+            var remembered = memories.List(owner).Select(MemoryDto.From).ToArray();
+            return Results.Ok(new CommandResultDto(
+                command.Name,
+                remembered.Length == 0
+                    ? "I haven't written anything down yet."
+                    : $"Here's what I remember ({remembered.Length}).",
+                Memories: remembered));
+        }
 
         case "new":
         {
@@ -1052,6 +1067,36 @@ secured.MapPost("/commands/{name}", async (
                 $"/{command.Name} is listed but not implemented.",
                 statusCode: StatusCodes.Status501NotImplemented);
     }
+});
+
+// What the assistant remembers about the caller, and dropping one of them.
+//
+// ⚠ The owner is resolved through ConversationSurfaces.Key + MemoryScope, never composed inline as
+// web:{userId}. In a room these must address the ROOM's memory — composing it per-endpoint is exactly
+// how compacting a room quietly folded the caller's own chat and reported success.
+//
+// Memory is personal, so both are viewer-gated like the conversation reads beside them: seeing and
+// deleting what is remembered about YOU needs no authority over any server.
+secured.MapGet("/memories", (HttpContext http, IMemoryStore memories) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.UserId, chatScope: null));
+    return Results.Ok(memories.List(owner).Select(MemoryDto.From).ToArray());
+});
+
+secured.MapDelete("/memories/{key}", (string key, HttpContext http, IMemoryStore memories) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.UserId, chatScope: null));
+
+    // Sanitised the same way the tool sanitises what the model writes, so a key shown in a listing
+    // addresses the same row when it comes back. Idempotent: forgetting what is already forgotten is
+    // the state the caller asked for, not an error to handle.
+    var sanitized = MemoryKey.Sanitize(key);
+    if (sanitized is not null)
+        memories.Forget(owner, sanitized);
+
+    return Results.NoContent();
 });
 
 // The caller's own past chats (the reverse path): list every conversation under their server-derived

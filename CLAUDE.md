@@ -126,6 +126,18 @@ Things that bite if you don't know them:
   authority and the propose-then-confirm rule are identical in every style, and an unrecognised
   value fails open to the written answer. Measure a change to it with `kgsm-assistant-eval voice
   --shipped-prompts`, which reports reply length against a trajectory floor.
+- **Memory belongs to an OWNER, not a conversation.** `remember`/`forget`/`recall` write things that
+  outlast the conversation they were said in; a one-line index is injected into every later turn's
+  system prompt (below the hashed template, like the live server lists — hashed in, every person
+  would produce a different prompt id). The owner is the conversation id up to its second `:`
+  (`MemoryScope`), so `web:{user}:{chat}` → `web:{user}`, and a room owns its own. It is **ambient for
+  the turn** (`MemoryOwner`), never a tool argument, and the scope is opened in
+  `ServerAssistant.ProduceStreamAsync` beside the confirmation/progress/search scopes — the yield-free
+  flow the dispatcher runs on. Storage is append-only, latest-wins per key, in the conversation
+  database. ⚠ **A memory carries what it was TOLD, never what a tool MEASURED** — a remembered port
+  repeated months later is a confident wrong answer. That rule is prompt-enforced and **the model does
+  not always hold it** (`Eval/CLAUDE.md`, case `J2`); what bounds the harm is the recall-side framing,
+  measured to keep the model calling the tool anyway.
 - **Propose, then confirm — mutations never execute inside a turn.** A mutating tool call *stages*
   the action and returns a confirmation token; the user confirms out-of-band (`/confirm` on the
   Service, interactive y/N on the CLI). A run with no confirmation touches no server.

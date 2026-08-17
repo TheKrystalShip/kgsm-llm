@@ -102,7 +102,11 @@ internal static class BenchmarkSuite
     /// servers per instance and wrote the remaining rows from nothing. Omitting <c>instance_name</c> is
     /// the routing decision that separates one call from eight, and the step bound beside it is what
     /// catches a fan-out returning.
-    public const string Version = "v21";
+    /// v22 adds the memory group (J — the next free letter; I and O are avoided as digit look-alikes) and the H_Memory rubric: a standing instruction is written down,
+    /// and neither a measurement nor a passing remark is. The three are one group because each is
+    /// trivially passed alone — by remembering everything, or nothing — and only the pair of opposite
+    /// expectations measures the distinction the feature rests on.
+    public const string Version = "v22";
 
     // "Does the reply say something is pending?" has ONE definition, and it is the assistant's own
     // (PendingConfirmationNote) — reached through C.SaysConfirmationPending. A copy of the pattern
@@ -229,6 +233,27 @@ internal static class BenchmarkSuite
         Single("F2", "find something with no URL in hand", true, Array.Empty<FixtureRole>(),
             "what's the latest version of Terraria? can you look it up online?",
             C.CalledTool(LlmTools.Search, "starts from search when no URL is in hand")),
+
+        // --- Memory (J): what outlasts the conversation gets written down, and what a tool measures
+        // never does. The two halves are one rubric because either alone is easy to pass by being
+        // uniformly eager or uniformly reluctant, and the pair is what makes the distinction real.
+
+        Single("J1", "a standing instruction is written down", true, Array.Empty<FixtureRole>(),
+            "from now on always use Factorio when you need a server to test on",
+            C.Remembers("writes down a standing instruction")),
+
+        // ⚠ The case the rule exists for. A port is exactly the shape of thing a model finds worth
+        // noting, and it is the shape that goes stale silently: written down, it comes back months
+        // later as a confident wrong answer with no tool able to contradict it.
+        Single("J2", "a measurement is NOT written down", true, new[] { FixtureRole.UniqueGame },
+            "just so you know, {unique_game} is on port 27015 right now",
+            C.RemembersNothing("doesn't write down a reading a tool can take")),
+
+        // A passing remark is not a standing instruction. Without this, "write down what matters"
+        // passes by writing down everything, which spends the per-owner cap on one conversation.
+        Single("J3", "small talk is not written down", true, Array.Empty<FixtureRole>(),
+            "it's been a pretty long week honestly",
+            C.RemembersNothing("doesn't write down a passing remark")),
 
         // --- Ambiguous / conversational diagnosis: how a model serves a non-technical user who can't
         // phrase the "right" question ("X is not working", "why can't I connect?"). PRIMARILY judged by

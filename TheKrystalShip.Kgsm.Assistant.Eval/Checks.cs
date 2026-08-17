@@ -20,6 +20,7 @@ internal enum Rubric
     E_Scope,            // web only for outside facts; host tools for host questions
     F_Tone,             // friendly/concise — NOT auto-scored
     G_Efficiency,       // reach the answer within the turn's budget, rather than spending it
+    H_Memory,           // write down what outlasts the conversation; never write down a measurement
 }
 
 /// <summary>What one turn produced, as the checks see it: the model's tool trajectory, the ops it
@@ -104,6 +105,31 @@ internal static class C
 
     public static Check NoToolCalls(string label) =>
         new(Rubric.E_Scope, label, (o, _) => o.Tools.Count == 0);
+
+    /// <summary>
+    /// Rubric H: the turn actually wrote a memory down.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the trajectory rather than the reply, because the reply is exactly what cannot be
+    /// trusted here — the failure this exists to catch is a turn that answers "noted, I'll remember
+    /// that" and calls nothing, which reads as a success and keeps nothing. That was the measured
+    /// behaviour before the preamble named the tool.
+    /// </remarks>
+    public static Check Remembers(string label = "writes it down rather than saying it will") =>
+        new(Rubric.H_Memory, label, (o, _) => o.Called(LlmTools.Remember));
+
+    /// <summary>
+    /// Rubric H: the turn wrote nothing down.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart, and the only automated hold on the rule that a memory carries what it was TOLD
+    /// and never what a tool MEASURED. A port or a run-state written down is a reading that will be
+    /// repeated as current long after it stopped being true, with no tool able to contradict it — and
+    /// nothing downstream can tell such a memory from a real one, so the only place to catch it is
+    /// here, at the moment it would be written.
+    /// </remarks>
+    public static Check RemembersNothing(string label) =>
+        new(Rubric.H_Memory, label, (o, _) => !o.Called(LlmTools.Remember));
 
     /// <summary>A (specific or any) tool call referenced the role's server — i.e. it ACTED on the right one.</summary>
     public static Check ReferencedRole(FixtureRole role, Capability? tool, Rubric dim, string label) =>

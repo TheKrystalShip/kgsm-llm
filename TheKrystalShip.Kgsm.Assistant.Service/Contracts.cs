@@ -111,7 +111,28 @@ public sealed record CommandResultDto(
     bool? State = null,
     CompactionResultDto? Compaction = null,
     IReadOnlyList<CommandDto>? Commands = null,
-    IReadOnlyList<ToolDto>? Tools = null);
+    IReadOnlyList<ToolDto>? Tools = null,
+    IReadOnlyList<MemoryDto>? Memories = null);
+
+/// <summary>
+/// One thing the assistant remembers about the caller, as a surface shows it.
+/// </summary>
+/// <param name="Key">Its stable slug — what <c>DELETE /memories/{key}</c> names.</param>
+/// <param name="Summary">The line injected into every turn.</param>
+/// <param name="Body">The detail, read on demand; empty when the summary said everything.</param>
+/// <param name="WrittenAt">
+/// When it was written. Shown rather than hidden: a memory is something the assistant was told, and
+/// how long ago is the only thing that says how much weight it still carries.
+/// </param>
+public sealed record MemoryDto(
+    string Key,
+    string Summary,
+    string Body,
+    DateTimeOffset WrittenAt)
+{
+    public static MemoryDto From(TheKrystalShip.Llm.Models.MemoryRecord memory) =>
+        new(memory.Key, memory.Summary, memory.Body, memory.WrittenAt);
+}
 
 /// <summary>
 /// The body of <c>POST /commands/{name}</c>: which conversation the command applies to, and the

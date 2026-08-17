@@ -83,6 +83,10 @@ public static class ChatCommands
         new("compact", "Summarize this conversation in place to free up context",
             KgsmTier.Viewer, Mutates: true, Options: []),
         new("new", "Start a fresh conversation", KgsmTier.Viewer, Mutates: true, Options: []),
+        // Listing only. Dropping ONE memory needs to name it, and nothing here takes free text — so
+        // that lives on DELETE /memories/{key} and the surfaces that render this list.
+        new("memory", "Show what the assistant remembers about you",
+            KgsmTier.Viewer, Mutates: false, Options: []),
         new("think", "Whether the assistant reasons step by step before answering",
             KgsmTier.Viewer, Mutates: true, Options: [StateOption("step-by-step reasoning")]),
         new("autorun", "Whether authorized actions run without asking you to confirm each one",

@@ -112,7 +112,14 @@ log "syncing publish trees → ${PREFIX}"
 # prefix is still a sibling's artifact. setup.sh creates the directory for the same reason.
 rsync -a --delete --exclude='*.pdb' --exclude='*.xml' --exclude='/wwwroot/' \
     "$PUB/service/" "$PREFIX/service/"
-rsync -a --delete --exclude='*.pdb' --exclude='*.xml' "$PUB/cli/"     "$PREFIX/cli/"
+# ⚠ The CLI resolves its conversation database to a file BESIDE its binary — it has no state
+# directory of its own, unlike the service — so the database lives inside the tree being synced.
+# Excluded from --delete because it is state, not an artifact: without this, every deploy destroys
+# the CLI's whole conversation history and everything the assistant has remembered about anyone who
+# talks to it there. The -wal/-shm siblings go with it; deleting those alone corrupts an open store.
+rsync -a --delete --exclude='*.pdb' --exclude='*.xml' \
+    --exclude='/conversations.db' --exclude='/conversations.db-wal' --exclude='/conversations.db-shm' \
+    "$PUB/cli/" "$PREFIX/cli/"
 
 # The prompts and tool definitions the assistant runs on. They are SHIPPED ARTIFACTS, not state:
 # --delete and no exceptions, so what is installed is exactly what this commit says. That is also

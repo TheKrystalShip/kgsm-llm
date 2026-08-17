@@ -201,6 +201,22 @@ run in CI without a model. A live run is the only thing that exercises the model
 - **Corpus version discipline:** bump `BenchmarkSuite.Version` when you change an EXISTING case's
   checks (old result files then compare honestly; `compare` warns across the change). Pure additions
   are also a bump-worthy change to "overall", but per-check diffs still line up by id+label.
+- **Known model finding — `J2` is red and prompt tuning does not move it.** Told a measurement
+  conversationally ("just so you know, X is on port 27015 right now"), gemma4:12b writes it to memory
+  **3/3**, against a rule stated in the preamble, in the `remember` tool description, and again in the
+  injected memory block. Three wordings were measured — a category list, the rule restated as a test
+  the model applies before calling, and a hard REFUSE in the tool description itself — and all three
+  scored 0/3 while `J1`/`J3` stayed 3/3. It is left red rather than deleted or softened: the check is
+  a correct trajectory assertion and the model is what fails it. The harm is bounded rather than
+  fixed — with a deliberately wrong port memory seeded, the model still called the status tool and
+  did not answer from the memory, which is the recall-side framing holding. Do not "fix" this by
+  weakening the check.
+- **Unrelated defect the corpus cannot see: measured numbers drift in the reply.** Asked "what port is
+  palworld on?" with **zero memories present**, gemma4:12b reported `17015/udp` on 2 of 3 reps where
+  the instance config says `27015/udp`; the same question phrased "what ports does Ketchup use?"
+  answered correctly 3/3. The tool call and its result are right and the digit changes on the way into
+  the prose. Invariant #1 is why no check here catches it — scoring the world fact is exactly what the
+  corpus refuses to do — so it is recorded here rather than encoded as a case.
 - **Known model finding (corpus v2):** gemma4:12b handles the ambiguous `G` cases well;
   **qwen3.5:9b intermittently returns an EMPTY reply after tool calls** on open-ended diagnostic
   prompts (CLI-confirmed, not a harness artifact) and misses network-exposure reasoning. The

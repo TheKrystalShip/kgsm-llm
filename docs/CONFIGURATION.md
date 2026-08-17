@@ -59,6 +59,7 @@ any committed settings file — which declares each of them blank so the Control
 |---------|:---:|:-------:|:-------:|---------|
 | `Llm` | ✅ | ✅ | — | Chat model client and which server serves it |
 | `Conversation` | ✅ | ✅ | — | Per-turn short-term memory |
+| `Memory` | ✅ | ✅ | — | What outlasts a conversation, per owner |
 | `LlmAgent` | ✅ | ✅ | — | Agent-loop safety caps |
 | `Recording` | ✅ (on) | ✅ (off) | — | Transcript corpus (opt-in) |
 | `KGSM` | ✅ | ✅ | — | Path to `kgsm.sh` |
@@ -132,6 +133,23 @@ place and there is no second id to move to.
 
 `CompactAtPercent` is well under 100 on purpose: it is measured on the turn that just finished, and the
 next one still needs room for a fresh system prompt, the injected server lists, and its tool output.
+
+### `Memory` — what outlasts a conversation (`MemoryOptions`)
+
+| Key | Default | Env | Notes |
+|-----|---------|-----|-------|
+| `MaxPerOwner` | `64` | `Memory__MaxPerOwner` | Most memories one owner may hold. A write past it is refused naming the cap, never evicted |
+| `MaxSummaryLength` | `200` | `Memory__MaxSummaryLength` | Longest one-line summary — the line injected into every turn |
+| `MaxBodyLength` | `2000` | `Memory__MaxBodyLength` | Longest body, read only on demand |
+
+Memories live in the **same SQLite file** as the conversation history
+(`Conversation:DatabasePath`), so there is deliberately no path of their own: one file is this
+assistant's whole durable state, and a second path would let the two halves land on different disks.
+
+A memory belongs to an **owner** — the conversation id up to its second `:` — so `web:{user}:{chat}`
+resolves to `web:{user}` and crosses that person's chats, while `room:{room}` owns its own. Every
+limit here is a **context** budget rather than a storage one: each memory costs a line in every system
+prompt built for that owner, which is why the cap refuses rather than evicting.
 
 ### `LlmAgent` — agent loop (`LlmAgentOptions`)
 

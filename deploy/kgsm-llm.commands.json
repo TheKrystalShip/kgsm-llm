@@ -17,6 +17,12 @@
         "options": []
       },
       {
+        "name": "memory",
+        "description": "Show what the assistant remembers about you",
+        "mutates": false,
+        "options": []
+      },
+      {
         "name": "new",
         "description": "Start a fresh conversation",
         "mutates": true,

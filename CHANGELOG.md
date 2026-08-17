@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.0] - 2026-08-17
+
+### Added — a person can see and prune what is remembered about them
+
+`GET /memories` lists what the assistant has written down about the caller and
+`DELETE /memories/{key}` drops one, both viewer-gated and principal-scoped: seeing and pruning what is
+remembered about you needs no authority over any server. `/memory` in the chat command catalog lists
+the same thing, so every surface reads it from one place. Both resolve the owner through
+`ConversationSurfaces.Key` — in a room they address the room's memory, never the caller's own.
+
+Listing only: nothing in the command catalog takes free text, so dropping one memory names it through
+the route rather than through a command argument.
+
+### Added — the memory group in the benchmark (corpus v22, rubric `H_Memory`)
+
+A standing instruction is written down (`J1`), and neither a measurement (`J2`) nor a passing remark
+(`J3`) is. Each is trivially passed alone by remembering everything or nothing, so the opposite
+expectations are what measure the distinction.
+
+⚠ **`J2` is red and three wordings did not move it.** Told a measurement conversationally, gemma4:12b
+writes it down 3/3 against a rule stated in the preamble, the tool description and the injected memory
+block. It is left red rather than softened — the check is correct and the model is what fails it. The
+harm is bounded rather than fixed: with a deliberately wrong port memory seeded, the model still
+called the status tool instead of answering from it.
+
+The rest of the suite is unchanged by the preamble edit — 195/196 checks, every other dimension 1.00.
+
+### Fixed — a deploy no longer destroys the CLI's history and memories
+
+`deploy.sh` syncs the CLI's publish tree with `--delete`, and the CLI resolves its conversation
+database to a file beside its binary — inside that tree. Every deploy therefore deleted the whole CLI
+conversation corpus and everything the assistant had remembered about anyone who talks to it there.
+The database and its `-wal`/`-shm` siblings are excluded from that sync.
+
 ## [1.34.0] - 2026-08-17
 
 ### Added — the assistant remembers

@@ -1,16 +1,16 @@
 {
   "server_info": {
-    "description": "Look up a game server. With NO instance_name: covers every server at once — this is the right tool for \"what's running?\" / \"list the servers\". With instance_name: reports on that one server. The 'aspect' parameter picks WHAT to report (status by default, or its config, version, connected players, backups, note, or autostart setting) — use it instead of reading files to answer those.",
+    "description": "Reports on instances — the servers that are installed. With no instance_name it covers every instance at once; with one it covers that instance. The 'aspect' parameter picks what is reported. The default aspect, status, gives whether the instance is running plus its headline details, including the port it is configured to use. This covers an installed instance; blueprint_info covers a game type that is not installed.",
     "params": [
       {
         "name": "instance_name",
-        "description": "The server to report on. OMIT this to cover EVERY server at once — always do that for questions like \"which servers are running?\" instead of checking servers one at a time.",
+        "description": "One instance to report on. Omitted, the report covers every instance at once, which answers a question about the whole fleet in a single call.",
         "required": false,
         "type": "string"
       },
       {
         "name": "aspect",
-        "description": "Optional, defaults to \"status\" (is it running, and its headline detail). Pick another to answer a narrower question: \"config\" a summary of its KGSM settings (to see the raw configuration file, use read_file), \"version\" the installed version and whether an update is available, \"players\" who is connected right now, \"backups\" the backups it has, \"note\" its operator note, \"autostart\" whether it starts at boot.",
+        "description": "What to report. status (the default): whether the instance is running, and its headline details including the port it is configured to use. config: a summary of its KGSM settings, where read_file shows the raw configuration file. version: the version this instance has installed and whether an update is available — this is the instance's own installed version, where search covers what the game's developers have published. players: who is connected right now. backups: the backups it has. note: its operator note. autostart: whether it starts at boot.",
         "required": false,
         "type": "string",
         "enum": [
@@ -26,11 +26,11 @@
     ]
   },
   "host_info": {
-    "description": "Report on the HOST MACHINE itself rather than any one server — its uptime, load, memory, disk space, external IP address and whether a reboot is pending. Use \"ports\" to see what is bound on the host and \"conflicts\" to find servers configured to want the same port. Use this for \"is the machine running out of space/memory?\", \"how busy is the host?\", or \"is anything fighting over a port?\".",
+    "description": "Reports on the host machine the instances run on, rather than on any one instance.",
     "params": [
       {
         "name": "aspect",
-        "description": "Optional, defaults to \"vitals\" (uptime, load, memory, disk, external IP, whether a reboot is pending). Use \"ports\" for what is currently bound on the host, or \"conflicts\" for servers configured to want the same port.",
+        "description": "What to report. vitals (the default): uptime, load, memory, disk, external IP, and whether a reboot is pending. ports: what is currently bound on the host. conflicts: instances configured to want the same port.",
         "required": false,
         "type": "string",
         "enum": [
@@ -42,28 +42,28 @@
     ]
   },
   "blueprint_info": {
-    "description": "Look up the game types (blueprints) that can be installed. With NO blueprint_name: lists all of them. With one: describes that game type in detail — the ports it needs, its resource requirements, and what it supports. Use this to answer \"what games can I run?\" or \"what does Valheim need?\" BEFORE proposing an install.",
+    "description": "Reports on blueprints — the game types that can be installed. With no blueprint_name it lists every blueprint. With one it describes that game type: the ports it needs, its resource requirements, and what it supports. A blueprint is a recipe, so this reports what a game type would need, never the state of anything running; server_info reports on an instance that is installed.",
     "params": [
       {
         "name": "blueprint_name",
-        "description": "Optional. A game to describe in detail — its ports, resource needs, and what it supports — by the name it is listed under. OMIT it to list every game that can be installed.",
+        "description": "One blueprint to describe in detail — the ports it needs, its resource needs, and what it supports — by the name it is listed under. Omitted, it lists every game type that can be installed.",
         "required": false,
         "type": "string"
       }
     ]
   },
   "events": {
-    "description": "Get the history of what has happened, read straight from KGSM's own event log — most recent first. Covers one server (with instance_name) or every server (without). Use the default scope for \"what happened to X?\" / \"has X crashed recently?\", and scope=changes for \"what changed on X?\" or \"when was X last updated?\".",
+    "description": "The history of what has happened, read from KGSM's own event log, most recent first. Covers one instance with instance_name, or every instance without one. This is the record of what happened to this host's own instances — when one was updated, restarted, backed up or crashed. read_console gives what a server itself printed, which is a separate record.",
     "params": [
       {
         "name": "instance_name",
-        "description": "Optional. Scope the events to this one server. OMIT to get events across every server on this host — do that for questions like \"what happened recently?\" / \"any errors lately?\".",
+        "description": "One instance to scope the events to. Omitted, the feed covers every instance on this host, which answers a question about the fleet in a single call.",
         "required": false,
         "type": "string"
       },
       {
         "name": "scope",
-        "description": "Optional, defaults to \"all\". Use \"all\" for the full feed — starts, stops, crashes, installs, updates, backups, port changes, player activity. Use \"changes\" to narrow it to durable CHANGES only (installs, uninstalls, updates, version changes, backups, port changes), which is the right scope for \"what changed on X?\" or \"when was X last updated?\".",
+        "description": "Which events to include. all (the default): the full feed — starts, stops, restarts, crashes, installs, updates, backups, port changes, player activity. changes: durable changes only — installs, uninstalls, updates, version changes, backups, port changes — which is where an instance's own update history lives, so it answers when an instance was last updated or what has changed on it. A start, a stop or a crash appears under all and not under changes.",
         "required": false,
         "type": "string",
         "enum": [
@@ -73,7 +73,7 @@
       },
       {
         "name": "window",
-        "description": "Optional. How far back to look. Defaults to 24h if omitted.",
+        "description": "How far back to look. Defaults to 24h.",
         "required": false,
         "type": "string",
         "enum": [
@@ -86,7 +86,7 @@
     ]
   },
   "run_health_check": {
-    "description": "Run a quick health check on ONE server and get a ranked summary. Checks whether it's running, scans its recent logs for errors, reports whether an update is available, and checks host disk space. Use this for \"is X healthy / OK?\" or \"what's wrong with X?\" instead of fetching status, logs and disk separately.",
+    "description": "A health check on one instance, returned as a ranked summary. It combines four readings in a single call: whether the instance is running, errors in its recent logs, whether an update is available, and host disk space. It describes the present; trace_root_cause investigates an incident in the past.",
     "params": [
       {
         "name": "instance_name",
@@ -97,7 +97,7 @@
     ]
   },
   "get_performance": {
-    "description": "Get ONE server's resource usage — CPU (as % of one core), memory, network and disk-I/O throughput, process count. Without a range it's a LIVE snapshot of current values (\"how much is X using?\", \"is X hammering the CPU/RAM?\"); with a range it's the TREND over that window as a chart (\"how has X been doing over the last hour/day?\", \"is X's memory climbing?\"). A stopped server has no live snapshot but may still have recent history.",
+    "description": "One instance's resource usage: CPU as a percentage of one core, memory, network and disk-I/O throughput, and process count. With no range it is a live snapshot of current values. With a range it is the trend across that window. A running instance has both. A stopped instance has no live snapshot, and may still have recent history. This covers one instance; host_info covers the machine they all run on.",
     "params": [
       {
         "name": "instance_name",
@@ -120,7 +120,7 @@
     ]
   },
   "get_network": {
-    "description": "Report the network reachability of ONE server across two layers: the HOST FIREWALL (the ports KGSM has opened, the firewall backend, and whether it's enforcing) AND the ROUTER / UPnP port forwards it has on the local router. Use this for \"what ports are open for X?\", \"is X's port allowed through the firewall?\", \"is X forwarded on the router?\", or \"is X reachable from the internet?\". Both layers are reported honestly and separately — an unreachable firewall or router is 'couldn't check', never 'nothing open'.",
+    "description": "The network reachability of one instance, across two layers: the host firewall (which ports KGSM has opened, which firewall backend, and whether it is enforcing) and the UPnP port forwards on the local router. It reports whether the instance's port is reachable; server_info reports which port the instance uses. Each layer is reported separately, and a layer that could not be reached is reported as 'couldn't check'.",
     "params": [
       {
         "name": "instance_name",
@@ -131,7 +131,7 @@
     ]
   },
   "trace_root_cause": {
-    "description": "Investigate WHY one server crashed, won't stay up, or has been misbehaving recently — an incident/history question, not a right-now check (use run_health_check for \"is X healthy now?\"). Automatically pulls together its event history, resource usage, and health checks and matches them against known failure patterns (port conflicts, update-triggered crash loops, disk-full failures, event-log/live-state mismatches), returning a ranked explanation with the evidence behind it. Use this for \"why did X crash?\" or \"why did X stop working?\" instead of calling events/get_performance separately and reasoning it out yourself. If no known pattern matches, it honestly reports a correlation instead of guessing a cause.",
+    "description": "Investigates why one instance crashed, will not stay up, or has been misbehaving. It gathers the instance's event history, resource usage and health checks in a single call and matches them against known failure patterns — port conflicts, update-triggered crash loops, disk-full failures, mismatches between the event log and live state — then returns a ranked explanation with the evidence behind it. It covers an incident in the past; run_health_check covers the present. When no known pattern matches, it reports the correlation it found.",
     "params": [
       {
         "name": "instance_name",
@@ -154,17 +154,17 @@
     ]
   },
   "search": {
-    "description": "Look something up in the knowledge base: the operator's indexed documentation first, then the public web as a fallback. Returns short passages, each with its source (a doc path or a URL). Use it ONLY for outside facts that help with the games/servers — a game's latest version, patch notes, or what a setting does. Results may be external and out of date, so cite the sources and don't state them as certain. Do NOT use this for anything about this host's own servers (status, config, health) — the KGSM tools are authoritative for those. When the user asks you to look something up ONLINE, pass scope=\"web\" — otherwise a local guide about the same game will answer instead, and it will not know anything current.",
+    "description": "Looks a topic up and returns short passages, each with its source — a doc path or a URL. It reads the operator's indexed documentation and the public web. It covers facts about a game or a piece of software that hold anywhere: what its settings do, what its release notes say, which version its developers have published. Facts about this host's own instances are measured directly by the KGSM tools instead — which version an instance has installed and whether an update is available come from server_info with aspect=version, and when an instance was last updated, restarted or backed up comes from events. A passage can be out of date, so it is worth citing its source and saying so.",
     "params": [
       {
         "name": "query",
-        "description": "What to look up. Searches the operator's own indexed documentation first, then falls back to the public web. For OUTSIDE/background facts that help with the games or servers — e.g. a game's latest version, release notes, or what a config option means. NOT for anything about this host's own servers (status/config/health) — use the KGSM tools for those.",
+        "description": "The topic to look up. It covers facts about a game or a piece of software that hold anywhere — what a config option means, what a release note says, which version the developers have published. Facts about this host's own instances (status, config, health, which version is installed, when it was last updated) are measured directly by server_info and events instead.",
         "required": true,
         "type": "string"
       },
       {
         "name": "scope",
-        "description": "Where to look. Use \"web\" whenever the user asked you to check ONLINE or on the internet, or when the answer depends on what is true right now — a release date, a current version, recent news, anything that changes over time. Use \"local\" to stay inside the operator's own documentation. OMIT it (or \"auto\") otherwise, which tries the documentation first. NOTE: local guides about a game will match a question about that game even when they say nothing about what was asked, so \"auto\" is the wrong choice for anything time-sensitive.",
+        "description": "Where to look. web: the public web only, which is the source for anything that changes over time — a current version, a release date, recent news — and for anything the user asks you to check online. local: the operator's own documentation only. auto (the default): the documentation first, then the web when nothing there scores well enough. A local guide about a game matches a question about that game whether or not it addresses what was asked, so an auto result can be about the right game and silent on the question; the same words with scope=web ask a different source.",
         "required": false,
         "type": "string",
         "enum": [
@@ -176,7 +176,7 @@
     ]
   },
   "fetch_url": {
-    "description": "Fetch and read the full text of ONE specific web page by its exact URL — an official docs page, a Steam store page, a GitHub raw file (like a Dockerfile), and so on. Use this when you already HAVE a URL (from the user, or from a prior search result) and need its actual content. Do NOT use this to find a page in the first place — use `search` for that (it looks things up by topic and returns short summaries, not full page content). Only public http/https pages can be fetched; large pages may be truncated.",
+    "description": "Reads the full text of one web page by its exact URL — an official docs page, a Steam store page, a raw GitHub file. It takes a URL you already have, from the user or from a search result. search is what finds a page by topic and returns short summaries; this reads one page you can already name. Public http/https pages only, and a large page is truncated.",
     "params": [
       {
         "name": "url",
@@ -187,7 +187,7 @@
     ]
   },
   "read_file": {
-    "description": "Read a text file from inside a game server's own directory — its configuration, logs, server.properties, mod settings, and so on. Read-only and confined to that server's folder. Give the file's path relative to the server's directory (use list_files first if you don't know it), or OMIT the path to read the server's main configuration (its .config.ini). Large files are truncated and binary files aren't shown. To CHANGE a config setting, propose it with set_config_value instead.",
+    "description": "Reads a text file inside one instance's own directory — the game's configuration, its logs, server.properties, a mod's settings. Read-only, and confined to that instance's folder. The path is relative to the instance's directory; omitting it reads the instance's KGSM configuration (its .config.ini). Large files are truncated and binary files are not shown. A change to a game's own config file is proposed with write_file; a change to the .config.ini is proposed with set_config_value.",
     "params": [
       {
         "name": "instance_name",
@@ -197,14 +197,14 @@
       },
       {
         "name": "path",
-        "description": "Optional. The file to read, as a path relative to the server's own directory — e.g. \"server.properties\" or \"logs/latest.log\". OMIT it to read the server's main configuration (its .config.ini). Use list_files first if you don't know the file name.",
+        "description": "The file to read, as a path relative to the instance's own directory — server.properties, logs/latest.log. Omitted, it reads the instance's KGSM configuration (its .config.ini). find_files locates a file by name and search_files locates one by its contents.",
         "required": false,
         "type": "string"
       }
     ]
   },
   "list_files": {
-    "description": "List the files and folders inside a game server's own directory, so you can find a file to read with read_file. Optionally pass a subdirectory (e.g. \"logs\") to look inside it; omit it for the server's top level.",
+    "description": "Lists the files and folders inside one instance's own directory, one level at a time. It answers what is in a directory. find_files searches every subdirectory for a file by name, and search_files searches inside every file for text.",
     "params": [
       {
         "name": "instance_name",
@@ -221,7 +221,7 @@
     ]
   },
   "find_files": {
-    "description": "Find a file inside a game server's folder by name, searching every subdirectory at once. USE THIS INSTEAD OF list_files when you know roughly what the file is called — a game's own config is often several directories deep, and stepping down one directory at a time wastes the turn. Give a glob like \"PalWorldSettings.ini\", \"*.ini\" or \"server.properties\"; it returns matching paths ready to hand to read_file. Archived copies under a backups folder are excluded, so what you get is the live file.",
+    "description": "Finds a file anywhere inside one instance's folder by name, searching every subdirectory in a single call. A game's own config often sits several directories deep, so one glob reaches it where stepping down a level at a time takes many calls. It returns matching paths ready to pass to read_file. Archived copies under a backups folder are excluded, so what comes back is the live file.",
     "params": [
       {
         "name": "instance_name",
@@ -231,7 +231,7 @@
       },
       {
         "name": "pattern",
-        "description": "The file name to look for, as a glob — e.g. \"PalWorldSettings.ini\", \"*.ini\", \"server.properties\", or \"*Settings*\". Include a \"/\" to match on the path instead of just the name (e.g. \"*/Config/*.ini\"). Prefer the most specific pattern you can: a broad one can match hundreds of files.",
+        "description": "The file name as a glob — PalWorldSettings.ini, *.ini, server.properties, *Settings*. A / in the pattern matches against the path rather than the name, e.g. */Config/*.ini. The most specific pattern that fits returns the fewest files; a broad one can match hundreds.",
         "required": true,
         "type": "string"
       },
@@ -244,7 +244,7 @@
     ]
   },
   "search_files": {
-    "description": "Search INSIDE a game server's files for text, across every subdirectory at once — use this when you know the SETTING you want but not which file holds it (e.g. \"MaxPlayers\", \"DayTimeSpeedRate\"). Returns each matching file with the line number and the line itself, ready to hand to read_file. Use find_files instead when you know the file's NAME. Archived copies under a backups folder are excluded, and binary files are skipped.",
+    "description": "Searches inside one instance's files for text, across every subdirectory in a single call. It finds which file holds a setting when the setting's name is known and the file's is not — MaxPlayers, DayTimeSpeedRate. It returns each matching file with the line number and the line itself, ready to pass to read_file. find_files searches by file name instead. Archived copies under a backups folder are excluded, and binary files are skipped.",
     "params": [
       {
         "name": "instance_name",
@@ -254,7 +254,7 @@
       },
       {
         "name": "text",
-        "description": "The text to look for inside the files — a setting name like \"MaxPlayers\" or \"DayTimeSpeedRate\". Matching ignores case. This is text, NOT a filename pattern: do not wrap it in \"*\". A regular expression works too. Prefer a distinctive string: a common word can match hundreds of lines.",
+        "description": "The text to look for inside the files — a setting name such as MaxPlayers or DayTimeSpeedRate. Matching ignores case and a regular expression works. This is file content rather than a file name, so it takes the bare text with no * around it. A distinctive string returns the fewest lines; a common word can match hundreds.",
         "required": true,
         "type": "string"
       },
@@ -267,7 +267,7 @@
     ]
   },
   "read_console": {
-    "description": "Read what a server itself printed — its console output. Use this for what a server is saying right now, or for what it said on its way down. A stopped server's last output is still readable. The reply says which run it came from and whether the server restarted recently; if it did, the reason it went down is in the previous run, which you read by calling this again with run=1.",
+    "description": "Reads what an instance itself printed — its console output. It covers what an instance is saying now, and what it said on its way down; a stopped instance's last output is still readable. events covers KGSM's own record of what happened to the instance, which is a separate record from what the game printed. The reply names which run it came from and whether the instance restarted recently. An instance's log restarts from empty every time it starts, so after a crash-restart the crash is in run 1 and run 0 holds the clean boot that followed it.",
     "params": [
       {
         "name": "instance_name",
@@ -290,7 +290,7 @@
     ]
   },
   "server_command": {
-    "description": "Propose an action on an EXISTING server instance — choose it with the 'verb' parameter: start (a stopped server), stop (a running one), restart (stop then start), update (to its latest version), backup (create one now), enable_autostart / disable_autostart (whether it starts when the host boots). Staged for human confirmation — it does not run until a person confirms.",
+    "description": "Proposes a lifecycle action on one existing instance, chosen with the 'verb' parameter. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
         "name": "instance_name",
@@ -300,7 +300,7 @@
       },
       {
         "name": "verb",
-        "description": "Which action to take on the server: start, stop, restart, update, backup (take one now), enable_autostart (make it start when the host boots), or disable_autostart. Note that start and enable_autostart are different: start runs it NOW, enable_autostart only affects the next boot.",
+        "description": "Which action to take. start: run a stopped instance now. stop: stop a running one. restart: stop it and start it again. update: bring it to its latest version. backup: take one now. enable_autostart and disable_autostart: whether it starts when the host boots. start acts now, and enable_autostart acts at the next boot.",
         "required": true,
         "type": "string",
         "enum": [
@@ -316,7 +316,7 @@
     ]
   },
   "backup_command": {
-    "description": "Propose acting on a server's EXISTING backups: restore one over the server's current data, delete one, or prune the old ones. List them with server_info(aspect=backups) first so you name a backup that exists. Restoring REPLACES the server's current data and deleting is permanent. Staged for human confirmation — it does not run until a person confirms.",
+    "description": "Proposes acting on an instance's existing backups: restore one over the instance's current data, delete one, or prune the old ones. server_info with aspect=backups lists them under the id this tool takes. Restoring replaces the instance's current data, and deleting is permanent. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
         "name": "instance_name",
@@ -326,7 +326,7 @@
       },
       {
         "name": "verb",
-        "description": "What to do with the server's existing backups: restore (replace the server's current data with a backup), delete (remove one backup), or prune (delete the oldest, keeping the most recent few). To CREATE a backup use server_command with verb=backup instead.",
+        "description": "What to do with the instance's existing backups. restore: replace the instance's current data with a backup. delete: remove one backup. prune: delete the oldest, keeping the most recent few. server_command with verb=backup creates a new one.",
         "required": true,
         "type": "string",
         "enum": [
@@ -350,7 +350,7 @@
     ]
   },
   "player_command": {
-    "description": "Propose moderating a player on a server: kick, ban, or unban them. Staged for human confirmation — it does not run until a person confirms. Only works on games whose server supports moderation commands; if it doesn't, say so rather than suggesting a workaround.",
+    "description": "Proposes moderating a player on one instance: kick, ban, or unban them. Staged for human confirmation: it does not run until a person confirms. Moderation works on games whose server supports moderation commands, and the tool reports when a game does not.",
     "params": [
       {
         "name": "instance_name",
@@ -371,18 +371,18 @@
       },
       {
         "name": "target",
-        "description": "Which player, exactly as the user named them. Use server_info(aspect=players) first if you need to see who is connected. Do NOT convert the name into an id or invent one — the game decides which form it needs and the system supplies it.",
+        "description": "Which player, exactly as the user named them. server_info with aspect=players lists who is connected. The game decides which form of identifier it needs and the system supplies it, so the name as the user gave it is the right thing to pass.",
         "required": true,
         "type": "string"
       }
     ]
   },
   "install_server": {
-    "description": "Propose installing a NEW game server from a blueprint. Heavy and slow; staged for human confirmation — it does not run until a person confirms.",
+    "description": "Proposes installing a new instance from a blueprint. The blueprint is the game type; the instance is the server this creates from it. Heavy and slow. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
         "name": "blueprint_name",
-        "description": "The game to install, by the name it is listed under (e.g. \"Project Zomboid\").",
+        "description": "The blueprint to install, by the name it is listed under, e.g. \"Project Zomboid\".",
         "required": true,
         "type": "string"
       },
@@ -407,7 +407,7 @@
     ]
   },
   "uninstall_server": {
-    "description": "Propose PERMANENTLY deleting a server instance and all its data. Irreversible; staged for human confirmation — it does not run until a person confirms.",
+    "description": "Proposes permanently deleting one instance and all of its data. Irreversible. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
         "name": "instance_name",
@@ -418,7 +418,7 @@
     ]
   },
   "set_config_value": {
-    "description": "Propose setting one key=value in a server's configuration file (its .config.ini), e.g. auto_update, executable_arguments, or a timeout setting. Staged for human confirmation — it does not run until a person confirms. kgsm refuses identity/structural keys, path keys (*_dir/*_file), ports, and the integration toggles (enable_firewall_management/_port_forwarding/_command_shortcuts) — those have dedicated flows — so proposing one of those is rejected when confirmed; tell the user rather than retrying.",
+    "description": "Proposes setting one key=value in an instance's KGSM configuration (its .config.ini) — settings such as auto_update, executable_arguments, or a timeout. A change to the game's own config file is proposed with write_file instead. Staged for human confirmation: it does not run until a person confirms. kgsm keeps identity and structural keys, path keys (*_dir and *_file), ports, and the integration toggles (enable_firewall_management, enable_port_forwarding, enable_command_shortcuts) to their own dedicated flows, so one of those is rejected at confirmation time and the tool says which.",
     "params": [
       {
         "name": "instance_name",
@@ -441,7 +441,7 @@
     ]
   },
   "write_file": {
-    "description": "Propose a CHANGE to a text file inside a game server's OWN directory — e.g. its actual game config file (Palworld's PalWorldSettings.ini, server.properties, a mod's settings file). This is for the GAME's own config; for KGSM's own settings (ports, launch arguments, auto-update) use set_config_value instead. You send ONLY the text that changes: old_string is the exact text to replace, copied from read_file's output, and new_string is what it becomes. The rest of the file is preserved for you byte for byte — never send the whole file and never retype settings you aren't changing. If old_string matches nowhere, or matches more than one place, NOTHING is staged and you get an error saying so: read the file again and copy the text exactly rather than guessing at it. Staged for human confirmation against a preview; it does not run until a person confirms, and a running server picks up the change on its next restart. Never claim to have written the file yourself.",
+    "description": "Proposes a change to a text file inside one instance's own directory — the game's own config file, such as Palworld's PalWorldSettings.ini, server.properties, or a mod's settings file. KGSM's own settings (ports, launch arguments, auto-update) are proposed with set_config_value instead. It takes only the text that changes: old_string is the exact text to replace, copied from read_file's output, and new_string is what it becomes. The rest of the file is preserved byte for byte. old_string has to match exactly once; a match in no place, or in several, stages nothing and returns an error saying which, and reading the file again for the exact text resolves it. Staged for human confirmation against a preview: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
     "params": [
       {
         "name": "instance_name",
@@ -451,47 +451,47 @@
       },
       {
         "name": "path",
-        "description": "The file to change, as a path relative to the server's own directory — e.g. \"install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini\" or \"server.properties\". Use list_files/read_file first to find and read it.",
+        "description": "The file to change, as a path relative to the instance's own directory — install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini, server.properties. find_files locates it by name and read_file shows its contents.",
         "required": true,
         "type": "string"
       },
       {
         "name": "old_string",
-        "description": "The EXACT text to replace, copied character for character from what read_file showed you — normally just the one setting you're changing, e.g. \"Difficulty=None\". It must appear EXACTLY ONCE in the file; if it appears more than once, include a little of the surrounding text so it matches one place only. Everything else in the file is kept for you, so NEVER put the whole file here.",
+        "description": "The exact text to replace, copied character for character from what read_file showed you — normally the one setting being changed, e.g. \"Difficulty=None\". It has to appear exactly once in the file; where it appears more than once, a little of the surrounding text narrows it to one place. Everything else in the file is preserved for you.",
         "required": true,
         "type": "string"
       },
       {
         "name": "new_string",
-        "description": "What that text becomes, e.g. \"Difficulty=Difficulty_Hard\". To ADD a setting, put a nearby existing line in old_string and that same line plus your new one here. An empty value deletes the old text.",
+        "description": "What that text becomes, e.g. \"Difficulty=Difficulty_Hard\". To add a setting, put a nearby existing line in old_string and that same line plus the new one here. An empty value deletes the old text.",
         "required": true,
         "type": "string"
       },
       {
         "name": "copy_from",
-        "description": "Only for a file that is empty or does not exist yet, when the game ships a default/reference file beside it (e.g. \"install/DefaultPalWorldSettings.ini\"): its content is copied into the file server-side and your old_string/new_string replacement applied to that copy, so you never reproduce it yourself. Leave it out when editing a file that already has content.",
+        "description": "For a file that is empty or does not exist yet, when the game ships a default or reference file beside it (e.g. \"install/DefaultPalWorldSettings.ini\"): its content is copied into the file server-side and the old_string/new_string replacement is applied to that copy. Left out when editing a file that already has content.",
         "required": false,
         "type": "string"
       }
     ]
   },
   "create_blueprint": {
-    "description": "AUTHORS a game type that is genuinely MISSING from the catalog: researches it online and DRAFTS a server config, then shows it to the user in an editor to review and tweak. The test-install + verification runs LATER, only when they save the config — so calling this does NOT add the game yet. It does its OWN online research, so call it DIRECTLY, in the same turn the user asks — do NOT run a separate search/fetch_url or blueprint_info first, and do NOT announce that you'll go research it and come back; calling this tool IS how the research and drafting start. After it returns, tell the user a draft is ready for them to review and save; do NOT claim the game is added or installed. Use this ONLY when the game is not in blueprint_info / not offered by install_server — for a game that's already installable, propose install_server instead. Not every game can be self-hosted or has a native Linux server — relay the outcome honestly either way.",
+    "description": "Authors a blueprint for a game that is missing from the catalog. It runs its own online research and drafts a server config in a single call, then shows the draft to the user in an editor to review and tweak. Calling it is what starts the research and the drafting, so it is the whole first step and needs no search, fetch_url or blueprint_info call ahead of it. The test-install and verification run later, when the user saves the config, so that is the point at which the game is added. blueprint_info lists the games already in the catalog, and a game already there is installed with install_server. Not every game can be self-hosted or has a native Linux server, and the tool reports either outcome.",
     "params": [
       {
         "name": "game",
-        "description": "The game to add, by its common name (e.g. \"Terraria\", \"Rust\") — not a blueprint slug.",
+        "description": "The game to add, by its common name — \"Terraria\", \"Rust\". A blueprint slug is not what this takes.",
         "required": true,
         "type": "string"
       }
     ]
   },
   "revise_blueprint": {
-    "description": "UPDATES the blueprint draft the user is CURRENTLY reviewing in the editor. Use this whenever they ask to change, populate, fix, or add anything to the open draft — a metadata field (min/recommended RAM, max players, disk), a port, the launch args, anything. The draft's current YAML is given to you in THIS turn's context: take it, apply ONLY the requested change (research any values first with search if you need them), and pass the COMPLETE updated YAML as revised_yaml. It re-validates and shows the user the updated draft to review and save — nothing is installed. You have NO other way to change the draft: NEVER say you updated, populated, or added to it unless you called this tool and it succeeded.",
+    "description": "Updates the blueprint draft the user is currently reviewing in the editor — a metadata field (min or recommended RAM, max players, disk), a port, the launch args, any part of it. The draft's current YAML is given in this turn's context; revised_yaml takes that whole document with the requested change applied. It re-validates and shows the updated draft to review and save, and installs nothing. This tool is what changes an open draft, and the change is real once it returns successfully.",
     "params": [
       {
         "name": "revised_yaml",
-        "description": "The COMPLETE updated blueprint YAML — the whole document (the current draft with the requested change applied), not a fragment or a diff. Base it on the open draft's current content shown to you this turn; change only what the user asked for and keep every other field as-is.",
+        "description": "The complete updated blueprint YAML: the whole document, being the open draft's current content with the requested change applied. It is the full document rather than a fragment or a diff, and every field the user did not ask about keeps its current value.",
         "required": true,
         "type": "string"
       }

@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0] - 2026-08-17
+
+### Changed — the system prompt states definitions, and the tool catalog disambiguates itself
+
+`deploy/prompts/preamble.md` is rewritten: 8411 bytes to 5569, sectioned under headings instead of
+one paragraph. It carries the definitions the assistant needs and nothing else. The blueprint/instance
+distinction, the naming rule, instance resolution, the truth rules, tool selection, searching, editing
+a game's config file and proposing a change each get a heading and a few short sentences.
+
+Two properties the text now holds throughout. **No worked examples**: a rule is stated once, in the
+general, rather than illustrated with a phrasing the model has no context for. **No negated
+instructions**: every rule says what to do, because naming the wrong behaviour plants it. "Never
+invent a shortened spelling" is now "call a game by the name the lists use"; "never turn an unknown
+into a number" is now "'none' and '0' mean a tool measured the thing and found it empty, so save
+those two words for that".
+
+One rule is sharper rather than shorter: the lists injected each turn say what **exists**, and a tool
+says what **state** something is in. The old text answered "which blueprints are running" from the
+instance list, which reads as though run-state came from the list.
+
+`deploy/prompts/tools.json` is rewritten on the same principle: each description says what the tool
+**reports**, and the fact that made the old directive true replaces the directive. `find_files`' "USE
+THIS INSTEAD OF list_files" is now "one glob reaches it where stepping down a level at a time takes
+many calls"; `write_file`'s "NEVER put the whole file here" is now "the rest of the file is preserved
+byte for byte".
+
+**Where two tools could plausibly answer one question, each now names the other.** This is the part
+that carries its own measurement — descriptions written as pure facts, with the disambiguation
+removed, sent "when was X last updated?" to the public web on every repetition. The pairs, in the
+vocabulary the preamble defines: `server_info` covers an installed instance and `blueprint_info` a
+game type that is not installed; `server_info(aspect=version)` covers the version an instance has
+installed and `search` what the game's developers have published; `events(scope=changes)` covers an
+instance's own update history and `read_console` what the game itself printed; `get_performance`
+covers one instance and `host_info` the machine they all run on; `get_network` covers whether a port
+is reachable and `server_info` which port an instance uses.
+
+Measured on the routing benchmark (gemma4:12b, 63 cases x 3 reps, temp 0.3): routing 0.977 to 1.000,
+clarify-vs-guess 1.000 held, efficiency 0.867 to 0.911, overall 492/525 to 495/525. Three checks is
+inside the run-to-run spread, so the benchmark does not separate this text from what it replaces —
+it establishes that a third fewer bytes costs nothing measurable. "When was X last updated?" is the
+one case with a clean attribution: 0/3 without the disambiguating facts, 3/3 with them.
+
 ## [1.27.0] - 2026-08-16
 
 ### Changed — the prompts and the tool catalog are files, not code

@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Models;
 
@@ -215,7 +216,7 @@ public static class CommandSettlement
             {
                 narrated = true;
                 progress?.Report(
-                    LlmTools.ServerCommand, "settling",
+                    ResultCardKinds.Settling, "settling",
                     expectedRunning
                         ? $"Waiting for {instance} to come up…"
                         : $"Waiting for {instance} to shut down…");

@@ -80,7 +80,7 @@ public static class HealthCheckAggregator
         var summary = BuildSummary(instanceId, snapshot.Running, overall, stability, logs, updates, disk, ports);
 
         return new ToolResult<HealthData>(
-            Tool: LlmTools.RunHealthCheck,
+            Tool: ResultCardKinds.Health,
             Confidence: Confidence.Confirmed, // deterministic read of measured facts
             Subject: new ResultRef(ResourceKind.Server, instanceId),
             Summary: summary,

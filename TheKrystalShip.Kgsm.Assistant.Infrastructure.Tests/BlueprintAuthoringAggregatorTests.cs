@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant.Envelope;
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
@@ -677,12 +678,12 @@ public sealed class BlueprintAuthoringAggregatorTests
 
         Received.InOrder(() =>
         {
-            _progress.Report(LlmTools.CreateBlueprint, "research", Arg.Any<string>());
-            _progress.Report(LlmTools.CreateBlueprint, "feasibility", Arg.Any<string>());
-            _progress.Report(LlmTools.CreateBlueprint, "draft", Arg.Any<string>());
-            _progress.Report(LlmTools.CreateBlueprint, "install", Arg.Any<string>());
-            _progress.Report(LlmTools.CreateBlueprint, "verify", Arg.Any<string>());
-            _progress.Report(LlmTools.CreateBlueprint, "teardown", Arg.Any<string>());
+            _progress.Report(ResultCardKinds.BlueprintDraft, "research", Arg.Any<string>());
+            _progress.Report(ResultCardKinds.BlueprintDraft, "feasibility", Arg.Any<string>());
+            _progress.Report(ResultCardKinds.BlueprintDraft, "draft", Arg.Any<string>());
+            _progress.Report(ResultCardKinds.BlueprintDraft, "install", Arg.Any<string>());
+            _progress.Report(ResultCardKinds.BlueprintDraft, "verify", Arg.Any<string>());
+            _progress.Report(ResultCardKinds.BlueprintDraft, "teardown", Arg.Any<string>());
         });
     }
 
@@ -695,12 +696,12 @@ public sealed class BlueprintAuthoringAggregatorTests
 
         await Create().AuthorAsync("Terraria");
 
-        _progress.Received(1).Report(LlmTools.CreateBlueprint, "research", Arg.Any<string>());
-        _progress.Received(1).Report(LlmTools.CreateBlueprint, "feasibility", Arg.Any<string>());
-        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "draft", Arg.Any<string>());
-        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "install", Arg.Any<string>());
-        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "verify", Arg.Any<string>());
-        _progress.DidNotReceive().Report(LlmTools.CreateBlueprint, "teardown", Arg.Any<string>());
+        _progress.Received(1).Report(ResultCardKinds.BlueprintDraft, "research", Arg.Any<string>());
+        _progress.Received(1).Report(ResultCardKinds.BlueprintDraft, "feasibility", Arg.Any<string>());
+        _progress.DidNotReceive().Report(ResultCardKinds.BlueprintDraft, "draft", Arg.Any<string>());
+        _progress.DidNotReceive().Report(ResultCardKinds.BlueprintDraft, "install", Arg.Any<string>());
+        _progress.DidNotReceive().Report(ResultCardKinds.BlueprintDraft, "verify", Arg.Any<string>());
+        _progress.DidNotReceive().Report(ResultCardKinds.BlueprintDraft, "teardown", Arg.Any<string>());
     }
 
     [Fact]

@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0] - 2026-08-17
+
+### Changed — the whole tool catalog is renamed, split, and named by the file
+
+`TheKrystalShip.Kgsm.Assistant` **5.0.0** (breaking: `LlmTools`' members are `Capability`, not `Tool`;
+`IToolCatalog` gains the name/label/tier lookups; `IServerOperations` and `ToolDispatcher` take the
+catalog).
+
+**Every tool is named for what it reports.** `get_performance` is `get_instance_resource_usage`,
+`events` is `get_event_history`, `server_command` is `control_instance`, `write_file` is
+`edit_instance_file`, and so on for 23 of them.
+
+**The aggregate reads are split into one tool per answer.** `server_info`'s seven aspects are seven
+tools (`get_instance_status`, `get_instance_config`, `get_instance_version`, `list_online_players`,
+`list_instance_backups`, `get_instance_note`, `get_instance_autostart`); `host_info`'s three are
+`get_host_vitals`, `list_host_ports`, `find_port_conflicts`. 33 tools where there were 25.
+
+**`get_event_history` serves the whole timeline.** Its `scope` is gone. It asked the model to predict
+which half of the feed held its answer before it had read any of it, and the prediction failed in both
+directions: an instance's update history sat in the narrow half, a restart sat outside it, and each
+question reached for the scope that omitted it.
+
+**Which port an instance uses comes from `get_instance_status`.** The old catalog claimed
+`get_network` owned the port question and that `server_info` had no ports aspect — untrue in practice,
+because kgsm's status payload carries the ports regardless, so both answered it and routing flipped
+run to run. `check_instance_reachability` owns reachability, and its name says so.
+
+Measured on the routing benchmark (gemma4:12b, 63 shared cases x 3 reps, temp 0.3): routing 0.977 to
+1.000, no-fabrication 0.906 to 0.958, propose-only 0.868 to 0.947, efficiency 0.867 to **1.000** —
+every step-budget failure gone. Overall 492/525 to 514/525.
+
+### Changed — a tool's name lives in the file, and only in the file
+
+Code binds to a `Capability` — a stable id like `instance.status` — and `tools.json` declares which
+capability each tool implements. The catalog resolves the two at startup and refuses a set that does
+not match the handlers: a capability with no entry, an entry naming a capability nothing implements,
+or two entries claiming one capability. **Renaming a tool is now an edit to that file and a restart.**
+Adding one is still code, because a file cannot supply behaviour.
+
+Nothing outside the catalog holds a tool name. A refusal that points the model at another tool
+interpolates the current name; the tier sets are built from the file's names; the benchmark asserts
+capabilities and resolves them through the catalog it scored against.
+
+**`tool.start` carries a `label`**, read from the tool's catalog entry, so a surface no longer keeps
+its own name-to-label map. The panel's had gone stale without failing: it named four tools that no
+longer existed and knew nothing of any tool added since, and its prettify-the-name fallback hid that.
+A frame with no label still gets that fallback.
+
+⚠ **A result card's `tool` is a card-shape id, not a tool name** (`ResultCardKinds`). The two were one
+string, which meant a name chosen to route a model well decided whether a browser rendered a card —
+and three had already silently stopped rendering. Card kinds change with the surface that reads them,
+never with routing.
+
 ## [1.29.0] - 2026-08-17
 
 ### Added — a setting can be changed by naming it

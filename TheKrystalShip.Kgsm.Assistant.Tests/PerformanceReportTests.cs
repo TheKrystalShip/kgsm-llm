@@ -31,7 +31,7 @@ public class PerformanceReportTests
     {
         var result = PerformanceReport.Build(Live(), "minecraft");
 
-        result.Tool.Should().Be(LlmTools.GetPerformance);
+        result.Tool.Should().Be(ResultCardKinds.Performance);
         result.Confidence.Should().Be(Confidence.Confirmed);            // deterministic read of measured facts
         result.Subject.Should().Be(new ResultRef(ResourceKind.Metrics, "minecraft"));
         result.Summary.Should().Contain("minecraft").And.Contain("42.5%").And.Contain("1 GB");
@@ -193,7 +193,7 @@ public class PerformanceReportTests
             History(("cpuPctCore", [10, 30, 20]), ("memBytes", [1_073_741_824, 1_073_741_824, 1_073_741_824])),
             "minecraft");
 
-        result.Tool.Should().Be(LlmTools.GetPerformance);
+        result.Tool.Should().Be(ResultCardKinds.Performance);
         result.Confidence.Should().Be(Confidence.Confirmed);
         result.Summary.Should().Contain("last 1h").And.Contain("averaged 20%").And.Contain("peak 30%");
         result.Data.Range.Should().Be("1h");

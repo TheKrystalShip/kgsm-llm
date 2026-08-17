@@ -106,7 +106,7 @@ public sealed class SearchAggregator : ISearch
     private static ToolResult<SearchData> Envelope(
         string query, SearchState state, string summary, IReadOnlyList<SearchPassage> passages) =>
         new(
-            Tool: LlmTools.Search,
+            Tool: ResultCardKinds.Search,
             Confidence: state switch
             {
                 SearchState.LocalStrong => Confidence.Confirmed,

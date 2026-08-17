@@ -54,38 +54,91 @@ public sealed class DiskToolCatalog : IToolCatalog
         var path = Path.Combine(directory, FileName);
         var byName = Parse(path);
 
-        // Every tool the code can dispatch must be described, and nothing else may be. The first
-        // check catches a deleted entry (the model would lose a capability silently); the second
-        // catches an invented one (the model would be offered a tool with no handler behind it and
-        // could call it at will).
-        var expected = LlmTools.EveryToolName.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        // Names come from the file, capabilities from the code, and this is where they are bound. A
+        // tool declares which capability it implements; the pairing must be exactly one-to-one, and
+        // each way it can fail loses something different:
+        //   · a capability with no entry — the model silently loses a tool the assistant can run
+        //   · an entry naming no capability, or one nothing implements — the model is offered a tool
+        //     that fails the turn it is called on
+        //   · two entries claiming one capability — which name the tool has becomes file order
+        var byCapability = new Dictionary<Capability, string>();
+        foreach (var (name, doc) in byName)
+        {
+            if (string.IsNullOrWhiteSpace(doc.Capability))
+                throw new AssistantTextUnavailableException(
+                    $"{path}: tool '{name}' declares no capability. Every entry names the capability it " +
+                    "implements — that is what binds it to a handler, and a name alone binds to nothing.");
 
-        var missing = expected.Except(byName.Keys).Order(StringComparer.Ordinal).ToList();
+            var capability = new Capability(doc.Capability.Trim());
+            if (byCapability.TryGetValue(capability, out var already))
+                throw new AssistantTextUnavailableException(
+                    $"{path}: '{name}' and '{already}' both declare the capability '{capability}'. One " +
+                    "capability is one tool; which name it takes cannot depend on the order of the file.");
+
+            byCapability[capability] = name;
+        }
+
+        var missing = LlmTools.EveryCapability.Except(byCapability.Keys)
+            .Select(c => c.Id).Order(StringComparer.Ordinal).ToList();
         if (missing.Count > 0)
             throw new AssistantTextUnavailableException(
-                $"{path} is missing {missing.Count} tool(s) the assistant can dispatch: " +
-                $"{string.Join(", ", missing)}. Every tool needs an entry; restore them or reinstall " +
-                "the file from the deploy.");
+                $"{path} declares no tool for {missing.Count} capability(ies) the assistant can " +
+                $"dispatch: {string.Join(", ", missing)}. Each needs an entry naming it; restore them " +
+                "or reinstall the file from the deploy.");
 
-        var unknown = byName.Keys.Except(expected).Order(StringComparer.Ordinal).ToList();
+        var unknown = byCapability.Keys.Except(LlmTools.EveryCapability)
+            .Select(c => c.Id).Order(StringComparer.Ordinal).ToList();
         if (unknown.Count > 0)
             throw new AssistantTextUnavailableException(
-                $"{path} defines {unknown.Count} tool(s) this assistant has no handler for: " +
+                $"{path} declares {unknown.Count} capability(ies) this assistant has no handler for: " +
                 $"{string.Join(", ", unknown)}. A tool the model is offered but nothing can run fails " +
-                "the turn it is called on; remove them or spell the name as the code has it.");
+                "the turn it is called on; remove them or correct the capability id.");
 
-        LlmToolDefinition Define(Tool tool) => byName[tool.Name].ToDefinition(tool, path);
+        _names = byCapability.ToDictionary(kv => kv.Key, kv => new Tool(kv.Value));
+        _capabilities = byCapability.ToDictionary(kv => kv.Value, kv => kv.Key, StringComparer.Ordinal);
+        _labels = byCapability.ToDictionary(
+            kv => kv.Value, kv => byName[kv.Value].Label?.Trim(), StringComparer.Ordinal);
+
+        LlmToolDefinition Define(Capability capability)
+        {
+            var name = _names[capability];
+            return byName[name.Name].ToDefinition(name, path);
+        }
+
+        StagedCommandTools = LlmTools.StagedCommandsTier.Select(c => _names[c]).ToHashSet();
+        AuthorizedReadTools = LlmTools.AuthorizedReadOnlyTier.Select(c => _names[c]).ToHashSet();
 
         ReadOnly = LlmTools.ReadOnlyTier.Select(Define).ToArray();
         All = LlmTools.ReadOnlyTier
             .Concat(LlmTools.AuthorizedReadOnlyTier)
             .Concat(LlmTools.StagedCommandsTier)
             .Concat(LlmTools.AuthorizedActionsTier)
-            .Where(t => t != LlmTools.ReviseBlueprint)
+            .Where(c => c != LlmTools.ReviseBlueprint)
             .Select(Define)
             .ToArray();
         ReviseBlueprintTool = Define(LlmTools.ReviseBlueprint);
     }
+
+    private readonly IReadOnlyDictionary<Capability, Tool> _names;
+    private readonly IReadOnlyDictionary<string, Capability> _capabilities;
+    private readonly IReadOnlyDictionary<string, string?> _labels;
+
+    /// <inheritdoc />
+    public Tool NameOf(Capability capability) => _names[capability];
+
+    /// <inheritdoc />
+    public Capability? CapabilityOf(Tool tool) =>
+        _capabilities.TryGetValue(tool.Name, out var c) ? c : null;
+
+    /// <inheritdoc />
+    public string? LabelOf(Tool tool) =>
+        _labels.TryGetValue(tool.Name, out var l) && !string.IsNullOrWhiteSpace(l) ? l : null;
+
+    /// <inheritdoc />
+    public IReadOnlySet<Tool> StagedCommandTools { get; }
+
+    /// <inheritdoc />
+    public IReadOnlySet<Tool> AuthorizedReadTools { get; }
 
     private static IReadOnlyDictionary<string, ToolDoc> Parse(string path)
     {
@@ -138,7 +191,8 @@ public sealed class DiskToolCatalog : IToolCatalog
         }
     }
 
-    private sealed record ToolDoc(string? Description, IReadOnlyList<ParamDoc>? Params)
+    private sealed record ToolDoc(
+        string? Capability, string? Label, string? Description, IReadOnlyList<ParamDoc>? Params)
     {
         public LlmToolDefinition ToDefinition(Tool tool, string path)
         {

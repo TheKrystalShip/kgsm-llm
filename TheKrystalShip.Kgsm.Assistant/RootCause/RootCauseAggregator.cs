@@ -104,7 +104,7 @@ public static class RootCauseAggregator
 
         var best = findings[0];
         return new ToolResult<RootCauseData>(
-            Tool: LlmTools.TraceRootCause,
+            Tool: ResultCardKinds.RootCause,
             Confidence: best.Confidence,
             Subject: new ResultRef(ResourceKind.Server, instance),
             Summary: best.Explanation,

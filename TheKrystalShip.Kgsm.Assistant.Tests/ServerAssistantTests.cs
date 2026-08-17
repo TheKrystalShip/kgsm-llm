@@ -75,7 +75,7 @@ public class ServerAssistantTests
         var turn = await CaptureTurnAsync(canPerformActions: true,
             blueprint: new BlueprintAuthoringFlags { Available = true }, draft: "name: tf2\nruntime: native\n");
 
-        turn.Tools.Should().Contain(t => t.Tool == LlmTools.ReviseBlueprint);
+        turn.Tools.Should().Contain(t => t.Tool == ShippedText.Name(LlmTools.ReviseBlueprint));
         // The open draft's content is injected into this turn's system prompt so the model can revise it.
         turn.SystemPrompt.Should().Contain("name: tf2");
     }
@@ -85,7 +85,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = true });
 
-        turn.Tools.Should().NotContain(t => t.Tool == LlmTools.ReviseBlueprint);
+        turn.Tools.Should().NotContain(t => t.Tool == ShippedText.Name(LlmTools.ReviseBlueprint));
         turn.Tools.Should().BeSameAs(ShippedText.Catalog.All);   // no draft ⇒ the unfiltered catalog reference holds
     }
 
@@ -95,7 +95,7 @@ public class ServerAssistantTests
         var turn = await CaptureTurnAsync(canPerformActions: false,
             blueprint: new BlueprintAuthoringFlags { Available = true }, draft: "name: tf2\n");
 
-        turn.Tools.Should().NotContain(t => t.Tool == LlmTools.ReviseBlueprint);
+        turn.Tools.Should().NotContain(t => t.Tool == ShippedText.Name(LlmTools.ReviseBlueprint));
     }
 
     private static LlmToolCall Call(Tool name) =>
@@ -120,7 +120,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
-        var decision = turn.Gate!(Call(LlmTools.ServerCommand));
+        var decision = turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand)));
 
         decision.Allowed.Should().BeFalse();
         decision.RefusalMessage.Should().Contain("permission");
@@ -139,10 +139,10 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
-        turn.Gate!(Call(LlmTools.ServerCommand));
+        turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand)));
 
         Journal.Declines.Should().ContainSingle()
-            .Which.Tool.Should().Be(LlmTools.ServerCommand.Name);
+            .Which.Tool.Should().Be(ShippedText.Name(LlmTools.ServerCommand).Name);
     }
 
     /// <summary>
@@ -157,7 +157,7 @@ public class ServerAssistantTests
     public async Task Gate_CapsAreNotRecordedAsRefusals()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var stop = Call(LlmTools.ServerCommand);
+        var stop = Call(ShippedText.Name(LlmTools.ServerCommand));
 
         for (var i = 0; i < 6; i++)
             turn.Gate!(stop);
@@ -171,7 +171,7 @@ public class ServerAssistantTests
     public async Task Gate_CapsStagedCommandsAtFivePerMessage()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var stop = Call(LlmTools.ServerCommand);
+        var stop = Call(ShippedText.Name(LlmTools.ServerCommand));
 
         // First five proposed commands are allowed (the dispatcher only STAGES them)...
         for (var i = 0; i < 5; i++)
@@ -190,14 +190,14 @@ public class ServerAssistantTests
         // separate budget per tier.
         var turn = await CaptureTurnAsync(canPerformActions: true);
 
-        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.SetConfigValue)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.WriteFile)).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.UninstallServer))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.InstallServer))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.SetConfigValue))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.WriteFile))).Allowed.Should().BeTrue();
 
         // Five staged across kinds; the sixth (any kind) is refused.
-        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeFalse();
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
-        var decision = turn.Gate!(Call(LlmTools.WriteFile));
+        var decision = turn.Gate!(Call(ShippedText.Name(LlmTools.WriteFile)));
 
         decision.Allowed.Should().BeFalse();
         decision.RefusalMessage.Should().Contain("permission");
@@ -215,7 +215,7 @@ public class ServerAssistantTests
     public async Task Gate_DoesNotCountReadOnlyToolsAgainstTheCap()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var status = Call(LlmTools.ServerInfo);
+        var status = Call(ShippedText.Name(LlmTools.ServerInfo));
 
         // Many read-only calls, all allowed and none consuming the staging budget.
         for (var i = 0; i < 10; i++)
@@ -223,7 +223,7 @@ public class ServerAssistantTests
 
         // The staging budget is still fully intact afterwards.
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
+            turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeTrue();
     }
 
     [Fact]
@@ -231,7 +231,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
-        var gate = turn.Gate!(Call(LlmTools.ReadFile));
+        var gate = turn.Gate!(Call(ShippedText.Name(LlmTools.ReadFile)));
 
         gate.Allowed.Should().BeFalse();
         gate.RefusalMessage.Should().Contain("permission");
@@ -241,7 +241,7 @@ public class ServerAssistantTests
     public async Task Gate_AllowsAuthorizedReadForAuthorizedCaller_WithoutConsumingStagingCap()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var view = Call(LlmTools.ReadFile);
+        var view = Call(ShippedText.Name(LlmTools.ReadFile));
 
         // Many file reads are allowed and none consume the staging budget...
         for (var i = 0; i < 10; i++)
@@ -249,7 +249,7 @@ public class ServerAssistantTests
 
         // ...so the full staging budget remains.
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
+            turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeTrue();
     }
 
     [Fact]
@@ -257,8 +257,8 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(canPerformActions: false);
 
-        turn.Gate!(Call(LlmTools.UninstallServer)).Allowed.Should().BeFalse();
-        turn.Gate!(Call(LlmTools.InstallServer)).Allowed.Should().BeFalse();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.UninstallServer))).Allowed.Should().BeFalse();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.InstallServer))).Allowed.Should().BeFalse();
     }
 
     [Fact]
@@ -268,7 +268,7 @@ public class ServerAssistantTests
         // each call adds a loop iteration (and a web fallback may spend a credit), so the gate caps it
         // per message (the in-turn runaway guard; the per-day web wallet cap is a host-side backstop).
         var turn = await CaptureTurnAsync(canPerformActions: false);
-        var search = Call(LlmTools.Search);
+        var search = Call(ShippedText.Name(LlmTools.Search));
 
         for (var i = 0; i < 5; i++)
             turn.Gate!(search).Allowed.Should().BeTrue($"search {i} is within the per-message cap");
@@ -279,7 +279,7 @@ public class ServerAssistantTests
     }
 
     private static LlmToolCall SearchFor(string query) =>
-        new(LlmTools.Search, new Dictionary<string, string?> { ["query"] = query });
+        new(ShippedText.Name(LlmTools.Search), new Dictionary<string, string?> { ["query"] = query });
 
     [Fact]
     public async Task Gate_RefusesARepeatedSearch_WithoutSpendingTheCap()
@@ -300,7 +300,7 @@ public class ServerAssistantTests
     }
 
     private static LlmToolCall SearchFor(string query, string scope) =>
-        new(LlmTools.Search,
+        new(ShippedText.Name(LlmTools.Search),
             new Dictionary<string, string?> { ["query"] = query, ["scope"] = scope });
 
     [Fact]
@@ -382,13 +382,13 @@ public class ServerAssistantTests
         var turn = await CaptureTurnAsync(canPerformActions: true);
 
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeFalse(); // search cap hit
+            turn.Gate!(Call(ShippedText.Name(LlmTools.Search))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.Search))).Allowed.Should().BeFalse(); // search cap hit
 
         // The full staging budget is still intact.
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse();
+            turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeFalse();
     }
 
     // --- §D7 search availability: the tool is offered iff a source backs it -----------------------
@@ -397,7 +397,7 @@ public class ServerAssistantTests
     public async Task Search_IsOffered_WhenASourceIsAvailable()
     {
         var turn = await CaptureTurnAsync(canPerformActions: false, search: new SearchOptions { WebEnabled = true });
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.Search);
+        turn.Tools.Select(t => t.Tool).Should().Contain(ShippedText.Name(LlmTools.Search));
     }
 
     [Fact]
@@ -406,8 +406,8 @@ public class ServerAssistantTests
         // Neither RAG nor a web provider configured → search is dropped, but the rest of the
         // read-only catalog is still offered.
         var turn = await CaptureTurnAsync(canPerformActions: false, search: new SearchOptions());
-        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.Search);
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.ServerInfo);
+        turn.Tools.Select(t => t.Tool).Should().NotContain(ShippedText.Name(LlmTools.Search));
+        turn.Tools.Select(t => t.Tool).Should().Contain(ShippedText.Name(LlmTools.ServerInfo));
     }
 
     [Fact]
@@ -431,15 +431,15 @@ public class ServerAssistantTests
     public async Task FetchUrl_IsOffered_WhenAvailable()
     {
         var turn = await CaptureTurnAsync(canPerformActions: false, fetch: new FetchOptions { Available = true });
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.FetchUrl);
+        turn.Tools.Select(t => t.Tool).Should().Contain(ShippedText.Name(LlmTools.FetchUrl));
     }
 
     [Fact]
     public async Task FetchUrl_IsOmitted_WhenUnavailable()
     {
         var turn = await CaptureTurnAsync(canPerformActions: false, fetch: new FetchOptions { Available = false });
-        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.FetchUrl);
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.ServerInfo);
+        turn.Tools.Select(t => t.Tool).Should().NotContain(ShippedText.Name(LlmTools.FetchUrl));
+        turn.Tools.Select(t => t.Tool).Should().Contain(ShippedText.Name(LlmTools.ServerInfo));
     }
 
     [Fact]
@@ -461,7 +461,7 @@ public class ServerAssistantTests
         // fetch_url is offered to everyone (read-only tier), but each call is a real outbound HTTP
         // request against a model/user-influenced URL and adds a loop iteration — capped per message.
         var turn = await CaptureTurnAsync(canPerformActions: false);
-        var fetch = Call(LlmTools.FetchUrl);
+        var fetch = Call(ShippedText.Name(LlmTools.FetchUrl));
 
         for (var i = 0; i < 5; i++)
             turn.Gate!(fetch).Allowed.Should().BeTrue($"fetch {i} is within the per-message cap");
@@ -479,16 +479,16 @@ public class ServerAssistantTests
         var turn = await CaptureTurnAsync(canPerformActions: true);
 
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.FetchUrl)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.FetchUrl)).Allowed.Should().BeFalse(); // fetch cap hit
+            turn.Gate!(Call(ShippedText.Name(LlmTools.FetchUrl))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.FetchUrl))).Allowed.Should().BeFalse(); // fetch cap hit
 
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.Search)).Allowed.Should().BeFalse(); // search cap hit, independently
+            turn.Gate!(Call(ShippedText.Name(LlmTools.Search))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.Search))).Allowed.Should().BeFalse(); // search cap hit, independently
 
         for (var i = 0; i < 5; i++)
-            turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeTrue();
-        turn.Gate!(Call(LlmTools.ServerCommand)).Allowed.Should().BeFalse(); // staging cap hit, independently
+            turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeTrue();
+        turn.Gate!(Call(ShippedText.Name(LlmTools.ServerCommand))).Allowed.Should().BeFalse(); // staging cap hit, independently
     }
 
     // --- create_blueprint availability + per-message cap + authorization ----------------------------
@@ -498,7 +498,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(
             canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = true });
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.CreateBlueprint);
+        turn.Tools.Select(t => t.Tool).Should().Contain(ShippedText.Name(LlmTools.CreateBlueprint));
     }
 
     [Fact]
@@ -506,8 +506,8 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(
             canPerformActions: true, blueprint: new BlueprintAuthoringFlags { Available = false });
-        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.CreateBlueprint);
-        turn.Tools.Select(t => t.Tool).Should().Contain(LlmTools.ServerInfo);
+        turn.Tools.Select(t => t.Tool).Should().NotContain(ShippedText.Name(LlmTools.CreateBlueprint));
+        turn.Tools.Select(t => t.Tool).Should().Contain(ShippedText.Name(LlmTools.ServerInfo));
     }
 
     [Fact]
@@ -515,7 +515,7 @@ public class ServerAssistantTests
     {
         var turn = await CaptureTurnAsync(
             canPerformActions: false, blueprint: new BlueprintAuthoringFlags { Available = true });
-        turn.Tools.Select(t => t.Tool).Should().NotContain(LlmTools.CreateBlueprint);
+        turn.Tools.Select(t => t.Tool).Should().NotContain(ShippedText.Name(LlmTools.CreateBlueprint));
     }
 
     [Fact]
@@ -525,7 +525,7 @@ public class ServerAssistantTests
         // tool isn't offered per the test above), the gate itself refuses it too.
         var turn = await CaptureTurnAsync(
             canPerformActions: false, blueprint: new BlueprintAuthoringFlags { Available = true });
-        var result = turn.Gate!(Call(LlmTools.CreateBlueprint));
+        var result = turn.Gate!(Call(ShippedText.Name(LlmTools.CreateBlueprint)));
         result.Allowed.Should().BeFalse();
         result.RefusalMessage.Should().Contain("permission");
     }
@@ -534,7 +534,7 @@ public class ServerAssistantTests
     public async Task Gate_CapsCreateBlueprint_AtOnePerMessage()
     {
         var turn = await CaptureTurnAsync(canPerformActions: true);
-        var call = Call(LlmTools.CreateBlueprint);
+        var call = Call(ShippedText.Name(LlmTools.CreateBlueprint));
 
         turn.Gate!(call).Allowed.Should().BeTrue();
 

@@ -76,6 +76,7 @@ internal sealed class TurnRegistry : ITurnRegistry
 
     private readonly IServiceScopeFactory _scopes;
     private readonly IServerAssistant _assistant;
+    private readonly IToolCatalog _catalog;
     private readonly IPendingConfirmationStore _pending;
     private readonly IConversationEventBus _bus;
     private readonly IInvocationContext _invocation;
@@ -93,10 +94,12 @@ internal sealed class TurnRegistry : ITurnRegistry
         IOptions<AssistantServiceOptions> assistantOptions,
         IOptions<ConversationOptions> conversationOptions,
         ISpokenAudio audio,
+        IToolCatalog catalog,
         ILogger<TurnRegistry> log)
     {
         _scopes = scopes;
         _assistant = assistant;
+        _catalog = catalog;
         _pending = pending;
         _bus = bus;
         _invocation = invocation;
@@ -403,7 +406,7 @@ internal sealed class TurnRegistry : ITurnRegistry
                                run.Shared, run.Style))
             {
                 var frame = TurnFrames.From(
-                    ev, principal, _pending, ttl, session.ConversationId, ref proposalSeq);
+                    ev, principal, _pending, ttl, session.ConversationId, _catalog, ref proposalSeq);
                 if (frame is null)
                     continue;
                 if (ev.Kind == AssistantEventKind.Confirmation && frame.Payload is CommandProposedEvent proposed)

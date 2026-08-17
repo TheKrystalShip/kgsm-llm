@@ -124,20 +124,20 @@ public class ChecksTests
     [Fact]
     public void CalledToolWith_requires_the_argument_to_match_not_just_the_tool()
     {
-        var check = C.CalledToolWith(LlmTools.ServerInfo, "aspect", "players", "x");
+        var check = C.CalledToolWith(LlmTools.ServerCommand, "verb", "restart", "x");
         check.Evaluate(Obs(tools: new[]
         {
-            Tool(LlmTools.ServerInfo, ("instance_name", "factorio-test"), ("aspect", "players")),
+            Tool(LlmTools.ServerCommand, ("instance_name", "factorio-test"), ("verb", "restart")),
         }), Fx).Should().BeTrue();
 
-        // The whole point: asking the right noun the WRONG question is a routing miss the tool
-        // name alone can't see.
+        // The whole point: reaching the right tool with the WRONG operation is a routing miss the
+        // tool name alone can't see.
         check.Evaluate(Obs(tools: new[]
         {
-            Tool(LlmTools.ServerInfo, ("instance_name", "factorio-test"), ("aspect", "backups")),
+            Tool(LlmTools.ServerCommand, ("instance_name", "factorio-test"), ("verb", "stop")),
         }), Fx).Should().BeFalse();
 
-        check.Evaluate(Obs(tools: new[] { Tool(LlmTools.ServerInfo, ("instance_name", "factorio-test")) }), Fx)
+        check.Evaluate(Obs(tools: new[] { Tool(LlmTools.ServerCommand, ("instance_name", "factorio-test")) }), Fx)
             .Should().BeFalse();
     }
 

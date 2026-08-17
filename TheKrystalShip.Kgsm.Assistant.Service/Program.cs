@@ -791,7 +791,7 @@ static async Task<ToolDto[]> AuthorizedToolsAsync(
     // Mirror ServerAssistant.SelectTools: omit `search` when no source backs it (§D7), so the SPA's
     // picker never lists a tool the turn would reject.
     if (!searchOptions.Value.Available)
-        tools = tools.Where(t => t.Tool != LlmTools.Search).ToArray();
+        tools = tools.Where(t => t.Tool != catalog.NameOf(LlmTools.Search)).ToArray();
 
     return [.. tools.Select(t => new ToolDto(
         t.Name,
@@ -1245,6 +1245,7 @@ review.MapGet("/conversations/stats", (
     IOptions<LlmBackendOptions> llm,
     IOptions<LlmAgentOptions> agent,
     IOptions<AssistantServiceOptions> assistant,
+    IToolCatalog catalog,
     string? surface) =>
 {
     if (ConversationSurfaces.Resolve(surface ?? WebSurface) is not { } scope)
@@ -1254,12 +1255,12 @@ review.MapGet("/conversations/stats", (
 
     // Whether a recorded tool name is one this assistant actually ships is a question only the
     // catalog can answer, and the catalog lives here — the store that counted the calls is
-    // domain-blind by design and reports the name it found either way. Checked against EveryToolName,
-    // not the ordinary-turn offer: a conditionally-offered tool (revise_blueprint) is real, and
-    // reporting it as invented would send a reviewer chasing a bug that isn't there.
+    // domain-blind by design and reports the name it found either way. Asked of the whole catalog
+    // rather than the ordinary-turn offer: a conditionally-offered tool (revise_blueprint) is real,
+    // and reporting it as invented would send a reviewer chasing a bug that isn't there.
     var tools = stats.Tools
         .Select(t => new AdminToolStatDto(
-            t.Name, LlmTools.EveryToolName.Contains(new Tool(t.Name)),
+            t.Name, catalog.CapabilityOf(new Tool(t.Name)) is not null,
             t.Calls, t.MedianMs, t.MaxMs, t.FailedCalls))
         .ToArray();
 

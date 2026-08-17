@@ -89,15 +89,15 @@ public class ServerAssistantStreamTests
             confirmations,
             new[]
             {
-                AgentEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = "Rust" }),
-                AgentEvent.ToolResult(LlmTools.CreateBlueprint, "Verified."),
+                AgentEvent.ToolStart(ShippedText.Name(LlmTools.CreateBlueprint), new Dictionary<string, string?> { ["game"] = "Rust" }),
+                AgentEvent.ToolResult(ShippedText.Name(LlmTools.CreateBlueprint), "Verified."),
                 AgentEvent.Final("Rust is now in the catalog."),
             },
             progress: progress,
             progressSteps: new (Tool, string, string)[]
             {
-                (LlmTools.CreateBlueprint, "research", "Looking it up online…"),
-                (LlmTools.CreateBlueprint, "draft", "Building a server config…"),
+                (ShippedText.Name(LlmTools.CreateBlueprint), "research", "Looking it up online…"),
+                (ShippedText.Name(LlmTools.CreateBlueprint), "draft", "Building a server config…"),
             });
 
         var events = await DrainAsync(Create(agent, confirmations, progress).RunStreamAsync("web:1", "make me a rust server", true));
@@ -108,7 +108,7 @@ public class ServerAssistantStreamTests
         events.Where(e => e.Kind == AssistantEventKind.Progress)
             .Select(e => e.ProgressKey).Should().Equal("research", "draft");
         events.Where(e => e.Kind == AssistantEventKind.Progress)
-            .Should().OnlyContain(e => e.ToolName == LlmTools.CreateBlueprint && e.ProgressStatus == "active");
+            .Should().OnlyContain(e => e.ToolName == ShippedText.Name(LlmTools.CreateBlueprint) && e.ProgressStatus == "active");
     }
 
     [Fact]
@@ -124,22 +124,22 @@ public class ServerAssistantStreamTests
             confirmations,
             new[]
             {
-                AgentEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?>()),
-                AgentEvent.ToolResult(LlmTools.CreateBlueprint, "a"),
+                AgentEvent.ToolStart(ShippedText.Name(LlmTools.CreateBlueprint), new Dictionary<string, string?>()),
+                AgentEvent.ToolResult(ShippedText.Name(LlmTools.CreateBlueprint), "a"),
                 AgentEvent.Final("a"),
             },
             progress: progress,
-            progressSteps: new (Tool, string, string)[] { (LlmTools.CreateBlueprint, "research", "alpha step") });
+            progressSteps: new (Tool, string, string)[] { (ShippedText.Name(LlmTools.CreateBlueprint), "research", "alpha step") });
         var agentB = new ScriptedAgent(
             confirmations,
             new[]
             {
-                AgentEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?>()),
-                AgentEvent.ToolResult(LlmTools.CreateBlueprint, "b"),
+                AgentEvent.ToolStart(ShippedText.Name(LlmTools.CreateBlueprint), new Dictionary<string, string?>()),
+                AgentEvent.ToolResult(ShippedText.Name(LlmTools.CreateBlueprint), "b"),
                 AgentEvent.Final("b"),
             },
             progress: progress,
-            progressSteps: new (Tool, string, string)[] { (LlmTools.CreateBlueprint, "research", "beta step") });
+            progressSteps: new (Tool, string, string)[] { (ShippedText.Name(LlmTools.CreateBlueprint), "research", "beta step") });
 
         await using var a = Create(agentA, confirmations, progress).RunStreamAsync("web:a", "x", true).GetAsyncEnumerator();
         await using var b = Create(agentB, confirmations, progress).RunStreamAsync("web:b", "y", true).GetAsyncEnumerator();

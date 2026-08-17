@@ -352,7 +352,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.FinalizeBlueprintAsync("Satisfactory", "edited-yaml", true, Arg.Any<CancellationToken>())
             .Returns(new ToolResult<BlueprintAuthoringData>(
-                LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "satisfactory"),
+                ShippedTextForTests.Name(LlmTools.CreateBlueprint), Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, "satisfactory"),
                 "Added Satisfactory.",
                 new BlueprintAuthoringData(BlueprintAuthoringOutcome.Verified, "Satisfactory", "satisfactory", [], "it booted", null, true)));
 
@@ -383,7 +383,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.FinalizeBlueprintAsync("Satisfactory", "edited-yaml", false, Arg.Any<CancellationToken>())
             .Returns(new ToolResult<BlueprintAuthoringData>(
-                LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "Satisfactory"),
+                ShippedTextForTests.Name(LlmTools.CreateBlueprint), Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "Satisfactory"),
                 "denied",
                 new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, "Satisfactory", null, [], null, "denied", false)));
 
@@ -1021,8 +1021,8 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("web:user1", "status?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
-                AssistantStreamEvent.ToolStart(LlmTools.ServerInfo, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
-                AssistantStreamEvent.ToolResult(LlmTools.ServerInfo, "factorio: stopped", "tc_0"),
+                AssistantStreamEvent.ToolStart(ShippedTextForTests.Name(LlmTools.ServerInfo), new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
+                AssistantStreamEvent.ToolResult(ShippedTextForTests.Name(LlmTools.ServerInfo), "factorio: stopped", "tc_0"),
                 AssistantStreamEvent.Token("Stopped."),
                 AssistantStreamEvent.Final("Stopped.")));
 
@@ -1033,7 +1033,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         body.Should().Contain("\"type\":\"tool.start\"");
         // §5·a correlation id — the SAME id rides tool.start and tool.result so a renderer pairs them.
         body.Should().Contain("\"id\":\"tc_0\"");
-        body.Should().Contain("\"tool\":\"server_info\"");
+        body.Should().Contain("\"tool\":\"get_instance_status\"");
         body.Should().Contain("\"instance_name\":\"factorio\"");
         body.Should().Contain("event: tool.result");
         body.Should().Contain("\"summary\":\"factorio: stopped\"");
@@ -1048,8 +1048,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // Phase 2 (§5·c): run_health_check surfaces a structured card on tool.result. The frame KEEPS
         // `summary` (Phase-1 clients unaffected) AND adds `result` — the ToolResultCard, with enums
         // serialised as camelCase strings (never opaque ints) for the SPA, correlated by the same id.
+        // The card's `tool` is the SPA's card kind, not the model-facing tool name — the two are
+        // deliberately separate, and this frame is the wire the browser reads.
         var card = new ToolResultCard(
-            LlmTools.RunHealthCheck.Name, Confidence.Confirmed,
+            ResultCardKinds.Health.Name, Confidence.Confirmed,
             new ResultRef(ResourceKind.Server, "factorio"),
             new HealthData(
                 CheckState.Warn,
@@ -1064,9 +1066,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         assistant.RunStreamAsync("web:user1", "health?", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
                 AssistantStreamEvent.ToolStart(
-                    LlmTools.RunHealthCheck, new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
+                    ShippedTextForTests.Name(LlmTools.RunHealthCheck), new Dictionary<string, string?> { ["instance_name"] = "factorio" }, "tc_0"),
                 AssistantStreamEvent.ToolResult(
-                    LlmTools.RunHealthCheck, "factorio: passed with warnings.", "tc_0", card),
+                    ShippedTextForTests.Name(LlmTools.RunHealthCheck), "factorio: passed with warnings.", "tc_0", card),
                 AssistantStreamEvent.Final("factorio has an update available.")));
 
         var response = await StreamTurnAsync(await AuthedAsync(Factory(assistant)), "health?");
@@ -1098,10 +1100,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("web:user1", "make me a rust server", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(
-                AssistantStreamEvent.ToolStart(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = "Rust" }, "tc_0"),
-                AssistantStreamEvent.Progress(LlmTools.CreateBlueprint, "research", "Looking it up online…"),
-                AssistantStreamEvent.Progress(LlmTools.CreateBlueprint, "draft", "Building a server config…"),
-                AssistantStreamEvent.ToolResult(LlmTools.CreateBlueprint, "Rust is now in the catalog.", "tc_0"),
+                AssistantStreamEvent.ToolStart(ShippedTextForTests.Name(LlmTools.CreateBlueprint), new Dictionary<string, string?> { ["game"] = "Rust" }, "tc_0"),
+                AssistantStreamEvent.Progress(ShippedTextForTests.Name(LlmTools.CreateBlueprint), "research", "Looking it up online…"),
+                AssistantStreamEvent.Progress(ShippedTextForTests.Name(LlmTools.CreateBlueprint), "draft", "Building a server config…"),
+                AssistantStreamEvent.ToolResult(ShippedTextForTests.Name(LlmTools.CreateBlueprint), "Rust is now in the catalog.", "tc_0"),
                 AssistantStreamEvent.Final("Rust is now in the catalog. Want me to make you a server?")));
 
         var response = await StreamTurnAsync(await AuthedAsync(Factory(assistant)), "make me a rust server");
@@ -1844,7 +1846,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                     Tools = new[]
                     {
                         new Llm.Models.RecordedToolCall(
-                            new Llm.Models.Tool("server_info"),
+                            new Llm.Models.Tool("get_instance_status"),
                             new Dictionary<string, string?> { ["instance"] = "factorio" },
                             "factorio is running", 12, null),
                     },
@@ -1866,7 +1868,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         body.Should().Contain("\"final\":\"Yes, it's running.\"");
         body.Should().Contain("\"think\":true");
         body.Should().Contain("\"thinking\":\"let me check\"");
-        body.Should().Contain("\"tool\":\"server_info\"");       // §5·a field name reused
+        body.Should().Contain("\"tool\":\"get_instance_status\"");       // §5·a field name reused
         body.Should().Contain("\"summary\":\"factorio is running\"");
         body.Should().Contain("\"outcome\":\"ok\"");
     }
@@ -2437,7 +2439,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 Tools = new[]
                 {
-                    new Llm.Models.ToolStat { Name = "server_info", Calls = 20, MedianMs = 222, MaxMs = 1041, FailedCalls = 1 },
+                    new Llm.Models.ToolStat { Name = "get_instance_status", Calls = 20, MedianMs = 222, MaxMs = 1041, FailedCalls = 1 },
                     new Llm.Models.ToolStat { Name = "google_search", Calls = 1, MedianMs = 0, MaxMs = 0, FailedCalls = 1 },
                 },
             },
@@ -2449,7 +2451,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
 
         var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("\"name\":\"server_info\",\"known\":true");
+        body.Should().Contain("\"name\":\"get_instance_status\",\"known\":true");
         body.Should().Contain("\"name\":\"google_search\",\"known\":false");
     }
 

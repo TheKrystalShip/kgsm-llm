@@ -213,7 +213,7 @@ using (host)
     var catalog = host.Services.GetRequiredService<IToolCatalog>();
     var offered = canPerformActions ? catalog.All : catalog.ReadOnly;
     if (!host.Services.GetRequiredService<IOptions<SearchOptions>>().Value.Available)
-        offered = [.. offered.Where(t => t.Tool != LlmTools.Search)];
+        offered = [.. offered.Where(t => t.Tool != catalog.NameOf(LlmTools.Search))];
 
     return await Repl.RunAsync(
         runner, interruptor, compactor, store, offered, canPerformActions, colorErr);

@@ -45,7 +45,7 @@ public static class PerformanceReport
         };
 
         return new ToolResult<PerformanceData>(
-            Tool: LlmTools.GetPerformance,
+            Tool: ResultCardKinds.Performance,
             Confidence: confidence,
             Subject: new ResultRef(ResourceKind.Metrics, instance),
             Summary: summary,
@@ -87,7 +87,7 @@ public static class PerformanceReport
         };
 
         return new ToolResult<PerformanceData>(
-            Tool: LlmTools.GetPerformance,
+            Tool: ResultCardKinds.Performance,
             Confidence: confidence,
             Subject: new ResultRef(ResourceKind.Metrics, instance),
             Summary: summary,

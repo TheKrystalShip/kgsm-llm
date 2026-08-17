@@ -98,7 +98,7 @@ public sealed class HealthCheckLiveTests : IClassFixture<WebApplicationFactory<P
 
         result.IsSuccess.Should().BeTrue();
 
-        var health = calls.FirstOrDefault(c => c.Name == LlmTools.RunHealthCheck);
+        var health = calls.FirstOrDefault(c => c.Name == ShippedTextForTests.Name(LlmTools.RunHealthCheck));
         health.Should().NotBeNull("a health question must route to run_health_check");
         (health!.Result ?? string.Empty).Should().Contain(Instance,
             "the tool's deterministic summary names the instance it assessed");

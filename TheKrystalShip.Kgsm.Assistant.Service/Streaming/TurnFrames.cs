@@ -17,6 +17,7 @@ internal static class TurnFrames
         IPendingConfirmationStore pending,
         int confirmationTtlSeconds,
         string conversationId,
+        IToolCatalog catalog,
         ref int proposalSeq) => ev.Kind switch
         {
             AssistantEventKind.Token =>
@@ -29,7 +30,8 @@ internal static class TurnFrames
                 new TurnFrame(TurnStream.ToolStart, new ToolStartEvent(
                     ev.ToolCallId ?? string.Empty,
                     ev.ToolName.Name,
-                    ev.ToolArguments ?? new Dictionary<string, string?>())),
+                    ev.ToolArguments ?? new Dictionary<string, string?>(),
+                    catalog.LabelOf(ev.ToolName))),
 
             // §5·a: `summary` (always) + the optional structured `result` card the dispatcher attached.
             AssistantEventKind.ToolResult when ev.ToolName is not null =>

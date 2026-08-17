@@ -29,8 +29,13 @@ public sealed class KgsmServerOperationsTests
     private readonly IWatchdogClient _watchdog = Substitute.For<IWatchdogClient>();
     private readonly AsyncLocalInvocationContext _invocation = new();
 
+    // The real shipped catalog, so a refusal that points the model at another tool names it the way
+    // the file does — the same resolution production uses.
+    private static readonly IToolCatalog Catalog = new DiskToolCatalog(ShippedPrompts.Directory);
+
     private KgsmServerOperations Create() =>
-        new(_instances, _files, _system, _watcher, _watchdog, _invocation, NullLogger<KgsmServerOperations>.Instance);
+        new(_instances, _files, _system, _watcher, _watchdog, _invocation, Catalog,
+            NullLogger<KgsmServerOperations>.Instance);
 
     // --- provenance: a turn/confirm scope stamps actor (the Discord principal) + origin=assistant ---
 
@@ -750,7 +755,7 @@ public sealed class KgsmServerOperationsTests
             "inst", "PalWorldSettings.ini", "NoSuchSetting", "1");
 
         result.IsSuccess.Should().BeFalse();
-        (result.Error ?? string.Empty).Should().Contain("search_files");
+        (result.Error ?? string.Empty).Should().Contain("search_instance_files");
     }
 
     [Fact]
@@ -781,7 +786,7 @@ public sealed class KgsmServerOperationsTests
             copyFromPath: "DefaultPalWorldSettings.ini");
 
         result.IsSuccess.Should().BeFalse();
-        (result.Error ?? string.Empty).Should().Contain("find_files");
+        (result.Error ?? string.Empty).Should().Contain("find_instance_file");
         _files.DidNotReceive().Read("inst", "DefaultPalWorldSettings.ini", Arg.Any<long>());
     }
 
@@ -796,7 +801,7 @@ public sealed class KgsmServerOperationsTests
             copyFromPath: "DefaultPalWorldSettings.ini");
 
         result.IsSuccess.Should().BeFalse();
-        (result.Error ?? string.Empty).Should().Contain("find_files");
+        (result.Error ?? string.Empty).Should().Contain("find_instance_file");
     }
 
     [Fact]

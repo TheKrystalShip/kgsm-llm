@@ -72,7 +72,7 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         result.IsSuccess.Should().BeTrue("the live turn should complete against Ollama + kgsm");
         result.Text.Should().NotBe(IterationLimitReply, "the loop must not hit the MaxIterations cap");
 
-        var statusCalls = calls.Where(c => c.Name == LlmTools.ServerInfo).ToList();
+        var statusCalls = calls.Where(c => c.Name == ShippedTextForTests.Name(LlmTools.ServerInfo)).ToList();
         statusCalls.Should().ContainSingle(
             "a fleet status question should need exactly one bulk get_status call — no per-instance looping");
 
@@ -101,7 +101,7 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
 
         result.IsSuccess.Should().BeTrue();
         result.Text.Should().NotBe(IterationLimitReply);
-        calls.Count(c => c.Name == LlmTools.ServerInfo).Should().BeInRange(1, 2,
+        calls.Count(c => c.Name == ShippedTextForTests.Name(LlmTools.ServerInfo)).Should().BeInRange(1, 2,
             "answering live status needs get_status (status isn't in the system prompt); no looping");
 
         // factorio-test is installed but stopped, so the model should report it as not running.
@@ -126,7 +126,7 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         var events = await RunStreamTurnAsync(model, "Which of my game servers are currently running?");
 
         var toolStarts = events.Where(e => e.Kind == AssistantEventKind.ToolStart).ToList();
-        toolStarts.Should().Contain(e => e.ToolName == LlmTools.ServerInfo,
+        toolStarts.Should().Contain(e => e.ToolName == ShippedTextForTests.Name(LlmTools.ServerInfo),
             "a fleet status question drives a get_status tool round on the stream");
         events.Should().Contain(e => e.Kind == AssistantEventKind.ToolResult,
             "each tool.start is followed by a tool.result");
@@ -135,7 +135,7 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         events[^1].Text.Should().NotBe(IterationLimitReply, "the loop must not hit the MaxIterations cap");
 
         // The bulk path: the get_status tool.start carried no instance_name.
-        var fleetStart = toolStarts.First(e => e.ToolName == LlmTools.ServerInfo);
+        var fleetStart = toolStarts.First(e => e.ToolName == ShippedTextForTests.Name(LlmTools.ServerInfo));
         string.IsNullOrWhiteSpace(fleetStart.ToolArguments?.GetValueOrDefault("instance_name")).Should().BeTrue(
             "the fleet stream must take the bulk path (no instance_name)");
     }
@@ -174,7 +174,7 @@ public sealed class GetStatusLiveTests : IClassFixture<WebApplicationFactory<Pro
         // The model proposed via the merged server_command tool with the right verb (the
         // dispatcher routes the verb to its kind and only stages it).
         calls.Should().Contain(c =>
-            c.Name == LlmTools.ServerCommand && c.Args.GetValueOrDefault("verb") == verb);
+            c.Name == ShippedTextForTests.Name(LlmTools.ServerCommand) && c.Args.GetValueOrDefault("verb") == verb);
     }
 
     // --- harness ---------------------------------------------------------------------------

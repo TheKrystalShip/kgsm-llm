@@ -31,7 +31,15 @@ internal sealed class KgsmServerOperations : IServerOperations
     private readonly IWatcherService _watcher;
     private readonly IWatchdogClient _watchdog;
     private readonly IInvocationContext _invocation;
+    private readonly IToolCatalog _catalog;
     private readonly ILogger<KgsmServerOperations> _logger;
+
+    /// <summary>
+    /// What a capability is CALLED on this deploy. These refusals are read by the model and tell it
+    /// which tool to reach for next, so the name has to be the one the catalog is actually offering —
+    /// a literal would keep pointing at the old name after a rename.
+    /// </summary>
+    private string Name(Capability capability) => _catalog.NameOf(capability).Name;
 
     // kgsm's `watcher ports test` exit code when the instance has no ports configured — treated as
     // "not applicable" (the health ports check skips) rather than "not reachable".
@@ -39,7 +47,8 @@ internal sealed class KgsmServerOperations : IServerOperations
 
     public KgsmServerOperations(
         IInstanceService instances, IInstanceFiles files, ISystemService system, IWatcherService watcher,
-        IWatchdogClient watchdog, IInvocationContext invocation, ILogger<KgsmServerOperations> logger)
+        IWatchdogClient watchdog, IInvocationContext invocation, IToolCatalog catalog,
+        ILogger<KgsmServerOperations> logger)
     {
         _instances = instances;
         _files = files;
@@ -47,6 +56,7 @@ internal sealed class KgsmServerOperations : IServerOperations
         _watcher = watcher;
         _watchdog = watchdog;
         _invocation = invocation;
+        _catalog = catalog;
         _logger = logger;
     }
 
@@ -788,7 +798,7 @@ internal sealed class KgsmServerOperations : IServerOperations
                 return seeded
                     ? Result.Success(source.Value!)
                     : Result.Failure<string>(
-                        "no text to replace was given. Pass old_string exactly as read_file showed it.");
+                        $"no text to replace was given. Pass old_string exactly as {Name(LlmTools.ReadFile)} showed it.");
 
             var edit = FileEdit.Apply(source.Value!, oldText, newText);
             return edit.Outcome switch
@@ -809,7 +819,7 @@ internal sealed class KgsmServerOperations : IServerOperations
                 FileEditOutcome.NoChange => Result.Failure<string>(
                     "the replacement is identical to the text it replaces, so this edit changes nothing."),
                 _ => Result.Failure<string>(
-                    "no text to replace was given. Pass old_string exactly as read_file showed it."),
+                    $"no text to replace was given. Pass old_string exactly as {Name(LlmTools.ReadFile)} showed it."),
             };
         }
         catch (Exception ex)
@@ -855,14 +865,14 @@ internal sealed class KgsmServerOperations : IServerOperations
                     Result.Failure<SettingEditSummary>(
                         $"'{sourcePath}' is empty, so it holds no settings to change. Pass the game's "
                         + "default/reference file as copy_from to fill it in."),
-                // The key is the whole address here, so a miss is answerable: search_files finds which
+                // The key is the whole address here, so a miss is answerable: search_instance_files finds which
                 // file actually carries it, which is a cheaper next step than guessing at spellings.
                 SettingEditOutcome.NoMatch => Result.Failure<SettingEditSummary>(
                     $"'{settingKey}' is not a setting in '{sourcePath}'. Check the spelling against the "
-                    + "file, or find the file that does carry it with search_files."),
+                    + $"file, or find the file that does carry it with {Name(LlmTools.SearchFiles)}."),
                 SettingEditOutcome.Ambiguous => Result.Failure<SettingEditSummary>(
                     $"'{settingKey}' is set in more than one place in '{sourcePath}', so which one was "
-                    + "meant is unknown. Name the exact text to replace with write_file instead."),
+                    + $"meant is unknown. Name the exact text to replace with {Name(LlmTools.WriteFile)} instead."),
                 SettingEditOutcome.NoChange => Result.Failure<SettingEditSummary>(
                     $"'{settingKey}' is already '{settingValue}' in '{sourcePath}', so this changes nothing."),
                 _ => Result.Failure<SettingEditSummary>(
@@ -903,7 +913,7 @@ internal sealed class KgsmServerOperations : IServerOperations
             FileOpOutcome.Ok => Result.Success(),
             FileOpOutcome.NotFound or FileOpOutcome.NotAFile => Result.Failure(
                 $"'{parent}' is not a directory in this instance, so '{relativePath}' is not where that "
-                + "file goes. Find the real path with find_files before writing to it."),
+                + $"file goes. Find the real path with {Name(LlmTools.FindFiles)} before writing to it."),
             FileOpOutcome.OutOfJail => Result.Failure(
                 $"the path '{relativePath}' is outside the instance directory."),
             FileOpOutcome.InstanceUnavailable => Result.Failure($"'{instance}' is not a known instance."),
@@ -929,7 +939,7 @@ internal sealed class KgsmServerOperations : IServerOperations
         {
             FileOpOutcome.NotFound when seeded =>
                 $"'{sourcePath}' does not exist, so there is nothing to copy from. Find the real "
-                + "reference file with find_files or list_files first.",
+                + $"reference file with {Name(LlmTools.FindFiles)} or {Name(LlmTools.ListFiles)} first.",
             FileOpOutcome.NotFound =>
                 $"'{sourcePath}' does not exist yet. To create it from the game's default/reference "
                 + "file, pass that file's path as copy_from; its content is copied here and your "

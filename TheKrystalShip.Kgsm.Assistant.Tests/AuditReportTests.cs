@@ -39,7 +39,7 @@ public class AuditReportTests
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
 
-        result.Tool.Should().Be(LlmTools.Events);
+        result.Tool.Should().Be(ResultCardKinds.AuditLog);
         result.Confidence.Should().Be(Confidence.Confirmed);
         result.Subject.Should().Be(new ResultRef(ResourceKind.Audit, "factorio-test", "all"));
         result.Data.State.Should().Be(AuditReadState.Available);
@@ -237,19 +237,6 @@ public class AuditReportTests
 
     /// <summary>The change timeline grounds "who changed it" the same way.</summary>
     [Fact]
-    public void BuildChangeTimeline_AlsoNamesActors()
-    {
-        var reading = new EventHistoryReading(AuditReadState.Available, new[]
-        {
-            Row("instance_updated", actor: "discord:claude"),
-        });
-
-        var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
-
-        result.Summary.Should().Contain("factorio-test updated, by claude");
-    }
-
-    [Fact]
     public void Build_UnknownEventType_FallsBackToRawTypeString_NeverGuessedGrammar()
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[] { Row("instance_relocated") });
@@ -260,76 +247,6 @@ public class AuditReportTests
     }
 
     // ------------------------------------------------------------ get_change_timeline -------------
-
-    [Fact]
-    public void BuildChangeTimeline_FiltersOutRoutineAndPlayerEvents_KeepsOnlyStateChanges()
-    {
-        var reading = new EventHistoryReading(AuditReadState.Available, new[]
-        {
-            Row("instance_started"),
-            Row("instance_stopped"),
-            Row("instance_crashed"),
-            Row("instance_player_joined"),
-            Row("instance_player_left"),
-            Row("instance_installed"),
-            Row("instance_updated"),
-            Row("instance_version_updated"),
-            Row("instance_backup_created"),
-            Row("instance_ports_opened"),
-            Row("instance_ports_closed"),
-            Row("instance_uninstalled"),
-        });
-
-        var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
-
-        result.Tool.Should().Be(LlmTools.Events);
-        var keptTypes = result.Data.Events.Select(e => e.Type).ToHashSet();
-        keptTypes.Should().BeEquivalentTo(new[]
-        {
-            "instance_installed", "instance_updated", "instance_version_updated",
-            "instance_backup_created", "instance_ports_opened", "instance_ports_closed",
-            "instance_uninstalled",
-        });
-        keptTypes.Should().NotContain("instance_started").And.NotContain("instance_stopped")
-            .And.NotContain("instance_crashed").And.NotContain("instance_player_joined")
-            .And.NotContain("instance_player_left");
-    }
-
-    [Fact]
-    public void BuildChangeTimeline_Empty_ExplainsWhatCountsAsAChange()
-    {
-        var reading = new EventHistoryReading(AuditReadState.Available, new[] { Row("instance_started") });
-
-        var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
-
-        result.Data.Events.Should().BeEmpty();
-        result.Summary.Should().Contain("No changes recorded for factorio-test in the last 7d");
-        result.Summary.Should().Contain("routine starts/stops and player activity don't");
-    }
-
-    [Fact]
-    public void BuildChangeTimeline_MonitorUnavailable_IsHonest()
-    {
-        var reading = new EventHistoryReading(AuditReadState.JournalUnavailable, Array.Empty<AuditEventRow>());
-
-        var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
-
-        result.Confidence.Should().Be(Confidence.Possible);
-        result.Summary.Should().Contain("unavailable").And.Contain("isn't a sign nothing changed");
-    }
-
-    [Fact]
-    public void BuildChangeTimeline_Summary_UsesChangeFraming_NotEventFraming()
-    {
-        var reading = new EventHistoryReading(AuditReadState.Available, new[] { Row("instance_installed") });
-
-        var result = AuditReport.BuildChangeTimeline(reading, "factorio-test", "7d");
-
-        result.Summary.Should().Contain("1 change for factorio-test");
-        result.Summary.Should().NotContain("1 event for");
-    }
-
-    // ------------------------------------------------------------------- AuditWindow ---------------
 
     [Fact]
     public void AuditWindow_Resolve_RecognizedToken_UsesItsSpan()

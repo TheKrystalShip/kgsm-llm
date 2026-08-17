@@ -1,3 +1,5 @@
+using TheKrystalShip.Llm.Models;
+
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
@@ -11,6 +13,13 @@ internal static class ShippedText
     public static string Directory { get; } = Locate();
 
     public static IToolCatalog Catalog { get; } = new DiskToolCatalog(Directory);
+
+    /// <summary>
+    /// What the shipped catalog calls a capability. Tests name capabilities for the same reason the
+    /// code does — a tool renamed for routing is a change to <c>tools.json</c>, and a suite that
+    /// hardcoded the old names would fail for no reason anyone should have to investigate.
+    /// </summary>
+    public static Tool Name(Capability capability) => Catalog.NameOf(capability);
 
     /// <summary>The shipped text of one segment, trimmed exactly as the reader trims it.</summary>
     public static string Segment(string fileName) =>

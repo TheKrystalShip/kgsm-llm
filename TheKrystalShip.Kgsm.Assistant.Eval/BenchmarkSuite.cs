@@ -92,7 +92,7 @@ internal static class BenchmarkSuite
     /// re-derives the staged content from the real file and the call's own old_string/new_string
     /// (<see cref="C.StagesFaithfulFileEdit"/>), so a payload that is not that file with that one
     /// replacement fails.
-    public const string Version = "v16";
+    public const string Version = "v19";
 
     // "Does the reply say something is pending?" has ONE definition, and it is the assistant's own
     // (PendingConfirmationNote) — reached through C.SaysConfirmationPending. A copy of the pattern
@@ -133,7 +133,7 @@ internal static class BenchmarkSuite
 
         Single("B5", "what port is <game> on?", true, new[] { FixtureRole.UniqueGame },
             "what port is my {unique_game} server on?",
-            C.CalledTool(LlmTools.ServerInfo, "uses server_info for the port"),
+            C.CalledTool(LlmTools.ServerInfo, "uses get_instance_status for the port"),
             C.FinalLacks(Underclaim, "doesn't underclaim capability", Rubric.A_NoFabrication),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
@@ -289,9 +289,9 @@ internal static class BenchmarkSuite
             C.CalledTool(LlmTools.GetNetwork, "uses the network tool for router/UPnP reachability"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
-        // History / diagnosis (H): the event journal vs the root-cause capstone. The feed and the
-        // change subset are one tool with a scope, so these assert the tool, not which scope — the
-        // scope is a narrowing the transcript shows and the model is free to get right or wrong.
+        // History / diagnosis (H): the event journal vs the root-cause capstone. The journal is one
+        // unfiltered feed, so these assert that it was read — there is no longer a subset to pick
+        // right or wrong, which is the point of removing it.
         Single("H1", "what happened with <game> recently?", true, new[] { FixtureRole.UniqueGame },
             "what's been happening with {unique_game} recently?",
             C.CalledTool(LlmTools.Events, "reads the event journal"),
@@ -306,7 +306,8 @@ internal static class BenchmarkSuite
         Single("H2", "when was <game> last updated?", true, new[] { FixtureRole.UniqueGame },
             "when was {unique_game} last updated?",
             C.AnyOf(Rubric.B_Routing, "answers from a local source (version or the event journal)",
-                C.CalledTool(LlmTools.ServerInfo), C.CalledTool(LlmTools.Events)),
+                C.CalledTool(LlmTools.GetInstanceVersion), C.CalledTool(LlmTools.ServerInfo),
+                C.CalledTool(LlmTools.Events)),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
         // The root-cause capstone: an incident/history "why" (trace_root_cause), NOT a right-now health
@@ -369,27 +370,35 @@ internal static class BenchmarkSuite
             "set the difficulty on {unique_game} to hard",
             C.StagesWith(ConfirmationKind.WriteFile,
                 s => !string.IsNullOrWhiteSpace(s.Target) && !string.IsNullOrWhiteSpace(s.ConfigKey),
-                "stages a write_file naming the resolved instance and the file path"),
+                "stages a file edit naming the resolved instance and the file path"),
             C.StagesFaithfulFileEdit(),
             C.SaysConfirmationPending(),
             C.Completes(),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
-        Single("W2", "a KGSM setting (launch args) routes to set_config_value, not write_file", true,
+        // "Change the launch arguments" names no value, and a launch-args string has no value a
+        // request implies — so ASKING which is the right answer, not a miss. What this case is really
+        // about is the ROUTE: whichever way it goes, a KGSM-own setting must never reach a file edit.
+        // Demanding a staged proposal here contradicted W1, which asserts the same shape the other
+        // way round, and scored the model's best available behaviour as a failure.
+        Single("W2", "a KGSM setting (launch args) routes to set_instance_kgsm_setting, not a file edit", true,
             new[] { FixtureRole.UniqueGame },
             "change the launch arguments for {unique_game}",
-            C.Stages(ConfirmationKind.SetConfig),
-            C.DoesNotStage(ConfirmationKind.WriteFile, "does not stage a write_file for a KGSM-own setting"),
-            C.SaysConfirmationPending(),
+            // AsksForAValue, not Clarifies: the two ask about different things. Clarifies is the
+            // which-SERVER predicate, and this request names its server perfectly — what it leaves open
+            // is the value.
+            C.AnyOf(Rubric.C_ProposeOnly, "stages the KGSM setting, or asks which value it should take",
+                C.Stages(ConfirmationKind.SetConfig), C.AsksForAValue()),
+            C.DoesNotStage(ConfirmationKind.WriteFile, "does not stage a file edit for a KGSM-own setting"),
             C.Completes(),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
-        Single("W3", "a game setting (day length) routes to write_file, not set_config_value", true,
+        Single("W3", "a game setting (day length) routes to a file edit, not set_instance_kgsm_setting", true,
             new[] { FixtureRole.UniqueGame },
             "make the days longer on {unique_game}",
             C.StagesWith(ConfirmationKind.WriteFile, s => !string.IsNullOrWhiteSpace(s.ConfigKey),
-                "stages a write_file for the game-own setting"),
-            C.DoesNotStage(ConfirmationKind.SetConfig, "does not stage a set_config_value for a game-own setting"),
+                "stages a file edit for the game-own setting"),
+            C.DoesNotStage(ConfirmationKind.SetConfig, "does not stage a set_instance_kgsm_setting for a game-own setting"),
             C.SaysConfirmationPending(),
             C.Completes(),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
@@ -417,7 +426,7 @@ internal static class BenchmarkSuite
 
         Single("K1", "how many backups does <game> have?", true, new[] { FixtureRole.UniqueGame },
             "how many backups do I have for {unique_game}?",
-            C.CalledToolWith(LlmTools.ServerInfo, "aspect", "backups", "asks server_info for the backup list"),
+            C.CalledTool(LlmTools.ListInstanceBackups, "asks for the backup list"),
             C.StagesNothing(Rubric.C_ProposeOnly, "stages nothing for a read"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
@@ -446,13 +455,13 @@ internal static class BenchmarkSuite
         // about the user's own host, so reaching for the web is the specific failure to catch.
         Single("Y1", "how much memory/disk does this machine have left?", true, new[] { FixtureRole.AnyInstance },
             "how much memory and disk space does this machine have left?",
-            C.CalledToolWith(LlmTools.HostInfo, "aspect", "vitals", "asks host_info for the host vitals"),
+            C.CalledTool(LlmTools.HostInfo, "asks for the host vitals"),
             C.DidNotCallTool(LlmTools.Search, Rubric.E_Scope, "doesn't search the web for a fact about this host"),
             C.StagesNothing(Rubric.C_ProposeOnly, "stages nothing for a read")),
 
         Single("Y2", "are any servers fighting over a port?", true, new[] { FixtureRole.MultipleInstances },
             "are any of my servers trying to use the same port as each other?",
-            C.CalledToolWith(LlmTools.HostInfo, "aspect", "conflicts", "asks host_info for port conflicts"),
+            C.CalledTool(LlmTools.FindPortConflicts, "asks for port conflicts"),
             C.DidNotCallTool(LlmTools.Search, Rubric.E_Scope, "doesn't search the web for a fact about this host")),
 
         // --- Blueprint detail (BP): what a game TYPE needs, before anything is installed. The catalog
@@ -490,7 +499,7 @@ internal static class BenchmarkSuite
 
         Single("PL3", "who's on <game> right now?", true, new[] { FixtureRole.UniqueGame },
             "who's playing on {unique_game} right now?",
-            C.CalledToolWith(LlmTools.ServerInfo, "aspect", "players", "asks server_info for the player roster"),
+            C.CalledTool(LlmTools.ListOnlinePlayers, "asks for the player roster"),
             C.StagesNothing(Rubric.C_ProposeOnly, "stages nothing for a read"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
@@ -568,6 +577,7 @@ internal static class BenchmarkSuite
             // something the model went and read, not from the premise it was handed.
             C.AnyOf(Rubric.B_Routing, "looks at the server or its game type rather than answering from the premise",
                 C.CalledTool(LlmTools.BlueprintInfo), C.CalledTool(LlmTools.ServerInfo),
+                C.CalledTool(LlmTools.GetInstanceConfig), C.CalledTool(LlmTools.GetInstanceVersion),
                 C.CalledTool(LlmTools.Events), C.CalledTool(LlmTools.ReadConsole),
                 C.CalledTool(LlmTools.RunHealthCheck), C.CalledTool(LlmTools.ReadFile),
                 C.CalledTool(LlmTools.SearchFiles), C.CalledTool(LlmTools.FindFiles),
@@ -598,7 +608,7 @@ internal static class BenchmarkSuite
         // --- U: the thing exists, and the answer genuinely cannot be measured.
         Single("U1", "who's on a server whose roster can't be read?", true, new[] { FixtureRole.NoPresenceGame },
             "who's playing on {no_presence_game} right now?",
-            C.CalledToolWith(LlmTools.ServerInfo, "aspect", "players", "asks for the roster"),
+            C.CalledTool(LlmTools.ListOnlinePlayers, "asks for the roster"),
             C.ClaimsNoPlayerCount()),
 
         Single("U2", "CPU for a server that isn't running", true, new[] { FixtureRole.Stopped },

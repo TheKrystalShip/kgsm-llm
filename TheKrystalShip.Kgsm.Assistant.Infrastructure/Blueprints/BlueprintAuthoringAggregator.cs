@@ -261,11 +261,11 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         }
 
         // --- Step 2: research (provenance-tagged) -------------------------------------------------
-        _progress.Report(LlmTools.CreateBlueprint, "research", $"Looking up \"{game}\" online…");
+        _progress.Report(ResultCardKinds.BlueprintDraft, "research", $"Looking up \"{game}\" online…");
         var findings = await _research.ResearchAsync(game, cancellationToken);
 
         // --- Step 3: feasibility gates -------------------------------------------------------------
-        _progress.Report(LlmTools.CreateBlueprint, "feasibility", "Checking it can run on Linux…");
+        _progress.Report(ResultCardKinds.BlueprintDraft, "feasibility", "Checking it can run on Linux…");
         if (findings.Feasibility != BlueprintFeasibility.Feasible)
         {
             var reason = findings.Feasibility switch
@@ -281,7 +281,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         }
 
         // --- Step 4: draft (sourced fields only — unknowns stay null/default) ---------------------
-        _progress.Report(LlmTools.CreateBlueprint, "draft", "Building a server config…");
+        _progress.Report(ResultCardKinds.BlueprintDraft, "draft", "Building a server config…");
         var (draft, provenance) = BuildDraft(slug, game, findings);
         if (draft is null)
         {
@@ -428,7 +428,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             {
                 var (actor, origin) = Provenance();
                 installAttempted = true;
-                _progress.Report(LlmTools.CreateBlueprint, "install", "Test-installing a copy to try it out…");
+                _progress.Report(ResultCardKinds.BlueprintDraft, "install", "Test-installing a copy to try it out…");
                 KgsmResult installResult = await Task.Run(
                     () => _instances.Install(slug, null, null, probeName, actor, origin, null, start: true),
                     cancellationToken);
@@ -450,7 +450,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 }
                 else
                 {
-                    _progress.Report(LlmTools.CreateBlueprint, "verify", "Booting it up and waiting for it to answer…");
+                    _progress.Report(ResultCardKinds.BlueprintDraft, "verify", "Booting it up and waiting for it to answer…");
                     (verified, proofLine, lastSnapshot, observedReadyRegex) = await VerifyAsync(probeName, draft, cancellationToken);
                     verifyLog.Add(verified
                         ? $"attempt {attempt}: verified — {proofLine}"
@@ -476,7 +476,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             {
                 if (installAttempted)
                 {
-                    _progress.Report(LlmTools.CreateBlueprint, "teardown", "Cleaning up the test copy…");
+                    _progress.Report(ResultCardKinds.BlueprintDraft, "teardown", "Cleaning up the test copy…");
                     await TeardownAsync(probeName);
                 }
             }
@@ -507,7 +507,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
             // B — evidence-driven repair: feed the real install tree + boot log to the model and let it
             // propose corrected launch fields. A null result means "no better idea than this draft" — stop
             // rather than burn the remaining attempts re-running an identical config.
-            _progress.Report(LlmTools.CreateBlueprint, "repair", "Reading what actually installed to fix the config…");
+            _progress.Report(ResultCardKinds.BlueprintDraft, "repair", "Reading what actually installed to fix the config…");
             var (repairedDraft, repairNote) = await TryRepairAsync(game, draft, evidence, cancellationToken);
             if (repairedDraft is null)
             {
@@ -1077,7 +1077,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
         IReadOnlyList<BlueprintFieldProvenance> provenance, string? proofLine, string? reason, bool offerInstance,
         string? draftYaml = null, string? evidence = null, bool editable = false) =>
         new(
-            LlmTools.CreateBlueprint,
+            ResultCardKinds.BlueprintDraft,
             outcome == BlueprintAuthoringOutcome.Verified ? Confidence.Confirmed : Confidence.Likely,
             subject,
             summary,

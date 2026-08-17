@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant;
 using System.Text.RegularExpressions;
 
 using TheKrystalShip.Kgsm.Assistant.Files;
@@ -40,6 +41,21 @@ internal sealed record TurnObservation(
     /// staged payload against the real file. Null for a synthetic observation with no host behind it.
     /// </summary>
     public Func<string, string, string?>? FileSnapshot { get; init; }
+
+    /// <summary>
+    /// What a capability is CALLED on the catalog this run was scored against. A recorded trajectory
+    /// holds names, and the corpus asserts capabilities, so the two are reconciled here rather than in
+    /// the corpus — which is what keeps the benchmark from being rewritten every time a tool is renamed
+    /// for routing. Absent on a synthetic observation, which then falls back to the capability id.
+    /// </summary>
+    public Func<Capability, Tool>? NameOf { get; init; }
+
+    public bool Called(Capability capability) =>
+        Tools.Any(t => Matches(t.Name, capability));
+
+    public bool Matches(Tool name, Capability capability) =>
+        string.Equals(name.Name, (NameOf?.Invoke(capability) ?? new Tool(capability.Id)).Name,
+            StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>A single named, dimension-tagged predicate over a turn. Stable and reviewed — it lives in
@@ -53,8 +69,8 @@ internal sealed record Check(Rubric Dimension, string Label, Func<TurnObservatio
 /// <summary>Factory for the check vocabulary. Names read as the assertion they make.</summary>
 internal static class C
 {
-    public static Check CalledTool(Tool tool, string? label = null) =>
-        new(Rubric.B_Routing, label ?? $"calls {tool}", (o, _) => o.Tools.Any(t => Eq(t.Name, tool)));
+    public static Check CalledTool(Capability tool, string? label = null) =>
+        new(Rubric.B_Routing, label ?? $"calls {tool}", (o, _) => o.Called(tool));
 
     /// <summary>Rubric B: called the tool AND an argument satisfies a predicate — the enum-argument
     /// counterpart of <see cref="StagesWith"/>. A noun-scoped tool carries the real routing decision in
@@ -62,28 +78,28 @@ internal static class C
     /// asking for the player roster and getting the backup list is a routing miss the tool name can't
     /// see. Argument-precise, so it stays a trajectory signal rather than a prose regex.</summary>
     public static Check CalledToolWith(
-        Tool tool, string argument, string expected, string label) =>
+        Capability tool, string argument, string expected, string label) =>
         new(Rubric.B_Routing, label, (o, _) => o.Tools.Any(t =>
-            Eq(t.Name, tool) &&
+            o.Matches(t.Name, tool) &&
             string.Equals(t.Arguments.GetValueOrDefault(argument)?.Trim(), expected,
                 StringComparison.OrdinalIgnoreCase)));
 
-    public static Check DidNotCallTool(Tool tool, Rubric dim, string label) =>
-        new(dim, label, (o, _) => !o.Tools.Any(t => Eq(t.Name, tool)));
+    public static Check DidNotCallTool(Capability tool, Rubric dim, string label) =>
+        new(dim, label, (o, _) => !o.Called(tool));
 
     public static Check NoToolCalls(string label) =>
         new(Rubric.E_Scope, label, (o, _) => o.Tools.Count == 0);
 
     /// <summary>A (specific or any) tool call referenced the role's server — i.e. it ACTED on the right one.</summary>
-    public static Check ReferencedRole(FixtureRole role, Tool? tool, Rubric dim, string label) =>
+    public static Check ReferencedRole(FixtureRole role, Capability? tool, Rubric dim, string label) =>
         new(dim, label, (o, fx) => o.Tools.Any(t =>
-            (tool is null || Eq(t.Name, tool)) &&
+            (tool is null || o.Matches(t.Name, tool.Value)) &&
             ReferencesInstance(t.Arguments.GetValueOrDefault("instance_name"), fx.InstanceFor(role), fx.GameFor(role))));
 
     /// <summary>Rubric A: a run-state/port answer must have consulted a status/health tool, not invented state.</summary>
     public static Check RoutedThroughStatusOrHealth(string label = "consults a status/health tool (no fabrication)") =>
         new(Rubric.A_NoFabrication, label, (o, _) =>
-            o.Tools.Any(t => Eq(t.Name, LlmTools.ServerInfo) || Eq(t.Name, LlmTools.RunHealthCheck)));
+            o.Tools.Any(t => o.Matches(t.Name, LlmTools.ServerInfo) || o.Matches(t.Name, LlmTools.RunHealthCheck)));
 
     public static Check Stages(ConfirmationKind kind, string? label = null) =>
         new(Rubric.C_ProposeOnly, label ?? $"stages {kind} for confirmation", (o, _) => o.Staged.Any(s => s.Kind == kind));
@@ -123,12 +139,32 @@ internal static class C
             if (staged?.ConfigKey is null || string.IsNullOrEmpty(staged.ConfigValue))
                 return false;
 
-            var call = o.Tools.LastOrDefault(t => Eq(t.Name, LlmTools.WriteFile)
+            // Either editor stages the same kind, so the payload is re-derived from whichever one was
+            // called. The path a setting change was CALLED with may be a bare file name — it is
+            // resolved to the real path before staging — so a setting call is matched on the tool
+            // alone and checked against the path that was actually staged.
+            var call = o.Tools.LastOrDefault(t => o.Matches(t.Name, LlmTools.WriteFile)
                 && string.Equals(t.Arguments.GetValueOrDefault("path")?.Trim(), staged.ConfigKey, StringComparison.Ordinal));
-            if (call is null)
+            var settingCall = call is null
+                ? o.Tools.LastOrDefault(t => o.Matches(t.Name, LlmTools.SetGameSetting))
+                : null;
+            if (call is null && settingCall is null)
                 return false;
 
-            var copyFrom = call.Arguments.GetValueOrDefault("copy_from")?.Trim();
+            if (settingCall is not null)
+            {
+                var settingSource = o.FileSnapshot?.Invoke(staged.Target, staged.ConfigKey);
+                if (settingSource is null)
+                    return false;
+
+                var key = settingCall.Arguments.GetValueOrDefault("setting")?.Trim() ?? string.Empty;
+                var value = settingCall.Arguments.GetValueOrDefault("value") ?? string.Empty;
+                var applied = SettingEdit.Apply(settingSource, key, value);
+                return applied.IsApplied
+                    && string.Equals(applied.Content, staged.ConfigValue, StringComparison.Ordinal);
+            }
+
+            var copyFrom = call!.Arguments.GetValueOrDefault("copy_from")?.Trim();
             var source = o.FileSnapshot?.Invoke(
                 staged.Target, string.IsNullOrEmpty(copyFrom) ? staged.ConfigKey : copyFrom);
             if (source is null)
@@ -193,7 +229,7 @@ internal static class C
     public static Check Clarifies(string label = "asks which (genuine ambiguity)") =>
         new(Rubric.D_ClarifyVsGuess, label, (o, _) =>
             o.Staged.Count == 0
-            && !o.Tools.Any(t => LlmTools.IsStagedCommand(t.Name))
+            && !o.Tools.Any(t => LlmTools.StagedCommandsTier.Any(c => o.Matches(t.Name, c)))
             && LooksLikeWhichQuestion(o.Final));
 
     /// <summary>

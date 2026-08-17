@@ -1,3 +1,4 @@
+using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Eval.Tests;
@@ -17,8 +18,14 @@ internal static class Build
             AnyInstance: instance,
             NeverInstalledGame: "minecraft");
 
-    public static RecordedToolCall Tool(TheKrystalShip.Llm.Models.Tool name, params (string k, string? v)[] args) =>
-        new(name, args.ToDictionary(a => a.k, a => a.v), Summary: "ok", DurationMs: 1);
+    /// <summary>
+    /// A recorded call, named by the capability it implements. A synthetic observation carries no
+    /// catalog, and <see cref="TurnObservation.Matches"/> falls back to the capability id for exactly
+    /// that case — so these tests exercise the checks without needing to know what any tool is called.
+    /// </summary>
+    public static RecordedToolCall Tool(Capability capability, params (string k, string? v)[] args) =>
+        new(new TheKrystalShip.Llm.Models.Tool(capability.Id),
+            args.ToDictionary(a => a.k, a => a.v), Summary: "ok", DurationMs: 1);
 
     public static PendingConfirmation Staged(ConfirmationKind kind, string instance = "factorio-test") =>
         new(kind, Target: instance, InstanceName: instance);

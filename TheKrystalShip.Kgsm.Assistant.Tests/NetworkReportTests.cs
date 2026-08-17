@@ -37,7 +37,7 @@ public class NetworkReportTests
         var r = NetworkReport.Build(
             Reading(ports: new PortRule(34197, 34197, "udp")), Upnp(), "factorio");
 
-        r.Tool.Should().Be(LlmTools.GetNetwork);
+        r.Tool.Should().Be(ResultCardKinds.Network);
         r.Confidence.Should().Be(Confidence.Confirmed);
         r.Subject.Should().Be(new ResultRef(ResourceKind.Network, "factorio"));
         r.Data.State.Should().Be(NetworkState.Available);

@@ -14,6 +14,16 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 /// </summary>
 internal static class ShippedTextForTests
 {
+    /// <summary>
+    /// The shipped catalog, for tests that need to know what a capability is CALLED — a frame's tool
+    /// name, a recorded trajectory. Built from the same directory the hosts are pointed at, so a
+    /// rename in <c>tools.json</c> moves the assertion with it.
+    /// </summary>
+    internal static IToolCatalog Catalog { get; } =
+        new DiskToolCatalog(Environment.GetEnvironmentVariable("Prompts__Directory"));
+
+    internal static Llm.Models.Tool Name(Capability capability) => Catalog.NameOf(capability);
+
     [ModuleInitializer]
     internal static void PointAtShippedPrompts()
     {

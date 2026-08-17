@@ -70,7 +70,7 @@ public class HealthCheckAggregatorTests
         r.Data.Total.Should().Be(6);
         r.Data.Passed.Should().Be(6);
         r.Data.Skipped.Should().Be(0);
-        r.Tool.Should().Be(LlmTools.RunHealthCheck);
+        r.Tool.Should().Be(ResultCardKinds.Health);
         r.Confidence.Should().Be(Confidence.Confirmed);
         r.Subject.Should().Be(new ResultRef(ResourceKind.Server, "minecraft"));
         r.Summary.Should().Contain("minecraft").And.Contain("healthy");

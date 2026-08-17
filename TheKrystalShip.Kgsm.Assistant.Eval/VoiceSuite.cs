@@ -19,7 +19,7 @@ internal sealed record VoiceCase(
     string Prompt,
     IReadOnlyList<FixtureRole> RequiredRoles,
     bool Authorized,
-    IReadOnlyList<Tool> MustCallAnyOf,
+    IReadOnlyList<Capability> MustCallAnyOf,
     bool MustStage = false);
 
 /// <summary>
@@ -82,7 +82,7 @@ internal static class VoiceSuite
         new VoiceCase(
             "V4", "what servers do we have?",
             new[] { FixtureRole.AnyInstance }, Authorized: false,
-            Array.Empty<Tool>()),
+            Array.Empty<Capability>()),
 
         // A number a listener has to catch first time, and the case where markdown and stray
         // punctuation hurt most.

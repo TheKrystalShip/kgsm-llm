@@ -84,7 +84,7 @@ public class ToolDispatcherTests
 
     private ToolDispatcher Create(IServerFacts? serverFacts = null) =>
         new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp,
-            serverFacts ?? _serverFacts, _hostFacts, _blueprintAuthoring, _settlement,
+            serverFacts ?? _serverFacts, _hostFacts, _blueprintAuthoring, ShippedText.Catalog, _settlement,
             NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
@@ -95,21 +95,21 @@ public class ToolDispatcherTests
         new(name, new Dictionary<string, string?> { ["instance_name"] = instance });
 
     private static LlmToolCall ServerCommandCall(string verb, string instance) =>
-        new(LlmTools.ServerCommand, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.ServerCommand), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["verb"] = verb,
         });
 
     private static LlmToolCall InstallCall(string blueprint, string? name = null) =>
-        new(LlmTools.InstallServer, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.InstallServer), new Dictionary<string, string?>
         {
             ["blueprint_name"] = blueprint,
             ["instance_name"] = name,
         });
 
     private static LlmToolCall SetConfigCall(string instance, string? key, string? value) =>
-        new(LlmTools.SetConfigValue, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.SetConfigValue), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["config_key"] = key,
@@ -117,14 +117,14 @@ public class ToolDispatcherTests
         });
 
     private static LlmToolCall SearchCall(string? query) =>
-        new(LlmTools.Search, new Dictionary<string, string?> { ["query"] = query });
+        new(ShippedText.Name(LlmTools.Search), new Dictionary<string, string?> { ["query"] = query });
 
     private static LlmToolCall FetchUrlCall(string? url) =>
-        new(LlmTools.FetchUrl, new Dictionary<string, string?> { ["url"] = url });
+        new(ShippedText.Name(LlmTools.FetchUrl), new Dictionary<string, string?> { ["url"] = url });
 
     private static LlmToolCall SetGameSettingCall(
         string instance, string? path, string? setting, string? value, string? copyFrom = null) =>
-        new(LlmTools.SetGameSetting, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.SetGameSetting), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["path"] = path,
@@ -135,7 +135,7 @@ public class ToolDispatcherTests
 
     private static LlmToolCall WriteFileCall(
         string instance, string? path, string? oldText, string? newText, string? copyFrom = null) =>
-        new(LlmTools.WriteFile, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.WriteFile), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["path"] = path,
@@ -150,7 +150,7 @@ public class ToolDispatcherTests
         _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Success("running, pid 123"));
 
-        var result = await Summary(Call(LlmTools.ServerInfo, "minecraft"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "minecraft"));
 
         result.Should().Contain("Status for minecraft");
         await _operations.Received(1).GetStatusAsync("minecraft", Arg.Any<CancellationToken>());
@@ -163,7 +163,7 @@ public class ToolDispatcherTests
             .Returns(Result.Success("stopped"));
 
         // "pvp" is a substring of exactly one instance.
-        await Summary(Call(LlmTools.ServerInfo, "pvp"));
+        await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "pvp"));
 
         await _operations.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
     }
@@ -172,7 +172,7 @@ public class ToolDispatcherTests
     public async Task AmbiguousName_AsksUser_AndDoesNotExecute()
     {
         // "terraria" matches two instances by game type / substring.
-        var result = await Summary(Call(LlmTools.ServerInfo, "terraria"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "terraria"));
 
         result.Should().Contain("Ambiguous")
             .And.Contain("terraria-pvp")
@@ -183,7 +183,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task UnknownName_ReturnsMiss_WithKnownList()
     {
-        var result = await Summary(Call(LlmTools.ServerInfo, "doesnotexist"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "doesnotexist"));
 
         result.Should().Contain("no instance named").And.Contain("minecraft");
         await _operations.DidNotReceive().GetStatusAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -200,7 +200,7 @@ public class ToolDispatcherTests
             }));
 
         var result = await Summary(
-            new LlmToolCall(LlmTools.ServerInfo, new Dictionary<string, string?>()));
+            new LlmToolCall(ShippedText.Name(LlmTools.ServerInfo), new Dictionary<string, string?>()));
 
         result.Should().Contain("minecraft: running").And.Contain("terraria-pvp: stopped");
 
@@ -223,11 +223,11 @@ public class ToolDispatcherTests
             }));
 
         var output = await Create().ExecuteAsync(
-            new LlmToolCall(LlmTools.ServerInfo, new Dictionary<string, string?>()));
+            new LlmToolCall(ShippedText.Name(LlmTools.ServerInfo), new Dictionary<string, string?>()));
 
         output.Summary.Should().Contain("minecraft: running").And.Contain("broken: status unavailable");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.ServerInfo.Name);
+        card.Tool.Should().Be(ResultCardKinds.Status.Name);
         card.Subject.Should().Be(new ResultRef(ResourceKind.Host, "primary"));
         var data = card.Data.Should().BeOfType<FleetStatusData>().Subject;
         data.Running.Should().Be(1);
@@ -245,7 +245,7 @@ public class ToolDispatcherTests
         _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Success("running, pid 123"));
 
-        var output = await Create().ExecuteAsync(Call(LlmTools.ServerInfo, "minecraft"));
+        var output = await Create().ExecuteAsync(Call(ShippedText.Name(LlmTools.ServerInfo), "minecraft"));
 
         output.Summary.Should().Contain("Status for minecraft");
         output.Data.Should().BeNull();
@@ -262,7 +262,7 @@ public class ToolDispatcherTests
             }));
 
         var result = await Summary(
-            new LlmToolCall(LlmTools.ServerInfo, new Dictionary<string, string?>()));
+            new LlmToolCall(ShippedText.Name(LlmTools.ServerInfo), new Dictionary<string, string?>()));
 
         // Measured-or-unknown: a could-not-read instance must not masquerade as stopped.
         result.Should().Contain("status unavailable").And.Contain("regenerated");
@@ -285,7 +285,7 @@ public class ToolDispatcherTests
                 HostDisk: new HostDisk(26, "916G", "649G"),
                 HostDiskUnavailableReason: null)));
 
-        var result = await Summary(Call(LlmTools.RunHealthCheck, "minecraft"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.RunHealthCheck), "minecraft"));
 
         // The dispatcher returns the aggregator's deterministic summary (the model's grounding text).
         result.Should().Contain("minecraft").And.Contain("healthy");
@@ -295,7 +295,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task RunHealthCheck_UnresolvedInstance_DoesNotFetch()
     {
-        var result = await Summary(Call(LlmTools.RunHealthCheck, "doesnotexist"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.RunHealthCheck), "doesnotexist"));
 
         result.Should().Contain("no instance named");
         await _operations.DidNotReceive()
@@ -308,7 +308,7 @@ public class ToolDispatcherTests
         _operations.GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(Result.Failure<InstanceHealthSnapshot>("kgsm unreachable"));
 
-        var result = await Summary(Call(LlmTools.RunHealthCheck, "minecraft"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.RunHealthCheck), "minecraft"));
 
         result.Should().Contain("could not run a health check").And.Contain("kgsm unreachable");
     }
@@ -330,11 +330,11 @@ public class ToolDispatcherTests
                 HostDisk: new HostDisk(26, "916G", "649G"),
                 HostDiskUnavailableReason: null)));
 
-        var output = await Create().ExecuteAsync(Call(LlmTools.RunHealthCheck, "minecraft"));
+        var output = await Create().ExecuteAsync(Call(ShippedText.Name(LlmTools.RunHealthCheck), "minecraft"));
 
         output.Summary.Should().Contain("minecraft");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.RunHealthCheck.Name);
+        card.Tool.Should().Be(ResultCardKinds.Health.Name);
         card.Confidence.Should().Be(Confidence.Confirmed);          // a deterministic read of measured facts
         card.Subject.Should().Be(new ResultRef(ResourceKind.Server, "minecraft"));
         var data = card.Data.Should().BeOfType<HealthData>().Subject;
@@ -350,7 +350,7 @@ public class ToolDispatcherTests
         _operations.ReadInstanceFileAsync("minecraft", "minecraft.config.ini", Arg.Any<CancellationToken>())
             .Returns(Result.Success("port = 25565\nrcon_password = hunter2\nlevel = world"));
 
-        var result = await Summary(Call(LlmTools.ReadFile, "minecraft"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ReadFile), "minecraft"));
 
         // The default filename is derived from the resolved instance name (no model-supplied path).
         await _operations.Received(1)
@@ -366,7 +366,7 @@ public class ToolDispatcherTests
         _operations.ReadInstanceFileAsync("minecraft", "logs/latest.log", Arg.Any<CancellationToken>())
             .Returns(Result.Success("[12:00] server started"));
 
-        var call = new LlmToolCall(LlmTools.ReadFile, new Dictionary<string, string?>
+        var call = new LlmToolCall(ShippedText.Name(LlmTools.ReadFile), new Dictionary<string, string?>
         {
             ["instance_name"] = "minecraft",
             ["path"] = "logs/latest.log",
@@ -381,7 +381,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task ReadFile_UnknownInstance_DoesNotRead()
     {
-        var result = await Summary(Call(LlmTools.ReadFile, "doesnotexist"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ReadFile), "doesnotexist"));
 
         result.Should().Contain("no instance named");
         await _operations.DidNotReceive()
@@ -398,7 +398,7 @@ public class ToolDispatcherTests
                 new InstanceDirEntry("minecraft.config.ini", IsDirectory: false, Size: 2048),
             }));
 
-        var result = await Summary(Call(LlmTools.ListFiles, "minecraft"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ListFiles), "minecraft"));
 
         await _operations.Received(1)
             .ListInstanceDirectoryAsync("minecraft", null, Arg.Any<CancellationToken>());
@@ -412,7 +412,7 @@ public class ToolDispatcherTests
             .Returns(Result.Success<IReadOnlyList<InstanceDirEntry>>(
                 new[] { new InstanceDirEntry("latest.log", IsDirectory: false, Size: 10) }));
 
-        var call = new LlmToolCall(LlmTools.ListFiles, new Dictionary<string, string?>
+        var call = new LlmToolCall(ShippedText.Name(LlmTools.ListFiles), new Dictionary<string, string?>
         {
             ["instance_name"] = "minecraft",
             ["subdir"] = "logs",
@@ -427,7 +427,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task ListFiles_UnknownInstance_DoesNotList()
     {
-        var result = await Summary(Call(LlmTools.ListFiles, "doesnotexist"));
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ListFiles), "doesnotexist"));
 
         result.Should().Contain("no instance named");
         await _operations.DidNotReceive()
@@ -440,7 +440,7 @@ public class ToolDispatcherTests
         var result = await Summary(
             new LlmToolCall(new Tool("delete_everything"), new Dictionary<string, string?>()));
 
-        result.Should().Contain("not a known tool");
+        result.Should().Contain("no tool called");
     }
 
     // --- search (unified lookup via the ISearch aggregator) ---
@@ -448,7 +448,7 @@ public class ToolDispatcherTests
     // the local-first / web-fallback composition is exercised in SearchAggregatorTests.
 
     private static ToolResult<SearchData> SearchEnvelope(string summary, SearchState state, params SearchPassage[] passages) =>
-        new(LlmTools.Search, Confidence.Likely, new ResultRef(ResourceKind.Search, "q"), summary, new SearchData("q", state, passages));
+        new(ResultCardKinds.Search, Confidence.Likely, new ResultRef(ResourceKind.Search, "q"), summary, new SearchData("q", state, passages));
 
     [Fact]
     public async Task Search_RelaysTheAggregatorGroundingVerbatim()
@@ -473,7 +473,7 @@ public class ToolDispatcherTests
         var output = await Create().ExecuteAsync(SearchCall("what is kgsm"));
 
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.Search.Name);   // the card carries the tool NAME ("search")
+        card.Tool.Should().Be(ResultCardKinds.Search.Name);   // the card carries the tool NAME ("search")
         card.Data.Should().BeOfType<SearchData>().Which.State.Should().Be(SearchState.LocalStrong);
     }
 
@@ -526,7 +526,7 @@ public class ToolDispatcherTests
         var output = await Create().ExecuteAsync(FetchUrlCall("https://docs.example.com/setup"));
 
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.FetchUrl.Name);
+        card.Tool.Should().Be(ResultCardKinds.WebPage.Name);
         var data = card.Data.Should().BeOfType<FetchData>().Subject;
         data.Url.Should().Be("https://docs.example.com/setup");
         data.Title.Should().Be("Setup Guide");
@@ -572,7 +572,7 @@ public class ToolDispatcherTests
     // (research/draft/persist/install/verify/teardown) is exercised in BlueprintAuthoringAggregatorTests.
 
     private static LlmToolCall CreateBlueprintCall(string? game) =>
-        new(LlmTools.CreateBlueprint, new Dictionary<string, string?> { ["game"] = game });
+        new(ShippedText.Name(LlmTools.CreateBlueprint), new Dictionary<string, string?> { ["game"] = game });
 
     [Fact]
     public async Task CreateBlueprint_DraftReady_GroundsTheModelToAskForReview_NotToClaimItsAdded()
@@ -615,7 +615,7 @@ public class ToolDispatcherTests
     {
         using var scope = _confirmations.BeginTurn();
         var envelope = new ToolResult<BlueprintAuthoringData>(
-            LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "SomeGame"),
+            ShippedText.Name(LlmTools.CreateBlueprint), Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "SomeGame"),
             "I couldn't find a native Linux server for it.",
             new BlueprintAuthoringData(BlueprintAuthoringOutcome.NotFeasible, "SomeGame", null, [], null, "I couldn't find a native Linux server for it.", false));
         _blueprintAuthoring.DraftAsync("SomeGame", Arg.Any<CancellationToken>()).Returns(envelope);
@@ -637,7 +637,7 @@ public class ToolDispatcherTests
     }
 
     private static ToolResult<BlueprintAuthoringData> DraftReadyEnvelope() =>
-        new(LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "terraria"),
+        new(ShippedText.Name(LlmTools.CreateBlueprint), Confidence.Likely, new ResultRef(ResourceKind.Blueprint, "terraria"),
             "I drafted a starting config for Terraria — review and save it to test-run it.",
             new BlueprintAuthoringData(
                 BlueprintAuthoringOutcome.DraftReady, "Terraria", "terraria", [], null, null, false,
@@ -648,7 +648,7 @@ public class ToolDispatcherTests
     // The dispatcher resolves the instance, reads the neutral snapshot, runs the pure aggregator, and
     // attaches a card ONLY for a Live read; the Live/NotRunning/Unavailable wording lives in PerformanceReportTests.
 
-    private static LlmToolCall PerformanceCall(string instance) => Call(LlmTools.GetPerformance, instance);
+    private static LlmToolCall PerformanceCall(string instance) => Call(ShippedText.Name(LlmTools.GetPerformance), instance);
 
     [Fact]
     public async Task GetPerformance_Live_SurfacesTheMetricsCard()
@@ -663,7 +663,7 @@ public class ToolDispatcherTests
         await _metrics.Received(1).GetSnapshotAsync("minecraft", Arg.Any<CancellationToken>());
         output.Summary.Should().Contain("minecraft").And.Contain("42.5%");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.GetPerformance.Name);   // the card carries the tool NAME ("get_performance")
+        card.Tool.Should().Be(ResultCardKinds.Performance.Name);   // the card carries the tool NAME ("get_performance")
         card.Confidence.Should().Be(Confidence.Confirmed);
         card.Subject.Should().Be(new ResultRef(ResourceKind.Metrics, "minecraft"));
         var data = card.Data.Should().BeOfType<PerformanceData>().Subject;
@@ -713,7 +713,7 @@ public class ToolDispatcherTests
     // aggregator, and attaches a card when EITHER axis has real structure; the wording lives in
     // NetworkReportTests.
 
-    private static LlmToolCall NetworkCall(string instance) => Call(LlmTools.GetNetwork, instance);
+    private static LlmToolCall NetworkCall(string instance) => Call(ShippedText.Name(LlmTools.GetNetwork), instance);
 
     [Fact]
     public async Task GetNetwork_Available_SurfacesTheNetworkCard()
@@ -732,7 +732,7 @@ public class ToolDispatcherTests
         // Both axes surface in the summary: firewall ports + the router forward.
         output.Summary.Should().Contain("25565/tcp").And.Contain("router");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.GetNetwork.Name);
+        card.Tool.Should().Be(ResultCardKinds.Network.Name);
         card.Subject.Should().Be(new ResultRef(ResourceKind.Network, "minecraft"));
         var data = card.Data.Should().BeOfType<NetworkData>().Subject;
         data.Backend.Should().Be("ufw");
@@ -790,7 +790,7 @@ public class ToolDispatcherTests
     // card (an empty/unavailable result is still a real, honestly-worded answer worth showing).
 
     private static LlmToolCall AuditLogCall(string? instance = null, string? window = null) =>
-        new(LlmTools.Events, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.Events), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["window"] = window,
@@ -801,7 +801,7 @@ public class ToolDispatcherTests
     /// to be a separate tool is now this argument — which is exactly what these tests must exercise.
     /// </summary>
     private static LlmToolCall ChangeTimelineCall(string? instance = null, string? window = null) =>
-        new(LlmTools.Events, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.Events), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["scope"] = "changes",
@@ -822,7 +822,7 @@ public class ToolDispatcherTests
         await _events.Received(1).GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
         output.Summary.Should().Contain("all servers");
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.Events.Name);
+        card.Tool.Should().Be(ResultCardKinds.AuditLog.Name);
         var data = card.Data.Should().BeOfType<AuditData>().Subject;
         data.Instance.Should().BeNull();
         data.Events.Should().ContainSingle();
@@ -874,57 +874,6 @@ public class ToolDispatcherTests
     }
 
     [Fact]
-    public async Task GetChangeTimeline_NoInstance_ReadsFleetWide_UsesChangeFraming()
-    {
-        var changeRow = SampleStart with { Type = "instance_installed" };
-        _events.GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new EventHistoryReading(AuditReadState.Available, new[] { changeRow }));
-
-        var output = await Create().ExecuteAsync(ChangeTimelineCall());
-
-        await _events.Received(1).GetEventsAsync(null, Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
-        output.Summary.Should().Contain("1 change for all servers");
-        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.Events.Name);
-    }
-
-    [Fact]
-    public async Task GetChangeTimeline_FiltersOutRoutineEvents_ViaTheSharedComposer()
-    {
-        var routine = SampleStart;   // instance_started — not a "change"
-        _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new EventHistoryReading(AuditReadState.Available, new[] { routine }));
-
-        var output = await Create().ExecuteAsync(ChangeTimelineCall("minecraft"));
-
-        var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        var data = card.Data.Should().BeOfType<AuditData>().Subject;
-        data.Events.Should().BeEmpty();
-        output.Summary.Should().Contain("No changes recorded");
-    }
-
-    [Fact]
-    public async Task GetChangeTimeline_UnresolvedInstance_DoesNotRead()
-    {
-        var output = await Create().ExecuteAsync(ChangeTimelineCall("doesnotexist"));
-
-        output.Summary.Should().Contain("no instance named");
-        await _events.DidNotReceive().GetEventsAsync(Arg.Any<string?>(), Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
-    }
-
-    // --- trace_root_cause (the capstone aggregator: fans out to _events + _metrics + _operations) ---
-    // Rule-matching itself is covered exhaustively by RootCauseAggregatorTests (pure, no mocks); these
-    // pin the DISPATCHER's job — resolve the REQUIRED instance, fetch all three sources, and always
-    // surface a card.
-
-    private static LlmToolCall RootCauseCall(string instance, string? range = null) =>
-        new(LlmTools.TraceRootCause, new Dictionary<string, string?>
-        {
-            ["instance_name"] = instance,
-            ["range"] = range,
-        });
-
-    [Fact]
     public async Task TraceRootCause_FetchesAllThreeSources_AndSurfacesCard()
     {
         _events.GetEventsAsync("minecraft", Arg.Any<long?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -942,11 +891,24 @@ public class ToolDispatcherTests
         await _metrics.Received(1).GetHistoryAsync("minecraft", "24h", Arg.Any<CancellationToken>());
         await _operations.Received(1).GetHealthSnapshotAsync("minecraft", Arg.Any<CancellationToken>());
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
-        card.Tool.Should().Be(LlmTools.TraceRootCause.Name);
+        card.Tool.Should().Be(ResultCardKinds.RootCause.Name);
         var data = card.Data.Should().BeOfType<RootCauseData>().Subject;
         data.Instance.Should().Be("minecraft");
         data.Findings.Should().NotBeEmpty();
     }
+
+
+    // --- diagnose_instance_failure (the capstone aggregator: fans out to _events + _metrics + _operations) ---
+    // Rule-matching itself is covered exhaustively by RootCauseAggregatorTests (pure, no mocks); these
+    // pin the DISPATCHER's job — resolve the REQUIRED instance, fetch all three sources, and always
+    // surface a card.
+
+    private static LlmToolCall RootCauseCall(string instance, string? range = null) =>
+        new(ShippedText.Name(LlmTools.TraceRootCause), new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["range"] = range,
+        });
 
     [Fact]
     public async Task TraceRootCause_UnresolvedInstance_DoesNotReadAnySource()
@@ -1102,7 +1064,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn(autoExecute: true))
         {
-            result = await Summary(Call(LlmTools.UninstallServer, "minecraft"));
+            result = await Summary(Call(ShippedText.Name(LlmTools.UninstallServer), "minecraft"));
 
             _confirmations.Staged.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new PendingConfirmation(ConfirmationKind.Uninstall, "minecraft"));
@@ -1184,7 +1146,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Summary(Call(LlmTools.UninstallServer, "minecraft"));
+            result = await Summary(Call(ShippedText.Name(LlmTools.UninstallServer), "minecraft"));
 
             _confirmations.Staged.Should().ContainSingle()
                 .Which.Should().BeEquivalentTo(new PendingConfirmation(ConfirmationKind.Uninstall, "minecraft"));
@@ -1199,7 +1161,7 @@ public class ToolDispatcherTests
         string result;
         using (_confirmations.BeginTurn())
         {
-            result = await Summary(Call(LlmTools.UninstallServer, "terraria"));
+            result = await Summary(Call(ShippedText.Name(LlmTools.UninstallServer), "terraria"));
             _confirmations.Staged.Should().BeEmpty();
         }
 
@@ -1225,7 +1187,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task BlueprintInfo_ListsGamesByTheNamePeopleUse_NotTheBlueprintIdentifier()
     {
-        var result = await Summary(new LlmToolCall(LlmTools.BlueprintInfo, new Dictionary<string, string?>()));
+        var result = await Summary(new LlmToolCall(ShippedText.Name(LlmTools.BlueprintInfo), new Dictionary<string, string?>()));
 
         result.Should().Contain("Project Zomboid");
         result.Should().NotContain("projectzomboid");
@@ -1238,7 +1200,7 @@ public class ToolDispatcherTests
             .Returns(new BlueprintDetail(
                 "projectzomboid", "Project Zomboid", null, [], "native", false, null, null, null, null, []));
 
-        var result = await Summary(new LlmToolCall(LlmTools.BlueprintInfo,
+        var result = await Summary(new LlmToolCall(ShippedText.Name(LlmTools.BlueprintInfo),
             new Dictionary<string, string?> { ["blueprint_name"] = "Project Zomboid" }));
 
         result.Should().Contain("Project Zomboid");
@@ -1534,7 +1496,7 @@ public class ToolDispatcherTests
     }
 
     private static LlmToolCall SearchFilesCall(string instance, string argument, string value) =>
-        new(LlmTools.SearchFiles, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.SearchFiles), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             [argument] = value,
@@ -1549,7 +1511,7 @@ public class ToolDispatcherTests
         var result = await Summary(SearchFilesCall("minecraft", "text", "*Player*"));
 
         result.Should().Contain("not a filename pattern");
-        result.Should().Contain("find_files");
+        result.Should().Contain("find_instance_file");
         await _operations.DidNotReceiveWithAnyArgs()
             .SearchInstanceFilesAsync(default!, default!, default, default, default);
     }
@@ -1600,7 +1562,7 @@ public class ToolDispatcherTests
     }
 
     private static LlmToolCall ReadConsoleCall(string instance, string? run = null) =>
-        new(LlmTools.ReadConsole, new Dictionary<string, string?>
+        new(ShippedText.Name(LlmTools.ReadConsole), new Dictionary<string, string?>
         {
             ["instance_name"] = instance,
             ["run"] = run,
@@ -1690,7 +1652,7 @@ public class ToolDispatcherTests
         _search.SearchAsync(Arg.Any<string>(), Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())
             .Returns(SearchEnvelope("Web results …", SearchState.Web));
 
-        var call = new LlmToolCall(LlmTools.Search,
+        var call = new LlmToolCall(ShippedText.Name(LlmTools.Search),
             new Dictionary<string, string?> { ["query"] = "newest terraria version", ["scope"] = "local" });
 
         using (SearchIntent.BeginTurn(SearchScope.Web))
@@ -1814,7 +1776,7 @@ public class ToolDispatcherTests
             // The name itself was corrupted, which no lookup can recover — it has to fail loudly.
             var result = await Summary(SetGameSettingCall("minecraft", "PaulWorldSettings.ini", "Difficulty", "Hard"));
 
-            result.Should().StartWith("Error:").And.Contain("find_files");
+            result.Should().StartWith("Error:").And.Contain("find_instance_file");
             _confirmations.Staged.Should().BeEmpty();
         }
     }

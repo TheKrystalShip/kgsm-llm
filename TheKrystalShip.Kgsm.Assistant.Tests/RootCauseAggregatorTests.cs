@@ -345,7 +345,7 @@ public class RootCauseAggregatorTests
     {
         var r = RootCauseAggregator.Run(Instance, "24h", Events(), UnavailableMetrics(), Healthy());
 
-        r.Tool.Should().Be(LlmTools.TraceRootCause);
+        r.Tool.Should().Be(ResultCardKinds.RootCause);
         r.Subject.Should().Be(new ResultRef(ResourceKind.Server, Instance));
         r.Data.Instance.Should().Be(Instance);
         r.Data.Range.Should().Be("24h");

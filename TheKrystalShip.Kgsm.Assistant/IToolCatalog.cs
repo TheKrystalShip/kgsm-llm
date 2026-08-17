@@ -25,4 +25,26 @@ public interface IToolCatalog
 
     /// <summary>Appended to the offer only on a turn that carries an open blueprint draft.</summary>
     LlmToolDefinition ReviseBlueprintTool { get; }
+
+    /// <summary>The name the file gives a capability — what the model is offered and calls it by.</summary>
+    Tool NameOf(Capability capability);
+
+    /// <summary>
+    /// What a name the model called means, or null when nothing implements it. Null is the honest
+    /// answer for a tool the model invented, and the dispatcher reports it rather than guessing.
+    /// </summary>
+    Capability? CapabilityOf(Tool tool);
+
+    /// <summary>
+    /// The short human label a surface shows while the tool runs ("Reading metrics"), or null when the
+    /// entry gives none. It ships beside the description because it describes the same tool, and a
+    /// surface that had to keep its own copy kept a stale one.
+    /// </summary>
+    string? LabelOf(Tool tool);
+
+    /// <summary>The propose-only commands, by the names they are offered under.</summary>
+    IReadOnlySet<Tool> StagedCommandTools { get; }
+
+    /// <summary>The authorized-only reads, by the names they are offered under.</summary>
+    IReadOnlySet<Tool> AuthorizedReadTools { get; }
 }

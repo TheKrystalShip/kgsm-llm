@@ -85,7 +85,7 @@ public static class FleetStatusCard
             Unavailable: servers.Count(s => s.State == ServerRunState.Unknown));
 
         return new ToolResult<FleetStatusData>(
-            Tool: LlmTools.ServerInfo,
+            Tool: ResultCardKinds.Status,
             Confidence: Confidence.Confirmed, // a deterministic read of measured facts (incl. honest "couldn't read")
             Subject: new ResultRef(ResourceKind.Host, HostSubjectId),
             Summary: BuildSummary(entries),

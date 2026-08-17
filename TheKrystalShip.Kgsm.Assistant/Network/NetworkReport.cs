@@ -47,7 +47,7 @@ public static class NetworkReport
 
         string routerClause = BuildRouterClause(instance, upnp);
         return new ToolResult<NetworkData>(
-            Tool: LlmTools.GetNetwork,
+            Tool: ResultCardKinds.Network,
             Confidence: confidence,
             Subject: new ResultRef(ResourceKind.Network, instance),
             Summary: $"{firewallClause} {routerClause}",

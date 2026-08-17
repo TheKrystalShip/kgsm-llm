@@ -64,7 +64,7 @@ public sealed class WebSearchLiveTests : IClassFixture<WebApplicationFactory<Pro
         result.IsSuccess.Should().BeTrue("the live turn should complete against Ollama + Tavily");
         result.Text.Should().NotBe(IterationLimitReply, "the loop must not hit the MaxIterations cap");
         result.Text.Should().NotBeNullOrWhiteSpace();
-        recorder.Calls.Should().Contain(c => c.Name == LlmTools.Search,
+        recorder.Calls.Should().Contain(c => c.Name == ShippedTextForTests.Name(LlmTools.Search),
             "an outside-fact prompt that explicitly asks to search the web should drive a search call");
     }
 

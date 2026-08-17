@@ -77,6 +77,6 @@ internal sealed class DisabledBlueprintAuthoring : IBlueprintAuthoring
         var data = new BlueprintAuthoringData(
             BlueprintAuthoringOutcome.Disabled, game, null, [], null, Reason: summary, OfferInstance: false);
         return new ToolResult<BlueprintAuthoringData>(
-            LlmTools.CreateBlueprint, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, game), summary, data);
+            ResultCardKinds.BlueprintDraft, Confidence.Confirmed, new ResultRef(ResourceKind.Blueprint, game), summary, data);
     }
 }

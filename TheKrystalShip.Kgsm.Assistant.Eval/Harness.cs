@@ -41,6 +41,14 @@ internal sealed class Harness
     /// unified <c>search</c> tool is offered in the eval — without a model or a live kgsm.</summary>
     internal T Resolve<T>() where T : notnull => _provider.GetRequiredService<T>();
 
+    /// <summary>
+    /// What the catalog this run loaded calls a capability. The corpus names capabilities and a
+    /// trajectory records names, so scoring resolves one to the other here — a tool renamed for
+    /// routing is then a change to tools.json and nothing else, the benchmark included.
+    /// </summary>
+    private Tool NameOf(Capability capability) =>
+        _provider.GetRequiredService<IToolCatalog>().NameOf(capability);
+
     public static Harness Build(EvalOptions options)
     {
         var config = BuildConfiguration(options);
@@ -221,10 +229,10 @@ internal sealed class Harness
     /// It asserts what the turn DID — a tool call, a staged confirmation, the sentence naming it —
     /// never whether the answer was true about the world (the routing harness's invariant #1).
     /// </summary>
-    private static bool FloorHeld(VoiceCase bench, VoiceSample sample)
+    private bool FloorHeld(VoiceCase bench, VoiceSample sample)
     {
         if (bench.MustCallAnyOf.Count > 0
-            && !bench.MustCallAnyOf.Any(t => sample.Tools.Contains(t.Name)))
+            && !bench.MustCallAnyOf.Any(c => sample.Tools.Contains(NameOf(c).Name)))
             return false;
 
         // A staged action the reply never mentions is the one failure a short answer must not buy: the
@@ -264,6 +272,7 @@ internal sealed class Harness
                 result.IsSuccess ? result.Text : record?.Final ?? "")
             {
                 FileSnapshot = ReadInstanceFile,
+                NameOf = NameOf,
             };
 
             // Before scoring: a turn that errored outright measured nothing, and enough of them in a

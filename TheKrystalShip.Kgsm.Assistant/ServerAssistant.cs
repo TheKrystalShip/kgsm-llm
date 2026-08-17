@@ -151,17 +151,17 @@ public class ServerAssistant : IServerAssistant
         // validation below, so a client asking for `search` on a host where it's unavailable gets the
         // honest invalid-tool error — never a dead tool the model would call and watch fail.
         if (!_searchOptions.Available)
-            authorized = authorized.Where(t => t.Tool != LlmTools.Search).ToArray();
+            authorized = authorized.Where(t => t.Tool != _toolCatalog.NameOf(LlmTools.Search)).ToArray();
 
         // Same omit-when-disabled rule for fetch_url: offered only when a real IWebFetch adapter
         // is enabled on this host (FetchOptions.Available).
         if (!_fetchOptions.Available)
-            authorized = authorized.Where(t => t.Tool != LlmTools.FetchUrl).ToArray();
+            authorized = authorized.Where(t => t.Tool != _toolCatalog.NameOf(LlmTools.FetchUrl)).ToArray();
 
         // Same omit-when-disabled rule for create_blueprint: offered only when the real authoring
         // pipeline is enabled on this host (BlueprintAuthoringFlags.Available, false everywhere by default).
         if (!_blueprintAuthoringFlags.Available)
-            authorized = authorized.Where(t => t.Tool != LlmTools.CreateBlueprint).ToArray();
+            authorized = authorized.Where(t => t.Tool != _toolCatalog.NameOf(LlmTools.CreateBlueprint)).ToArray();
 
         if (requestedTools is { Count: > 0 })
         {
@@ -670,7 +670,7 @@ public class ServerAssistant : IServerAssistant
         {
             var denied = "You don't have permission to add a blueprint to the catalog.";
             return new ToolResult<BlueprintAuthoringData>(
-                LlmTools.CreateBlueprint, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, game), denied,
+                ResultCardKinds.BlueprintDraft, Confidence.Likely, new ResultRef(ResourceKind.Blueprint, game), denied,
                 new BlueprintAuthoringData(BlueprintAuthoringOutcome.Failed, game, null, [], null, denied, false));
         }
 
@@ -1018,11 +1018,16 @@ public class ServerAssistant : IServerAssistant
         var searched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         return call =>
         {
+            // The gate authorizes a CAPABILITY, resolved from whatever the file calls it this deploy.
+            // A name nothing implements is refused here rather than reaching a handler that would have
+            // to decide what an unknown tool means.
+            var capability = _toolCatalog.CapabilityOf(call.Name);
+
             // create_blueprint is authorized-and-autonomous (LlmTools.AuthorizedActions): refused for an
             // unauthorized caller exactly like a staged command (defense in depth behind SelectTools
             // already omitting it for those callers), but it never stages — it runs to completion inline,
             // so its own per-message cap replaces the staging cap below.
-            if (call.Name == LlmTools.CreateBlueprint)
+            if (capability == LlmTools.CreateBlueprint)
             {
                 if (!canPerformActions)
                     return Declined(call, "Refused: you don't have permission to perform server actions.");
@@ -1039,7 +1044,7 @@ public class ServerAssistant : IServerAssistant
             // revise_blueprint: authorized + inline like create_blueprint (SelectTools only offers it on a
             // draft-bearing turn). Refuse an unauthorized caller as defense in depth; no per-message cap of
             // its own — a user may refine a draft several times, and the loop-iteration guard bounds runaway.
-            if (call.Name == LlmTools.ReviseBlueprint)
+            if (capability == LlmTools.ReviseBlueprint)
                 return canPerformActions
                     ? ToolGate.Allow
                     : ToolGate.Refuse("Refused: you don't have permission to perform server actions.");
@@ -1049,7 +1054,7 @@ public class ServerAssistant : IServerAssistant
             // fallback may spend a credit), so it carries its own per-message cap — the in-turn
             // runaway guard (the per-day web wallet ceiling lives host-side). Checked before the
             // read-only pass-through below.
-            if (call.Name == LlmTools.Search)
+            if (capability == LlmTools.Search)
             {
                 // A query already run this message cannot return anything new, so re-running it only
                 // spends the budget and the turn's iterations on an answer already in context. Refused
@@ -1082,7 +1087,7 @@ public class ServerAssistant : IServerAssistant
             // fetch_url is likewise read-only and open to everyone, but each call is a real outbound
             // HTTP request against a model/user-influenced URL and adds a loop iteration — its own
             // per-message cap, independent of the search cap.
-            if (call.Name == LlmTools.FetchUrl)
+            if (capability == LlmTools.FetchUrl)
             {
                 if (fetches >= MaxFetchesPerMessage)
                     return ToolGate.Refuse(
@@ -1093,12 +1098,12 @@ public class ServerAssistant : IServerAssistant
                 return ToolGate.Allow;
             }
 
-            if (LlmTools.IsAuthorizedRead(call.Name))
+            if (capability is not null && LlmTools.IsAuthorizedRead(capability.Value))
                 return canPerformActions
                     ? ToolGate.Allow
                     : Declined(call, "Refused: you don't have permission to read server files.");
 
-            if (!LlmTools.IsStagedCommand(call.Name))
+            if (capability is null || !LlmTools.IsStagedCommand(capability.Value))
                 return ToolGate.Allow; // read-only
 
             if (!canPerformActions)

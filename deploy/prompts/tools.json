@@ -1,48 +1,117 @@
 {
-  "server_info": {
-    "description": "Reports on instances — the servers that are installed. With no instance_name it covers every instance at once; with one it covers that instance. The 'aspect' parameter picks what is reported. The default aspect, status, gives whether the instance is running plus its headline details, including the port it is configured to use. This covers an installed instance; blueprint_info covers a game type that is not installed.",
+  "get_instance_status": {
+    "capability": "instance.status",
+    "label": "Checking status",
+    "description": "Reports whether an instance is running, with its headline details — including the port it is configured to use. With no instance_name it covers every instance at once, which is the answer to \"what's running?\" and \"list the servers\". An instance is a server that is installed; get_blueprint_info covers a game type that is not. check_instance_reachability covers whether that port is open and reachable.",
     "params": [
       {
         "name": "instance_name",
         "description": "One instance to report on. Omitted, the report covers every instance at once, which answers a question about the whole fleet in a single call.",
         "required": false,
         "type": "string"
-      },
-      {
-        "name": "aspect",
-        "description": "What to report. status (the default): whether the instance is running, and its headline details including the port it is configured to use. config: a summary of its KGSM settings, where read_file shows the raw configuration file. version: the version this instance has installed and whether an update is available — this is the instance's own installed version, where search covers what the game's developers have published. players: who is connected right now. backups: the backups it has. note: its operator note. autostart: whether it starts at boot.",
-        "required": false,
-        "type": "string",
-        "enum": [
-          "status",
-          "config",
-          "version",
-          "players",
-          "backups",
-          "note",
-          "autostart"
-        ]
       }
     ]
   },
-  "host_info": {
-    "description": "Reports on the host machine the instances run on, rather than on any one instance.",
+  "get_instance_config": {
+    "capability": "instance.config",
+    "label": "Reading config",
+    "description": "Reports one instance's KGSM settings as a summary — the knobs KGSM manages for it. read_instance_file shows the raw configuration file, and set_instance_kgsm_setting proposes a change to one of these settings.",
     "params": [
       {
-        "name": "aspect",
-        "description": "What to report. vitals (the default): uptime, load, memory, disk, external IP, and whether a reboot is pending. ports: what is currently bound on the host. conflicts: instances configured to want the same port.",
-        "required": false,
-        "type": "string",
-        "enum": [
-          "vitals",
-          "ports",
-          "conflicts"
-        ]
+        "name": "instance_name",
+        "description": "The instance whose settings to report.",
+        "required": true,
+        "type": "string"
       }
     ]
   },
-  "blueprint_info": {
-    "description": "Reports on blueprints — the game types that can be installed. With no blueprint_name it lists every blueprint. With one it describes that game type: the ports it needs, its resource requirements, and what it supports. A blueprint is a recipe, so this reports what a game type would need, never the state of anything running; server_info reports on an instance that is installed.",
+  "get_instance_version": {
+    "capability": "instance.version",
+    "label": "Checking version",
+    "description": "Reports the version one instance currently has installed and whether an update is available. This is the instance's own installed version; search_documentation_and_web covers what the game's developers have published. get_event_history covers when it was last updated.",
+    "params": [
+      {
+        "name": "instance_name",
+        "description": "The instance whose version to report.",
+        "required": true,
+        "type": "string"
+      }
+    ]
+  },
+  "list_online_players": {
+    "capability": "instance.players",
+    "label": "Checking who is online",
+    "description": "Lists who is connected right now. With no instance_name it covers every instance at once. It reports live presence; moderate_player acts on a player, and get_event_history covers who joined or left earlier.",
+    "params": [
+      {
+        "name": "instance_name",
+        "description": "One instance to report on. Omitted, the report covers every instance at once, which answers a question about the whole fleet in a single call.",
+        "required": false,
+        "type": "string"
+      }
+    ]
+  },
+  "list_instance_backups": {
+    "capability": "instance.backups",
+    "label": "Listing backups",
+    "description": "Lists the backups one instance has, with the ids manage_instance_backups takes. Creating a new backup is a lifecycle action and lives on control_instance.",
+    "params": [
+      {
+        "name": "instance_name",
+        "description": "The instance whose backups to list.",
+        "required": true,
+        "type": "string"
+      }
+    ]
+  },
+  "get_instance_note": {
+    "capability": "instance.note",
+    "label": "Reading the note",
+    "description": "Reports the operator note attached to one instance — free text a person left about it.",
+    "params": [
+      {
+        "name": "instance_name",
+        "description": "The instance whose note to report.",
+        "required": true,
+        "type": "string"
+      }
+    ]
+  },
+  "get_instance_autostart": {
+    "capability": "instance.autostart",
+    "label": "Checking autostart",
+    "description": "Reports whether an instance starts when the host boots. With no instance_name it covers every instance at once. Starting an instance now is control_instance with verb=start; changing this setting is control_instance with verb=enable_autostart or disable_autostart.",
+    "params": [
+      {
+        "name": "instance_name",
+        "description": "One instance to report on. Omitted, the report covers every instance at once, which answers a question about the whole fleet in a single call.",
+        "required": false,
+        "type": "string"
+      }
+    ]
+  },
+  "get_host_vitals": {
+    "capability": "host.vitals",
+    "label": "Checking host health",
+    "description": "Reports on the host machine the instances run on, rather than on any one instance: its uptime, load, memory, disk space, external IP address and whether a reboot is pending. get_instance_resource_usage covers what one instance is using.",
+    "params": []
+  },
+  "list_host_ports": {
+    "capability": "host.ports",
+    "label": "Reading host ports",
+    "description": "Lists what is currently bound on the host's ports — the machine's whole port usage. check_instance_reachability covers whether one instance's port is open and forwarded.",
+    "params": []
+  },
+  "find_port_conflicts": {
+    "capability": "host.port-conflicts",
+    "label": "Looking for port conflicts",
+    "description": "Lists instances configured to want the same port as each other. It compares what they are configured to use, which is how a conflict is found before both are running.",
+    "params": []
+  },
+  "get_blueprint_info": {
+    "capability": "blueprint.info",
+    "label": "Reading the game catalog",
+    "description": "Reports on blueprints — the game types that can be installed. With no blueprint_name it lists every blueprint. With one it describes that game type: the ports it needs, its resource requirements, and what it supports. A blueprint is a recipe, so this reports what a game type would need, never the state of anything running; get_instance_status reports on an instance that is installed.",
     "params": [
       {
         "name": "blueprint_name",
@@ -52,24 +121,16 @@
       }
     ]
   },
-  "events": {
-    "description": "The history of what has happened, read from KGSM's own event log, most recent first. Covers one instance with instance_name, or every instance without one. This is the record of what happened to this host's own instances — when one was updated, restarted, backed up or crashed. read_console gives what a server itself printed, which is a separate record.",
+  "get_event_history": {
+    "capability": "events.history",
+    "label": "Reading recent events",
+    "description": "The whole history of what has happened, read from KGSM's own event log, most recent first. Covers one instance with instance_name, or every instance without one. One unfiltered timeline: starts, stops, restarts, crashes, installs, updates, version changes, backups, port changes and player activity all arrive together, and what answers the question is read off it. This is the record of what happened to this host's own instances — when one was updated, restarted, backed up or crashed. read_instance_console gives what a server itself printed, which is a separate record.",
     "params": [
       {
         "name": "instance_name",
-        "description": "One instance to scope the events to. Omitted, the feed covers every instance on this host, which answers a question about the fleet in a single call.",
+        "description": "One instance to scope the get_event_history to. Omitted, the feed covers every instance on this host, which answers a question about the fleet in a single call.",
         "required": false,
         "type": "string"
-      },
-      {
-        "name": "scope",
-        "description": "Which events to include. all (the default): the full feed — starts, stops, restarts, crashes, installs, updates, backups, port changes, player activity. changes: durable changes only — installs, uninstalls, updates, version changes, backups, port changes — which is where an instance's own update history lives, so it answers when an instance was last updated or what has changed on it. A start, a stop or a crash appears under all and not under changes.",
-        "required": false,
-        "type": "string",
-        "enum": [
-          "all",
-          "changes"
-        ]
       },
       {
         "name": "window",
@@ -85,8 +146,10 @@
       }
     ]
   },
-  "run_health_check": {
-    "description": "A health check on one instance, returned as a ranked summary. It combines four readings in a single call: whether the instance is running, errors in its recent logs, whether an update is available, and host disk space. It describes the present; trace_root_cause investigates an incident in the past.",
+  "check_instance_health": {
+    "capability": "instance.health",
+    "label": "Running health check",
+    "description": "A health check on one instance, returned as a ranked summary. It combines four readings in a single call: whether the instance is running, errors in its recent logs, whether an update is available, and host disk space. It describes the present; diagnose_instance_failure investigates an incident in the past.",
     "params": [
       {
         "name": "instance_name",
@@ -96,7 +159,9 @@
       }
     ]
   },
-  "get_performance": {
+  "get_instance_resource_usage": {
+    "capability": "instance.resources",
+    "label": "Reading metrics",
     "description": "One instance's resource usage: CPU as a percentage of one core, memory, network and disk-I/O throughput, and process count. With no range it is a live snapshot of current values. With a range it is the trend across that window. A running instance has both. A stopped instance has no live snapshot, and may still have recent history. This covers one instance; host_info covers the machine they all run on.",
     "params": [
       {
@@ -119,8 +184,10 @@
       }
     ]
   },
-  "get_network": {
-    "description": "The network reachability of one instance, across two layers: the host firewall (which ports KGSM has opened, which firewall backend, and whether it is enforcing) and the UPnP port forwards on the local router. It reports whether the instance's port is reachable; server_info reports which port the instance uses. Each layer is reported separately, and a layer that could not be reached is reported as 'couldn't check'.",
+  "check_instance_reachability": {
+    "capability": "instance.network",
+    "label": "Checking network",
+    "description": "The network reachability of one instance, across two layers: the host firewall (which ports KGSM has opened, which firewall backend, and whether it is enforcing) and the UPnP port forwards on the local router. It reports whether the instance's port is reachable; get_instance_status reports which port the instance uses. Each layer is reported separately, and a layer that could not be reached is reported as 'couldn't check'.",
     "params": [
       {
         "name": "instance_name",
@@ -130,8 +197,10 @@
       }
     ]
   },
-  "trace_root_cause": {
-    "description": "Investigates why one instance crashed, will not stay up, or has been misbehaving. It gathers the instance's event history, resource usage and health checks in a single call and matches them against known failure patterns — port conflicts, update-triggered crash loops, disk-full failures, mismatches between the event log and live state — then returns a ranked explanation with the evidence behind it. It covers an incident in the past; run_health_check covers the present. When no known pattern matches, it reports the correlation it found.",
+  "diagnose_instance_failure": {
+    "capability": "instance.root-cause",
+    "label": "Tracing the root cause",
+    "description": "Investigates why one instance crashed, will not stay up, or has been misbehaving. It gathers the instance's event history, resource usage and health checks in a single call and matches them against known failure patterns — port conflicts, update-triggered crash loops, disk-full failures, mismatches between the event log and live state — then returns a ranked explanation with the evidence behind it. It covers an incident in the past; check_instance_health covers the present. When no known pattern matches, it reports the correlation it found.",
     "params": [
       {
         "name": "instance_name",
@@ -153,12 +222,14 @@
       }
     ]
   },
-  "search": {
-    "description": "Looks a topic up and returns short passages, each with its source — a doc path or a URL. It reads the operator's indexed documentation and the public web. It covers facts about a game or a piece of software that hold anywhere: what its settings do, what its release notes say, which version its developers have published. Facts about this host's own instances are measured directly by the KGSM tools instead — which version an instance has installed and whether an update is available come from server_info with aspect=version, and when an instance was last updated, restarted or backed up comes from events. A passage can be out of date, so it is worth citing its source and saying so.",
+  "search_documentation_and_web": {
+    "capability": "knowledge.search",
+    "label": "Searching docs & web",
+    "description": "Looks a topic up and returns short passages, each with its source — a doc path or a URL. It reads the operator's indexed documentation and the public web. It covers facts about a game or a piece of software that hold anywhere: what its settings do, what its release notes say, which version its developers have published. Facts about this host's own instances are measured directly by the KGSM tools instead — which version an instance has installed and whether an update is available come from get_instance_version, and when an instance was last updated, restarted or backed up comes from get_event_history. A passage can be out of date, so it is worth citing its source and saying so.",
     "params": [
       {
         "name": "query",
-        "description": "The topic to look up. It covers facts about a game or a piece of software that hold anywhere — what a config option means, what a release note says, which version the developers have published. Facts about this host's own instances (status, config, health, which version is installed, when it was last updated) are measured directly by server_info and events instead.",
+        "description": "The topic to look up. It covers facts about a game or a piece of software that hold anywhere — what a config option means, what a release note says, which version the developers have published. Facts about this host's own instances (status, config, health, which version is installed, when it was last updated) are measured directly by get_instance_status and get_event_history instead.",
         "required": true,
         "type": "string"
       },
@@ -175,8 +246,10 @@
       }
     ]
   },
-  "fetch_url": {
-    "description": "Reads the full text of one web page by its exact URL — an official docs page, a Steam store page, a raw GitHub file. It takes a URL you already have, from the user or from a search result. search is what finds a page by topic and returns short summaries; this reads one page you can already name. Public http/https pages only, and a large page is truncated.",
+  "read_web_page": {
+    "capability": "web.fetch",
+    "label": "Reading a web page",
+    "description": "Reads the full text of one web page by its exact URL — an official docs page, a Steam store page, a raw GitHub file. It takes a URL you already have, from the user or from a search_documentation_and_web result. search_documentation_and_web is what finds a page by topic and returns short summaries; this reads one page you can already name. Public http/https pages only, and a large page is truncated.",
     "params": [
       {
         "name": "url",
@@ -186,8 +259,10 @@
       }
     ]
   },
-  "read_file": {
-    "description": "Reads a text file inside one instance's own directory — the game's configuration, its logs, server.properties, a mod's settings. Read-only, and confined to that instance's folder. The path is relative to the instance's directory; omitting it reads the instance's KGSM configuration (its .config.ini). Large files are truncated and binary files are not shown. A change to a game's own config file is proposed with write_file; a change to the .config.ini is proposed with set_config_value.",
+  "read_instance_file": {
+    "capability": "files.read",
+    "label": "Reading a file",
+    "description": "Reads a text file inside one instance's own directory — the game's configuration, its logs, server.properties, a mod's settings. Read-only, and confined to that instance's folder. The path is relative to the instance's directory; omitting it reads the instance's KGSM configuration (its .config.ini). Large files are truncated and binary files are not shown. A change to a game's own config file is proposed with edit_instance_file; a change to the .config.ini is proposed with set_instance_kgsm_setting.",
     "params": [
       {
         "name": "instance_name",
@@ -197,14 +272,16 @@
       },
       {
         "name": "path",
-        "description": "The file to read, as a path relative to the instance's own directory — server.properties, logs/latest.log. Omitted, it reads the instance's KGSM configuration (its .config.ini). find_files locates a file by name and search_files locates one by its contents.",
+        "description": "The file to read, as a path relative to the instance's own directory — server.properties, logs/latest.log. Omitted, it reads the instance's KGSM configuration (its .config.ini). find_instance_file locates a file by name and search_instance_files locates one by its contents.",
         "required": false,
         "type": "string"
       }
     ]
   },
-  "list_files": {
-    "description": "Lists the files and folders inside one instance's own directory, one level at a time. It answers what is in a directory. find_files searches every subdirectory for a file by name, and search_files searches inside every file for text.",
+  "list_instance_directory": {
+    "capability": "files.list",
+    "label": "Listing files",
+    "description": "Lists the files and folders inside one instance's own directory, one level at a time. It answers what is in a directory. find_instance_file searches every subdirectory for a file by name, and search_instance_files searches inside every file for text.",
     "params": [
       {
         "name": "instance_name",
@@ -220,8 +297,10 @@
       }
     ]
   },
-  "find_files": {
-    "description": "Finds a file anywhere inside one instance's folder by name, searching every subdirectory in a single call. A game's own config often sits several directories deep, so one glob reaches it where stepping down a level at a time takes many calls. It returns matching paths ready to pass to read_file. Archived copies under a backups folder are excluded, so what comes back is the live file.",
+  "find_instance_file": {
+    "capability": "files.find",
+    "label": "Finding a file",
+    "description": "Finds a file anywhere inside one instance's folder by name, searching every subdirectory in a single call. A game's own config often sits several directories deep, so one glob reaches it where stepping down a level at a time takes many calls. It returns matching paths ready to pass to read_instance_file. Archived copies under a backups folder are excluded, so what comes back is the live file.",
     "params": [
       {
         "name": "instance_name",
@@ -237,14 +316,16 @@
       },
       {
         "name": "subdir",
-        "description": "Optional. Search only inside this subdirectory of the server's folder. OMIT it to search the whole server directory, which is usually what you want.",
+        "description": "Optional. Search only inside this subdirectory of the server's folder. OMIT it to search_documentation_and_web the whole server directory, which is usually what you want.",
         "required": false,
         "type": "string"
       }
     ]
   },
-  "search_files": {
-    "description": "Searches inside one instance's files for text, across every subdirectory in a single call. It finds which file holds a setting when the setting's name is known and the file's is not — MaxPlayers, DayTimeSpeedRate. It returns each matching file with the line number and the line itself, ready to pass to read_file. find_files searches by file name instead. Archived copies under a backups folder are excluded, and binary files are skipped.",
+  "search_instance_files": {
+    "capability": "files.search",
+    "label": "Searching in files",
+    "description": "Searches inside one instance's files for text, across every subdirectory in a single call. It finds which file holds a setting when the setting's name is known and the file's is not — MaxPlayers, DayTimeSpeedRate. It returns each matching file with the line number and the line itself, ready to pass to read_instance_file. find_instance_file searches by file name instead. Archived copies under a backups folder are excluded, and binary files are skipped.",
     "params": [
       {
         "name": "instance_name",
@@ -260,14 +341,16 @@
       },
       {
         "name": "subdir",
-        "description": "Optional. Search only inside this subdirectory of the server's folder. OMIT it to search the whole server directory, which is usually what you want.",
+        "description": "Optional. Search only inside this subdirectory of the server's folder. OMIT it to search_documentation_and_web the whole server directory, which is usually what you want.",
         "required": false,
         "type": "string"
       }
     ]
   },
-  "read_console": {
-    "description": "Reads what an instance itself printed — its console output. It covers what an instance is saying now, and what it said on its way down; a stopped instance's last output is still readable. events covers KGSM's own record of what happened to the instance, which is a separate record from what the game printed. The reply names which run it came from and whether the instance restarted recently. An instance's log restarts from empty every time it starts, so after a crash-restart the crash is in run 1 and run 0 holds the clean boot that followed it.",
+  "read_instance_console": {
+    "capability": "instance.console",
+    "label": "Reading console output",
+    "description": "Reads what an instance itself printed — its console output. It covers what an instance is saying now, and what it said on its way down; a stopped instance's last output is still readable. get_event_history covers KGSM's own record of what happened to the instance, which is a separate record from what the game printed. The reply names which run it came from and whether the instance restarted recently. An instance's log restarts from empty every time it starts, so after a crash-restart the crash is in run 1 and run 0 holds the clean boot that followed it.",
     "params": [
       {
         "name": "instance_name",
@@ -289,7 +372,9 @@
       }
     ]
   },
-  "server_command": {
+  "control_instance": {
+    "capability": "instance.lifecycle",
+    "label": "Running command",
     "description": "Proposes a lifecycle action on one existing instance, chosen with the 'verb' parameter. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
@@ -315,8 +400,10 @@
       }
     ]
   },
-  "backup_command": {
-    "description": "Proposes acting on an instance's existing backups: restore one over the instance's current data, delete one, or prune the old ones. server_info with aspect=backups lists them under the id this tool takes. Restoring replaces the instance's current data, and deleting is permanent. Staged for human confirmation: it does not run until a person confirms.",
+  "manage_instance_backups": {
+    "capability": "backups.manage",
+    "label": "Managing backups",
+    "description": "Proposes acting on an instance's existing backups: restore one over the instance's current data, delete one, or prune the old ones. list_instance_backups lists them under the id this tool takes. Restoring replaces the instance's current data, and deleting is permanent. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
         "name": "instance_name",
@@ -326,7 +413,7 @@
       },
       {
         "name": "verb",
-        "description": "What to do with the instance's existing backups. restore: replace the instance's current data with a backup. delete: remove one backup. prune: delete the oldest, keeping the most recent few. server_command with verb=backup creates a new one.",
+        "description": "What to do with the instance's existing backups. delete: remove exactly one backup, the one named in backup_name — this is what removes a single backup, however that one is described. prune: remove SEVERAL at once, the oldest ones, keeping the most recent few; it takes no backup_name because it does not act on one. restore: replace the instance's current data with a backup. list_instance_backups shows them oldest to newest with the ids delete takes. control_instance with verb=backup creates a new one.",
         "required": true,
         "type": "string",
         "enum": [
@@ -337,7 +424,7 @@
       },
       {
         "name": "backup_name",
-        "description": "Which backup to act on, by its id from server_info(aspect=backups). Required for restore and delete; omit it for prune.",
+        "description": "Which backup to act on, by its id from list_instance_backups. Required for restore and delete, including when the user described the backup rather than naming it — the list is what turns \"the oldest one\" into the id this takes. Omitted for prune.",
         "required": false,
         "type": "string"
       },
@@ -349,7 +436,9 @@
       }
     ]
   },
-  "player_command": {
+  "moderate_player": {
+    "capability": "player.moderate",
+    "label": "Moderating a player",
     "description": "Proposes moderating a player on one instance: kick, ban, or unban them. Staged for human confirmation: it does not run until a person confirms. Moderation works on games whose server supports moderation commands, and the tool reports when a game does not.",
     "params": [
       {
@@ -371,13 +460,15 @@
       },
       {
         "name": "target",
-        "description": "Which player, exactly as the user named them. server_info with aspect=players lists who is connected. The game decides which form of identifier it needs and the system supplies it, so the name as the user gave it is the right thing to pass.",
+        "description": "Which player, exactly as the user named them. list_online_players lists who is connected. The game decides which form of identifier it needs and the system supplies it, so the name as the user gave it is the right thing to pass.",
         "required": true,
         "type": "string"
       }
     ]
   },
-  "install_server": {
+  "install_instance": {
+    "capability": "instance.install",
+    "label": "Installing a server",
     "description": "Proposes installing a new instance from a blueprint. The blueprint is the game type; the instance is the server this creates from it. Heavy and slow. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
@@ -406,7 +497,9 @@
       }
     ]
   },
-  "uninstall_server": {
+  "uninstall_instance": {
+    "capability": "instance.uninstall",
+    "label": "Uninstalling a server",
     "description": "Proposes permanently deleting one instance and all of its data. Irreversible. Staged for human confirmation: it does not run until a person confirms.",
     "params": [
       {
@@ -417,8 +510,10 @@
       }
     ]
   },
-  "set_config_value": {
-    "description": "Proposes setting one key=value in an instance's KGSM configuration (its .config.ini) — settings such as auto_update, executable_arguments, or a timeout. A change to the game's own config file is proposed with set_game_setting (one Key=Value setting) or write_file (any other edit) instead. Staged for human confirmation: it does not run until a person confirms. kgsm keeps identity and structural keys, path keys (*_dir and *_file), ports, and the integration toggles (enable_firewall_management, enable_port_forwarding, enable_command_shortcuts) to their own dedicated flows, so one of those is rejected at confirmation time and the tool says which.",
+  "set_instance_kgsm_setting": {
+    "capability": "instance.kgsm-setting",
+    "label": "Changing a KGSM setting",
+    "description": "Proposes setting one key=value in an instance's KGSM configuration (its .config.ini) — settings such as auto_update, executable_arguments, or a timeout. A change to the game's own config file is proposed with set_instance_game_setting (one Key=Value setting) or edit_instance_file (any other edit) instead. Staged for human confirmation: it does not run until a person confirms. kgsm keeps identity and structural keys, path keys (*_dir and *_file), ports, and the integration toggles (enable_firewall_management, enable_port_forwarding, enable_command_shortcuts) to their own dedicated flows, so one of those is rejected at confirmation time and the tool says which.",
     "params": [
       {
         "name": "instance_name",
@@ -440,8 +535,10 @@
       }
     ]
   },
-  "write_file": {
-    "description": "Proposes a change to a text file inside one instance's own directory — the game's own config file, such as Palworld's PalWorldSettings.ini, server.properties, or a mod's settings file. It takes only the text that changes: old_string is the exact text to replace, copied from read_file's output, and new_string is what it becomes. The rest of the file is preserved byte for byte. old_string has to match exactly once; a match in no place, or in several, stages nothing and returns an error saying which, and reading the file again for the exact text resolves it. set_game_setting changes one Key=Value setting by naming its key, which needs no copied text and is the way to change a setting in a config that packs every setting onto one line; KGSM's own settings (ports, launch arguments, auto-update) are proposed with set_config_value. Staged for human confirmation against a preview: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
+  "edit_instance_file": {
+    "capability": "files.edit",
+    "label": "Editing a file",
+    "description": "Proposes a change to a text file inside one instance's own directory — the game's own config file, such as Palworld's PalWorldSettings.ini, server.properties, or a mod's settings file. It takes only the text that changes: old_string is the exact text to replace, copied from read_instance_file's output, and new_string is what it becomes. The rest of the file is preserved byte for byte. old_string has to match exactly once; a match in no place, or in several, stages nothing and returns an error saying which, and reading the file again for the exact text resolves it. set_instance_game_setting changes one Key=Value setting by naming its key, which needs no copied text and is the way to change a setting in a config that packs every setting onto one line; KGSM's own settings (ports, launch arguments, auto-update) are proposed with set_instance_kgsm_setting. Staged for human confirmation against a preview: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
     "params": [
       {
         "name": "instance_name",
@@ -451,13 +548,13 @@
       },
       {
         "name": "path",
-        "description": "The file to change, as a path relative to the instance's own directory — install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini, server.properties. find_files locates it by name and read_file shows its contents.",
+        "description": "The file to change, as a path relative to the instance's own directory — install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini, server.properties. find_instance_file locates it by name and read_instance_file shows its contents.",
         "required": true,
         "type": "string"
       },
       {
         "name": "old_string",
-        "description": "The exact text to replace, copied character for character from what read_file showed you — normally the one setting being changed, e.g. \"Difficulty=None\". It has to appear exactly once in the file; where it appears more than once, a little of the surrounding text narrows it to one place. Everything else in the file is preserved for you.",
+        "description": "The exact text to replace, copied character for character from what read_instance_file showed you — normally the one setting being changed, e.g. \"Difficulty=None\". It has to appear exactly once in the file; where it appears more than once, a little of the surrounding text narrows it to one place. Everything else in the file is preserved for you.",
         "required": true,
         "type": "string"
       },
@@ -476,7 +573,9 @@
     ]
   },
   "create_blueprint": {
-    "description": "Authors a blueprint for a game that is missing from the catalog. It runs its own online research and drafts a server config in a single call, then shows the draft to the user in an editor to review and tweak. Calling it is what starts the research and the drafting, so it is the whole first step and needs no search, fetch_url or blueprint_info call ahead of it. The test-install and verification run later, when the user saves the config, so that is the point at which the game is added. blueprint_info lists the games already in the catalog, and a game already there is installed with install_server. Not every game can be self-hosted or has a native Linux server, and the tool reports either outcome.",
+    "capability": "blueprint.create",
+    "label": "Setting up a new game",
+    "description": "Authors a blueprint for a game that is missing from the catalog. It runs its own online research and drafts a server config in a single call, then shows the draft to the user in an editor to review and tweak. Calling it is what starts the research and the drafting, so it is the whole first step and needs no search_documentation_and_web, read_web_page or get_blueprint_info call ahead of it. The test-install and verification run later, when the user saves the config, so that is the point at which the game is added. get_blueprint_info lists the games already in the catalog, and a game already there is installed with install_instance. Not every game can be self-hosted or has a native Linux server, and the tool reports either outcome.",
     "params": [
       {
         "name": "game",
@@ -487,6 +586,8 @@
     ]
   },
   "revise_blueprint": {
+    "capability": "blueprint.revise",
+    "label": "Updating the draft",
     "description": "Updates the blueprint draft the user is currently reviewing in the editor — a metadata field (min or recommended RAM, max players, disk), a port, the launch args, any part of it. The draft's current YAML is given in this turn's context; revised_yaml takes that whole document with the requested change applied. It re-validates and shows the updated draft to review and save, and installs nothing. This tool is what changes an open draft, and the change is real once it returns successfully.",
     "params": [
       {
@@ -497,8 +598,10 @@
       }
     ]
   },
-  "set_game_setting": {
-    "description": "Proposes changing one Key=Value setting in a game's own config file, naming the setting by its key. The value currently on disk is read here, so only the key and the new value are sent and the rest of the file is preserved byte for byte. This works whichever shape the config has — one setting per line, or every setting packed onto a single line, which is where naming the surrounding text stops being possible. The reply names the value that was there before. write_file covers a change that is not one setting's value, such as adding a line or editing prose; set_config_value covers KGSM's own settings rather than the game's. Staged for human confirmation: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
+  "set_instance_game_setting": {
+    "capability": "instance.game-setting",
+    "label": "Changing a game setting",
+    "description": "Proposes changing one Key=Value setting in a game's own config file, naming the setting by its key. The value currently on disk is read here, so only the key and the new value are sent and the rest of the file is preserved byte for byte. This works whichever shape the config has — one setting per line, or every setting packed onto a single line, which is where naming the surrounding text stops being possible. The reply names the value that was there before. edit_instance_file covers a change that is not one setting's value, such as adding a line or editing prose; set_instance_kgsm_setting covers KGSM's own settings rather than the game's. Staged for human confirmation: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
     "params": [
       {
         "name": "instance_name",
@@ -508,7 +611,7 @@
       },
       {
         "name": "path",
-        "description": "The game's own config file. Its NAME is enough — \"PalWorldSettings.ini\", \"server.properties\" — and it is looked up under the instance, so the directories around it do not have to be right. A full path works too. When the name matches several files, the reply lists them and a full path picks one; search_files finds the file that carries a given setting.",
+        "description": "The game's own config file. Its NAME is enough — \"PalWorldSettings.ini\", \"server.properties\" — and it is looked up under the instance, so the directories around it do not have to be right. A full path works too. When the name matches several files, the reply lists them and a full path picks one; search_instance_files finds the file that carries a given setting.",
         "required": true,
         "type": "string"
       },

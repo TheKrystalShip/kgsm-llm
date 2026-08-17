@@ -658,10 +658,20 @@ public sealed record ThinkingEvent(string Text);
 
 /// <summary>
 /// `tool.start` — a tool is about to run. <see cref="Id"/> is the synthesised correlation id that
-/// pairs this with its <see cref="ToolResultEvent"/>; `label` is omitted (no honest source — the SPA
-/// derives a display name from <see cref="Tool"/>); `arguments` is additive over the §5·a example.
+/// pairs this with its <see cref="ToolResultEvent"/>; `arguments` is additive over the §5·a example.
+/// <para>
+/// <see cref="Label"/> is the short human phrase to show while it runs ("Reading metrics"), read from
+/// the tool's own catalog entry. It ships in the frame because the alternative was every surface
+/// keeping its own name-to-label map — and the one the panel kept went stale, listing four tools that
+/// no longer existed while missing every tool added since. A surface that gets no label falls back to
+/// prettifying <see cref="Tool"/>, which is what it did before this field existed.
+/// </para>
 /// </summary>
-public sealed record ToolStartEvent(string Id, string Tool, IReadOnlyDictionary<string, string?> Arguments);
+public sealed record ToolStartEvent(
+    string Id,
+    string Tool,
+    IReadOnlyDictionary<string, string?> Arguments,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null);
 
 /// <summary>
 /// `tool.result` — a tool finished. <see cref="Id"/> pairs it with its <see cref="ToolStartEvent"/>.

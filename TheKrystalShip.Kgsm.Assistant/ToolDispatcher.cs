@@ -26,13 +26,13 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// Inventory reads (listing/resolving instances and blueprints) go through the
 /// cached <see cref="IServerInventory"/>; live status reads go through
 /// <see cref="IServerOperations"/>. Every COMMAND — the merged lifecycle
-/// <c>server_command</c> (start/stop/restart/update/backup), plus install/uninstall and
+/// <c>control_instance</c> (start/stop/restart/update/backup), plus install/uninstall and
 /// set_config — is propose-only: the dispatcher resolves and STAGES it into the
 /// <see cref="IConfirmationContext"/> — it is never executed here. The matching op runs
 /// later, from <see cref="ServerAssistant.ConfirmAsync"/>, only after a human confirms.
 /// <para>
 /// The ONE exception is an auto-accept turn (<see cref="IConfirmationContext.AutoExecute"/>, set by
-/// the host after the api verified admin-tier ∧ toggle): there the <c>server_command</c> lifecycle
+/// the host after the api verified admin-tier ∧ toggle): there the <c>control_instance</c> lifecycle
 /// verbs run immediately here (see <c>ExecuteCommandNowAsync</c>) instead of staging. Install /
 /// uninstall / set-config are NOT auto-executed even then — they keep their own stage methods.
 /// </para>
@@ -51,6 +51,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IServerFacts _serverFacts;
     private readonly IHostFacts _hostFacts;
     private readonly IBlueprintAuthoring _blueprintAuthoring;
+    private readonly IToolCatalog _catalog;
     private readonly SettlementTiming _settlement;
     private readonly ILogger<ToolDispatcher> _logger;
 
@@ -67,6 +68,7 @@ public class ToolDispatcher : IToolDispatcher
         IServerFacts serverFacts,
         IHostFacts hostFacts,
         IBlueprintAuthoring blueprintAuthoring,
+        IToolCatalog catalog,
         SettlementTiming settlement,
         ILogger<ToolDispatcher> logger)
     {
@@ -82,67 +84,100 @@ public class ToolDispatcher : IToolDispatcher
         _serverFacts = serverFacts;
         _hostFacts = hostFacts;
         _blueprintAuthoring = blueprintAuthoring;
+        _catalog = catalog;
         _settlement = settlement;
         _logger = logger;
     }
+
+    /// <summary>
+    /// What a capability is CALLED on this deploy — for a message that points the model at another
+    /// tool. Naming one in a literal would be the same hardcoding the catalog exists to remove: the
+    /// message would keep saying the old name after a rename, and send the model at a tool that is
+    /// not there any more.
+    /// </summary>
+    private string Name(Capability capability) => _catalog.NameOf(capability).Name;
 
     public async Task<ToolOutput> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Dispatching tool '{Tool}' args={Args}",
             call.Name, string.Join(", ", call.Arguments.Select(kv => $"{kv.Key}={kv.Value}")));
 
+        // The name is the file's; the binding is the code's. Resolving it here once is the whole seam:
+        // below this line nothing knows or cares what the tool is called, so renaming one is an edit to
+        // tools.json and a restart. A name nothing implements is reported rather than guessed at —
+        // the catalog refuses such a file at startup, so reaching this is a model inventing a tool.
+        var capability = _catalog.CapabilityOf(call.Name);
+        if (capability is null)
+            return $"Error: there is no tool called '{call.Name}'.";
+
         try
         {
-            if (call.Name == LlmTools.ServerInfo)
-                return await ServerInfoAsync(call, cancellationToken);
-            if (call.Name == LlmTools.HostInfo)
-                return await HostInfoAsync(call, cancellationToken);
-            if (call.Name == LlmTools.BlueprintInfo)
+            if (capability == LlmTools.ServerInfo)
+                return await ServerInfoAsync(call, "status", cancellationToken);
+            if (capability == LlmTools.GetInstanceConfig)
+                return await ServerInfoAsync(call, "config", cancellationToken);
+            if (capability == LlmTools.GetInstanceVersion)
+                return await ServerInfoAsync(call, "version", cancellationToken);
+            if (capability == LlmTools.ListOnlinePlayers)
+                return await ServerInfoAsync(call, "players", cancellationToken);
+            if (capability == LlmTools.ListInstanceBackups)
+                return await ServerInfoAsync(call, "backups", cancellationToken);
+            if (capability == LlmTools.GetInstanceNote)
+                return await ServerInfoAsync(call, "note", cancellationToken);
+            if (capability == LlmTools.GetInstanceAutostart)
+                return await ServerInfoAsync(call, "autostart", cancellationToken);
+            if (capability == LlmTools.HostInfo)
+                return await HostInfoAsync("vitals", cancellationToken);
+            if (capability == LlmTools.ListHostPorts)
+                return await HostInfoAsync("ports", cancellationToken);
+            if (capability == LlmTools.FindPortConflicts)
+                return await HostInfoAsync("conflicts", cancellationToken);
+            if (capability == LlmTools.BlueprintInfo)
                 return await BlueprintInfoAsync(call, cancellationToken);
-            if (call.Name == LlmTools.RunHealthCheck)
+            if (capability == LlmTools.RunHealthCheck)
                 return await RunHealthCheckAsync(call, cancellationToken);
-            if (call.Name == LlmTools.GetPerformance)
+            if (capability == LlmTools.GetPerformance)
                 return await GetPerformanceAsync(call, cancellationToken);
-            if (call.Name == LlmTools.GetNetwork)
+            if (capability == LlmTools.GetNetwork)
                 return await GetNetworkAsync(call, cancellationToken);
-            if (call.Name == LlmTools.Events)
+            if (capability == LlmTools.Events)
                 return await EventsAsync(call, cancellationToken);
-            if (call.Name == LlmTools.TraceRootCause)
+            if (capability == LlmTools.TraceRootCause)
                 return await TraceRootCauseAsync(call, cancellationToken);
-            if (call.Name == LlmTools.Search)
+            if (capability == LlmTools.Search)
                 return await SearchAsync(call, cancellationToken);
-            if (call.Name == LlmTools.FetchUrl)
+            if (capability == LlmTools.FetchUrl)
                 return await FetchUrlAsync(call, cancellationToken);
-            if (call.Name == LlmTools.CreateBlueprint)
+            if (capability == LlmTools.CreateBlueprint)
                 return await CreateBlueprintAsync(call, cancellationToken);
-            if (call.Name == LlmTools.ReviseBlueprint)
+            if (capability == LlmTools.ReviseBlueprint)
                 return await ReviseBlueprintAsync(call, cancellationToken);
-            if (call.Name == LlmTools.ReadFile)
+            if (capability == LlmTools.ReadFile)
                 return await ReadFileAsync(call, cancellationToken);
-            if (call.Name == LlmTools.ListFiles)
+            if (capability == LlmTools.ListFiles)
                 return await ListFilesAsync(call, cancellationToken);
-            if (call.Name == LlmTools.FindFiles)
+            if (capability == LlmTools.FindFiles)
                 return await FindFilesAsync(call, cancellationToken);
-            if (call.Name == LlmTools.SearchFiles)
+            if (capability == LlmTools.SearchFiles)
                 return await SearchFilesAsync(call, cancellationToken);
-            if (call.Name == LlmTools.ReadConsole)
+            if (capability == LlmTools.ReadConsole)
                 return await ReadConsoleAsync(call, cancellationToken);
-            if (call.Name == LlmTools.ServerCommand)
+            if (capability == LlmTools.ServerCommand)
                 return await StageServerCommandAsync(call, cancellationToken);
-            if (call.Name == LlmTools.BackupCommand)
+            if (capability == LlmTools.BackupCommand)
                 return await StageBackupCommandAsync(call, cancellationToken);
-            if (call.Name == LlmTools.PlayerCommand)
+            if (capability == LlmTools.PlayerCommand)
                 return await StagePlayerCommandAsync(call, cancellationToken);
-            if (call.Name == LlmTools.UninstallServer)
+            if (capability == LlmTools.UninstallServer)
                 return await StageUninstallAsync(call, cancellationToken);
-            if (call.Name == LlmTools.InstallServer)
+            if (capability == LlmTools.InstallServer)
                 return await StageInstallAsync(call, cancellationToken);
-            if (call.Name == LlmTools.SetConfigValue)
+            if (capability == LlmTools.SetConfigValue)
                 return await StageSetConfigAsync(call, cancellationToken);
-            if (call.Name == LlmTools.WriteFile)
+            if (capability == LlmTools.WriteFile)
                 return await StageWriteFileAsync(call, cancellationToken);
 
-            if (call.Name == LlmTools.SetGameSetting)
+            if (capability == LlmTools.SetGameSetting)
                 return await StageSetGameSettingAsync(call, cancellationToken);
 
             return $"Error: '{call.Name}' is not a known tool.";
@@ -194,7 +229,7 @@ public class ToolDispatcher : IToolDispatcher
 
         // The aggregator returns the model's grounding text (Summary) plus the cited passages (Data).
         // Attach the surface card only when there is something to cite — an empty / "couldn't search"
-        // outcome stays summary-only, exactly like a summary-only lifecycle read (mirrors run_health_check).
+        // outcome stays summary-only, exactly like a summary-only lifecycle read (mirrors check_instance_health).
         var result = await _search.SearchAsync(query, scope, cancellationToken);
         return result.Data.Passages.Count > 0
             ? new ToolOutput(result.Summary, ToolResultCard.From(result))
@@ -243,7 +278,7 @@ public class ToolDispatcher : IToolDispatcher
 
         var card = new FetchData(page.FinalUrl, page.Title, text, truncated);
         var envelope = new ToolResult<FetchData>(
-            LlmTools.FetchUrl, Confidence.Confirmed, new ResultRef(ResourceKind.WebPage, page.FinalUrl), summary, card);
+            ResultCardKinds.WebPage, Confidence.Confirmed, new ResultRef(ResourceKind.WebPage, page.FinalUrl), summary, card);
         return new ToolOutput(summary, ToolResultCard.From(envelope));
     }
 
@@ -330,16 +365,24 @@ public class ToolDispatcher : IToolDispatcher
         if (string.IsNullOrWhiteSpace(path))
             path = $"{resolved}.config.ini";
 
-        var result = await _operations.ReadInstanceFileAsync(resolved!, path, cancellationToken);
-        if (!result.IsSuccess)
-            return $"Error: could not read '{path}' for '{resolved}' ({result.Error ?? "unknown error"}).";
+        // The same path the model cannot transcribe. Reading a game's config is where it is handed a
+        // five-level path by the finder and hands back a corruption of it — measured spiralling through
+        // Linux_Server/, LinuxSrv/, Linuxerver/ until the turn's budget was gone — so the name is
+        // resolved here exactly as it is for an edit. A path given correctly resolves to itself.
+        var (file, unresolved) = await ResolveInstanceFilePathAsync(resolved!, path, cancellationToken);
+        if (unresolved is not null)
+            return unresolved;
 
-        return $"File ({path}) for {resolved}:\n{result.Value ?? string.Empty}";
+        var result = await _operations.ReadInstanceFileAsync(resolved!, file!, cancellationToken);
+        if (!result.IsSuccess)
+            return $"Error: could not read '{file}' for '{resolved}' ({result.Error ?? "unknown error"}).";
+
+        return $"File ({file}) for {resolved}:\n{result.Value ?? string.Empty}";
     }
 
     /// <summary>
     /// Lists one level of the resolved instance's own directory so the model can discover a
-    /// file to read with <c>read_file</c>. An omitted/blank <c>subdir</c> lists the top level;
+    /// file to read with <c>read_instance_file</c>. An omitted/blank <c>subdir</c> lists the top level;
     /// otherwise it lists that subdirectory. Same instance-directory jail as the read path.
     /// </summary>
     private async Task<string> ListFilesAsync(LlmToolCall call, CancellationToken cancellationToken)
@@ -385,20 +428,13 @@ public class ToolDispatcher : IToolDispatcher
     /// </summary>
     /// <summary>
     /// The per-instance read. <c>aspect</c> defaults to <c>status</c>, so a bare
-    /// <c>server_info(instance)</c> behaves exactly as the old single-purpose status tool did — the
+    /// <c>get_instance_status(instance)</c> behaves exactly as the old single-purpose status tool did — the
     /// enum is opt-in, which is what keeps the most-called tool's routing intact while the other
     /// aspects replace tools the model used to have to choose between.
     /// </summary>
-    private async Task<ToolOutput> ServerInfoAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<ToolOutput> ServerInfoAsync(
+        LlmToolCall call, string aspect, CancellationToken cancellationToken)
     {
-        var aspect = call.Arg("aspect")?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(aspect))
-            aspect = "status";
-
-        if (!LlmTools.ServerInfoAspects.Contains(aspect))
-            return $"Error: '{aspect}' is not a known aspect. "
-                 + $"Valid aspects: {string.Join(", ", LlmTools.ServerInfoAspects)}.";
-
         var name = call.Arg("instance_name")?.Trim();
 
         // The whole-host reads answer for every instance in one call, so they run before any
@@ -410,7 +446,9 @@ public class ToolDispatcher : IToolDispatcher
                 "status" => await GetFleetStatusAsync(cancellationToken),
                 "players" => await PresenceAsync(null, cancellationToken),
                 "autostart" => await AutostartAsync(null, cancellationToken),
-                _ => $"Error: '{aspect}' needs an instance_name — it reports on one server.",
+                // The three fleet-wide reads answer for every instance at once; the rest need a
+                // subject, and say which tool they are rather than naming an aspect nobody passed.
+                _ => $"Error: {call.Name} needs an instance_name — it reports on one server.",
             };
         }
 
@@ -421,16 +459,16 @@ public class ToolDispatcher : IToolDispatcher
         return aspect switch
         {
             "status" => await SingleStatusAsync(resolved!, cancellationToken),
-            // The engine's configuration SUMMARY, never the raw .config.ini. server_info is offered to
+            // The engine's configuration SUMMARY, never the raw .config.ini. get_instance_status is offered to
             // every caller, and reading a server's files is gated to authorized ones — routing this at
-            // read_file would hand the open tier a capability the gate exists to withhold.
+            // read_instance_file would hand the open tier a capability the gate exists to withhold.
             "config" => await ConfigSummaryAsync(resolved!, cancellationToken),
             "version" => await VersionAsync(resolved!, cancellationToken),
             "players" => await PresenceAsync(resolved, cancellationToken),
             "backups" => await BackupsAsync(resolved!, cancellationToken),
             "note" => await NoteAsync(resolved!, cancellationToken),
             "autostart" => await AutostartAsync(resolved, cancellationToken),
-            _ => $"Error: '{aspect}' is not a known aspect.",
+            _ => $"Error: {call.Name} is not wired to a report.",
         };
     }
 
@@ -523,7 +561,7 @@ public class ToolDispatcher : IToolDispatcher
     /// <summary>
     /// The engine's own view of an instance's configuration. Deliberately the status read rather than
     /// the <c>.config.ini</c> itself: this aspect is reachable by every caller, and file contents stay
-    /// behind the authorized <c>read_file</c>.
+    /// behind the authorized <c>read_instance_file</c>.
     /// </summary>
     private async Task<ToolOutput> ConfigSummaryAsync(string resolved, CancellationToken cancellationToken)
     {
@@ -566,12 +604,8 @@ public class ToolDispatcher : IToolDispatcher
     }
 
     /// <summary>The host machine's own vitals and port usage — never any one server's.</summary>
-    private async Task<ToolOutput> HostInfoAsync(LlmToolCall call, CancellationToken cancellationToken)
+    private async Task<ToolOutput> HostInfoAsync(string aspect, CancellationToken cancellationToken)
     {
-        var aspect = call.Arg("aspect")?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(aspect))
-            aspect = "vitals";
-
         if (aspect is "ports" or "conflicts")
         {
             var usage = await _hostFacts.GetPortUsageAsync(cancellationToken);
@@ -588,10 +622,6 @@ public class ToolDispatcher : IToolDispatcher
                 ? "Nothing is currently bound on the host's ports."
                 : "Ports in use on the host:\n" + string.Join("\n", usage.UsedPorts.Select(p => $"- {p}"));
         }
-
-        if (aspect != "vitals")
-            return $"Error: '{aspect}' is not a known aspect. "
-                 + $"Valid aspects: {string.Join(", ", LlmTools.HostInfoAspects)}.";
 
         var facts = await _hostFacts.GetAsync(cancellationToken);
         if (facts.State == FactsState.Unavailable)
@@ -646,7 +676,7 @@ public class ToolDispatcher : IToolDispatcher
 
         var detail = await _inventory.GetBlueprintDetailAsync(resolved!, cancellationToken);
         if (detail is null)
-            return $"'{name}' is not a known game type. Use blueprint_info with no name to list them.";
+            return $"'{name}' is not a known game type. Use {Name(LlmTools.BlueprintInfo)} with no name to list them.";
 
         var parts = new List<string> { $"Game type: {detail.DisplayName ?? detail.Name} ({detail.Kind})" };
         if (detail.Description is not null) parts.Add(detail.Description);
@@ -680,7 +710,7 @@ public class ToolDispatcher : IToolDispatcher
 
         var pattern = call.Arg("pattern")?.Trim();
         if (string.IsNullOrWhiteSpace(pattern))
-            return "Error: find_files needs a 'pattern' — the file name or glob to look for.";
+            return $"Error: {Name(LlmTools.FindFiles)} needs a 'pattern' — the file name or glob to look for.";
 
         var result = await _operations.FindInstanceFilesAsync(
             resolved!, pattern, NullIfBlank(call.Arg("subdir")), cancellationToken);
@@ -718,11 +748,11 @@ public class ToolDispatcher : IToolDispatcher
         if (error is not null)
             return error;
 
-        // Accept "pattern" as well: it is find_files' argument name, and a model that has just used
+        // Accept "pattern" as well: it is find_instance_file' argument name, and a model that has just used
         // that tool reaches for the same word. Taking it costs nothing and saves a whole turn.
         var pattern = (call.Arg("text") ?? call.Arg("pattern"))?.Trim();
         if (string.IsNullOrWhiteSpace(pattern))
-            return "Error: search_files needs 'text' — the text to look for inside the files.";
+            return $"Error: {Name(LlmTools.SearchFiles)} needs 'text' — the text to look for inside the files.";
 
         // A glob here is a routing slip, not a search that found nothing: "*Player*" is a valid
         // FILENAME pattern and an invalid expression, so relaying the regex parser's complaint sends
@@ -730,7 +760,7 @@ public class ToolDispatcher : IToolDispatcher
         if (InvalidExpression(pattern) is { } why)
             return $"Error: '{pattern}' isn't valid here — {why} 'text' is the text to find INSIDE " +
                    "the files, not a filename pattern, so it takes no \"*\" wildcards. Search for the " +
-                   $"bare string (e.g. \"{pattern.Trim('*', '?', '.')}\"), or use find_files if you " +
+                   $"bare string (e.g. \"{pattern.Trim('*', '?', '.')}\"), or use {Name(LlmTools.FindFiles)} if you " +
                    "are looking for a file by NAME.";
 
         var result = await _operations.SearchInstanceFilesAsync(
@@ -751,7 +781,7 @@ public class ToolDispatcher : IToolDispatcher
                 : $"Nothing in {resolved}'s files matches '{pattern}'. The whole folder was searched, " +
                   "so a near-identical spelling will not match either — this game names it something " +
                   "else. Search a SHORTER distinctive fragment of the word instead, or locate the " +
-                  "config with find_files and read it.";
+                  $"config with {Name(LlmTools.FindFiles)} and read it.";
         }
 
         var lines = string.Join("\n", matches.Matches.Select(m => $"- {m.Path}:{m.Line}: {Clip(m.Text)}"));
@@ -975,14 +1005,15 @@ public class ToolDispatcher : IToolDispatcher
         if (error is not null)
             return error;
 
-        var changes = string.Equals(call.Arg("scope")?.Trim(), "changes", StringComparison.OrdinalIgnoreCase);
-        var fallback = changes ? AuditWindow.DefaultChangeRange : AuditWindow.DefaultAuditWindow;
-        var (window, sinceMs) = AuditWindow.Resolve(call.Arg("window"), fallback, DateTimeOffset.UtcNow);
+        // The whole timeline, never a subset. A caller cannot know which half of the feed holds its
+        // answer until it has read the feed, so offering it the choice first only invites a guess —
+        // and it guessed wrong in both directions: an instance's update history sat in the narrow
+        // half, a restart sat outside it, and each question reached for the scope that omitted it.
+        var (window, sinceMs) = AuditWindow.Resolve(
+            call.Arg("window"), AuditWindow.DefaultAuditWindow, DateTimeOffset.UtcNow);
 
         var reading = await _events.GetEventsAsync(resolved, sinceMs, EventFetchLimit, cancellationToken);
-        var result = changes
-            ? AuditReport.BuildChangeTimeline(reading, resolved, window)
-            : AuditReport.Build(reading, resolved, window);
+        var result = AuditReport.Build(reading, resolved, window);
         return new ToolOutput(result.Summary, ToolResultCard.From(result));
     }
 
@@ -1121,7 +1152,7 @@ public class ToolDispatcher : IToolDispatcher
         if (kind is ConfirmationKind.BackupRestore or ConfirmationKind.BackupDelete
             && string.IsNullOrWhiteSpace(backupName))
             return $"Error: a {verb} needs 'backup_name' — the id of the backup to act on. " +
-                   "List them with server_info(aspect=backups) first.";
+                   $"List them with {Name(LlmTools.ListInstanceBackups)} first.";
 
         var keep = call.Arg("keep")?.Trim();
         if (kind is ConfirmationKind.BackupPrune
@@ -1234,7 +1265,7 @@ public class ToolDispatcher : IToolDispatcher
             ConfirmationKind.Restart => _operations.RestartAsync,
             ConfirmationKind.Update => _operations.UpdateAsync,
             ConfirmationKind.Backup => _operations.CreateBackupAsync,
-            // Not a lifecycle verb → fall back to staging. server_command's autostart verbs land here
+            // Not a lifecycle verb → fall back to staging. control_instance's autostart verbs land here
             // deliberately: the auto-accept toggle covers acting on a running server, and changing what
             // happens at the next boot is a different intent that keeps its human confirmation.
             _ => null,
@@ -1420,10 +1451,21 @@ public class ToolDispatcher : IToolDispatcher
                    "string deletes it).";
         if (string.IsNullOrEmpty(oldText) && !seeded)
             return "Error: no old_string was provided. Pass the exact text to replace, copied from " +
-                   "read_file's output — the rest of the file is kept for you, so never send the whole file.";
+                   $"{Name(LlmTools.ReadFile)}'s output — the rest of the file is kept for you, so never send the whole file.";
+
+        // Seeding writes a file that need not exist yet, so only an ordinary edit resolves its path;
+        // a seeded one is checked by the target-directory guard instead.
+        var file = path;
+        if (!seeded)
+        {
+            var (resolvedFile, unresolved) = await ResolveInstanceFilePathAsync(resolved!, path, cancellationToken);
+            if (unresolved is not null)
+                return unresolved;
+            file = resolvedFile!;
+        }
 
         var prepared = await _operations.PrepareInstanceFileEditAsync(
-            resolved!, path, oldText ?? string.Empty, newText, copyFrom, cancellationToken);
+            resolved!, file, oldText ?? string.Empty, newText, copyFrom, cancellationToken);
         if (!prepared.IsSuccess)
             return $"Error: {prepared.Error ?? "the edit could not be applied."} Nothing was staged.";
 
@@ -1437,10 +1479,10 @@ public class ToolDispatcher : IToolDispatcher
             return $"Error: the resulting file is {byteCount:N0} bytes, over the {MaxWriteBytes / (1024 * 1024)} MB limit.";
 
         _confirmations.Stage(new PendingConfirmation(
-            ConfirmationKind.WriteFile, resolved!, InstanceName: null, ConfigKey: path, ConfigValue: content));
+            ConfirmationKind.WriteFile, resolved!, InstanceName: null, ConfigKey: file, ConfigValue: content));
 
         var how = seeded ? $", filled in from '{copyFrom}'" : "";
-        return $"Staged an edit to '{path}' on '{resolved}'{how} for confirmation — your replacement " +
+        return $"Staged an edit to '{file}' on '{resolved}'{how} for confirmation — your replacement " +
                "applied to the file's current content, everything else untouched. A confirmation prompt " +
                "with a preview has been shown to the user. This is NOT done yet and will only run if a " +
                "permitted human confirms it — tell the user it's awaiting their confirmation, and that " +
@@ -1473,11 +1515,13 @@ public class ToolDispatcher : IToolDispatcher
         if (string.IsNullOrWhiteSpace(name))
             return (null, $"Error: '{path}' does not name a file.");
 
+        // A lookup that could not run is not evidence about the path: fall through and let the read or
+        // the edit answer for itself, exactly as it did before the name was resolved here at all.
         var found = await _operations.FindInstanceFilesAsync(instance, name, null, cancellationToken);
-        if (!found.IsSuccess)
+        if (found is null || !found.IsSuccess || found.Value is null)
             return (path, null);
 
-        var paths = found.Value!.Paths;
+        var paths = found.Value.Paths;
         if (paths.Count == 1)
             return (paths[0], null);
 
@@ -1489,7 +1533,7 @@ public class ToolDispatcher : IToolDispatcher
 
         if (paths.Count == 0)
             return (null, $"Error: no file named '{name}' exists under '{instance}'. Find the real name "
-                        + "with find_files, or the file that carries the setting with search_files.");
+                        + $"with {Name(LlmTools.FindFiles)}, or the file that carries the setting with {Name(LlmTools.SearchFiles)}.");
 
         return (null, $"Error: '{name}' matches {paths.Count} files under '{instance}', so which one was "
                     + $"meant is unknown: {string.Join(", ", paths.Take(8))}. Pass the full path of the one "
@@ -1522,8 +1566,8 @@ public class ToolDispatcher : IToolDispatcher
 
         var path = call.Arg("path")?.Trim();
         if (string.IsNullOrWhiteSpace(path))
-            return "Error: no path was provided. Pass the game's own config file — find_files locates "
-                 + "it by name and search_files locates the file that carries a given setting.";
+            return $"Error: no path was provided. Pass the game's own config file — {Name(LlmTools.FindFiles)} locates "
+                 + $"it by name and {Name(LlmTools.SearchFiles)} locates the file that carries a given setting.";
 
         var setting = call.Arg("setting")?.Trim();
         if (string.IsNullOrWhiteSpace(setting))

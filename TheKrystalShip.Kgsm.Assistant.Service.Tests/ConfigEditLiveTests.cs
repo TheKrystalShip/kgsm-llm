@@ -117,7 +117,7 @@ public sealed class ConfigEditLiveTests : IClassFixture<WebApplicationFactory<Pr
 
         result.IsSuccess.Should().BeTrue();
 
-        var view = calls.FirstOrDefault(c => c.Name == LlmTools.ReadFile);
+        var view = calls.FirstOrDefault(c => c.Name == ShippedTextForTests.Name(LlmTools.ReadFile));
         view.Should().NotBeNull("a config-view request must route to read_file");
         (view!.Result ?? string.Empty).Should().Contain("auto_update",
             "the fixed read path must surface real config content to the model (not a 'could not read' error)");
@@ -136,7 +136,7 @@ public sealed class ConfigEditLiveTests : IClassFixture<WebApplicationFactory<Pr
             $"Set the auto_update setting to true on the {Instance} server.", canPerformActions: true);
 
         result.IsSuccess.Should().BeTrue();
-        calls.Should().Contain(c => c.Name == LlmTools.SetConfigValue);
+        calls.Should().Contain(c => c.Name == ShippedTextForTests.Name(LlmTools.SetConfigValue));
         result.Confirmations.Should().Contain(
             c => c.Kind == ConfirmationKind.SetConfig && c.Target == Instance && c.ConfigKey == "auto_update",
             "an authorized set request must STAGE a SetConfig confirmation, not apply it");

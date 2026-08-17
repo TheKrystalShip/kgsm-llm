@@ -163,47 +163,12 @@ public static class AuditReport
         };
 
         return new ToolResult<AuditData>(
-            Tool: LlmTools.Events,
+            Tool: ResultCardKinds.AuditLog,
             Confidence: confidence,
             Subject: new ResultRef(ResourceKind.Audit, subject, "all"),
             Summary: summary,
             Data: data);
     }
-
-    /// <summary>
-    /// Builds the change-scoped <c>events</c> result: the same source, filtered to
-    /// <see cref="ChangeEventTypes"/> and framed as "what changed" rather than "what happened".
-    /// </summary>
-    public static ToolResult<AuditData> BuildChangeTimeline(EventHistoryReading reading, string? instance, string range)
-    {
-        var subject = instance ?? "primary";
-        var changes = reading.State == AuditReadState.Available
-            ? NewestFirst(reading.Events.Where(e => ChangeEventTypes.Contains(e.Type)).ToArray())
-            : Array.Empty<AuditEventRow>();
-        var data = new AuditData(instance, range, reading.State, changes);
-
-        var (confidence, summary) = reading.State switch
-        {
-            AuditReadState.Available => (Confidence.Confirmed, BuildSummary(instance, range, changes,
-                emptyWording: $"No changes recorded for {(instance ?? "any server")} in the last {range} " +
-                "(installs, uninstalls, updates, version changes, backups, and port changes count as " +
-                "changes; routine starts/stops and player activity don't).",
-                changeFraming: true)),
-            _ => (Confidence.Possible,
-                $"The change timeline for {(instance ?? "this host")} is unavailable right now — the engine's " +
-                "event journal couldn't be read. That isn't a sign nothing changed; the timeline just couldn't be read."),
-        };
-
-        // Same tool and same journal as the unfiltered read; the Section is what tells a surface which
-        // scope produced this card, now that one tool serves both.
-        return new ToolResult<AuditData>(
-            Tool: LlmTools.Events,
-            Confidence: confidence,
-            Subject: new ResultRef(ResourceKind.Audit, subject, "changes"),
-            Summary: summary,
-            Data: data);
-    }
-
     /// <summary>
     /// Orders a read newest-first, breaking a same-timestamp tie by id descending. The port already
     /// returns rows in this order; ordering here is what makes the card and the listing say the same

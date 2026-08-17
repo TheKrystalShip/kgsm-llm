@@ -137,7 +137,7 @@ public class SearchAggregatorTests
 
         var result = await Create(new SearchOptions { LocalMinScore = 0.35 }).SearchAsync("what is kgsm");
 
-        result.Tool.Should().Be(LlmTools.Search);
+        result.Tool.Should().Be(ResultCardKinds.Search);
         result.Confidence.Should().Be(Confidence.Confirmed);   // measured — the operator's own docs
         result.Subject.Should().Be(new ResultRef(ResourceKind.Search, "what is kgsm"));
         result.Data.State.Should().Be(SearchState.LocalStrong);

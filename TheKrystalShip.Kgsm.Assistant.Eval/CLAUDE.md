@@ -201,22 +201,50 @@ run in CI without a model. A live run is the only thing that exercises the model
 - **Corpus version discipline:** bump `BenchmarkSuite.Version` when you change an EXISTING case's
   checks (old result files then compare honestly; `compare` warns across the change). Pure additions
   are also a bump-worthy change to "overall", but per-check diffs still line up by id+label.
-- **Known model finding — `J2` is red and prompt tuning does not move it.** Told a measurement
-  conversationally ("just so you know, X is on port 27015 right now"), gemma4:12b writes it to memory
-  **3/3**, against a rule stated in the preamble, in the `remember` tool description, and again in the
-  injected memory block. Three wordings were measured — a category list, the rule restated as a test
-  the model applies before calling, and a hard REFUSE in the tool description itself — and all three
-  scored 0/3 while `J1`/`J3` stayed 3/3. It is left red rather than deleted or softened: the check is
-  a correct trajectory assertion and the model is what fails it. The harm is bounded rather than
-  fixed — with a deliberately wrong port memory seeded, the model still called the status tool and
-  did not answer from the memory, which is the recall-side framing holding. Do not "fix" this by
-  weakening the check.
-- **Unrelated defect the corpus cannot see: measured numbers drift in the reply.** Asked "what port is
-  palworld on?" with **zero memories present**, gemma4:12b reported `17015/udp` on 2 of 3 reps where
-  the instance config says `27015/udp`; the same question phrased "what ports does Ketchup use?"
-  answered correctly 3/3. The tool call and its result are right and the digit changes on the way into
-  the prose. Invariant #1 is why no check here catches it — scoring the world fact is exactly what the
-  corpus refuses to do — so it is recorded here rather than encoded as a case.
+- **Known model finding — `J2` is red, and THINKING is the variable that decides it.** Told a
+  measurement conversationally ("just so you know, X is on port 27015 right now"), gemma4:12b writes it
+  to memory against a rule stated in the preamble, the `remember` tool description and the injected
+  memory block. Measured on the live host:
+
+  | `Llm:Think` | writes a reading down |
+  |---|---|
+  | `true` | 0/3 — the rule holds |
+  | `false` | 3/3, then 4/4, 4/4, 4/4 across four wordings — the rule does not hold |
+
+  The eval runs **without** thinking, which is what the Service ships
+  (`kgsm-assistant.settings.json` → `"Think": false`), so this case measures the production
+  configuration and the red is real. The CLI is the outlier — its `appsettings.json` sets
+  `"Think": true`, which is why the same prompt behaves differently there.
+
+  Four wordings were measured against the no-think path and none moved it: a category list; the rule
+  restated as a test to apply before calling ("ask yourself: could a tool answer this?"); a hard
+  REFUSE paragraph in the tool description; and a positive reframe ("your memory is for X; a server's
+  state is live and lives in the tools") combined with a rewritten tool description and the rule
+  repositioned last in the prompt, where recency is highest. All four scored 0. The reading is that a
+  rule of this shape needs a deliberation step to be applied at all, and without one the model matches
+  "person stated a fact" → "write it down" directly. **Everything except the committed wording was
+  reverted** — an unmeasured prompt edit is churn, and this prompt carries 195 other checks.
+
+  Left red rather than softened: the check is a correct trajectory assertion and the model is what
+  fails it. The harm is bounded rather than fixed — with a deliberately wrong port memory seeded, the
+  model still called the status tool and did not answer from the memory. **The one measured lever is
+  `Llm:Think`**, which is a latency trade, not a free fix.
+- **Unrelated defect the corpus cannot see: a port number is fabricated on the SINGULAR phrasing.**
+  Measured with zero memories present, against an instance whose config says `8211/udp|27015/udp`:
+
+  | question | correct |
+  |---|---|
+  | "what ports does Ketchup use?" | 3/3 |
+  | "what port is Ketchup on?" | 1/3 |
+  | "what port is palworld on?" | 1/3, and 0/4 after a prompt edit telling it to list every port |
+
+  So the trigger is being asked for *the* port when the tool reported two, not the game-name
+  indirection — asked for one number the model picks one, and what it picks is a plausible
+  neighbouring value (`21075`, `17015`, `21015`) rather than either measured port. Those values appear
+  in no config on the host. The tool call and its result are correct; the digits change on the way into
+  the prose, and the reply is exactly as confident either way. Invariant #1 is why no check here
+  catches it — scoring the world fact is what the corpus refuses to do — so it is recorded rather than
+  encoded as a case. Unfixed.
 - **Known model finding (corpus v2):** gemma4:12b handles the ambiguous `G` cases well;
   **qwen3.5:9b intermittently returns an EMPTY reply after tool calls** on open-ended diagnostic
   prompts (CLI-confirmed, not a harness artifact) and misses network-exposure reasoning. The

@@ -135,9 +135,11 @@ Things that bite if you don't know them:
   `ServerAssistant.ProduceStreamAsync` beside the confirmation/progress/search scopes — the yield-free
   flow the dispatcher runs on. Storage is append-only, latest-wins per key, in the conversation
   database. ⚠ **A memory carries what it was TOLD, never what a tool MEASURED** — a remembered port
-  repeated months later is a confident wrong answer. That rule is prompt-enforced and **the model does
-  not always hold it** (`Eval/CLAUDE.md`, case `J2`); what bounds the harm is the recall-side framing,
-  measured to keep the model calling the tool anyway.
+  repeated months later is a confident wrong answer. The rule is prompt-enforced and **holds only when
+  the model is thinking**: with `Llm:Think` on it writes no reading down, and with it off — which is
+  what the Service ships — it writes one every time, against four measured wordings (`Eval/CLAUDE.md`,
+  case `J2`). What bounds the harm is the recall-side framing, measured to keep the model calling the
+  tool anyway even with a wrong memory in front of it.
 - **Propose, then confirm — mutations never execute inside a turn.** A mutating tool call *stages*
   the action and returns a confirmation token; the user confirms out-of-band (`/confirm` on the
   Service, interactive y/N on the CLI). A run with no confirmation touches no server.

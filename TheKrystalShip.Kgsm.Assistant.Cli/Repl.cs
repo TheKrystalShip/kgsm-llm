@@ -259,5 +259,5 @@ internal static class Repl
             : "(nothing to compact yet)", Ansi.Dim, color));
     }
 
-    private static string NewConversationId() => $"cli:{Guid.NewGuid():N}";
+    private static string NewConversationId() => CliConversation.NewId();
 }

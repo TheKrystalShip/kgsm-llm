@@ -38,6 +38,7 @@ public static class ServiceCollectionExtensions
         services.Configure<LlmBackendOptions>(backendSection);
         services.Configure<LlamaCppOptions>(configuration.GetSection(LlamaCppOptions.Section));
         services.Configure<ConversationOptions>(configuration.GetSection(ConversationOptions.Section));
+        services.Configure<MemoryOptions>(configuration.GetSection(MemoryOptions.Section));
         services.Configure<LlmAgentOptions>(configuration.GetSection(LlmAgentOptions.Section));
 
         // Read once at registration: a backend swap is a restart, and resolving it per request
@@ -59,6 +60,12 @@ public static class ServiceCollectionExtensions
         // one log, never trimmed. Path comes from ConversationOptions.DatabasePath (a host points it at
         // its state dir). The old separate JSONL recorder is retired; the agent loop writes turns here.
         services.AddSingleton<IConversationStore, SqliteConversationStore>();
+
+        // Durable memory: what was written down in one conversation and is read back in later ones.
+        // Separate from the conversation store because it is keyed to an OWNER rather than to a
+        // conversation, and shares that store's database file — one file is this assistant's state.
+        services.AddSingleton<IMemoryStore, SqliteMemoryStore>();
+
         services.AddSingleton<ILlmAgent, LlmAgent>();
         services.AddSingleton<IConversationCompactor, ConversationCompactor>();
 

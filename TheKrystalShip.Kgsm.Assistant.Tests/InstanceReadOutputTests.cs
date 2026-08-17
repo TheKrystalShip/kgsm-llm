@@ -1,6 +1,7 @@
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
@@ -11,6 +12,7 @@ using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Search;
 using TheKrystalShip.Kgsm.Assistant.Status;
+using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Models;
 
 using Xunit;
@@ -52,6 +54,7 @@ public class InstanceReadOutputTests
         new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events,
             _network, _upnp, facts, _hostFacts, _blueprintAuthoring, ShippedText.Catalog,
             new SettlementTiming(TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(10)),
+            new InMemoryMemoryStore(), Options.Create(new MemoryOptions()),
             NullLogger<ToolDispatcher>.Instance);
 
     private async Task<string> Run(Capability capability, IServerFacts facts) =>

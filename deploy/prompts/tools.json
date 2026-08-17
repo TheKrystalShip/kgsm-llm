@@ -621,5 +621,56 @@
         "type": "string"
       }
     ]
+  },
+  "remember": {
+    "capability": "memory.write",
+    "label": "Writing it down",
+    "description": "Writes one thing down about the person you are talking to, so later conversations start already knowing it. Use it when they tell you something that stays true after this conversation ends: how they like things done, a standing instruction, what they call something, a correction to something you got wrong, or a decision they want kept to. Say what you wrote down. Do NOT write down anything a tool measures — a port, a version, a player count, how much disk is free, or whether a server is running. Those change without anyone telling you, and a remembered reading repeated later is a wrong answer stated confidently; read them with the tool that reports them instead. Do not write down what was said in passing, what you can look up, or anything the person did not mean to be kept.",
+    "params": [
+      {
+        "name": "key",
+        "description": "A short name for this memory, in lowercase words joined by hyphens, like 'preferred-test-game'. Writing again under a key that already exists REPLACES it — that is how you correct a memory.",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "summary",
+        "description": "The one line you will be shown at the start of every later conversation. State the fact itself — 'Tests new servers with Factorio' — never that a note exists.",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "body",
+        "description": "Any detail worth keeping that does not fit the summary, read only when you ask for this memory by name. Leave it out when the summary says everything.",
+        "required": false,
+        "type": "string"
+      }
+    ]
+  },
+  "forget": {
+    "capability": "memory.forget",
+    "label": "Forgetting it",
+    "description": "Drops one thing you remember about this person, by its key. Use it when they ask you to forget something, or when they tell you something that makes a memory wrong and there is nothing to replace it with — if there IS a replacement, write the new one under the same key instead.",
+    "params": [
+      {
+        "name": "key",
+        "description": "The key of the memory to drop, as shown in what you remember about this person.",
+        "required": true,
+        "type": "string"
+      }
+    ]
+  },
+  "recall": {
+    "capability": "memory.read",
+    "label": "Recalling",
+    "description": "Reads one of your memories about this person in full. You are already shown a one-line summary of every one of them at the start of the conversation — use this only when a summary points at detail you need and do not have. It tells you nothing about any server.",
+    "params": [
+      {
+        "name": "key",
+        "description": "The key of the memory to read in full.",
+        "required": true,
+        "type": "string"
+      }
+    ]
   }
 }

@@ -18,9 +18,11 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// <c>(tool, verb)</c> a static map onto <see cref="ConfirmationKind"/>.</item>
 /// </list>
 ///
-/// Tools fall into four tiers:
+/// Tools fall into five tiers:
 /// <list type="bullet">
 /// <item><see cref="ReadOnly"/>: open to everyone.</item>
+/// <item><see cref="PersonalTier"/>: the caller's own memory — open to everyone and mutating, because
+/// the authority is over yourself rather than over the host.</item>
 /// <item><see cref="AuthorizedReadOnly"/>: offered only to action-authorized callers
 /// (exposes file and console contents), but mutates nothing — runs inline, uncapped.</item>
 /// <item><see cref="AuthorizedActions"/>: authorized, mutating, and confirm-free — run inline
@@ -102,6 +104,18 @@ public static class LlmTools
     // fetch adapter is configured (FetchOptions.Available), same omit-when-disabled rule as
     // `search`; the dispatcher routes it to IWebFetch.
     public static readonly Capability FetchUrl = new("web.fetch");
+
+    // Durable memory: what the assistant writes down in one conversation and reads back in later ones,
+    // keyed to the OWNER of the conversation rather than to the conversation (MemoryScope). Three
+    // capabilities rather than one verb-enum tool, because they are three different acts on the store
+    // and a mistaken verb on a single tool would forget what it was asked to record.
+    //
+    // ⚠ None of them takes an owner: it is ambient for the turn (MemoryOwner), derived from the
+    // conversation id. An owner the model could name is one it could get wrong, and getting it wrong
+    // writes into somebody else's memory.
+    public static readonly Capability Remember = new("memory.write");
+    public static readonly Capability Forget = new("memory.forget");
+    public static readonly Capability Recall = new("memory.read");
 
     // Authorized, autonomous action — offered only to action-authorized callers, but unlike the staged
     // commands below it runs INLINE (no propose→confirm): it touches no user data (it only researches,
@@ -245,6 +259,26 @@ public static class LlmTools
         GetPerformance, TraceRootCause, Search, FetchUrl,
     ];
 
+    /// <summary>
+    /// The caller's own memory — offered to everyone, mutating, and run inline.
+    /// </summary>
+    /// <remarks>
+    /// A fifth tier because the other four all classify authority over the HOST, and this is authority
+    /// over yourself. It cannot join <see cref="ReadOnlyTier"/> (that tier's contract is that it mutates
+    /// nothing), and it must not need <c>canPerformActions</c> the way
+    /// <see cref="AuthorizedActionsTier"/> does — remembering your own preferences is exactly what a
+    /// caller with no authority over any server is entitled to do. Staging it behind a human
+    /// confirmation would be ceremony over something that touches no server and nobody else.
+    /// <para>
+    /// What confines it is not a tier check but the ambient owner (<see cref="MemoryOwner"/>): every
+    /// call reaches the caller's own namespace and no other, by construction rather than by policy.
+    /// </para>
+    /// </remarks>
+    public static readonly IReadOnlyList<Capability> PersonalTier =
+    [
+        Remember, Forget, Recall,
+    ];
+
     /// <summary>Reads that expose file or console contents — authorized callers only.</summary>
     public static readonly IReadOnlyList<Capability> AuthorizedReadOnlyTier =
     [
@@ -283,7 +317,7 @@ public static class LlmTools
     /// <see cref="ReviseBlueprint"/> is excluded because it is offered only alongside an open draft.
     /// </summary>
     public static IReadOnlySet<Capability> EveryOfferedCapability =>
-        ReadOnlyTier.Concat(AuthorizedReadOnlyTier).Concat(StagedCommandsTier)
+        ReadOnlyTier.Concat(PersonalTier).Concat(AuthorizedReadOnlyTier).Concat(StagedCommandsTier)
             .Concat(AuthorizedActionsTier).Where(t => t != ReviseBlueprint).ToHashSet();
 
     /// <summary>
@@ -294,7 +328,7 @@ public static class LlmTools
     /// invented. This is also the set a tools.json entry has to name to be accepted.
     /// </summary>
     public static IReadOnlySet<Capability> EveryCapability =>
-        ReadOnlyTier.Concat(AuthorizedReadOnlyTier).Concat(StagedCommandsTier)
+        ReadOnlyTier.Concat(PersonalTier).Concat(AuthorizedReadOnlyTier).Concat(StagedCommandsTier)
             .Concat(AuthorizedActionsTier).ToHashSet();
 
     public static bool IsStagedCommand(Capability tool) => StagedCommandTools.Contains(tool);

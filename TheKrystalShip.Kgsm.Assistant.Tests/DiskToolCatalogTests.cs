@@ -36,8 +36,11 @@ public sealed class DiskToolCatalogTests : IDisposable
         // The ordinary-turn offer excludes revise_blueprint; the catalog still defines it.
         catalog.All.Select(t => t.Tool).Should()
             .BeEquivalentTo(LlmTools.EveryOfferedCapability.Select(ShippedText.Name));
+
+        // ReadOnly is the UNAUTHORIZED offer, not the read-only tier: it carries the personal tier
+        // too, because writing to your own memory needs no authority over any server.
         catalog.ReadOnly.Select(t => t.Tool).Should()
-            .BeEquivalentTo(LlmTools.ReadOnlyTier.Select(ShippedText.Name));
+            .BeEquivalentTo(LlmTools.ReadOnlyTier.Concat(LlmTools.PersonalTier).Select(ShippedText.Name));
         catalog.ReviseBlueprintTool.Tool.Should().Be(ShippedText.Name(LlmTools.ReviseBlueprint));
     }
 

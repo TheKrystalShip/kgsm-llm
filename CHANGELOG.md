@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0] - 2026-08-17
+
+### Added — the assistant remembers
+
+Three tools — `remember`, `forget` and `recall` — write things down that outlast the conversation
+they were said in, and a one-line index of them is injected into every later turn's system prompt.
+What a person says about how they like things done now survives a new chat, a new device and a new
+surface.
+
+A memory belongs to an **owner**, not to a conversation: the conversation id up to its second `:`, so
+`web:alice:chat7` and `web:alice:chat9` share one memory and reach nobody else's, while a room
+(`room:{guild}-v{channel}`) owns its own — there is no verified user segment in a shared transcript
+to anchor a personal one to. The owner is derived from the turn and is deliberately not a tool
+argument: an owner the model could name is one it could get wrong.
+
+Storage is append-only and resolved latest-wins per key, the same shape the conversation store
+already uses for tombstones, verdicts and preferences — writing a key again supersedes it, forgetting
+appends a tombstone, and nothing is updated or deleted in place. Memories live in a `memory_entries`
+table in the conversation database.
+
+⚠ **A memory carries what it was told, never what a tool measured.** Ports, versions, player counts
+and run-state change without anyone saying so, and a remembered reading repeated later is a wrong
+answer stated confidently. The rule is in the tool description, in the preamble, and restated in the
+injected block itself; every injected line is dated so a memory that has gone stale is visibly old.
+
+The memory tools form a fifth tool tier (`LlmTools.PersonalTier`), offered to everyone including
+callers with no authority over any server: the authority is over yourself. At most three memories are
+written per message, and an owner holds at most `Memory:MaxPerOwner` (64) — a write past it is
+refused naming the cap, never evicted silently.
+
+The injected index sits **below** the hashed prompt template, like the live instance lists: hashed
+in, every person would produce a different prompt id and every roll-up bucketed by prompt version
+would shatter into one bucket each.
+
 ## [1.33.0] - 2026-08-17
 
 ### Added — `list_instance_backups` answers for the whole host

@@ -108,8 +108,12 @@ public sealed class DiskToolCatalog : IToolCatalog
         StagedCommandTools = LlmTools.StagedCommandsTier.Select(c => _names[c]).ToHashSet();
         AuthorizedReadTools = LlmTools.AuthorizedReadOnlyTier.Select(c => _names[c]).ToHashSet();
 
-        ReadOnly = LlmTools.ReadOnlyTier.Select(Define).ToArray();
+        // The personal tier joins BOTH offers: it is open to everyone, so it belongs in the
+        // unauthorized set as well as the full one. Present in only one of them, a caller with no
+        // authority over any server would silently lose the ability to remember their own preferences.
+        ReadOnly = LlmTools.ReadOnlyTier.Concat(LlmTools.PersonalTier).Select(Define).ToArray();
         All = LlmTools.ReadOnlyTier
+            .Concat(LlmTools.PersonalTier)
             .Concat(LlmTools.AuthorizedReadOnlyTier)
             .Concat(LlmTools.StagedCommandsTier)
             .Concat(LlmTools.AuthorizedActionsTier)

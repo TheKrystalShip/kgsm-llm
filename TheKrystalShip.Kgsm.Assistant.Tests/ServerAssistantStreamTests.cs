@@ -37,7 +37,8 @@ public class ServerAssistantStreamTests
 
     private ServerAssistant Create(ILlmAgent agent, IConfirmationContext confirmations, ITurnProgress? progress = null)
     {
-        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+                Arg.Any<string?>(), Arg.Any<ReplyStyle>(), Arg.Any<string?>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             agent, _prompt, confirmations, progress ?? new TurnProgress(), _inventory, _operations,

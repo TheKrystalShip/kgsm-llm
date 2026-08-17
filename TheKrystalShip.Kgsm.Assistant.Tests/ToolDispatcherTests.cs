@@ -1,6 +1,7 @@
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
@@ -15,6 +16,7 @@ using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.RootCause;
 using TheKrystalShip.Kgsm.Assistant.Search;
 using TheKrystalShip.Kgsm.Assistant.Status;
+using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Models;
 
 using Xunit;
@@ -85,6 +87,7 @@ public class ToolDispatcherTests
     private ToolDispatcher Create(IServerFacts? serverFacts = null) =>
         new(_operations, _inventory, _confirmations, _search, _webFetch, _metrics, _events, _network, _upnp,
             serverFacts ?? _serverFacts, _hostFacts, _blueprintAuthoring, ShippedText.Catalog, _settlement,
+            new InMemoryMemoryStore(), Options.Create(new MemoryOptions()),
             NullLogger<ToolDispatcher>.Instance);
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The

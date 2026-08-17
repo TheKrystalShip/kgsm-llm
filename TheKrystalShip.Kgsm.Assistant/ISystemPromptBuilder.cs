@@ -30,7 +30,13 @@ public interface ISystemPromptBuilder
     /// wording only: the authorization stance, the tool rules and the duty to report a staged action
     /// are the same in every style.
     /// </param>
+    /// <param name="ownerKey">
+    /// Whose memories to inject — the owner of the conversation this turn runs in
+    /// (<see cref="Llm.Conversation.MemoryScope"/>). <see langword="null"/> or blank injects none,
+    /// which is what a turn with no resolvable owner gets. Last parameter to keep existing positional
+    /// callers unshifted.
+    /// </param>
     Task<BuiltPrompt> BuildAsync(
         bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default,
-        string? leaf = null, ReplyStyle style = ReplyStyle.Default);
+        string? leaf = null, ReplyStyle style = ReplyStyle.Default, string? ownerKey = null);
 }

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant;
@@ -15,22 +16,25 @@ public class SystemPromptBuilder : ISystemPromptBuilder
     private readonly ILogger<SystemPromptBuilder> _logger;
     private readonly IConfiguration _configuration;
     private readonly IPromptOverrides _overrides;
+    private readonly IMemoryStore _memories;
 
     public SystemPromptBuilder(
         IServerInventory inventory,
         ILogger<SystemPromptBuilder> logger,
         IConfiguration configuration,
-        IPromptOverrides overrides)
+        IPromptOverrides overrides,
+        IMemoryStore memories)
     {
         _inventory = inventory;
         _logger = logger;
         _configuration = configuration;
         _overrides = overrides;
+        _memories = memories;
     }
 
     public async Task<BuiltPrompt> BuildAsync(
         bool canPerformActions, bool autoExecute = false, CancellationToken cancellationToken = default,
-        string? leaf = null, ReplyStyle style = ReplyStyle.Default)
+        string? leaf = null, ReplyStyle style = ReplyStyle.Default, string? ownerKey = null)
     {
         // The editable template: persona + authorization stance. Each segment resolves
         // file (hot, top precedence) > inline Llm:* config > lib-owned constant default.
@@ -99,10 +103,65 @@ public class SystemPromptBuilder : ISystemPromptBuilder
             _logger.LogWarning(ex, "Failed to inject live lists into system prompt");
         }
 
+        AppendMemories(builder, ownerKey);
+
         if (styleSegment.Length > 0)
             builder.Append("\n\n").Append(styleSegment);
 
         return new BuiltPrompt(builder.ToString(), templateHash);
+    }
+
+    /// <summary>
+    /// Appends the one-line index of what is remembered about this conversation's owner.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Summaries only — bodies are read on demand by the recall tool. The index is what every turn
+    /// pays for, so it carries the fact and the date and nothing else.
+    /// </para>
+    /// <para>
+    /// ⚠ <b>Below the hashed template, deliberately</b>, exactly like the instance lists above. Hashed
+    /// in, every person would produce a different prompt id — the recorded hash would move with who is
+    /// asking rather than with what the operator edited, and every roll-up that buckets turns by
+    /// prompt version would break into one bucket per user.
+    /// </para>
+    /// <para>
+    /// A failed read degrades to no memories rather than aborting the turn, on the same reasoning as
+    /// the inventory injection: the model can still answer, and a turn that fails outright because a
+    /// note could not be read is worse than one that answers without it.
+    /// </para>
+    /// </remarks>
+    private void AppendMemories(StringBuilder builder, string? ownerKey)
+    {
+        if (string.IsNullOrWhiteSpace(ownerKey))
+            return;
+
+        IReadOnlyList<MemoryRecord> memories;
+        try
+        {
+            memories = _memories.List(ownerKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to inject memories into system prompt");
+            return;
+        }
+
+        if (memories.Count == 0)
+            return;
+
+        builder.Append("\n\nWhat you remember about this person, written down in earlier conversations:\n");
+        foreach (var memory in memories)
+            builder.Append($"- {memory.Key} ({Elapsed.Stamp(memory.WrittenAt)}): {memory.Summary}\n");
+
+        // The two sentences that keep a memory from being read as a measurement. The first says where
+        // the detail is; the second is the whole invariant, stated where the memories themselves are
+        // rather than only in the tool description — this is the position the model reads them in.
+        builder.Append(
+            "\nEach line is a summary; read one in full with the recall tool when you need the detail. "
+            + "These are things you were TOLD, not things you measured — anything about the current "
+            + "state of a server, its ports, its version or who is on it must come from a tool, "
+            + "every time.");
     }
 
     /// <summary>

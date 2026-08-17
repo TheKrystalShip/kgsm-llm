@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.Llm.Models;
 
 using Xunit;
 
@@ -52,6 +53,9 @@ public sealed class SystemPromptBuilderTests : IDisposable
     /// A builder over a directory seeded with the SHIPPED text, which is the state a deploy leaves
     /// behind. <paramref name="seed"/> false leaves the directory empty, for the missing-file cases.
     /// </summary>
+    /// <summary>What this builder's turns remember, so a test can seed a memory and assert on it.</summary>
+    private readonly InMemoryMemoryStore _memories = new();
+
     private SystemPromptBuilder Build(bool seed = true, params (string key, string value)[] config)
     {
         var settings = config.ToDictionary(c => c.key, c => (string?)c.value);
@@ -61,7 +65,8 @@ public sealed class SystemPromptBuilderTests : IDisposable
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var overrides = new FilePromptOverrides(configuration, NullLogger<FilePromptOverrides>.Instance);
-        return new SystemPromptBuilder(_inventory, NullLogger<SystemPromptBuilder>.Instance, configuration, overrides);
+        return new SystemPromptBuilder(
+            _inventory, NullLogger<SystemPromptBuilder>.Instance, configuration, overrides, _memories);
     }
 
     private void WriteSegment(string fileName, string text)
@@ -314,5 +319,124 @@ public sealed class SystemPromptBuilderTests : IDisposable
             ("Llm:ActionsDenied", "CONFIGURED DENIED")).BuildAsync(canPerformActions: false);
 
         prompt.Text.Should().StartWith("CONFIGURED PREAMBLE");
+    }
+
+    // ── memories ─────────────────────────────────────────────────────────────
+
+    /// <summary>The injected block's own marker. Deliberately not "What you remember" — the preamble
+    /// itself now talks about remembering, so a looser needle matches the persona and proves nothing.</summary>
+    private const string MemoryHeading = "written down in earlier conversations";
+
+    private void Remember(string owner, string key, string summary) =>
+        _memories.Write(owner, new MemoryRecord(key, summary, "body", DateTimeOffset.UtcNow, owner));
+
+    [Fact]
+    public async Task Memories_AreInjectedForTheirOwner()
+    {
+        Remember("web:alice", "preferred-game", "Tests with Factorio.");
+
+        var prompt = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:alice");
+
+        prompt.Text.Should().Contain("preferred-game");
+        prompt.Text.Should().Contain("Tests with Factorio.");
+    }
+
+    [Fact]
+    public async Task Memories_AreNotInjectedForSomebodyElse()
+    {
+        Remember("web:alice", "preferred-game", "Tests with Factorio.");
+
+        var prompt = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:bob");
+
+        prompt.Text.Should().NotContain("Tests with Factorio.");
+    }
+
+    [Fact]
+    public async Task NoOwner_InjectsNothing()
+    {
+        Remember("web:alice", "preferred-game", "Tests with Factorio.");
+
+        var prompt = await Build().BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().NotContain("Tests with Factorio.");
+        prompt.Text.Should().NotContain(MemoryHeading);
+    }
+
+    [Fact]
+    public async Task AnOwnerWithNoMemories_GetsNoMemorySectionAtAll()
+    {
+        // An empty heading would tell the model it has a memory and that it is blank, which reads as
+        // "this person has told me nothing" — a claim about them rather than about the store.
+        var prompt = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:alice");
+
+        prompt.Text.Should().NotContain(MemoryHeading);
+    }
+
+    [Fact]
+    public async Task InjectedMemories_SayTheyWereToldNotMeasured()
+    {
+        Remember("web:alice", "preferred-game", "Tests with Factorio.");
+
+        var prompt = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:alice");
+
+        // The measured-or-unknown rule, restated where the memories are read.
+        prompt.Text.Should().Contain("TOLD");
+        prompt.Text.Should().Contain("must come from a tool");
+    }
+
+    [Fact]
+    public async Task Memories_DoNotMoveThePromptHash()
+    {
+        // ⚠ THE invariant. The hash fingerprints the operator's editable template; memories are
+        // per-person live state injected below it. Hashed in, every user would produce a different
+        // prompt id and every roll-up bucketed by prompt version would shatter into one bucket each.
+        var before = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:alice");
+
+        Remember("web:alice", "preferred-game", "Tests with Factorio.");
+        var after = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:alice");
+
+        after.Text.Should().NotBe(before.Text, "the memory really was injected");
+        after.TemplateHash.Should().Be(before.TemplateHash);
+    }
+
+    [Fact]
+    public async Task TwoPeople_ShareOnePromptHash()
+    {
+        Remember("web:alice", "preferred-game", "Tests with Factorio.");
+        Remember("web:bob", "preferred-game", "Tests with Terraria.");
+
+        var alice = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:alice");
+        var bob = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:bob");
+
+        alice.TemplateHash.Should().Be(bob.TemplateHash);
+    }
+
+    [Fact]
+    public async Task AFailedMemoryRead_DegradesToNoMemories_RatherThanFailingTheTurn()
+    {
+        var builder = new SystemPromptBuilder(
+            _inventory, NullLogger<SystemPromptBuilder>.Instance,
+            new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { [FilePromptOverrides.DirectoryKey] = _dir }).Build(),
+            new FilePromptOverrides(
+                new ConfigurationBuilder().AddInMemoryCollection(
+                    new Dictionary<string, string?> { [FilePromptOverrides.DirectoryKey] = _dir }).Build(),
+                NullLogger<FilePromptOverrides>.Instance),
+            new ThrowingMemoryStore());
+
+        var prompt = await builder.BuildAsync(canPerformActions: false, ownerKey: "web:alice");
+
+        prompt.Text.Should().Contain(ShippedText.Segment("preamble.md"));
+        prompt.Text.Should().NotContain(MemoryHeading);
+    }
+
+    /// <summary>A store whose reads fail — the degrade path, which must not take the turn with it.</summary>
+    private sealed class ThrowingMemoryStore : TheKrystalShip.Llm.Interfaces.IMemoryStore
+    {
+        public IReadOnlyList<MemoryRecord> List(string ownerKey) => throw new InvalidOperationException("boom");
+        public MemoryRecord? Get(string ownerKey, string key) => throw new InvalidOperationException("boom");
+        public bool Write(string ownerKey, MemoryRecord memory) => throw new InvalidOperationException("boom");
+        public bool Forget(string ownerKey, string key) => throw new InvalidOperationException("boom");
+        public int Count(string ownerKey) => throw new InvalidOperationException("boom");
     }
 }

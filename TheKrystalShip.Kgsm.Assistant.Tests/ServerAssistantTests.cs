@@ -43,7 +43,8 @@ public class ServerAssistantTests
     private ServerAssistant Create(
         SearchOptions? search = null, FetchOptions? fetch = null, BlueprintAuthoringFlags? blueprint = null)
     {
-        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+        _prompt.BuildAsync(Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+                Arg.Any<string?>(), Arg.Any<ReplyStyle>(), Arg.Any<string?>())
             .Returns(new BuiltPrompt("system", "deadbeef"));
         return new ServerAssistant(
             _agent, _prompt, _confirmations, _progress, _inventory, _operations,

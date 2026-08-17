@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
@@ -13,6 +14,7 @@ using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.RootCause;
 using TheKrystalShip.Kgsm.Assistant.Status;
+using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -53,6 +55,8 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IBlueprintAuthoring _blueprintAuthoring;
     private readonly IToolCatalog _catalog;
     private readonly SettlementTiming _settlement;
+    private readonly IMemoryStore _memories;
+    private readonly MemoryOptions _memoryOptions;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
@@ -70,6 +74,8 @@ public class ToolDispatcher : IToolDispatcher
         IBlueprintAuthoring blueprintAuthoring,
         IToolCatalog catalog,
         SettlementTiming settlement,
+        IMemoryStore memories,
+        IOptions<MemoryOptions> memoryOptions,
         ILogger<ToolDispatcher> logger)
     {
         _operations = operations;
@@ -86,6 +92,8 @@ public class ToolDispatcher : IToolDispatcher
         _blueprintAuthoring = blueprintAuthoring;
         _catalog = catalog;
         _settlement = settlement;
+        _memories = memories;
+        _memoryOptions = memoryOptions.Value;
         _logger = logger;
 
         _declaredArgs = catalog.All
@@ -204,6 +212,12 @@ public class ToolDispatcher : IToolDispatcher
                 return await SearchAsync(call, cancellationToken);
             if (capability == LlmTools.FetchUrl)
                 return await FetchUrlAsync(call, cancellationToken);
+            if (capability == LlmTools.Remember)
+                return Remember(call);
+            if (capability == LlmTools.Forget)
+                return Forget(call);
+            if (capability == LlmTools.Recall)
+                return Recall(call);
             if (capability == LlmTools.CreateBlueprint)
                 return await CreateBlueprintAsync(call, cancellationToken);
             if (capability == LlmTools.ReviseBlueprint)
@@ -245,6 +259,118 @@ public class ToolDispatcher : IToolDispatcher
                  + "not an answer about any server — the identical call will fail the same way, so "
                  + "tell the user the read did not complete instead of retrying it.";
         }
+    }
+
+    /// <summary>
+    /// The owner whose memory this turn may touch, or a refusal explaining that there is none.
+    /// </summary>
+    /// <remarks>
+    /// A turn whose conversation id resolved to nothing has no owner, and the only safe reading of
+    /// that is "no memory", never a namespace shared by everyone in the same position. The refusal
+    /// names what cannot be done rather than reporting an empty memory, which the model would relay as
+    /// the person having none.
+    /// </remarks>
+    private static bool TryOwner(out string owner, out string refusal)
+    {
+        owner = MemoryOwner.Key ?? string.Empty;
+        refusal = owner.Length > 0
+            ? string.Empty
+            : "Error: this conversation has no memory attached to it, so nothing can be remembered or "
+            + "recalled here. Answer from what is in front of you and do not offer to remember anything.";
+        return owner.Length > 0;
+    }
+
+    /// <summary>
+    /// Writes one thing down about the person so later conversations start knowing it.
+    /// </summary>
+    /// <remarks>
+    /// Every failure is refused with the reason and the way forward, never truncated or silently
+    /// adjusted: a memory the model believes it stored and did not is worse than one it knows it could
+    /// not store, because only the second one gets said out loud.
+    /// </remarks>
+    private ToolOutput Remember(LlmToolCall call)
+    {
+        if (!TryOwner(out var owner, out var refusal))
+            return refusal;
+
+        var key = MemoryKey.Sanitize(call.Arg("key"));
+        if (key is null)
+            return $"Error: {Name(LlmTools.Remember)} needs a 'key' — a short name for this memory, "
+                 + "like 'preferred-test-game', so it can be corrected or forgotten later. Letters and "
+                 + "numbers only.";
+
+        var summary = call.Arg("summary")?.Trim();
+        if (string.IsNullOrWhiteSpace(summary))
+            return $"Error: {Name(LlmTools.Remember)} needs a 'summary' — the one line that gets "
+                 + "recalled. State the fact itself, not that a note exists.";
+
+        if (summary.Length > _memoryOptions.MaxSummaryLength)
+            return $"Error: that summary is {summary.Length} characters and the limit is "
+                 + $"{_memoryOptions.MaxSummaryLength}. Shorten it to the fact itself and put the "
+                 + "detail in 'body'.";
+
+        var body = call.Arg("body")?.Trim() ?? string.Empty;
+        if (body.Length > _memoryOptions.MaxBodyLength)
+            return $"Error: that body is {body.Length} characters and the limit is "
+                 + $"{_memoryOptions.MaxBodyLength}. Keep what matters and drop the rest.";
+
+        var memory = new MemoryRecord(key, summary, body, DateTimeOffset.UtcNow, owner);
+        if (!_memories.Write(owner, memory))
+            return $"Error: this person already has {_memoryOptions.MaxPerOwner} memories, which is the "
+                 + $"limit. Use {Name(LlmTools.Forget)} on one that no longer matters, then write this "
+                 + "one again.";
+
+        return $"Remembered, under the key '{key}': {summary}\n"
+             + $"It will be there at the start of every later conversation with this person. "
+             + $"Write it again under the same key to correct it, or {Name(LlmTools.Forget)} to drop it.";
+    }
+
+    /// <summary>Drops one memory. An unknown key lists what does exist, so the model corrects the key
+    /// rather than re-sending the same call.</summary>
+    private ToolOutput Forget(LlmToolCall call)
+    {
+        if (!TryOwner(out var owner, out var refusal))
+            return refusal;
+
+        var key = MemoryKey.Sanitize(call.Arg("key"));
+        if (key is null)
+            return $"Error: {Name(LlmTools.Forget)} needs a 'key' — the name of the memory to drop.";
+
+        if (_memories.Forget(owner, key))
+            return $"Forgotten: '{key}' is no longer remembered about this person.";
+
+        var standing = _memories.List(owner);
+        return standing.Count == 0
+            ? $"Nothing is remembered about this person, so there is no '{key}' to forget."
+            : $"There is no memory called '{key}'. What is remembered: "
+              + $"{Quoted(standing.Select(m => m.Key))}.";
+    }
+
+    /// <summary>Reads one memory in full — the bodies the per-turn index deliberately leaves out.</summary>
+    private ToolOutput Recall(LlmToolCall call)
+    {
+        if (!TryOwner(out var owner, out var refusal))
+            return refusal;
+
+        var key = MemoryKey.Sanitize(call.Arg("key"));
+        if (key is null)
+            return $"Error: {Name(LlmTools.Recall)} needs a 'key' — the name of the memory to read.";
+
+        if (_memories.Get(owner, key) is not { } memory)
+        {
+            var standing = _memories.List(owner);
+            return standing.Count == 0
+                ? "Nothing is remembered about this person yet."
+                : $"There is no memory called '{key}'. What is remembered: "
+                  + $"{Quoted(standing.Select(m => m.Key))}.";
+        }
+
+        // Dated, like every other memory the model is shown. It was written down, not measured — and
+        // how long ago is the only thing that says how much weight it still carries.
+        var written = $"written {Elapsed.Stamp(memory.WrittenAt)}";
+        return string.IsNullOrWhiteSpace(memory.Body)
+            ? $"'{memory.Key}' ({written}): {memory.Summary}"
+            : $"'{memory.Key}' ({written}): {memory.Summary}\n\n{memory.Body}";
     }
 
     /// <summary>

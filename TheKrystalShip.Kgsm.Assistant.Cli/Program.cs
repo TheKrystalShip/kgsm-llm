@@ -192,7 +192,7 @@ using (host)
         }
 
         var (completed, ok) = await interruptor.RunAsync(
-            ct => runner.RunTurnAsync($"cli:{Guid.NewGuid():N}", oneShotPrompt.Trim(), ct));
+            ct => runner.RunTurnAsync(CliConversation.NewId(), oneShotPrompt.Trim(), ct));
         if (!completed)
         {
             Console.Error.WriteLine();

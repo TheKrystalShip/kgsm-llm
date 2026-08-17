@@ -10,6 +10,7 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Network;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Status;
+using TheKrystalShip.Llm.Conversation;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 
@@ -58,6 +59,13 @@ public class ServerAssistant : IServerAssistant
     /// several new games at once is refused rather than fanning out several probes concurrently.
     /// </summary>
     private const int MaxBlueprintAuthoringsPerMessage = 1;
+
+    /// <summary>
+    /// Per-message ceiling on memories written. A turn that settles one thing worth keeping is the
+    /// normal case and three is generous; past that it is a model filling somebody's whole store from a
+    /// single message, which spends the per-owner cap on one conversation's worth of detail.
+    /// </summary>
+    private const int MaxMemoryWritesPerMessage = 3;
 
     private readonly ILlmAgent _agent;
     private readonly ISystemPromptBuilder _promptBuilder;
@@ -221,7 +229,9 @@ public class ServerAssistant : IServerAssistant
 
         // The style reaches the prompt and stops there. It is never consulted when selecting tools or
         // building the gate: a spoken turn may do exactly what a typed one may.
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf, style);
+        var prompt = await _promptBuilder.BuildAsync(
+            canPerformActions, autoExecute, cancellationToken, leaf, style,
+            MemoryScope.OwnerOf(conversationId));
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn
@@ -248,6 +258,11 @@ public class ServerAssistant : IServerAssistant
         // for the turn rather than left to the model to pass along, because the model was measured
         // not passing it — see SearchIntent.
         using var looking = SearchIntent.BeginTurn(SearchIntent.From(userPrompt));
+
+        // Whose memory this turn may read and write, derived from the conversation rather than named
+        // by the model — see MemoryOwner.
+        using var remembering = MemoryOwner.BeginTurn(MemoryScope.OwnerOf(conversationId));
+
         // The review reads the scope, so it is attached here rather than at construction: the scope
         // exists only for the duration of the turn.
         var result = await _agent.RunAsync(
@@ -286,7 +301,9 @@ public class ServerAssistant : IServerAssistant
         }
 
         // Presentation only — see RunAsync: the style reaches the prompt and nothing else.
-        var prompt = await _promptBuilder.BuildAsync(canPerformActions, autoExecute, cancellationToken, leaf, style);
+        var prompt = await _promptBuilder.BuildAsync(
+            canPerformActions, autoExecute, cancellationToken, leaf, style,
+            MemoryScope.OwnerOf(conversationId));
         var tools = toolResult.Value!;
 
         var turn = new AgentTurn
@@ -368,6 +385,9 @@ public class ServerAssistant : IServerAssistant
             // yield-free flow the dispatcher actually runs on. Opened in the iterator it would be
             // gone by the first tool call — which is the streaming path every surface uses.
             using var looking = SearchIntent.BeginTurn(SearchIntent.From(turn.UserPrompt));
+            // ⚠ Opened HERE for exactly the reason above: this is the yield-free flow the dispatcher
+            // runs on, and a memory scope opened in the iterator would be gone by the first tool call.
+            using var remembering = MemoryOwner.BeginTurn(MemoryScope.OwnerOf(turn.ConversationId));
 
             var finalText = string.Empty;
             LlmUsage? finalUsage = null;
@@ -1015,6 +1035,7 @@ public class ServerAssistant : IServerAssistant
         var searches = 0;
         var fetches = 0;
         var authored = 0;
+        var remembered = 0;
         var searched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         return call =>
         {
@@ -1022,6 +1043,24 @@ public class ServerAssistant : IServerAssistant
             // A name nothing implements is refused here rather than reaching a handler that would have
             // to decide what an unknown tool means.
             var capability = _toolCatalog.CapabilityOf(call.Name);
+
+            // The personal tier (LlmTools.PersonalTier) needs no server authority — it reaches the
+            // caller's own memory and nothing else, so canPerformActions is deliberately not consulted.
+            // What bounds it is a per-message cap on the WRITES: one turn settling something is normal,
+            // a turn writing a dozen memories is a runaway filling the person's whole store.
+            if (capability is { } personal && LlmTools.PersonalTier.Contains(personal))
+            {
+                if (personal != LlmTools.Remember)
+                    return ToolGate.Allow;
+
+                if (remembered >= MaxMemoryWritesPerMessage)
+                    return ToolGate.Refuse(
+                        $"Refused: at most {MaxMemoryWritesPerMessage} thing(s) can be written down per " +
+                        "message. Say what else is worth remembering and it can be recorded next turn.");
+
+                remembered++;
+                return ToolGate.Allow;
+            }
 
             // create_blueprint is authorized-and-autonomous (LlmTools.AuthorizedActions): refused for an
             // unauthorized caller exactly like a staged command (defense in depth behind SelectTools

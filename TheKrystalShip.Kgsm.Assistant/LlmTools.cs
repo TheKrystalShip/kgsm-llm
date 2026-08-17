@@ -40,8 +40,8 @@ public static class LlmTools
     // routing benchmark is what decides between them. Every one of these still reaches the same
     // handler it did as an aspect — only how it is offered changed.
     //
-    // Omitting instance_name covers the whole fleet on the three that support it (status, players,
-    // autostart); the rest report on one instance.
+    // Omitting instance_name covers the whole fleet on the four that support it (status, players,
+    // autostart, backups); the rest report on one instance.
     public static readonly Capability ServerInfo = new("instance.status");
     public static readonly Capability GetInstanceConfig = new("instance.config");
     public static readonly Capability GetInstanceVersion = new("instance.version");

@@ -10,7 +10,7 @@
          ships under. The three published libraries (TheKrystalShip.Llm, .Kgsm.Assistant and
          .Kgsm.Assistant.Relay) each version independently of it and of each other. Read by
          deploy/version.sh, which is the single source for packaging. -->
-    <Version>1.32.0</Version>
+    <Version>1.33.0</Version>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>

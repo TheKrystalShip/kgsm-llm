@@ -96,7 +96,13 @@ internal static class BenchmarkSuite
     /// network tool: the configured ports, what the host firewall has open and what the router
     /// forwards all come back from one status call, so "is the port open" and "is it reachable" are
     /// scored as reaching for that one tool rather than a second one that no longer exists.
-    public const string Version = "v20";
+    /// v21 adds the fleet-wide backup question (K1b) and scores an OMITTED argument
+    /// (<see cref="C.CalledToolWithout"/>). Every backup case named one server, so the corpus could
+    /// not see the failure that reached production: asked across the whole host, the model read a few
+    /// servers per instance and wrote the remaining rows from nothing. Omitting <c>instance_name</c> is
+    /// the routing decision that separates one call from eight, and the step bound beside it is what
+    /// catches a fan-out returning.
+    public const string Version = "v21";
 
     // "Does the reply say something is pending?" has ONE definition, and it is the assistant's own
     // (PendingConfirmationNote) — reached through C.SaysConfirmationPending. A copy of the pattern
@@ -435,6 +441,19 @@ internal static class BenchmarkSuite
             C.CalledTool(LlmTools.ListInstanceBackups, "asks for the backup list"),
             C.StagesNothing(Rubric.C_ProposeOnly, "stages nothing for a read"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
+
+        // The question that spans every server. It is here because the per-instance loop it replaces
+        // failed in production and in a way no other case could see: asked across eight servers, the
+        // model read three or four and wrote the rest from nothing — ids and dates for servers backed
+        // up hours earlier. The fleet read is what makes the complete answer the cheap one, so the
+        // check is the omitted argument, and the step bound is what would catch a fan-out returning.
+        Single("K1b", "does anything need a backup?", true, new[] { FixtureRole.AnyInstance },
+            "any of the servers need a backup?",
+            C.CalledTool(LlmTools.ListInstanceBackups, "asks for the backup list"),
+            C.CalledToolWithout(LlmTools.ListInstanceBackups, "instance_name",
+                "asks once for every server rather than server by server"),
+            C.WithinIterations(4, "does not fan the read out over the fleet"),
+            C.StagesNothing(Rubric.C_ProposeOnly, "stages nothing for a read")),
 
         Single("K2", "restore <game> from a backup", true, new[] { FixtureRole.UniqueGame },
             "restore {unique_game} from its most recent backup",

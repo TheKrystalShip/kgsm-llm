@@ -54,12 +54,12 @@
   "list_instance_backups": {
     "capability": "instance.backups",
     "label": "Listing backups",
-    "description": "Lists the backups one instance has, newest first. Each carries the id manage_instance_backups takes, how long ago it was taken, the game version it captured, its size, and which of the server's directories it actually holds — which is what decides whether restoring it brings back the world. Creating a new backup is a lifecycle action and lives on control_instance.",
+    "description": "Lists the backups one instance has, newest first. Each carries the id manage_instance_backups takes, how long ago it was taken, the game version it captured, its size, and which of the server's directories it actually holds — which is what decides whether restoring it brings back the world. Leaving instance_name out answers for EVERY server in one call, saying how long ago each was last backed up — that is the answer to \"does anything need a backup?\" or \"when was everything last backed up?\", so ask it that way once instead of asking server by server. Name the instance for a question about one server, or when you need its individual backup ids. Creating a new backup is a lifecycle action and lives on control_instance.",
     "params": [
       {
         "name": "instance_name",
-        "description": "The instance whose backups to list.",
-        "required": true,
+        "description": "The instance whose backups to list. Leave it out for a question about every server's backups at once.",
+        "required": false,
         "type": "string"
       }
     ]

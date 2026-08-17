@@ -87,7 +87,43 @@ public class ToolDispatcher : IToolDispatcher
         _catalog = catalog;
         _settlement = settlement;
         _logger = logger;
+
+        _declaredArgs = catalog.All
+            .Concat(catalog.ReadOnly)
+            .Append(catalog.ReviseBlueprintTool)
+            .GroupBy(definition => definition.Tool)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlySet<string>)group
+                    .SelectMany(definition => definition.Parameters)
+                    .Select(parameter => parameter.Name)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// The argument names each tool declares, taken from the same catalog the model is offered.
+    /// <para>
+    /// A misspelled argument name is not a harmless extra: the value is carried under a key nothing
+    /// reads, so the call proceeds as if the argument had been omitted. On a tool whose subject is
+    /// optional that succeeds and answers a different question — <c>instance_nameless=</c> on the
+    /// status read returns the whole fleet, and nothing in the result says the server that was asked
+    /// about was never looked at. Catching it here is the only place the intent is still visible.
+    /// </para>
+    /// </summary>
+    private readonly IReadOnlyDictionary<Tool, IReadOnlySet<string>> _declaredArgs;
+
+    /// <summary>
+    /// Argument names a tool reads beyond the ones the catalog declares. The content search takes
+    /// <c>pattern</c> for <c>text</c>, because the file-name search's argument is called
+    /// <c>pattern</c> and a model that has just used that tool reaches for the same word. Accepting it
+    /// costs nothing and saves a turn — so the check above has to know about it, or the tolerance
+    /// becomes the error it exists to avoid.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<Capability, IReadOnlySet<string>> ArgumentAliases =
+        new Dictionary<Capability, IReadOnlySet<string>>
+        {
+            [LlmTools.SearchFiles] = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "pattern" },
+        };
 
     /// <summary>
     /// What a capability is CALLED on this deploy — for a message that points the model at another
@@ -96,6 +132,11 @@ public class ToolDispatcher : IToolDispatcher
     /// not there any more.
     /// </summary>
     private string Name(Capability capability) => _catalog.NameOf(capability).Name;
+
+    /// <summary>Names in the form the model has to reproduce them — quoted, so the boundary of each
+    /// one is unambiguous in a sentence.</summary>
+    private static string Quoted(IEnumerable<string> names) =>
+        string.Join(", ", names.Select(name => $"'{name}'"));
 
     public async Task<ToolOutput> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
     {
@@ -108,7 +149,24 @@ public class ToolDispatcher : IToolDispatcher
         // the catalog refuses such a file at startup, so reaching this is a model inventing a tool.
         var capability = _catalog.CapabilityOf(call.Name);
         if (capability is null)
-            return $"Error: there is no tool called '{call.Name}'.";
+            return $"Error: there is no tool called '{call.Name}'. Call one of the tools you were "
+                 + "given by its exact name — nothing outside that list exists here.";
+
+        if (_declaredArgs.TryGetValue(call.Name, out var declared))
+        {
+            ArgumentAliases.TryGetValue(capability.Value, out var aliases);
+            var unknown = call.Arguments.Keys
+                .Where(key => !declared.Contains(key) && aliases?.Contains(key) != true)
+                .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (unknown.Count > 0)
+                return $"Error: {call.Name} has no argument called {Quoted(unknown)}. "
+                     + (declared.Count == 0
+                         ? "It takes no arguments."
+                         : $"Its arguments are: {Quoted(declared.OrderBy(a => a, StringComparer.OrdinalIgnoreCase))}. "
+                         + "Call it again with the value under the right name.");
+        }
 
         try
         {
@@ -183,7 +241,9 @@ public class ToolDispatcher : IToolDispatcher
         catch (Exception ex)
         {
             _logger.LogError(ex, "Tool '{Tool}' threw", call.Name);
-            return $"Error: the '{call.Name}' tool failed unexpectedly.";
+            return $"Error: the '{call.Name}' tool failed unexpectedly. That is a fault on this host, "
+                 + "not an answer about any server — the identical call will fail the same way, so "
+                 + "tell the user the read did not complete instead of retrying it.";
         }
     }
 
@@ -198,7 +258,7 @@ public class ToolDispatcher : IToolDispatcher
     {
         var query = call.Arg("query")?.Trim();
         if (string.IsNullOrWhiteSpace(query))
-            return "Error: search needs a 'query'.";
+            return "Error: search needs a 'query' — the words to look for, as a person would phrase them.";
 
         // Anything unrecognised means "wherever you think best" — the same fail-open the reply style
         // takes. A misread scope must not turn a search into an error.
@@ -254,7 +314,8 @@ public class ToolDispatcher : IToolDispatcher
     {
         var url = call.Arg("url")?.Trim();
         if (string.IsNullOrWhiteSpace(url))
-            return "Error: fetch_url needs a 'url'.";
+            return $"Error: fetch_url needs a 'url' — one full address, including the scheme. "
+                 + $"{Name(LlmTools.Search)} finds one if you do not have it yet.";
 
         var result = await _webFetch.FetchAsync(url, cancellationToken);
         if (!result.IsSuccess)
@@ -291,7 +352,8 @@ public class ToolDispatcher : IToolDispatcher
     {
         var game = call.Arg("game")?.Trim();
         if (string.IsNullOrWhiteSpace(game))
-            return "Error: create_blueprint needs a 'game'.";
+            return "Error: create_blueprint needs a 'game' — the name of the game to research and draft "
+                 + "a blueprint for. If the user has not named one, ask them.";
 
         // Mandatory-review flow: DRAFT only (research + build) — the test-install/verify runs later, when a
         // permitted human saves the config. A ready draft is staged as a Blueprint confirmation carrying the
@@ -373,7 +435,10 @@ public class ToolDispatcher : IToolDispatcher
 
         var result = await _operations.ReadInstanceFileAsync(resolved!, file!, cancellationToken);
         if (!result.IsSuccess)
-            return $"Error: could not read '{file}' for '{resolved}' ({result.Error ?? "unknown error"}).";
+            return $"Error: could not read '{file}' for '{resolved}' ({result.Error ?? "unknown error"}). "
+                 + $"That is a failed read, not an empty or missing file. {Name(LlmTools.ListFiles)} shows "
+                 + "what is actually there; if the file is listed, say the read failed rather than "
+                 + "reporting its contents.";
 
         return $"File ({file}) for {resolved}:\n{result.Value ?? string.Empty}";
     }
@@ -395,7 +460,10 @@ public class ToolDispatcher : IToolDispatcher
         var result = await _operations.ListInstanceDirectoryAsync(
             resolved!, hasSubdir ? subdir : null, cancellationToken);
         if (!result.IsSuccess)
-            return $"Error: could not list files for '{resolved}' ({result.Error ?? "unknown error"}).";
+            return $"Error: could not list files for '{resolved}' ({result.Error ?? "unknown error"}). "
+                 + (hasSubdir
+                     ? $"'{subdir}' may not exist — call this again with no subdir to see the top level."
+                     : "That is a failed listing, not an empty directory.");
 
         var where = hasSubdir ? $"{resolved}/{subdir!.Trim('/')}" : resolved;
         var entries = result.Value!;
@@ -456,9 +524,10 @@ public class ToolDispatcher : IToolDispatcher
                 "status" => await GetFleetStatusAsync(cancellationToken),
                 "players" => await PresenceAsync(null, cancellationToken),
                 "autostart" => await AutostartAsync(null, cancellationToken),
-                // The three fleet-wide reads answer for every instance at once; the rest need a
-                // subject, and say which tool they are rather than naming an aspect nobody passed.
-                _ => $"Error: {call.Name} needs an instance_name — it reports on one server.",
+                "backups" => await FleetBackupsAsync(cancellationToken),
+                // The fleet-wide reads answer for every instance at once; the rest need a subject,
+                // and say which tool they are rather than naming an aspect nobody passed.
+                _ => await NeedsOneInstanceAsync(call.Name, cancellationToken),
             };
         }
 
@@ -712,6 +781,92 @@ public class ToolDispatcher : IToolDispatcher
               + "and not the world. That is either because this game keeps its world inside the "
               + "install directory, or because the saves directory was empty when each was taken."
             : string.Empty;
+
+        return header + "\n" + string.Join("\n", lines) + note;
+    }
+
+    /// <summary>
+    /// Every server's backups, in one call.
+    /// <para>
+    /// "Does anything need a backup?" is one question about the whole host, and answering it by
+    /// calling the per-instance read once per server does not work: measured over three runs on eight
+    /// servers, the model read three or four of them and then either promised to continue or filled
+    /// the remaining rows in from nothing — ids and dates that were never measured, for servers backed
+    /// up hours earlier. One call is what makes the complete answer cheaper than the invented one.
+    /// </para>
+    /// <para>
+    /// The reads fan out here rather than in the model's loop, so N servers cost N engine calls and
+    /// one round-trip instead of N. Each stands alone: a server whose listing could not be read says
+    /// so and is not counted as having none.
+    /// </para>
+    /// <para>
+    /// Ordered by how long ago each server was last backed up, longest first, because that is the
+    /// order the question is asked in. The age is stated and no server is called overdue — how old is
+    /// too old depends on the game and the person, and neither is knowable here.
+    /// </para>
+    /// </summary>
+    private async Task<ToolOutput> FleetBackupsAsync(CancellationToken cancellationToken)
+    {
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        if (instances.Count == 0)
+            return "No servers are installed, so there are no backups.";
+
+        var names = instances.Keys.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
+        var listings = await Task.WhenAll(
+            names.Select(name => _serverFacts.GetBackupsAsync(name, cancellationToken)));
+
+        var now = DateTimeOffset.UtcNow;
+        var read = names.Zip(listings)
+            .Select(pair => (Name: pair.First, pair.Second))
+            .ToArray();
+
+        var unreadable = read.Where(r => r.Second.State == FactsState.Unavailable).ToArray();
+        var none = read.Where(r => r.Second.State != FactsState.Unavailable && r.Second.Backups.Count == 0)
+            .ToArray();
+        var held = read.Where(r => r.Second.State != FactsState.Unavailable && r.Second.Backups.Count > 0)
+            // Newest-first is the listing's contract, so the newest is the head. A server whose newest
+            // carries no timestamp sorts as the most stale rather than as the freshest: an unknown age
+            // is not evidence of a recent backup.
+            .OrderBy(r => r.Second.Backups[0].CreatedAt ?? DateTimeOffset.MinValue)
+            .ToArray();
+
+        var lines = new List<string>();
+
+        foreach (var (name, _) in none)
+            lines.Add($"- {name} — no backups at all");
+
+        foreach (var (name, listing) in held)
+        {
+            var newest = listing.Backups[0];
+            var when = newest.CreatedAt is { } at
+                ? $"newest {Elapsed.Moment(at, now)}"
+                : "when the newest was taken is unknown";
+
+            var total = listing.Backups.Sum(b => b.SizeBytes);
+            var size = total > 0 ? $", {FormatSize(total)} in total" : string.Empty;
+
+            lines.Add($"- {name} — {listing.Backups.Count} backup(s), {when}{size}");
+        }
+
+        foreach (var (name, _) in unreadable)
+            lines.Add($"- {name} — could not be read, so whether it has any backups is unknown");
+
+        // The same warning the per-instance read carries, gathered rather than repeated per line: a
+        // backup with no saves directory restores an install and not a world.
+        var noSaves = held
+            .Where(r => r.Second.Backups.All(b => b.Contents.Count > 0
+                && !b.Contents.Any(c => c.Contains("save", StringComparison.OrdinalIgnoreCase))))
+            .Select(r => r.Name)
+            .ToArray();
+
+        var note = noSaves.Length == 0
+            ? string.Empty
+            : $"\n\nNone of the backups for {string.Join(", ", noSaves)} holds a saves directory, so "
+              + "restoring one restores the installation and not the world.";
+
+        var header = $"Backups across all {names.Length} server(s), longest since the last backup first. "
+            + $"To see one server's individual backups and their ids, ask for it by name with "
+            + $"{Name(LlmTools.ListInstanceBackups)}:";
 
         return header + "\n" + string.Join("\n", lines) + note;
     }
@@ -1165,7 +1320,9 @@ public class ToolDispatcher : IToolDispatcher
 
         var result = await statusTask;
         if (!result.IsSuccess)
-            return $"Error: could not read server status ({result.Error ?? "unknown error"}).";
+            return $"Error: could not read server status ({result.Error ?? "unknown error"}). The engine "
+                 + "did not answer, which is not the same as the servers being stopped — say the status "
+                 + "is unknown rather than reporting one.";
 
         var card = FleetStatusCard.Build(result.Value!, await presenceTask);
         return new ToolOutput(card.Summary, ToolResultCard.From(card));
@@ -1190,7 +1347,9 @@ public class ToolDispatcher : IToolDispatcher
 
         var result = await _operations.GetHealthSnapshotAsync(resolved!, cancellationToken);
         if (!result.IsSuccess)
-            return $"Error: could not run a health check on '{resolved}' ({result.Error ?? "unknown error"}).";
+            return $"Error: could not run a health check on '{resolved}' ({result.Error ?? "unknown error"}). "
+                 + $"The check did not run, so it found nothing wrong AND nothing right. "
+                 + $"{Name(LlmTools.ServerInfo)} reads the state it could not aggregate.";
 
         var health = HealthCheckAggregator.Run(result.Value!, resolved!);
         return new ToolOutput(health.Summary, ToolResultCard.From(health));
@@ -1676,7 +1835,8 @@ public class ToolDispatcher : IToolDispatcher
         var port = call.Arg("port")?.Trim();
         if (!string.IsNullOrWhiteSpace(port)
             && (!int.TryParse(port, out var parsedPort) || parsedPort is < 1 or > 65535))
-            return $"Error: '{port}' is not a valid port number.";
+            return $"Error: '{port}' is not a valid port number. Pass a whole number from 1 to 65535, "
+                 + "or leave port out to take the blueprint's own default.";
 
         _confirmations.Stage(new PendingConfirmation(
             ConfirmationKind.Install, blueprint!, instanceName,
@@ -1712,7 +1872,8 @@ public class ToolDispatcher : IToolDispatcher
 
         var key = call.Arg("config_key")?.Trim();
         if (string.IsNullOrWhiteSpace(key))
-            return "Error: no config_key was provided.";
+            return $"Error: no config_key was provided. {Name(LlmTools.GetInstanceConfig)} lists "
+                 + $"{resolved}'s settings and marks which of them can be changed from here.";
 
         if (IsServerNoteKey(key))
             return "Error: the server note is not editable from chat. It is written from the control " +
@@ -1771,7 +1932,9 @@ public class ToolDispatcher : IToolDispatcher
 
         var path = call.Arg("path")?.Trim();
         if (string.IsNullOrWhiteSpace(path))
-            return "Error: no path was provided.";
+            return $"Error: no path was provided. Pass the file to edit — {Name(LlmTools.FindFiles)} "
+                 + $"locates it by name under {resolved}, and {Name(LlmTools.SearchFiles)} locates the "
+                 + "file that carries a given setting.";
 
         var copyFrom = call.Arg("copy_from")?.Trim();
         var seeded = !string.IsNullOrWhiteSpace(copyFrom);
@@ -1849,7 +2012,8 @@ public class ToolDispatcher : IToolDispatcher
         var separator = path.LastIndexOfAny(['/', '\\']);
         var name = separator >= 0 ? path[(separator + 1)..] : path;
         if (string.IsNullOrWhiteSpace(name))
-            return (null, $"Error: '{path}' does not name a file.");
+            return (null, $"Error: '{path}' does not name a file — it ends at a directory separator. "
+                        + $"Pass the file's own name, or find it with {Name(LlmTools.FindFiles)}.");
 
         // A lookup that could not run is not evidence about the path: fall through and let the read or
         // the edit answer for itself, exactly as it did before the name was resolved here at all.
@@ -1953,12 +2117,14 @@ public class ToolDispatcher : IToolDispatcher
     /// </summary>
     private async Task<(string? resolved, string? error)> ResolveBlueprintAsync(string? name, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(name))
-            return (null, "Error: no blueprint_name was provided.");
-
         var blueprints = await _inventory.GetBlueprintCatalogAsync(cancellationToken);
         if (blueprints.Count == 0)
             return (null, "Error: there are no installable blueprints available.");
+
+        // As with a blank instance_name: the catalog is in hand, so a refusal states it rather than
+        // leaving the caller to re-send the same empty argument.
+        if (string.IsNullOrWhiteSpace(name))
+            return (null, $"Error: no blueprint_name was provided. Pass one of: {Catalog(blueprints)}.");
 
         var query = name.Trim();
 
@@ -1998,9 +2164,13 @@ public class ToolDispatcher : IToolDispatcher
                 $"Ambiguous: '{name}' matches multiple games: {string.Join(", ", candidates.Select(b => b.Label))}. " +
                 "Ask the user which one they mean and do not stage anything until they choose.");
 
-        var known = blueprints.Select(b => b.Label).OrderBy(l => l, StringComparer.OrdinalIgnoreCase);
-        return (null, $"Error: no game named '{name}' can be installed. Installable games: {string.Join(", ", known)}.");
+        return (null, $"Error: no game named '{name}' can be installed. Installable games: {Catalog(blueprints)}.");
     }
+
+    /// <summary>The installable games, named the way a person says them, in the one order every
+    /// refusal states them in.</summary>
+    private static string Catalog(IReadOnlyList<BlueprintSummary> blueprints) =>
+        string.Join(", ", blueprints.Select(b => b.Label).OrderBy(l => l, StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// The name to call a blueprint by in text the model reads back to a person. Falls back to the
@@ -2045,12 +2215,15 @@ public class ToolDispatcher : IToolDispatcher
     /// </summary>
     private async Task<(string? resolved, string? error)> ResolveInstanceAsync(string? name, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(name))
-            return (null, "Error: no instance_name was provided.");
-
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
         if (instances.Count == 0)
             return (null, "Error: there are no installed instances to act on.");
+
+        // A blank subject is the case that most needs the roster, so it gets the same list a typo
+        // gets below. Naming only the missing argument leaves nothing to change between one call and
+        // the next, and the observed behaviour then is the identical call, repeated.
+        if (string.IsNullOrWhiteSpace(name))
+            return (null, $"Error: no instance_name was provided. Pass one of: {Roster(instances)}.");
 
         var query = name.Trim();
 
@@ -2075,8 +2248,26 @@ public class ToolDispatcher : IToolDispatcher
                 $"Ambiguous: '{name}' matches multiple instances: {string.Join(", ", candidates)}. " +
                 "Ask the user which one they mean (list these options) and do not act until they choose.");
 
-        var known = instances.Keys.OrderBy(k => k);
-        return (null, $"Error: no instance named '{name}'. Known instances: {string.Join(", ", known)}.");
+        return (null, $"Error: no instance named '{name}'. Known instances: {Roster(instances)}.");
+    }
+
+    /// <summary>The installed instance names, in the one order every refusal states them in.</summary>
+    private static string Roster(IReadOnlyDictionary<string, string> instances) =>
+        string.Join(", ", instances.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The refusal for a per-instance read called with no subject. It answers the question the caller
+    /// was actually asking — one that spanned the fleet — by naming the servers and the shape of the
+    /// call that covers them, because a message stating only that the tool reports on one server
+    /// describes the constraint and leaves the remedy to be guessed at.
+    /// </summary>
+    private async Task<string> NeedsOneInstanceAsync(Tool tool, CancellationToken cancellationToken)
+    {
+        var instances = await _inventory.GetInstancesAsync(cancellationToken);
+        return instances.Count == 0
+            ? $"Error: {tool} reports on one server, and no instances are installed to report on."
+            : $"Error: {tool} reports on one server, so it needs an instance_name. To cover more than "
+            + $"one, call it once per server. The installed servers are: {Roster(instances)}.";
     }
 
     /// <summary>

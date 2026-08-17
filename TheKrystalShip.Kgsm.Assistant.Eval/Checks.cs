@@ -87,6 +87,21 @@ internal static class C
     public static Check DidNotCallTool(Capability tool, Rubric dim, string label) =>
         new(dim, label, (o, _) => !o.Called(tool));
 
+    /// <summary>
+    /// Rubric B: called the tool with <paramref name="argument"/> absent — the fleet mode of a read
+    /// that answers for one server when given a subject and for every server when not.
+    /// <para>
+    /// Omitting an argument is a routing decision as real as choosing a tool, and the only one that
+    /// separates "answer this for the whole host" from "answer it for one server, seven more times".
+    /// Measured on the call rather than the prose: a per-instance fan-out and a fleet read produce
+    /// similar-looking answers, and the difference between them is how much of one was measured.
+    /// </para>
+    /// </summary>
+    public static Check CalledToolWithout(Capability tool, string argument, string label) =>
+        new(Rubric.B_Routing, label, (o, _) => o.Tools.Any(t =>
+            o.Matches(t.Name, tool) &&
+            string.IsNullOrWhiteSpace(t.Arguments.GetValueOrDefault(argument))));
+
     public static Check NoToolCalls(string label) =>
         new(Rubric.E_Scope, label, (o, _) => o.Tools.Count == 0);
 

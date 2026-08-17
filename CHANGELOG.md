@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0] - 2026-08-17
+
+### Added — `list_instance_backups` answers for the whole host
+
+Leaving `instance_name` out reports every server's backups in one call: how long ago each was last
+backed up, how many it has and how much they take, ordered longest-since-last-backup first. It joins
+`get_instance_status`, `list_online_players` and `get_instance_autostart` as a fleet-wide read.
+
+The per-instance loop it replaces did not survive contact with the model. Asked to cover eight
+servers, three runs read three, three and five of them, then either promised to continue or wrote the
+remaining rows from nothing — invented ids and dates, for servers backed up hours earlier. One call
+is what makes the complete answer cheaper than the invented one. A server whose listing cannot be
+read is reported as unknown and never as having none, and the reads fan out inside the one call, so N
+servers cost N engine calls and a single round-trip. Nine tests in `FleetBackupsTests` hold the
+ordering, the fan-out, and the two answers that must not be confused — no backups, and unreadable.
+
+### Changed — a refusal names an action the caller can take
+
+`TheKrystalShip.Kgsm.Assistant` **6.1.0**.
+
+**A refused call states the answer it is refusing for.** A per-instance read called with no
+`instance_name` names the installed servers and says to call it once per server; a blank
+`instance_name` lists the instances the same way a typo'd one already did; a blank `blueprint_name`
+lists the installable games; a blank `config_key` names the read that lists the settable keys; a
+blank `path` names the two tools that locate a file. The roster and the catalog are rendered by one
+helper each, so every refusal states them in one order.
+
+**A read that could not run says so, in the terms the next sentence needs.** A failed file read says
+it is not an empty or missing file, a failed directory listing distinguishes a bad subdir from an
+empty one, a failed fleet status says the status is unknown rather than stopped, and a health check
+that did not run says it found nothing wrong *and* nothing right. A tool that threw says the
+identical call will throw again.
+
+**A misspelled argument NAME is refused, with the names the tool takes.** The dispatcher checks a
+call's argument names against the ones the catalog declares for that tool, because a name nothing
+reads is not a harmless extra — the value is dropped and the call proceeds as if the argument had
+been omitted. On `get_instance_status`, whose subject is optional, `instance_nameless=Ketchup`
+therefore answered for the whole fleet and said nothing about the server that was never looked at.
+`search_instance_files` still takes `pattern` for `text`; that tolerance is declared in one place the
+check reads, so accepting it and diagnosing a typo cannot disagree.
+
+Twelve tests in `ToolErrorWordingTests` hold the wording, on the same footing as the reads
+themselves: a refusal is text a model acts on, so what it says is contract.
+
 ## [1.32.0] - 2026-08-17
 
 ### Changed — every read says what it found, not what the engine printed

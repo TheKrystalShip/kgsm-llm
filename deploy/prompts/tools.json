@@ -2,11 +2,11 @@
   "get_instance_status": {
     "capability": "instance.status",
     "label": "Checking status",
-    "description": "Reports whether an instance is running, with its headline details — including the port it is configured to use. With no instance_name it covers every instance at once, which is the answer to \"what's running?\" and \"list the servers\". An instance is a server that is installed; get_blueprint_info covers a game type that is not. check_instance_reachability covers whether that port is open and reachable.",
+    "description": "Reports one instance's current state: whether it is running, its game and process, its version and whether an update is available, its configured ports and whether the host firewall has them open and the router forwards them, its disk use, and how many backups it has. Answers whether a server is up, and whether anyone outside can reach it. Name the instance. Leaving instance_name out answers one question only — \"what's running?\", across the whole host — and answers nothing about any single server. Which instances exist and what game each runs is in the list above already.",
     "params": [
       {
         "name": "instance_name",
-        "description": "One instance to report on. Omitted, the report covers every instance at once, which answers a question about the whole fleet in a single call.",
+        "description": "The instance to report on. Give it whenever the question is about a server. Leave it out only for a question about the whole host at once.",
         "required": false,
         "type": "string"
       }
@@ -15,7 +15,7 @@
   "get_instance_config": {
     "capability": "instance.config",
     "label": "Reading config",
-    "description": "Reports one instance's KGSM settings as a summary — the knobs KGSM manages for it. read_instance_file shows the raw configuration file, and set_instance_kgsm_setting proposes a change to one of these settings.",
+    "description": "Lists every KGSM setting for one instance with its current value, and says which of them can be changed. The keys it reports are the keys set_instance_kgsm_setting takes, so a value read here can be changed by passing the same key back. These are KGSM's settings for the server (auto-update, backup schedule, memory cap, restart schedule, launch arguments); read_instance_file shows the game's own configuration file instead.",
     "params": [
       {
         "name": "instance_name",
@@ -54,7 +54,7 @@
   "list_instance_backups": {
     "capability": "instance.backups",
     "label": "Listing backups",
-    "description": "Lists the backups one instance has, with the ids manage_instance_backups takes. Creating a new backup is a lifecycle action and lives on control_instance.",
+    "description": "Lists the backups one instance has, newest first. Each carries the id manage_instance_backups takes, how long ago it was taken, the game version it captured, its size, and which of the server's directories it actually holds — which is what decides whether restoring it brings back the world. Creating a new backup is a lifecycle action and lives on control_instance.",
     "params": [
       {
         "name": "instance_name",
@@ -67,7 +67,7 @@
   "get_instance_note": {
     "capability": "instance.note",
     "label": "Reading the note",
-    "description": "Reports the operator note attached to one instance — free text a person left about it.",
+    "description": "Reports the server note attached to one instance — free text a person left about it, with who wrote it and when. It reports whether a note is set, so an instance with none is answered as having none.",
     "params": [
       {
         "name": "instance_name",
@@ -99,13 +99,13 @@
   "list_host_ports": {
     "capability": "host.ports",
     "label": "Reading host ports",
-    "description": "Lists what is currently bound on the host's ports — the machine's whole port usage. check_instance_reachability covers whether one instance's port is open and forwarded.",
+    "description": "Lists every port the host is listening on right now, split into the ones a game server is configured for — naming which server — and the ones nothing here owns. It reports the whole machine. One instance's own ports and whether they are open come back from get_instance_status.",
     "params": []
   },
   "find_port_conflicts": {
     "capability": "host.port-conflicts",
     "label": "Looking for port conflicts",
-    "description": "Lists instances configured to want the same port as each other. It compares what they are configured to use, which is how a conflict is found before both are running.",
+    "description": "Reports whether any two claimants want the same port: two instances configured for one port, or an instance whose port a process outside KGSM already holds. It compares what they are configured to use, which is how a conflict is found before both are running.",
     "params": []
   },
   "get_blueprint_info": {
@@ -181,19 +181,6 @@
           "7d",
           "30d"
         ]
-      }
-    ]
-  },
-  "check_instance_reachability": {
-    "capability": "instance.network",
-    "label": "Checking network",
-    "description": "The network reachability of one instance, across two layers: the host firewall (which ports KGSM has opened, which firewall backend, and whether it is enforcing) and the UPnP port forwards on the local router. It reports whether the instance's port is reachable; get_instance_status reports which port the instance uses. Each layer is reported separately, and a layer that could not be reached is reported as 'couldn't check'.",
-    "params": [
-      {
-        "name": "instance_name",
-        "description": "The exact name of the server instance.",
-        "required": true,
-        "type": "string"
       }
     ]
   },
@@ -281,7 +268,7 @@
   "list_instance_directory": {
     "capability": "files.list",
     "label": "Listing files",
-    "description": "Lists the files and folders inside one instance's own directory, one level at a time. It answers what is in a directory. find_instance_file searches every subdirectory for a file by name, and search_instance_files searches inside every file for text.",
+    "description": "Lists the files and folders inside one instance's own directory, one level at a time, with each one's size and when it was last changed. It answers what is in a directory, and which of the things in it was touched recently. find_instance_file searches every subdirectory for a file by name, and search_instance_files searches inside every file for text.",
     "params": [
       {
         "name": "instance_name",
@@ -403,7 +390,7 @@
   "manage_instance_backups": {
     "capability": "backups.manage",
     "label": "Managing backups",
-    "description": "Proposes acting on an instance's existing backups: restore one over the instance's current data, delete one, or prune the old ones. list_instance_backups lists them under the id this tool takes. Restoring replaces the instance's current data, and deleting is permanent. Staged for human confirmation: it does not run until a person confirms.",
+    "description": "Acts on the backups an instance already has: restore one, delete one, or prune the old ones. Name which backup with \"newest\" or \"oldest\" — those need no id. An id from list_instance_backups also works. Creating a new backup is a lifecycle action and lives on control_instance.",
     "params": [
       {
         "name": "instance_name",
@@ -424,7 +411,7 @@
       },
       {
         "name": "backup_name",
-        "description": "Which backup to act on, by its id from list_instance_backups. Required for restore and delete, including when the user described the backup rather than naming it — the list is what turns \"the oldest one\" into the id this takes. Omitted for prune.",
+        "description": "Which backup to act on, for restore and delete. \"newest\" or \"oldest\" names it by position and is what a request like \"the most recent backup\" means. A full id from list_instance_backups also works. Not used by prune, which takes 'keep' instead.",
         "required": false,
         "type": "string"
       },

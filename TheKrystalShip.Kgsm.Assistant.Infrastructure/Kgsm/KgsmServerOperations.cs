@@ -293,7 +293,7 @@ internal sealed class KgsmServerOperations : IServerOperations
     }
 
     private static InstanceDirEntry MapDirEntry(FileEntry entry) =>
-        new(entry.Name, entry.Kind == FileKind.Dir, entry.SizeBytes ?? 0);
+        new(entry.Name, entry.Kind == FileKind.Dir, entry.SizeBytes ?? 0, entry.Mtime);
 
     public async Task<Result<IReadOnlyList<FleetStatusEntry>>> GetFleetStatusAsync(CancellationToken cancellationToken = default)
     {

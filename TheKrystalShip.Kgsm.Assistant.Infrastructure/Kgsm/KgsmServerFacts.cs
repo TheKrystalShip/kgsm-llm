@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 
@@ -54,7 +55,9 @@ internal sealed class KgsmServerFacts : IServerFacts
                         HostDiskMapping.NullIfEmpty(b.Version),
                         b.CreatedAt,
                         b.SizeBytes,
-                        HostDiskMapping.NullIfEmpty(b.Consistency)))
+                        HostDiskMapping.NullIfEmpty(b.Consistency),
+                        b.Sources ?? [],
+                        b.FileCount))
                     .ToArray();
                 return new BackupListing(FactsState.Available, rows);
             }
@@ -104,6 +107,124 @@ internal sealed class KgsmServerFacts : IServerFacts
         {
             _logger.LogError(ex, "Version read failed for {Instance}", instance);
             return new VersionFacts(FactsState.Unavailable, null, null, null);
+        }
+    }
+
+    /// <summary>
+    /// Reads one instance's runtime status as structured facts, from the same non-fast status read
+    /// the version leg uses — so the engine actually consults upstream and
+    /// <see cref="InstanceStatusFacts.UpdateAvailable"/> is a real tri-state.
+    /// <para>
+    /// The engine's ports live on the instance record rather than the status report, so they are
+    /// read from there and rendered through the canonical mapping. A record that cannot be read
+    /// costs the ports and nothing else: the status is still reported.
+    /// </para>
+    /// </summary>
+    public async Task<InstanceStatusFacts> GetStatusAsync(
+        string instance, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var statusTask = Task.Run(() => _instances.GetInstanceStatus(instance), cancellationToken);
+            var infoTask = Task.Run(() => _instances.GetInstanceInfo(instance), cancellationToken);
+
+            var status = await statusTask;
+            var info = await infoTask;
+
+            if (status is null)
+            {
+                _logger.LogWarning("Status read returned nothing for {Instance}", instance);
+                return Unknown();
+            }
+
+            var ports = info?.Ports is { Count: > 0 } mappings
+                ? mappings.Expand().Select(p => $"{p.Port}/{p.Protocol}").ToArray()
+                : [];
+
+            return new InstanceStatusFacts(
+                FactsState.Available,
+                status.Status,
+                status.Process?.Pid,
+                status.Process?.StartTime is { } started
+                    ? new DateTimeOffset(DateTime.SpecifyKind(started, DateTimeKind.Utc))
+                    : null,
+                HostDiskMapping.NullIfEmpty(status.Configuration?.Blueprint),
+                HostDiskMapping.NullIfEmpty(status.Configuration?.Runtime),
+                HostDiskMapping.NullIfEmpty(status.Configuration?.Directory),
+                HostDiskMapping.NullIfEmpty(status.Resources?.DiskUsage),
+                ports,
+                HostDiskMapping.NullIfEmpty(status.Version?.Current),
+                HostDiskMapping.NullIfEmpty(status.Version?.Latest),
+                status.Version?.Checked == true ? status.Version.UpdatesAvailable : null,
+                status.Backups?.Count ?? 0);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Status read failed for {Instance}", instance);
+            return Unknown();
+        }
+
+        static InstanceStatusFacts Unknown() => new(
+            FactsState.Unavailable, false, null, null, null, null, null, null, [], null, null, null, 0);
+    }
+
+    /// <summary>
+    /// Reads an instance's whole KGSM configuration, each key carrying the engine's own judgement of
+    /// whether the setter will accept a change to it. That judgement is not re-derived here: a second
+    /// copy of the rule is what lets a surface offer a change the write path then refuses.
+    /// </summary>
+    public async Task<InstanceConfigFacts> GetConfigAsync(
+        string instance, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var entries = await Task.Run(() => _instances.GetInstanceConfig(instance), cancellationToken);
+
+            // Null is the read failing. An instance always has a configuration, so an empty result
+            // could only mean the same thing — but the engine distinguishes them, so this does too.
+            if (entries is null)
+            {
+                _logger.LogWarning("Config read returned nothing for {Instance}", instance);
+                return new InstanceConfigFacts(FactsState.Unavailable, []);
+            }
+
+            return new InstanceConfigFacts(
+                FactsState.Available,
+                entries.Select(e => new InstanceSetting(e.Key, e.Value, e.Settable)).ToArray());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Config read failed for {Instance}", instance);
+            return new InstanceConfigFacts(FactsState.Unavailable, []);
+        }
+    }
+
+    /// <summary>
+    /// Reads an instance's server note off its record. The body is stored encoded, and kgsm-lib is
+    /// the one place that encoding is understood — so this reads the decoded property rather than
+    /// the raw config value, which would otherwise surface as base64.
+    /// </summary>
+    public async Task<NoteFacts> GetNoteAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var info = await Task.Run(() => _instances.GetInstanceInfo(instance), cancellationToken);
+            if (info is null)
+            {
+                _logger.LogWarning("Note read returned no instance record for {Instance}", instance);
+                return new NoteFacts(FactsState.Unavailable, null, null, null);
+            }
+
+            return new NoteFacts(
+                FactsState.Available,
+                HostDiskMapping.NullIfEmpty(info.NoteBody),
+                HostDiskMapping.NullIfEmpty(info.NoteUpdatedBy),
+                HostDiskMapping.NullIfEmpty(info.NoteUpdatedAt));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Note read failed for {Instance}", instance);
+            return new NoteFacts(FactsState.Unavailable, null, null, null);
         }
     }
 

@@ -54,6 +54,21 @@ public static class NetworkReport
             Data: data);
     }
 
+    /// <summary>
+    /// The host-firewall clause on its own, for a reading that reports the two network axes as
+    /// lines among others rather than as one sentence. Same wording either way — there is one
+    /// answer to "what is open", and two places writing it is how two surfaces come to disagree.
+    /// </summary>
+    public static string DescribeFirewall(NetworkReading firewall, string instance) =>
+        firewall.State == NetworkState.Available
+            ? BuildFirewallAvailable(instance, firewall).Item2
+            : $"Host firewall: unavailable right now — the firewall service isn't reachable. That "
+              + "isn't a sign no ports are open; it just couldn't be read.";
+
+    /// <summary>The router/UPnP clause on its own. See <see cref="DescribeFirewall"/>.</summary>
+    public static string DescribeRouter(UpnpReading upnp, string instance) =>
+        BuildRouterClause(instance, upnp);
+
     private static (Confidence, string) BuildFirewallAvailable(string instance, NetworkReading r)
     {
         // No backend that can enumerate rules — honest, and distinct from "nothing open".

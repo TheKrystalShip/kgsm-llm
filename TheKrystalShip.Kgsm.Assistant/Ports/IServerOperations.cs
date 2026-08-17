@@ -284,7 +284,16 @@ public interface IServerOperations
 /// a file or subdirectory name, whether it's a directory, and the file size in bytes
 /// (0 for directories). Neutral data — the dispatcher formats it for the model.
 /// </summary>
-public sealed record InstanceDirEntry(string Name, bool IsDirectory, long Size);
+/// <summary>One entry in a listing of an instance's own directory.</summary>
+/// <param name="Name">The entry's name, relative to the directory that was listed.</param>
+/// <param name="IsDirectory">Whether it is a directory rather than a file.</param>
+/// <param name="Size">Its size in bytes; 0 for a directory.</param>
+/// <param name="Modified">
+/// When it was last written, where the filesystem reported it. Null is an honest unknown. It is
+/// carried because "which config did I change" is answered by it and by nothing else in a listing.
+/// </param>
+public sealed record InstanceDirEntry(
+    string Name, bool IsDirectory, long Size, DateTimeOffset? Modified = null);
 
 /// <summary>
 /// What a file search found (<see cref="IServerOperations.FindInstanceFilesAsync"/>).

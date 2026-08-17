@@ -73,7 +73,16 @@ public static class FleetStatusCard
     /// dispatcher returns a summary-only error string for that. An empty list is a real measured
     /// result (zero servers) and yields an empty card, not a dropped one.
     /// </summary>
-    public static ToolResult<FleetStatusData> Build(IReadOnlyList<FleetStatusEntry> entries)
+    /// <param name="entries">The measured run state of every instance.</param>
+    /// <param name="presence">
+    /// Who is connected, for the same instances. Optional: it comes from a different authority and a
+    /// supervisor that cannot answer costs the roster clause and nothing else. It rides along because
+    /// it is ONE call for the whole fleet — "what's running" is almost always followed by "is anyone
+    /// on it", and answering both here is free where answering it per instance would be N round
+    /// trips.
+    /// </param>
+    public static ToolResult<FleetStatusData> Build(
+        IReadOnlyList<FleetStatusEntry> entries, PresenceReading? presence = null)
     {
         var servers = entries.Select(Map).ToArray();
 
@@ -88,7 +97,7 @@ public static class FleetStatusCard
             Tool: ResultCardKinds.Status,
             Confidence: Confidence.Confirmed, // a deterministic read of measured facts (incl. honest "couldn't read")
             Subject: new ResultRef(ResourceKind.Host, HostSubjectId),
-            Summary: BuildSummary(entries),
+            Summary: BuildSummary(entries, presence),
             Data: data);
     }
 
@@ -101,19 +110,45 @@ public static class FleetStatusCard
             : new FleetServerStatus(e.Instance, ServerRunState.Unknown, Severity.Warn, e.Reason);
 
     /// <summary>
-    /// The model's grounding text — kept byte-identical to the dispatcher's prior inline output so
-    /// the model's narration doesn't change when the card lights up. An unreadable instance is
-    /// reported as "status unavailable (reason)", never collapsed to "stopped".
+    /// The model's grounding text. An unreadable instance is reported as "status unavailable
+    /// (reason)", never collapsed to "stopped", and a running instance carries who is on it when
+    /// the supervisor could say.
     /// </summary>
-    private static string BuildSummary(IReadOnlyList<FleetStatusEntry> entries)
+    private static string BuildSummary(IReadOnlyList<FleetStatusEntry> entries, PresenceReading? presence)
     {
         if (entries.Count == 0)
             return "There are no installed server instances.";
 
         var lines = entries.Select(e => e.Availability == FleetStatusAvailability.Read
-            ? $"- {e.Instance}: {(e.Running == true ? "running" : "stopped")}"
+            ? $"- {e.Instance}: {(e.Running == true ? "running" : "stopped")}{Roster(e, presence)}"
             : $"- {e.Instance}: status unavailable ({e.Reason ?? "unknown reason"})");
 
         return $"Status of all {entries.Count} server(s):\n" + string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// Who is connected to a running instance. Silent for a stopped one (nobody is on a server that
+    /// is not up, and saying so for every stopped server is noise), and silent when presence was not
+    /// read at all — an absent clause is honest, where "0 connected" would be a measurement nobody
+    /// made. A game whose players cannot be observed says exactly that.
+    /// </summary>
+    private static string Roster(FleetStatusEntry entry, PresenceReading? presence)
+    {
+        if (entry.Running != true || presence is null || presence.State == FactsState.Unavailable)
+            return string.Empty;
+
+        var row = presence.Instances.FirstOrDefault(
+            i => string.Equals(i.Instance, entry.Instance, StringComparison.OrdinalIgnoreCase));
+
+        if (row is null)
+            return string.Empty;
+
+        if (!row.IsMeasured)
+            return ", this game doesn't report who is connected";
+
+        return row.Players.Count == 0
+            ? ", nobody connected"
+            : $", {row.Players.Count} connected ("
+              + string.Join(", ", row.Players.Select(p => p.Name ?? p.Id ?? "unnamed")) + ")";
     }
 }

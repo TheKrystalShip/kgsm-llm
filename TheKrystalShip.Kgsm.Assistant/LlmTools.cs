@@ -75,14 +75,13 @@ public static class LlmTools
 
     // Network reachability for one instance across two layers: the HOST FIREWALL (the ports KGSM has
     // opened, the firewall backend, its enforcement state — from the kgsm-firewall authority) AND the
-    // ROUTER / UPnP forwards (from the watchdog). Read-only and offered to everyone (it reveals no file
-    // contents). Each layer is reported honestly and separately — unreachable is "couldn't check", never
-    // "nothing open". It owns REACHABILITY, and its name says so; which port an instance is configured
-    // to use comes back in get_instance_status's payload, which is where "what port is X on?" belongs.
-    // The old split claimed this tool owned the port question outright — untrue in practice, because
-    // kgsm's status payload carries the ports regardless, so both tools answered it and the benchmark
-    // flipped between them run to run.
-    public static readonly Capability GetNetwork = new("instance.network");
+    // NOTE: there is no per-instance network capability. "Is it up" and "can anyone reach it" are one
+    // question, answered by three authorities — the engine for the configured ports, the host firewall
+    // for what is open, the supervisor for what the router forwards. get_instance_status reads all
+    // three and reports them together, so the answer costs one call. A second tool over the same
+    // ground was the ambiguity the catalog's naming pass exists to remove: kgsm's status payload
+    // carried the ports regardless, so both tools answered "what port is X on?" and routing flipped
+    // between them run to run.
 
     // The capstone aggregator: a DETERMINISTIC composition of the event timeline + a metrics window +
     // a health snapshot for ONE instance, run through a fixed rules table of known KGSM failure
@@ -243,7 +242,7 @@ public static class LlmTools
         ListInstanceBackups, GetInstanceNote, GetInstanceAutostart,
         HostInfo, ListHostPorts, FindPortConflicts,
         BlueprintInfo, Events, RunHealthCheck,
-        GetPerformance, GetNetwork, TraceRootCause, Search, FetchUrl,
+        GetPerformance, TraceRootCause, Search, FetchUrl,
     ];
 
     /// <summary>Reads that expose file or console contents — authorized callers only.</summary>

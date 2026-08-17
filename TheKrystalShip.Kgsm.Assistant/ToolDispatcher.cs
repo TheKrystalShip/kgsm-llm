@@ -127,19 +127,17 @@ public class ToolDispatcher : IToolDispatcher
             if (capability == LlmTools.GetInstanceAutostart)
                 return await ServerInfoAsync(call, "autostart", cancellationToken);
             if (capability == LlmTools.HostInfo)
-                return await HostInfoAsync("vitals", cancellationToken);
+                return await HostVitalsAsync(cancellationToken);
             if (capability == LlmTools.ListHostPorts)
-                return await HostInfoAsync("ports", cancellationToken);
+                return await HostPortsAsync(cancellationToken);
             if (capability == LlmTools.FindPortConflicts)
-                return await HostInfoAsync("conflicts", cancellationToken);
+                return await HostConflictsAsync(cancellationToken);
             if (capability == LlmTools.BlueprintInfo)
                 return await BlueprintInfoAsync(call, cancellationToken);
             if (capability == LlmTools.RunHealthCheck)
                 return await RunHealthCheckAsync(call, cancellationToken);
             if (capability == LlmTools.GetPerformance)
                 return await GetPerformanceAsync(call, cancellationToken);
-            if (capability == LlmTools.GetNetwork)
-                return await GetNetworkAsync(call, cancellationToken);
             if (capability == LlmTools.Events)
                 return await EventsAsync(call, cancellationToken);
             if (capability == LlmTools.TraceRootCause)
@@ -404,14 +402,26 @@ public class ToolDispatcher : IToolDispatcher
         if (entries.Count == 0)
             return $"{where} is empty.";
 
+        // The modification time is what answers "which of these did somebody change", and a listing
+        // of names and sizes cannot. It is stated as a distance from now as well as a moment, since
+        // the moment alone means nothing to a reader holding no clock.
+        var now = DateTimeOffset.UtcNow;
         var lines = entries.Select(e =>
-            e.IsDirectory ? $"- {e.Name}/" : $"- {e.Name} ({FormatSize(e.Size)})");
+        {
+            var changed = e.Modified is { } at ? $", changed {Elapsed.Moment(at, now)}" : string.Empty;
+            return e.IsDirectory
+                ? $"- {e.Name}/{changed}"
+                : $"- {e.Name} ({FormatSize(e.Size)}){changed}";
+        });
         return $"Files in {where}:\n{string.Join("\n", lines)}";
     }
 
     /// <summary>Compact human size for a directory listing (B / KB / MB).</summary>
     private static string FormatSize(long bytes) =>
-        bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024):0.#} MB"
+        // GB matters as much as the smaller units: a backup archive rendered in megabytes reads as
+        // "4663.9 MB", which a reader comparing it against anything else has to convert first.
+        bytes >= 1024L * 1024 * 1024 ? $"{bytes / (1024.0 * 1024 * 1024):0.#} GB"
+        : bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024):0.#} MB"
         : bytes >= 1024 ? $"{bytes / 1024.0:0.#} KB"
         : $"{bytes} B";
 
@@ -472,13 +482,123 @@ public class ToolDispatcher : IToolDispatcher
         };
     }
 
+    /// <summary>
+    /// One server's status, rendered from the engine's structured read.
+    /// <para>
+    /// The network axes ride along. "Is it up" and "can anyone reach it" are one question a person
+    /// asks in one breath, and they are answered by three separate authorities — the engine for the
+    /// configured ports, the host firewall for what is open, the supervisor for what the router
+    /// forwards. Splitting them across two tools made the model spend a turn discovering the second
+    /// half of an answer it had already been asked for. They are read in parallel, and each degrades
+    /// on its own: an unreachable firewall costs its own line and nothing else.
+    /// </para>
+    /// </summary>
     private async Task<ToolOutput> SingleStatusAsync(string resolved, CancellationToken cancellationToken)
     {
-        var result = await _operations.GetStatusAsync(resolved, cancellationToken);
-        if (!result.IsSuccess)
-            return $"Error: could not get status for '{resolved}' ({result.Error ?? "unknown error"}).";
+        var factsTask = _serverFacts.GetStatusAsync(resolved, cancellationToken);
+        var firewallTask = _network.GetPortsAsync(resolved, cancellationToken);
+        var upnpTask = _upnp.GetForwardsAsync(resolved, cancellationToken);
 
-        return $"Status for {resolved}:\n{result.Value}";
+        var facts = await factsTask;
+        if (facts.State == FactsState.Unavailable)
+            return $"Couldn't read {resolved}'s status — the engine didn't answer. That isn't the "
+                 + "same as it being stopped.";
+
+        // A port that answered with nothing is an authority that could not be consulted, not one
+        // reporting an empty world — the same rule its own states are written in.
+        var firewall = await firewallTask
+            ?? new NetworkReading(
+                NetworkState.FirewallUnavailable, "", PortListState.Unknown,
+                NetworkEnforcement.Unknown, []);
+        var upnp = await upnpTask ?? new UpnpReading(UpnpState.DaemonUnavailable, []);
+
+        var now = DateTimeOffset.UtcNow;
+        var lines = new List<string>
+        {
+            $"{resolved} is {(facts.Running ? "RUNNING" : "STOPPED")}.",
+        };
+
+        var game = facts.Blueprint is null
+            ? null
+            : await GameLabelAsync(BlueprintKey(facts.Blueprint), cancellationToken);
+        if (game is not null)
+            lines.Add($"- Game: {game}{(facts.Runtime is null ? "" : $", running {facts.Runtime}")}");
+
+        if (facts.Running && facts.Pid is { } pid)
+            lines.Add(facts.StartedAt is { } started
+                ? $"- Process {pid}, started {Elapsed.Moment(started, now)}"
+                : $"- Process {pid} (when it started was not recorded)");
+
+        lines.Add(VersionLine(facts));
+
+        // Ports, and the two things that decide whether anybody outside can use them. Each is
+        // stated even when it could not be read, because a missing line reads as "nothing there".
+        if (facts.Ports.Count > 0)
+        {
+            lines.Add($"- Configured ports: {string.Join(", ", facts.Ports)}");
+            lines.Add($"- {NetworkReport.DescribeFirewall(firewall, resolved)}");
+            lines.Add($"- {NetworkReport.DescribeRouter(upnp, resolved)}");
+        }
+        else
+        {
+            lines.Add("- No ports are configured for it.");
+        }
+
+        if (facts.DiskUsage is not null)
+            lines.Add($"- Disk: {facts.DiskUsage}{(facts.Directory is null ? "" : $" at {facts.Directory}")}");
+
+        lines.Add(facts.BackupCount == 0
+            ? "- No backups."
+            : $"- {facts.BackupCount} backup(s) — {Name(LlmTools.ListInstanceBackups)} lists them with "
+              + "their dates and what each holds.");
+
+        var summary = string.Join("\n", lines);
+
+        // The card carries the network axes, when there are ports for them to be about — the same
+        // card the Control Panel already renders, now reached from the read that answers the
+        // question people actually ask. An instance with no ports has no network picture to draw.
+        if (facts.Ports.Count == 0)
+            return summary;
+
+        var report = NetworkReport.Build(firewall, upnp, resolved);
+        bool hasNetworkStructure =
+            report.Data.State == NetworkState.Available || report.Data.UpnpState == UpnpState.Queried;
+
+        return hasNetworkStructure
+            ? new ToolOutput(summary, ToolResultCard.From(report with { Summary = summary }))
+            : summary;
+    }
+
+    /// <summary>
+    /// The version clause of a status read, kept beside the rest so an unchecked comparison is
+    /// never written as "up to date".
+    /// </summary>
+    private static string VersionLine(InstanceStatusFacts facts)
+    {
+        var installed = facts.InstalledVersion ?? "unknown";
+        return facts.UpdateAvailable switch
+        {
+            true => $"- Version {installed} — an update IS available (latest: {facts.LatestVersion ?? "unknown"})",
+            false => $"- Version {installed} — up to date",
+            null => $"- Version {installed} — whether an update is available could not be checked",
+        };
+    }
+
+    /// <summary>
+    /// The blueprint's own name from the file name the engine reports it under
+    /// (<c>palworld.bp.yaml</c>). Written here rather than in the adapter because it is a naming
+    /// convention of the engine's report, not a fact about the instance.
+    /// </summary>
+    private static string BlueprintKey(string blueprintFile)
+    {
+        var name = blueprintFile;
+        foreach (var suffix in new[] { ".bp.yaml", ".bp.yml", ".bp" })
+        {
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return name[..^suffix.Length];
+        }
+
+        return name;
     }
 
     private async Task<ToolOutput> VersionAsync(string resolved, CancellationToken cancellationToken)
@@ -537,6 +657,16 @@ public class ToolDispatcher : IToolDispatcher
         return "Connected players:\n" + string.Join("\n", lines);
     }
 
+    /// <summary>
+    /// An instance's backups, each stating what it is rather than only what it is called.
+    /// <para>
+    /// The id is opaque by design — nothing parses it — so everything a person actually asks about a
+    /// backup has to be said beside it: when it was taken, in the past tense as well as the absolute
+    /// moment; what game version it captured; and above all <em>what it holds</em>. A backup whose
+    /// contents omit the saves directory does not restore a world, and that is unknowable from an id
+    /// and a size.
+    /// </para>
+    /// </summary>
     private async Task<ToolOutput> BackupsAsync(string resolved, CancellationToken cancellationToken)
     {
         var listing = await _serverFacts.GetBackupsAsync(resolved, cancellationToken);
@@ -547,40 +677,119 @@ public class ToolDispatcher : IToolDispatcher
         if (listing.Backups.Count == 0)
             return $"{resolved} has no backups.";
 
+        var now = DateTimeOffset.UtcNow;
         var lines = listing.Backups.Select(b =>
         {
-            var when = b.CreatedAt is { } at ? at.ToString("yyyy-MM-dd HH:mm") : "date unknown";
-            var version = b.Version is null ? string.Empty : $", version {b.Version}";
-            var size = b.SizeBytes > 0 ? $", {b.SizeBytes / (1024.0 * 1024.0):F1} MB" : string.Empty;
-            return $"- {b.Id} ({when}{version}{size})";
+            var when = b.CreatedAt is { } at ? $"taken {Elapsed.Moment(at, now)}" : "when it was taken is unknown";
+
+            var facts = new List<string>();
+            if (b.Version is not null) facts.Add($"game version {b.Version}");
+            if (b.SizeBytes > 0) facts.Add(FormatSize(b.SizeBytes));
+            if (b.FileCount > 0) facts.Add($"{b.FileCount:N0} files");
+            facts.Add(b.Contents.Count > 0
+                ? $"holds: {string.Join(", ", b.Contents)}"
+                : "what it holds was not recorded");
+            if (b.Consistency is not null) facts.Add($"capture: {b.Consistency}");
+
+            return $"- {b.Id} — {when}, {string.Join(", ", facts)}";
         });
 
-        return $"Backups for {resolved}, most recent first:\n" + string.Join("\n", lines);
+        var total = listing.Backups.Sum(b => b.SizeBytes);
+        var header = $"{resolved} has {listing.Backups.Count} backup(s)"
+            + (total > 0 ? $", {FormatSize(total)} in total" : "")
+            + ", newest first:";
+
+        // Restoring one that does not hold the saves directory brings back an install and no world.
+        // The listing carries the fact; whether it matters is the person's call, so it is stated
+        // rather than judged.
+        var missingSaves = listing.Backups
+            .Where(b => b.Contents.Count > 0
+                && !b.Contents.Any(c => c.Contains("save", StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+
+        var note = missingSaves.Length == listing.Backups.Count && listing.Backups.Count > 0
+            ? "\n\nNone of these holds a saves directory, so restoring one restores the installation "
+              + "and not the world. That is either because this game keeps its world inside the "
+              + "install directory, or because the saves directory was empty when each was taken."
+            : string.Empty;
+
+        return header + "\n" + string.Join("\n", lines) + note;
     }
 
     /// <summary>
-    /// The engine's own view of an instance's configuration. Deliberately the status read rather than
-    /// the <c>.config.ini</c> itself: this aspect is reachable by every caller, and file contents stay
-    /// behind the authorized <c>read_instance_file</c>.
+    /// The instance's KGSM settings, spelled in the vocabulary the setter takes.
+    /// <para>
+    /// Every key is named exactly as <c>set_instance_kgsm_setting</c> accepts it, and whether it can
+    /// be changed is the engine's own judgement rather than one made here — so a value read from
+    /// this list can be changed by passing the key back, and a key marked managed is one the write
+    /// path will refuse. The two used to share no vocabulary at all: this reported the running
+    /// status while the setter took config keys, and nothing connected them.
+    /// </para>
+    /// <para>
+    /// The paths KGSM manages are dropped from the listing. They are locations rather than settings,
+    /// none can be changed, and a dozen absolute paths is most of what a reader would have to get
+    /// past to reach the settings that answer the question.
+    /// </para>
     /// </summary>
     private async Task<ToolOutput> ConfigSummaryAsync(string resolved, CancellationToken cancellationToken)
     {
-        var result = await _operations.GetStatusAsync(resolved, cancellationToken);
-        return result.IsSuccess
-            ? $"Configuration for {resolved}:\n{result.Value}"
-            : $"Couldn't read {resolved}'s configuration ({result.Error ?? "unknown error"}).";
+        var config = await _serverFacts.GetConfigAsync(resolved, cancellationToken);
+        if (config.State == FactsState.Unavailable)
+            return $"Couldn't read {resolved}'s configuration — the engine didn't answer.";
+
+        if (config.Settings.Count == 0)
+            return $"{resolved} reported no configuration settings.";
+
+        var shown = config.Settings.Where(s => !IsManagedPath(s.Key)).ToArray();
+        var settable = shown.Where(s => s.Settable).ToArray();
+        var managed = shown.Where(s => !s.Settable).ToArray();
+
+        var parts = new List<string>
+        {
+            $"{resolved}'s KGSM settings. These are KGSM's own settings for the server, not the "
+            + "game's own config file.",
+        };
+
+        if (settable.Length > 0)
+            parts.Add($"Changeable with {Name(LlmTools.SetConfigValue)}:\n"
+                + string.Join("\n", settable.Select(Describe)));
+
+        if (managed.Length > 0)
+            parts.Add("Managed by KGSM, cannot be changed:\n"
+                + string.Join("\n", managed.Select(Describe)));
+
+        return string.Join("\n\n", parts);
+
+        static string Describe(InstanceSetting s) =>
+            $"- {s.Key} = {(s.Value.Length == 0 ? "(empty)" : s.Value)}";
     }
+
+    /// <summary>
+    /// Whether a config key names a location KGSM owns rather than a setting anyone would set.
+    /// Matched on the key's shape, which is the same shape the engine's own refusal is written in.
+    /// </summary>
+    private static bool IsManagedPath(string key) =>
+        key.EndsWith("_dir", StringComparison.Ordinal)
+        || key.EndsWith("_file", StringComparison.Ordinal)
+        || key is "cgroup_path" or "executable_subdirectory";
 
     private async Task<ToolOutput> NoteAsync(string resolved, CancellationToken cancellationToken)
     {
-        var instances = await _inventory.GetInstancesAsync(cancellationToken);
-        if (!instances.ContainsKey(resolved))
-            return $"Error: '{resolved}' is not a known server.";
+        var note = await _serverFacts.GetNoteAsync(resolved, cancellationToken);
+        if (note.State == FactsState.Unavailable)
+            return $"Couldn't read {resolved}'s note — the engine didn't answer. That isn't the "
+                 + "same as it having none.";
 
-        var result = await _operations.GetStatusAsync(resolved, cancellationToken);
-        return result.IsSuccess
-            ? $"Status for {resolved} (its note, if set, appears here):\n{result.Value}"
-            : $"Couldn't read {resolved}'s note ({result.Error ?? "unknown error"}).";
+        if (note.Body is null)
+            return $"{resolved} has no server note set.";
+
+        var who = note.UpdatedBy is null ? string.Empty : $" by {note.UpdatedBy}";
+        var when = note.UpdatedAt is null ? string.Empty : $" on {note.UpdatedAt}";
+        var attribution = who.Length + when.Length == 0
+            ? string.Empty
+            : $"\n(written{who}{when})";
+
+        return $"{resolved}'s server note:\n{note.Body}{attribution}";
     }
 
     private async Task<ToolOutput> AutostartAsync(string? resolved, CancellationToken cancellationToken)
@@ -603,26 +812,88 @@ public class ToolDispatcher : IToolDispatcher
             : "Set to start at boot:\n" + string.Join("\n", reading.EnabledInstances.Select(n => $"- {n}"));
     }
 
-    /// <summary>The host machine's own vitals and port usage — never any one server's.</summary>
-    private async Task<ToolOutput> HostInfoAsync(string aspect, CancellationToken cancellationToken)
+    /// <summary>
+    /// What is listening on the host right now, with the instance configured for each port beside
+    /// it.
+    /// <para>
+    /// Split into the ports a game server is configured for and the ports nothing here owns, because
+    /// that is the division every question about this reading turns on — "is my server's port up"
+    /// and "what else is on this box" are answered from opposite halves of one list, and a model
+    /// reading a flat list has to make the join itself from a process name that is a binary's name.
+    /// </para>
+    /// <para>
+    /// It reports LISTENING sockets, so a stopped server's configured port is simply absent. Saying
+    /// that here is what stops the absence being read as the port being free.
+    /// </para>
+    /// </summary>
+    private async Task<ToolOutput> HostPortsAsync(CancellationToken cancellationToken)
     {
-        if (aspect is "ports" or "conflicts")
+        var usage = await _hostFacts.GetPortUsageAsync(cancellationToken);
+        if (usage.State == FactsState.Unavailable)
+            return "Couldn't read which ports the host is listening on — the scan didn't run. "
+                 + "That isn't the same as nothing being bound.";
+
+        if (usage.UsedPorts.Count == 0)
+            return "The host is listening on no ports at all.";
+
+        var owned = usage.UsedPorts.Where(p => p.Instance is not null).ToArray();
+        var others = usage.UsedPorts.Where(p => p.Instance is null).ToArray();
+
+        var parts = new List<string>
         {
-            var usage = await _hostFacts.GetPortUsageAsync(cancellationToken);
-            if (usage.State == FactsState.Unavailable)
-                return "Couldn't read the host's port usage — the engine didn't answer. "
-                     + "That isn't the same as nothing being bound.";
+            $"The host is listening on {usage.UsedPorts.Count} port(s). A server that is stopped "
+            + "holds none, so its ports are absent from this list rather than shown as free.",
+        };
 
-            if (aspect == "conflicts")
-                return usage.Conflicts.Count == 0
-                    ? "No port conflicts between the configured servers."
-                    : "Port conflicts:\n" + string.Join("\n", usage.Conflicts.Select(c => $"- {c}"));
+        if (owned.Length > 0)
+            parts.Add($"Configured for a game server ({owned.Length}):\n"
+                + string.Join("\n", owned.Select(p =>
+                    $"- {p.Port}/{p.Protocol} — {p.Instance}{HeldBy(p.Process)}")));
 
-            return usage.UsedPorts.Count == 0
-                ? "Nothing is currently bound on the host's ports."
-                : "Ports in use on the host:\n" + string.Join("\n", usage.UsedPorts.Select(p => $"- {p}"));
-        }
+        if (others.Length > 0)
+            parts.Add($"Not configured for any game server ({others.Length}):\n"
+                + string.Join("\n", others.Select(p =>
+                    $"- {p.Port}/{p.Protocol}{HeldBy(p.Process)}")));
 
+        return string.Join("\n\n", parts);
+    }
+
+    /// <summary>
+    /// Who holds a socket, or an explicit statement that the scan could not tell. An unattributed
+    /// socket is read without the privilege to name its owner, which is not the same as it having
+    /// none — and a clause left out entirely reads as the latter.
+    /// </summary>
+    private static string HeldBy(string? process) =>
+        process is null ? ", holding process not identified" : $", held by {process}";
+
+    /// <summary>
+    /// Whether any two claimants want the same port. The two kinds of finding are worded apart
+    /// because they are fixed by opposite actions: two instances contending is a configuration
+    /// change here, an outside process holding the port is not.
+    /// </summary>
+    private async Task<ToolOutput> HostConflictsAsync(CancellationToken cancellationToken)
+    {
+        var usage = await _hostFacts.GetPortUsageAsync(cancellationToken);
+        if (usage.ConflictState == FactsState.Unavailable)
+            return "Couldn't check for port conflicts — the scan didn't run. That isn't the same "
+                 + "as there being none.";
+
+        if (usage.Conflicts.Count == 0)
+            return "No port conflicts. No two servers are configured for the same port, and "
+                 + "nothing outside KGSM is holding a port one of them wants.";
+
+        var lines = usage.Conflicts.Select(c => c.OtherIsInstance
+            ? $"- {c.Port}/{c.Protocol} — '{c.Instance}' and '{c.Other}' are both configured for it. "
+              + "Only one can bind it, so change the port on one of them."
+            : $"- {c.Port}/{c.Protocol} — '{c.Instance}' is configured for it, but {c.Other} is "
+              + "already holding it. That process isn't a KGSM server.");
+
+        return $"{usage.Conflicts.Count} port conflict(s):\n" + string.Join("\n", lines);
+    }
+
+    /// <summary>The host machine's own vitals — never any one server's.</summary>
+    private async Task<ToolOutput> HostVitalsAsync(CancellationToken cancellationToken)
+    {
         var facts = await _hostFacts.GetAsync(cancellationToken);
         if (facts.State == FactsState.Unavailable)
             return "Couldn't read the host's vitals — the engine didn't answer.";
@@ -886,11 +1157,17 @@ public class ToolDispatcher : IToolDispatcher
     /// </summary>
     private async Task<ToolOutput> GetFleetStatusAsync(CancellationToken cancellationToken)
     {
-        var result = await _operations.GetFleetStatusAsync(cancellationToken);
+        // Presence is one call for the whole fleet, from a different authority, so it rides along
+        // rather than costing a second turn — and a supervisor that cannot answer costs the roster
+        // clause alone.
+        var statusTask = _operations.GetFleetStatusAsync(cancellationToken);
+        var presenceTask = _serverFacts.GetPresenceAsync(cancellationToken);
+
+        var result = await statusTask;
         if (!result.IsSuccess)
             return $"Error: could not read server status ({result.Error ?? "unknown error"}).";
 
-        var card = FleetStatusCard.Build(result.Value!);
+        var card = FleetStatusCard.Build(result.Value!, await presenceTask);
         return new ToolOutput(card.Summary, ToolResultCard.From(card));
     }
 
@@ -953,36 +1230,6 @@ public class ToolDispatcher : IToolDispatcher
         return report.Data.State == PerformanceState.Live
             ? new ToolOutput(report.Summary, ToolResultCard.From(report))
             : report.Summary;   // NotRunning / MonitorUnavailable stay summary-only (no card)
-    }
-
-    /// <summary>
-    /// The network read (mirrors <see cref="GetPerformanceAsync"/>): resolves the instance, reads the two
-    /// independent authorities — the host firewall via <see cref="INetworkInfo"/> (kgsm-firewall) and the
-    /// router / UPnP forwards via <see cref="IUpnpInfo"/> (the watchdog) — and runs the pure
-    /// <see cref="NetworkReport"/>. A card is attached when EITHER axis has real measured structure (the
-    /// firewall is <see cref="NetworkState.Available"/> OR the router was <see cref="UpnpState.Queried"/>);
-    /// when both are unavailable it stays summary-only rather than card an empty shell. Neither port throws,
-    /// so there is no error path — each unreachable authority arrives as its honest unavailable state, which
-    /// the aggregator words as such (never a fabricated "nothing open" / "nothing forwarded").
-    /// </summary>
-    private async Task<ToolOutput> GetNetworkAsync(LlmToolCall call, CancellationToken cancellationToken)
-    {
-        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
-        if (error is not null)
-            return error;
-
-        // Both authorities read concurrently — independent sockets, neither throws.
-        var firewallTask = _network.GetPortsAsync(resolved!, cancellationToken);
-        var upnpTask = _upnp.GetForwardsAsync(resolved!, cancellationToken);
-        var firewall = await firewallTask;
-        var upnp = await upnpTask;
-
-        var report = NetworkReport.Build(firewall, upnp, resolved!);
-        bool hasStructure = report.Data.State == NetworkState.Available
-                            || report.Data.UpnpState == UpnpState.Queried;
-        return hasStructure
-            ? new ToolOutput(report.Summary, ToolResultCard.From(report))
-            : report.Summary;   // both authorities unavailable → summary-only (no card)
     }
 
     /// <summary>
@@ -1149,10 +1396,19 @@ public class ToolDispatcher : IToolDispatcher
             return error;
 
         var backupName = call.Arg("backup_name")?.Trim();
-        if (kind is ConfirmationKind.BackupRestore or ConfirmationKind.BackupDelete
-            && string.IsNullOrWhiteSpace(backupName))
-            return $"Error: a {verb} needs 'backup_name' — the id of the backup to act on. " +
-                   $"List them with {Name(LlmTools.ListInstanceBackups)} first.";
+        if (kind is ConfirmationKind.BackupRestore or ConfirmationKind.BackupDelete)
+        {
+            if (string.IsNullOrWhiteSpace(backupName))
+                return $"Error: a {verb} needs 'backup_name' — which backup to act on. Pass " +
+                       $"\"newest\" or \"oldest\" to name it by position, or an id from " +
+                       $"{Name(LlmTools.ListInstanceBackups)}.";
+
+            var (id, unresolved) = await ResolveBackupIdAsync(resolved!, backupName, cancellationToken);
+            if (unresolved is not null)
+                return unresolved;
+
+            backupName = id;
+        }
 
         var keep = call.Arg("keep")?.Trim();
         if (kind is ConfirmationKind.BackupPrune
@@ -1168,6 +1424,86 @@ public class ToolDispatcher : IToolDispatcher
                "will only run if a permitted human clicks Confirm — tell the user it's awaiting their " +
                "confirmation.";
     }
+
+    /// <summary>
+    /// Turns whatever the caller called a backup into the id the instance actually has.
+    /// <para>
+    /// <b>A caller never has to reproduce an id.</b> They are opaque and long
+    /// (<c>Ketchup-20260817T023033Z-c6d089</c>) and a model handed one back does not copy it:
+    /// measured on gemma4:12b, every attempt is a fresh corruption — the hash truncated, a digit
+    /// changed, the separators swapped. Refusing those and asking for an exact copy is worse than
+    /// accepting them, because it is an instruction the model cannot follow: it retries with another
+    /// guess until the turn's whole step budget is gone, and the action never gets staged at all.
+    /// </para>
+    /// <para>
+    /// So position is a first-class way to name one. <c>newest</c> / <c>oldest</c> (and the words
+    /// people actually use for them) resolve against the engine's own ordering — which is what the
+    /// request usually said in the first place: "restore the most recent backup" names a backup
+    /// without naming an id.
+    /// </para>
+    /// <para>
+    /// An exact id still resolves, and so does an unambiguous prefix of exactly one — that recovers a
+    /// truncation. A value that is none of those is refused and pointed at the position words, never
+    /// corrected to the nearest real id: picking the closest match is how the wrong backup gets
+    /// restored over live data.
+    /// </para>
+    /// </summary>
+    private async Task<(string? Id, string? Error)> ResolveBackupIdAsync(
+        string instance, string given, CancellationToken cancellationToken)
+    {
+        var listing = await _serverFacts.GetBackupsAsync(instance, cancellationToken);
+
+        // A listing that could not be read is not evidence about the id. Let the confirm step answer
+        // for it rather than refusing an id that may well be correct.
+        if (listing.State == FactsState.Unavailable)
+            return (given, null);
+
+        if (listing.Backups.Count == 0)
+            return (null, $"Error: '{instance}' has no backups, so there is none to act on.");
+
+        // The listing is newest-first, which is the engine's ordering and not one derived here.
+        if (NewestWords.Contains(given))
+            return (listing.Backups[0].Id, null);
+        if (OldestWords.Contains(given))
+            return (listing.Backups[^1].Id, null);
+
+        var exact = listing.Backups.FirstOrDefault(
+            b => string.Equals(b.Id, given, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null)
+            return (exact.Id, null);
+
+        var prefixed = listing.Backups
+            .Where(b => b.Id.StartsWith(given, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (prefixed.Length == 1)
+            return (prefixed[0].Id, null);
+
+        // The way out is the position words, not another attempt at the id. A message that asks for
+        // an exact copy is what turned this into a retry loop.
+        var how = $"Pass \"newest\" or \"oldest\" instead — those name a backup by position and need "
+                + "no id.";
+
+        return (null, prefixed.Length > 1
+            ? $"Error: '{given}' matches {prefixed.Length} of {instance}'s backups, so which one was "
+              + $"meant is unknown. {how}"
+            : $"Error: '{instance}' has no backup called '{given}'. {how}");
+    }
+
+    /// <summary>
+    /// The words that name the most recent backup. A request says "the most recent backup" or "the
+    /// latest one"; taking those literally is what lets a caller act without carrying an id.
+    /// </summary>
+    private static readonly HashSet<string> NewestWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "newest", "latest", "most recent", "most-recent", "recent", "newest backup",
+        "latest backup", "most recent backup",
+    };
+
+    /// <summary>The words that name the oldest backup. See <see cref="NewestWords"/>.</summary>
+    private static readonly HashSet<string> OldestWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "oldest", "earliest", "oldest backup", "earliest backup",
+    };
 
     /// <summary>
     /// Player moderation. Refused up front for a game whose blueprint declares no command for the

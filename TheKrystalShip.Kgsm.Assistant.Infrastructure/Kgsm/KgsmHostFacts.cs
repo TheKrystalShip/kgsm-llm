@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 
@@ -26,12 +27,18 @@ internal sealed class KgsmHostFacts : IHostFacts
 {
     private readonly ISystemService _system;
     private readonly INetworkService _network;
+    private readonly IInstanceService _instances;
     private readonly ILogger<KgsmHostFacts> _logger;
 
-    public KgsmHostFacts(ISystemService system, INetworkService network, ILogger<KgsmHostFacts> logger)
+    public KgsmHostFacts(
+        ISystemService system,
+        INetworkService network,
+        IInstanceService instances,
+        ILogger<KgsmHostFacts> logger)
     {
         _system = system;
         _network = network;
+        _instances = instances;
         _logger = logger;
     }
 
@@ -62,35 +69,99 @@ internal sealed class KgsmHostFacts : IHostFacts
         }
     }
 
+    /// <summary>
+    /// Reads the host's listening ports and the engine's conflict findings, each as typed entries.
+    /// <para>
+    /// The two scans carry their own state: null from either means it could not be made, and an
+    /// empty list means it was made and found nothing. Collapsing those together is how a conflict
+    /// scan nobody managed to run comes back as "all clear".
+    /// </para>
+    /// <para>
+    /// A listening port is joined to the instance configured for it, using the engine's own
+    /// instance list. The process name is a binary's name (<c>java</c>, <c>PalServer-Linux</c>) and
+    /// several instances can share one, so it is never what the join is made on.
+    /// </para>
+    /// </summary>
     public async Task<HostPortUsage> GetPortUsageAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            var used = await Task.Run(() => _network.ListUsedPorts(), cancellationToken);
-            var conflicts = await Task.Run(() => _network.FindConflicts(), cancellationToken);
+            var usedTask = Task.Run(() => _network.ListUsedPortsDetailed(), cancellationToken);
+            var conflictsTask = Task.Run(() => _network.FindConflictsDetailed(), cancellationToken);
+            var owners = await ReadPortOwnersAsync(cancellationToken);
 
-            // Either leg failing makes the whole reading unavailable rather than half-reported: a
-            // conflict list that silently came back empty because the command failed reads exactly
-            // like "no conflicts", which is the one thing it must never be mistaken for.
-            if (!used.IsSuccess || !conflicts.IsSuccess)
-            {
-                _logger.LogWarning(
-                    "Host port usage read failed (used: {UsedOk}, conflicts: {ConflictsOk}).",
-                    used.IsSuccess, conflicts.IsSuccess);
-                return new HostPortUsage(FactsState.Unavailable, [], []);
-            }
+            var used = await usedTask;
+            var conflicts = await conflictsTask;
 
-            return new HostPortUsage(FactsState.Available, Lines(used.Stdout), Lines(conflicts.Stdout));
+            if (used is null)
+                _logger.LogWarning("Host port listing could not be read.");
+            if (conflicts is null)
+                _logger.LogWarning("Host port conflict scan could not be read.");
+
+            var ports = used is null
+                ? []
+                : used.Select(p => new HostPortEntry(
+                        p.Port,
+                        p.Protocol,
+                        HostDiskMapping.NullIfEmpty(p.Process),
+                        owners.GetValueOrDefault((p.Port, p.Protocol))))
+                    .ToArray();
+
+            var findings = conflicts is null
+                ? []
+                : conflicts.Select(c => new PortConflictEntry(
+                        c.Port, c.Protocol, c.Instance, c.Other,
+                        OtherIsInstance: string.Equals(c.Kind, "instance", StringComparison.Ordinal)))
+                    .ToArray();
+
+            return new HostPortUsage(
+                used is null ? FactsState.Unavailable : FactsState.Available,
+                ports,
+                conflicts is null ? FactsState.Unavailable : FactsState.Available,
+                findings);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Host port usage read failed.");
-            return new HostPortUsage(FactsState.Unavailable, [], []);
+            return new HostPortUsage(FactsState.Unavailable, [], FactsState.Unavailable, []);
         }
     }
 
-    private static IReadOnlyList<string> Lines(string? stdout) =>
-        string.IsNullOrWhiteSpace(stdout)
-            ? []
-            : stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    /// <summary>
+    /// Which instance is configured for each (port, protocol), from the engine's instance list.
+    /// <para>
+    /// A range is unrolled and a proto-less entry covers both protocols, so the map is keyed the
+    /// same way a listening socket is observed. A read that fails yields an empty map: the ports
+    /// are still reported, just without an owner beside them — the join is an enrichment, and
+    /// losing it must not lose the measurement.
+    /// </para>
+    /// </summary>
+    private async Task<Dictionary<(int Port, string Protocol), string>> ReadPortOwnersAsync(
+        CancellationToken cancellationToken)
+    {
+        var owners = new Dictionary<(int, string), string>();
+
+        try
+        {
+            var instances = await Task.Run(() => _instances.GetAllOrNull(), cancellationToken);
+            if (instances is null)
+                return owners;
+
+            foreach (var entry in instances)
+            {
+                var mappings = entry.Value?.Ports;
+                if (mappings is null)
+                    continue;
+
+                foreach (var (port, protocol) in mappings.Expand())
+                    owners.TryAdd((port, protocol), entry.Key);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read which instances own which ports.");
+        }
+
+        return owners;
+    }
 }

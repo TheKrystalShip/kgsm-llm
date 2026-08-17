@@ -22,14 +22,49 @@ public sealed record HostFacts(
     string? ExternalIp,
     bool? RebootRequired);
 
+/// <summary>One port the host is listening on.</summary>
+/// <param name="Port">The port number.</param>
+/// <param name="Protocol">The protocol it listens on — <c>tcp</c> or <c>udp</c>.</param>
+/// <param name="Process">
+/// The process holding the socket, or null when the scan could not attribute it. Null is "who holds
+/// it is unknown", never a placeholder — the port itself is measured either way.
+/// </param>
+/// <param name="Instance">
+/// The instance configured for this port, when one is. Joined here from the engine's own instance
+/// list rather than guessed from the process name, which is a binary's name and not a server's.
+/// </param>
+public sealed record HostPortEntry(int Port, string Protocol, string? Process, string? Instance);
+
+/// <summary>
+/// Two claimants on one port. The engine finds these; nothing above it re-derives them by comparing
+/// instance configs.
+/// </summary>
+/// <param name="Port">The contested port.</param>
+/// <param name="Protocol">The protocol the contest is on.</param>
+/// <param name="Instance">The instance whose configuration claims the port.</param>
+/// <param name="Other">The other claimant — another instance, or a process outside KGSM.</param>
+/// <param name="OtherIsInstance">
+/// Whether <paramref name="Other"/> names another instance rather than an outside process. The two
+/// read alike and are fixed by completely different actions, so the distinction travels with the
+/// finding instead of being inferred from what the name looks like.
+/// </param>
+public sealed record PortConflictEntry(
+    int Port, string Protocol, string Instance, string Other, bool OtherIsInstance);
+
 /// <summary>
 /// What is bound on the host's ports and where two instances want the same one. A conflict is the
 /// engine's own finding, not a comparison this layer derives.
+/// <para>
+/// The two axes carry their own state because they are two scans: one can answer while the other
+/// cannot, and an unread conflict scan must never be reported as "no conflicts" — that is the
+/// ordinary answer, so a failure collapsing into it is invisible.
+/// </para>
 /// </summary>
 public sealed record HostPortUsage(
     FactsState State,
-    IReadOnlyList<string> UsedPorts,
-    IReadOnlyList<string> Conflicts);
+    IReadOnlyList<HostPortEntry> UsedPorts,
+    FactsState ConflictState,
+    IReadOnlyList<PortConflictEntry> Conflicts);
 
 /// <summary>
 /// Facts about the host machine itself rather than any one instance — what backs the model-facing
@@ -62,5 +97,6 @@ public sealed class UnavailableHostFacts : IHostFacts
         Task.FromResult(new HostFacts(FactsState.Unavailable, null, null, null, null, null, null));
 
     public Task<HostPortUsage> GetPortUsageAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(new HostPortUsage(FactsState.Unavailable, [], []));
+        Task.FromResult(new HostPortUsage(
+            FactsState.Unavailable, [], FactsState.Unavailable, []));
 }

@@ -20,12 +20,78 @@ public enum FactsState
 /// <param name="CreatedAt">When the backup was taken, when the manifest records it.</param>
 /// <param name="SizeBytes">The archive's size on disk.</param>
 /// <param name="Consistency">The manifest's measured consistency verdict, when it carries one.</param>
+/// <param name="Contents">
+/// Which of the instance's directories the payload actually holds — <c>install</c>, <c>saves</c>. A
+/// directory that was empty at capture time is absent, so this is what a restore would bring back
+/// and not what was asked for. The single most consequential fact about a backup, and the one an id
+/// cannot carry: a backup holding no <c>saves</c> does not restore a world.
+/// </param>
+/// <param name="FileCount">How many files the payload holds.</param>
 public sealed record BackupEntry(
     string Id,
     string? Version,
     DateTimeOffset? CreatedAt,
     long SizeBytes,
-    string? Consistency);
+    string? Consistency,
+    IReadOnlyList<string> Contents,
+    long FileCount);
+
+/// <summary>
+/// One setting in an instance's KGSM configuration.
+/// </summary>
+/// <param name="Key">The key, spelled exactly as the setter takes it.</param>
+/// <param name="Value">The current value. An empty string is a real value, not an absence.</param>
+/// <param name="Settable">
+/// Whether the engine will accept a change to this key. Read from the engine rather than judged
+/// here, so what a reader is told it can change is exactly what the write path accepts.
+/// </param>
+public sealed record InstanceSetting(string Key, string Value, bool Settable);
+
+/// <summary>An instance's KGSM configuration — every key, in the setter's own vocabulary.</summary>
+public sealed record InstanceConfigFacts(FactsState State, IReadOnlyList<InstanceSetting> Settings);
+
+/// <summary>
+/// An instance's operator-authored server note.
+/// </summary>
+/// <param name="State">Whether the instance's record could be read at all.</param>
+/// <param name="Body">The note's text, or null when no note is set. Null is measured, not unknown —
+/// <paramref name="State"/> carries whether the read happened.</param>
+/// <param name="UpdatedBy">Who last wrote it, when the record says.</param>
+/// <param name="UpdatedAt">When it was last written, when the record says.</param>
+public sealed record NoteFacts(
+    FactsState State, string? Body, string? UpdatedBy, string? UpdatedAt);
+
+/// <summary>
+/// One instance's runtime status, as the engine measured it — the structured form of what a status
+/// read returns, rather than the engine's own report text.
+/// </summary>
+/// <param name="State">Whether the engine answered at all.</param>
+/// <param name="Running">Whether the instance is running. Meaningless unless the read succeeded.</param>
+/// <param name="Pid">The process id, when the engine has one.</param>
+/// <param name="StartedAt">When the process started, when the engine recorded it.</param>
+/// <param name="Blueprint">The blueprint the instance was made from.</param>
+/// <param name="Runtime">How it runs — <c>native</c> or <c>container</c>.</param>
+/// <param name="Directory">Where it is installed.</param>
+/// <param name="DiskUsage">How much disk it occupies, as the engine reported it.</param>
+/// <param name="Ports">Its configured ports, each as <c>port/protocol</c>.</param>
+/// <param name="InstalledVersion">The version installed, when known.</param>
+/// <param name="LatestVersion">The latest version upstream, when the engine checked.</param>
+/// <param name="UpdateAvailable">Null when the comparison could not be made — never "up to date".</param>
+/// <param name="BackupCount">How many backups exist.</param>
+public sealed record InstanceStatusFacts(
+    FactsState State,
+    bool Running,
+    int? Pid,
+    DateTimeOffset? StartedAt,
+    string? Blueprint,
+    string? Runtime,
+    string? Directory,
+    string? DiskUsage,
+    IReadOnlyList<string> Ports,
+    string? InstalledVersion,
+    string? LatestVersion,
+    bool? UpdateAvailable,
+    int BackupCount);
 
 /// <summary>An instance's backups, most-recent-first.</summary>
 public sealed record BackupListing(FactsState State, IReadOnlyList<BackupEntry> Backups);
@@ -166,6 +232,17 @@ public interface IServerFacts
     /// <summary>Reads an instance's installed and latest versions.</summary>
     Task<VersionFacts> GetVersionAsync(string instance, CancellationToken cancellationToken = default);
 
+    /// <summary>Reads one instance's runtime status as structured facts.</summary>
+    Task<InstanceStatusFacts> GetStatusAsync(string instance, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads an instance's KGSM configuration — every key, its value, and whether it can be changed.
+    /// </summary>
+    Task<InstanceConfigFacts> GetConfigAsync(string instance, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads an instance's operator-authored server note.</summary>
+    Task<NoteFacts> GetNoteAsync(string instance, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Reads presence for every instance in one call. Whole-host by design — the supervisor answers
     /// for all of them at once, and asking per instance would be N round-trips for the same map.
@@ -206,6 +283,16 @@ public sealed class UnavailableServerFacts : IServerFacts
 
     public Task<VersionFacts> GetVersionAsync(string instance, CancellationToken cancellationToken = default) =>
         Task.FromResult(new VersionFacts(FactsState.Unavailable, null, null, null));
+
+    public Task<InstanceStatusFacts> GetStatusAsync(string instance, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new InstanceStatusFacts(
+            FactsState.Unavailable, false, null, null, null, null, null, null, [], null, null, null, 0));
+
+    public Task<InstanceConfigFacts> GetConfigAsync(string instance, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new InstanceConfigFacts(FactsState.Unavailable, []));
+
+    public Task<NoteFacts> GetNoteAsync(string instance, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new NoteFacts(FactsState.Unavailable, null, null, null));
 
     public Task<PresenceReading> GetPresenceAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new PresenceReading(FactsState.Unavailable, []));

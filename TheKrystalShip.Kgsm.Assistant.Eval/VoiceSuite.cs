@@ -89,7 +89,7 @@ internal static class VoiceSuite
         new VoiceCase(
             "V5", "what port is {unique_game} on?",
             new[] { FixtureRole.UniqueGame }, Authorized: false,
-            new[] { LlmTools.ServerInfo, LlmTools.GetNetwork }),
+            new[] { LlmTools.ServerInfo }),
 
         // An open-ended one. The written answer is genuinely a report; the spoken one has to be a
         // verdict, and it must not become a cheerful verdict on a server it never checked.

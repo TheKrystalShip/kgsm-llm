@@ -89,7 +89,8 @@ public class ToolDispatcherTests
 
     // Phase 2: ExecuteAsync now returns ToolOutput (model-facing summary + optional surface card). The
     // routing/resolution/staging tests below assert on the model-facing summary, so unwrap it once here.
-    private async Task<string> Summary(LlmToolCall call) => (await Create().ExecuteAsync(call)).Summary;
+    private async Task<string> Summary(LlmToolCall call, IServerFacts? serverFacts = null) =>
+        (await Create(serverFacts: serverFacts).ExecuteAsync(call)).Summary;
 
     private static LlmToolCall Call(Tool name, string instance) =>
         new(name, new Dictionary<string, string?> { ["instance_name"] = instance });
@@ -147,25 +148,22 @@ public class ToolDispatcherTests
     [Fact]
     public async Task ExactName_Resolves_AndExecutes()
     {
-        _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
-            .Returns(Result.Success("running, pid 123"));
+        var facts = Substitute.For<IServerFacts>();
 
-        var result = await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "minecraft"));
+        await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "minecraft"), serverFacts: facts);
 
-        result.Should().Contain("Status for minecraft");
-        await _operations.Received(1).GetStatusAsync("minecraft", Arg.Any<CancellationToken>());
+        await facts.Received(1).GetStatusAsync("minecraft", Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task SingleFuzzyMatch_Resolves()
     {
-        _operations.GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>())
-            .Returns(Result.Success("stopped"));
+        var facts = Substitute.For<IServerFacts>();
 
         // "pvp" is a substring of exactly one instance.
-        await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "pvp"));
+        await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "pvp"), serverFacts: facts);
 
-        await _operations.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
+        await facts.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -238,17 +236,16 @@ public class ToolDispatcherTests
     }
 
     [Fact]
-    public async Task GetStatus_SingleServer_StaysCardless()
+    public async Task GetStatus_SingleServer_ReportsTheMeasuredState()
     {
-        // The single-server path returns kgsm's opaque status string — no structured source — so it
-        // is summary-only (Data null); carding it would fabricate structure we don't have.
-        _operations.GetStatusAsync("minecraft", Arg.Any<CancellationToken>())
-            .Returns(Result.Success("running, pid 123"));
+        var output = await Create(serverFacts: FactsWithPorts("25565/tcp"))
+            .ExecuteAsync(Call(ShippedText.Name(LlmTools.ServerInfo), "minecraft"));
 
-        var output = await Create().ExecuteAsync(Call(ShippedText.Name(LlmTools.ServerInfo), "minecraft"));
-
-        output.Summary.Should().Contain("Status for minecraft");
-        output.Data.Should().BeNull();
+        // Rendered from the engine's structured read, not relayed as its report text: the run state
+        // is a word rather than a bare boolean, and the version comparison is spelled out.
+        output.Summary.Should().Contain("minecraft is RUNNING")
+            .And.Contain("Version 1.21")
+            .And.Contain("up to date");
     }
 
     [Fact]
@@ -708,15 +705,49 @@ public class ToolDispatcherTests
         await _metrics.DidNotReceive().GetSnapshotAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    // --- get_network (host firewall via INetworkInfo + router/UPnP via IUpnpInfo) ---
-    // The dispatcher resolves the instance, reads BOTH neutral pictures concurrently, runs the pure
-    // aggregator, and attaches a card when EITHER axis has real structure; the wording lives in
-    // NetworkReportTests.
+    // --- the network axes, inside the status read ---
+    // There is no separate reachability tool: the status read fetches the configured ports from the
+    // engine, what the host firewall has open, and what the router forwards, all concurrently, and
+    // reports them together. The wording of each axis lives in NetworkReportTests.
 
-    private static LlmToolCall NetworkCall(string instance) => Call(ShippedText.Name(LlmTools.GetNetwork), instance);
+    private static LlmToolCall StatusCall(string instance) =>
+        Call(ShippedText.Name(LlmTools.ServerInfo), instance);
+
+    /// <summary>A status reading with ports configured — what makes the network axes reportable.</summary>
+    private static IServerFacts FactsWithPorts(params string[] ports) =>
+        new StubStatusFacts(new InstanceStatusFacts(
+            FactsState.Available, Running: true, Pid: 42, StartedAt: null,
+            Blueprint: "minecraft.bp.yaml", Runtime: "native", Directory: "/opt/minecraft",
+            DiskUsage: "2.0G", Ports: ports, InstalledVersion: "1.21",
+            LatestVersion: "1.21", UpdateAvailable: false, BackupCount: 0));
+
+    private sealed record StubStatusFacts(InstanceStatusFacts Status) : IServerFacts
+    {
+        public Task<InstanceStatusFacts> GetStatusAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(Status);
+        public Task<BackupListing> GetBackupsAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new BackupListing(FactsState.Unavailable, []));
+        public Task<VersionFacts> GetVersionAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new VersionFacts(FactsState.Unavailable, null, null, null));
+        public Task<InstanceConfigFacts> GetConfigAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new InstanceConfigFacts(FactsState.Unavailable, []));
+        public Task<NoteFacts> GetNoteAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new NoteFacts(FactsState.Unavailable, null, null, null));
+        public Task<PresenceReading> GetPresenceAsync(CancellationToken ct = default) =>
+            Task.FromResult(new PresenceReading(FactsState.Unavailable, []));
+        public Task<AutostartReading> GetAutostartAsync(CancellationToken ct = default) =>
+            Task.FromResult(new AutostartReading(FactsState.Unavailable, []));
+        public Task<ConsoleTail> GetConsoleTailAsync(string i, int lines, CancellationToken ct = default) =>
+            Task.FromResult(new ConsoleTail(FactsState.Unavailable, []));
+        public Task<ConsoleRuns> GetConsoleRunsAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new ConsoleRuns(FactsState.Unavailable, []));
+        public Task<ConsoleTail> GetConsoleRunTailAsync(
+            string i, int lines, int run, CancellationToken ct = default) =>
+            Task.FromResult(new ConsoleTail(FactsState.Unavailable, []));
+    }
 
     [Fact]
-    public async Task GetNetwork_Available_SurfacesTheNetworkCard()
+    public async Task Status_ReportsPortsFirewallAndRouterInOneCall()
     {
         _network.GetPortsAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(new NetworkReading(
@@ -725,24 +756,29 @@ public class ToolDispatcherTests
         _upnp.GetForwardsAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(new UpnpReading(UpnpState.Queried, new[] { new UpnpForward(25565, "tcp", 25565, "192.168.1.5") }));
 
-        var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
+        var output = await Create(serverFacts: FactsWithPorts("25565/tcp"))
+            .ExecuteAsync(StatusCall("minecraft"));
 
         await _network.Received(1).GetPortsAsync("minecraft", Arg.Any<CancellationToken>());
         await _upnp.Received(1).GetForwardsAsync("minecraft", Arg.Any<CancellationToken>());
-        // Both axes surface in the summary: firewall ports + the router forward.
-        output.Summary.Should().Contain("25565/tcp").And.Contain("router");
+
+        // The run state, the configured port, what the firewall has open, and what the router
+        // forwards — all from the one read.
+        output.Summary.Should().Contain("RUNNING")
+            .And.Contain("Configured ports: 25565/tcp")
+            .And.Contain("25565/tcp")
+            .And.Contain("router");
+
         var card = output.Data.Should().BeOfType<ToolResultCard>().Subject;
         card.Tool.Should().Be(ResultCardKinds.Network.Name);
-        card.Subject.Should().Be(new ResultRef(ResourceKind.Network, "minecraft"));
         var data = card.Data.Should().BeOfType<NetworkData>().Subject;
         data.Backend.Should().Be("ufw");
         data.Ports.Should().ContainSingle();
         data.UpnpState.Should().Be(UpnpState.Queried);
-        data.Forwards.Should().ContainSingle();
     }
 
     [Fact]
-    public async Task GetNetwork_FirewallUnavailableButRouterQueried_StillCards()
+    public async Task Status_FirewallUnavailable_StillReportsTheRestAndSaysSo()
     {
         _network.GetPortsAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(new NetworkReading(
@@ -751,33 +787,38 @@ public class ToolDispatcherTests
         _upnp.GetForwardsAsync("minecraft", Arg.Any<CancellationToken>())
             .Returns(new UpnpReading(UpnpState.Queried, Array.Empty<UpnpForward>()));
 
-        var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
+        var output = await Create(serverFacts: FactsWithPorts("25565/tcp"))
+            .ExecuteAsync(StatusCall("minecraft"));
 
-        // Firewall couldn't be read, but the router answered → the router axis alone warrants a card.
+        // One axis failing costs that axis and nothing else, and it is stated rather than dropped —
+        // a missing line would read as "nothing is open".
+        output.Summary.Should().Contain("RUNNING").And.Contain("unavailable");
         output.Data.Should().BeOfType<ToolResultCard>();
-        output.Summary.Should().Contain("unavailable");   // the firewall clause is still honest
     }
 
     [Fact]
-    public async Task GetNetwork_BothUnavailable_StaysSummaryOnly()
+    public async Task Status_WithNoPortsConfigured_SaysSoAndCardsNothing()
     {
-        _network.GetPortsAsync("minecraft", Arg.Any<CancellationToken>())
-            .Returns(new NetworkReading(
-                NetworkState.FirewallUnavailable, "", PortListState.Unknown, NetworkEnforcement.Unknown,
-                Array.Empty<PortRule>()));
-        _upnp.GetForwardsAsync("minecraft", Arg.Any<CancellationToken>())
-            .Returns(new UpnpReading(UpnpState.DaemonUnavailable, Array.Empty<UpnpForward>()));
+        var output = await Create(serverFacts: FactsWithPorts())
+            .ExecuteAsync(StatusCall("minecraft"));
 
-        var output = await Create().ExecuteAsync(NetworkCall("minecraft"));
-
-        output.Summary.Should().Contain("unavailable").And.Contain("isn't a sign no ports are open");
-        output.Data.Should().BeNull();   // neither axis could read → no card
+        output.Summary.Should().Contain("No ports are configured");
+        output.Data.Should().BeNull();
     }
 
     [Fact]
-    public async Task GetNetwork_UnresolvedInstance_DoesNotRead()
+    public async Task Status_EngineUnavailable_IsNotReportedAsStopped()
     {
-        var result = await Summary(NetworkCall("doesnotexist"));
+        var output = await Create().ExecuteAsync(StatusCall("minecraft"));
+
+        output.Summary.Should().Contain("didn't answer")
+            .And.Contain("isn't the same as it being stopped");
+    }
+
+    [Fact]
+    public async Task Status_UnresolvedInstance_DoesNotRead()
+    {
+        var result = await Summary(StatusCall("doesnotexist"));
 
         result.Should().Contain("no instance named");
         await _network.DidNotReceive().GetPortsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -1559,6 +1600,13 @@ public class ToolDispatcherTests
             Task.FromResult(new PresenceReading(FactsState.Unavailable, []));
         public Task<AutostartReading> GetAutostartAsync(CancellationToken ct = default) =>
             Task.FromResult(new AutostartReading(FactsState.Unavailable, []));
+        public Task<InstanceStatusFacts> GetStatusAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new InstanceStatusFacts(
+                FactsState.Unavailable, false, null, null, null, null, null, null, [], null, null, null, 0));
+        public Task<InstanceConfigFacts> GetConfigAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new InstanceConfigFacts(FactsState.Unavailable, []));
+        public Task<NoteFacts> GetNoteAsync(string i, CancellationToken ct = default) =>
+            Task.FromResult(new NoteFacts(FactsState.Unavailable, null, null, null));
     }
 
     private static LlmToolCall ReadConsoleCall(string instance, string? run = null) =>

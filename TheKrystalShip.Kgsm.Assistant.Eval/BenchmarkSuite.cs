@@ -92,7 +92,11 @@ internal static class BenchmarkSuite
     /// re-derives the staged content from the real file and the call's own old_string/new_string
     /// (<see cref="C.StagesFaithfulFileEdit"/>), so a payload that is not that file with that one
     /// replacement fails.
-    public const string Version = "v19";
+    /// v20 moves the two reachability cases (N) onto the status read. There is no per-instance
+    /// network tool: the configured ports, what the host firewall has open and what the router
+    /// forwards all come back from one status call, so "is the port open" and "is it reachable" are
+    /// scored as reaching for that one tool rather than a second one that no longer exists.
+    public const string Version = "v20";
 
     // "Does the reply say something is pending?" has ONE definition, and it is the assistant's own
     // (PendingConfirmationNote) — reached through C.SaysConfirmationPending. A copy of the pattern
@@ -277,16 +281,18 @@ internal static class BenchmarkSuite
             C.CalledTool(LlmTools.GetPerformance, "uses the performance tool for the trend"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
-        // Network reachability (get_network) — distinct from B5's "what port is it ON" (get_status): these
-        // are firewall/router reachability questions, the get_network lane.
+        // Network reachability. The status read owns it: the configured ports, what the host
+        // firewall has open and what the router forwards come back together, so "is it up" and "can
+        // anyone reach it" cost one call. These assert the model does not go looking for a second
+        // tool that no longer exists.
         Single("N1", "is <game>'s port open in the firewall?", true, new[] { FixtureRole.UniqueGame },
             "is {unique_game}'s port actually open in the firewall?",
-            C.CalledTool(LlmTools.GetNetwork, "uses the network tool for firewall reachability"),
+            C.CalledTool(LlmTools.ServerInfo, "reads the status, which carries the firewall state"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
         Single("N2", "is <game> reachable from the internet?", true, new[] { FixtureRole.UniqueGame },
             "is {unique_game} reachable from the internet right now?",
-            C.CalledTool(LlmTools.GetNetwork, "uses the network tool for router/UPnP reachability"),
+            C.CalledTool(LlmTools.ServerInfo, "reads the status, which carries the router forwards"),
             C.ResolvedNotAsked(FixtureRole.UniqueGame)),
 
         // History / diagnosis (H): the event journal vs the root-cause capstone. The journal is one

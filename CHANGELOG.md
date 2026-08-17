@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0] - 2026-08-17
+
+### Changed — every read says what it found, not what the engine printed
+
+`TheKrystalShip.Kgsm.Assistant` **6.0.0** (breaking: `IServerFacts` gains the status/config/note
+reads; `HostPortUsage` and `InstanceDirEntry` change shape; there is no `instance.network`
+capability). Requires `TheKrystalShip.KGSM.Lib` 4.39.0 and KGSM 3.16.0-rc6.
+
+**`get_instance_status` answers the whole question in one call.** It reports the run state, the game
+and process, the version comparison, the configured ports **with what the host firewall has open and
+what the router forwards**, disk use and the backup count — rendered from the engine's structured
+read rather than relaying its JSON report. There is no separate reachability tool: "is it up" and
+"can anyone reach it" are one question, and answering them apart cost a whole turn.
+
+**`get_instance_config` and `set_instance_kgsm_setting` share one vocabulary.** The read lists every
+KGSM setting with its value and whether it can be changed, keyed exactly as the setter takes it. The
+settable flag is the engine's own judgement (`instances config-list`), so a change offered on a key
+is one the write path accepts. It used to return the runtime status blob, which held none of the
+settable keys at all.
+
+**`get_instance_note` reads the note.** It returned a status blob with no note field in it, which
+made "there is no note" an answer nothing had measured.
+
+**`list_host_ports` names ports.** It relayed the engine's decorated scan output, whose rows were
+process tuples with the port stripped out — a port listing containing no port. Entries are now split
+into those a game server is configured for, naming which, and those nothing here owns.
+
+**`find_port_conflicts` no longer reports "no conflicts" as two conflicts.** It split the engine's
+human output on newlines, so a clean host returned the scan's own progress lines as findings. The
+conflict scan carries its own availability, because "none found" is the ordinary answer and a scan
+that could not run must never collapse into it.
+
+**Backups say what they hold.** Each carries how long ago it was taken, the game version, its size in
+the right unit, the file count, the capture mode, and **which directories the payload holds** — which
+is what decides whether restoring it brings back the world. A listing where nothing holds a saves
+directory says so.
+
+**The model is told what time it is.** No tool result carried a "now", so every timestamp was
+uninterpretable and the model's only fallback was a date from its own training. The host's clock is
+injected each turn, and every timestamped output states its distance from now alongside the moment.
+
+**A backup id is checked before anything is staged.** A model quoting a long opaque id back does not
+reproduce it — measured: the hash suffix dropped and a digit changed. An exact id or an unambiguous
+prefix of one resolves; anything else is refused with the real ids rather than corrected to the
+closest, because that is how the wrong backup gets restored over live data.
+
+**Naming a backup needs no id.** `newest` / `oldest` resolve against the engine's own newest-first
+ordering, which is what a request like "restore the most recent backup" said in the first place. An
+exact id or an unambiguous prefix still works; anything else is pointed at the position words rather
+than corrected to the nearest real id.
+
+**Fleet status carries who is connected**, from one supervisor call for the whole fleet. Directory
+listings carry each entry's modification time.
+
 ## [1.31.0] - 2026-08-17
 
 ### Changed — the whole tool catalog is renamed, split, and named by the file

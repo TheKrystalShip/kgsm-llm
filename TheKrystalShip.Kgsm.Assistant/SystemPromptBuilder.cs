@@ -55,6 +55,16 @@ public class SystemPromptBuilder : ISystemPromptBuilder
 
         var builder = new StringBuilder(template);
 
+        // The host's clock, stated outright. A tool result is the only thing the model reads and none
+        // of them carries a "now", so without this a timestamp in a reading has no frame: asked how
+        // recent a backup is, the model either declines or supplies a date from its own training,
+        // which is a fabrication with no tool able to contradict it. Deliberately below the hashed
+        // template, for the same reason the instance list is — the prompt did not change because a
+        // minute passed.
+        builder.Append("\n\nRight now it is ")
+               .Append(Elapsed.Stamp(DateTimeOffset.Now))
+               .Append(" on this host. Every time a tool reports is measured against this.");
+
         try
         {
             // Games are named the way a person names them, here and in the tools' output alike. The

@@ -212,6 +212,28 @@ public interface IServerOperations
         string? copyFromPath = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Resolves a change to one <c>Key=Value</c> setting into the file's full new content, addressing
+    /// the setting by <paramref name="settingKey"/> instead of by the text around it. Same jail, same
+    /// size cap and same fail-closed contract as <see cref="PrepareInstanceFileEditAsync"/> — a key
+    /// that occurs nowhere or in several places returns a failed <see cref="Result"/> and stages
+    /// nothing.
+    /// <para>
+    /// It exists because a packed config defeats an anchored edit: when one line carries every setting
+    /// a game has, naming the text to replace means reproducing that whole line byte-perfect. The key
+    /// is a dozen characters and the value on disk is read rather than retyped, so the size of the
+    /// file stops mattering.
+    /// </para>
+    /// <para>
+    /// The success value carries the whole new content, exactly as the anchored edit does, so the
+    /// confirmation, the preview and the write are one path regardless of how the change was named.
+    /// Never throws.
+    /// </para>
+    /// </summary>
+    Task<Result<SettingEditSummary>> PrepareInstanceSettingEditAsync(
+        string instance, string relativePath, string settingKey, string settingValue,
+        string? copyFromPath = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Restores <paramref name="backupId"/> over the instance's current data. Called only by
     /// <see cref="IServerAssistant.ConfirmAsync"/> after a human confirms — never from the agent
     /// loop. This REPLACES what is there now; the engine owns whatever safety it applies.
@@ -288,3 +310,18 @@ public sealed record InstanceContentMatch(string Path, int Line, string Text);
 /// </summary>
 public sealed record InstanceContentMatches(
     IReadOnlyList<InstanceContentMatch> Matches, bool Truncated, bool Incomplete);
+
+/// <summary>
+/// A resolved setting change (<see cref="IServerOperations.PrepareInstanceSettingEditAsync"/>): the
+/// file's full new content, plus the value that was there and the value replacing it.
+/// <para>
+/// The two values ride along because the caller never saw them. A change named by key is proposed
+/// without reading the file into the prompt, so <c>before → after</c> is the only way the person
+/// confirming — and the model narrating it — learns what the number actually moved from. Reporting the
+/// new value alone would let an edit that changed nothing meaningful read exactly like one that did.
+/// </para>
+/// </summary>
+/// <param name="Content">The file's complete new content, ready to stage.</param>
+/// <param name="PreviousValue">The value the key held before the change.</param>
+/// <param name="NewValue">The value the key holds in <paramref name="Content"/>.</param>
+public sealed record SettingEditSummary(string Content, string PreviousValue, string NewValue);

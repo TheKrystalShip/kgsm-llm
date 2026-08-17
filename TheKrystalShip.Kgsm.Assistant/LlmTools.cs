@@ -144,6 +144,15 @@ public static class LlmTools
     // there is no per-game structure to parse.
     public static readonly Tool WriteFile = new("write_file");
 
+    // Changes ONE Key=Value setting in a game's own config, addressed by the key. write_file asks for
+    // the text being replaced, which a packed config defeats: Palworld keeps every setting on a single
+    // ~2000-character line, so naming the text means echoing that whole line back byte-perfect, and a
+    // 12B model mangles a key or a decimal somewhere in the middle and retries until the iteration cap.
+    // Naming the key sends a dozen characters and reads the current value off disk. Same staged
+    // ConfirmationKind.WriteFile as write_file — the proposal is the same file with the same preview;
+    // only how the caller addressed it differs.
+    public static readonly Tool SetGameSetting = new("set_game_setting");
+
     /// <summary>
     /// The aspects <see cref="ServerInfo"/> accepts, in display order. Single source of truth for
     /// both the tool's <c>enum</c> schema and the dispatcher's aspect routing, so the catalog and the
@@ -249,7 +258,7 @@ public static class LlmTools
     public static readonly IReadOnlyList<Tool> StagedCommandsTier =
     [
         ServerCommand, BackupCommand, PlayerCommand, InstallServer,
-        UninstallServer, SetConfigValue, WriteFile,
+        UninstallServer, SetConfigValue, WriteFile, SetGameSetting,
     ];
 
     /// <summary>Tools of authorized-only reads; refused for unauthorized callers, but not capped.</summary>

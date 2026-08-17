@@ -418,7 +418,7 @@
     ]
   },
   "set_config_value": {
-    "description": "Proposes setting one key=value in an instance's KGSM configuration (its .config.ini) — settings such as auto_update, executable_arguments, or a timeout. A change to the game's own config file is proposed with write_file instead. Staged for human confirmation: it does not run until a person confirms. kgsm keeps identity and structural keys, path keys (*_dir and *_file), ports, and the integration toggles (enable_firewall_management, enable_port_forwarding, enable_command_shortcuts) to their own dedicated flows, so one of those is rejected at confirmation time and the tool says which.",
+    "description": "Proposes setting one key=value in an instance's KGSM configuration (its .config.ini) — settings such as auto_update, executable_arguments, or a timeout. A change to the game's own config file is proposed with set_game_setting (one Key=Value setting) or write_file (any other edit) instead. Staged for human confirmation: it does not run until a person confirms. kgsm keeps identity and structural keys, path keys (*_dir and *_file), ports, and the integration toggles (enable_firewall_management, enable_port_forwarding, enable_command_shortcuts) to their own dedicated flows, so one of those is rejected at confirmation time and the tool says which.",
     "params": [
       {
         "name": "instance_name",
@@ -441,7 +441,7 @@
     ]
   },
   "write_file": {
-    "description": "Proposes a change to a text file inside one instance's own directory — the game's own config file, such as Palworld's PalWorldSettings.ini, server.properties, or a mod's settings file. KGSM's own settings (ports, launch arguments, auto-update) are proposed with set_config_value instead. It takes only the text that changes: old_string is the exact text to replace, copied from read_file's output, and new_string is what it becomes. The rest of the file is preserved byte for byte. old_string has to match exactly once; a match in no place, or in several, stages nothing and returns an error saying which, and reading the file again for the exact text resolves it. Staged for human confirmation against a preview: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
+    "description": "Proposes a change to a text file inside one instance's own directory — the game's own config file, such as Palworld's PalWorldSettings.ini, server.properties, or a mod's settings file. It takes only the text that changes: old_string is the exact text to replace, copied from read_file's output, and new_string is what it becomes. The rest of the file is preserved byte for byte. old_string has to match exactly once; a match in no place, or in several, stages nothing and returns an error saying which, and reading the file again for the exact text resolves it. set_game_setting changes one Key=Value setting by naming its key, which needs no copied text and is the way to change a setting in a config that packs every setting onto one line; KGSM's own settings (ports, launch arguments, auto-update) are proposed with set_config_value. Staged for human confirmation against a preview: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
     "params": [
       {
         "name": "instance_name",
@@ -493,6 +493,41 @@
         "name": "revised_yaml",
         "description": "The complete updated blueprint YAML: the whole document, being the open draft's current content with the requested change applied. It is the full document rather than a fragment or a diff, and every field the user did not ask about keeps its current value.",
         "required": true,
+        "type": "string"
+      }
+    ]
+  },
+  "set_game_setting": {
+    "description": "Proposes changing one Key=Value setting in a game's own config file, naming the setting by its key. The value currently on disk is read here, so only the key and the new value are sent and the rest of the file is preserved byte for byte. This works whichever shape the config has — one setting per line, or every setting packed onto a single line, which is where naming the surrounding text stops being possible. The reply names the value that was there before. write_file covers a change that is not one setting's value, such as adding a line or editing prose; set_config_value covers KGSM's own settings rather than the game's. Staged for human confirmation: it does not run until a person confirms, and a running instance picks the change up on its next restart.",
+    "params": [
+      {
+        "name": "instance_name",
+        "description": "The exact name of the server instance.",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "path",
+        "description": "The game's own config file. Its NAME is enough — \"PalWorldSettings.ini\", \"server.properties\" — and it is looked up under the instance, so the directories around it do not have to be right. A full path works too. When the name matches several files, the reply lists them and a full path picks one; search_files finds the file that carries a given setting.",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "setting",
+        "description": "The setting's key on its own, without an '=' or the rest of the line — \"DayTimeSpeedRate\", \"Difficulty\", \"max-players\". Case does not have to match the file. The key has to be set exactly once in the file; a key set in two places is reported rather than guessed at.",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "value",
+        "description": "The value the setting becomes, written exactly as the file spells values — \"0.500000\", \"Difficulty_Hard\", \"20\". Quotes are part of the value where the file quotes it. An empty string clears the value and keeps the setting.",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "copy_from",
+        "description": "For a config that is empty or does not exist yet, when the game ships a default or reference file beside it (e.g. \"install/DefaultPalWorldSettings.ini\"): its content is copied in server-side and the setting changed on that copy. Left out when editing a file that already has content.",
+        "required": false,
         "type": "string"
       }
     ]

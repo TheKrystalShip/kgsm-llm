@@ -714,4 +714,117 @@ public sealed class KgsmServerOperationsTests
 
         result.IsSuccess.Should().BeFalse();
     }
+
+    // --- PrepareInstanceSettingEditAsync (address the setting by key, read its value off disk) ---
+
+    [Fact]
+    public async Task PrepareSettingEdit_ChangesTheValueAndReportsWhatItReplaced()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceSettingEditAsync(
+            "inst", "PalWorldSettings.ini", "ExpRate", "2.000000");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.PreviousValue.Should().Be("1.000000");
+        result.Value.NewValue.Should().Be("2.000000");
+        result.Value.Content.Should().Be(Config.Replace("ExpRate=1.000000", "ExpRate=2.000000"));
+    }
+
+    [Fact]
+    public async Task PrepareSettingEdit_WritesNothing()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        await Create().PrepareInstanceSettingEditAsync("inst", "PalWorldSettings.ini", "ExpRate", "2.000000");
+
+        _files.DidNotReceive().Write("inst", Arg.Any<string>(), Arg.Any<string>(), Arg.Any<WriteOptions>());
+    }
+
+    [Fact]
+    public async Task PrepareSettingEdit_UnknownSetting_PointsAtSearchFiles()
+    {
+        FileHolds("PalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceSettingEditAsync(
+            "inst", "PalWorldSettings.ini", "NoSuchSetting", "1");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("search_files");
+    }
+
+    [Fact]
+    public async Task PrepareSettingEdit_SettingInTwoPlaces_RefusesRatherThanPickingOne()
+    {
+        FileHolds("server.properties", "difficulty=easy\ndifficulty=hard\n");
+
+        var result = await Create().PrepareInstanceSettingEditAsync(
+            "inst", "server.properties", "difficulty", "peaceful");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("more than one place");
+    }
+
+    // --- the seeded-write target guard (a guessed directory must fail loudly, not create a file) ---
+
+    [Fact]
+    public async Task PrepareSettingEdit_SeededIntoADirectoryThatDoesNotExist_Refuses()
+    {
+        // The model reached the seeded path only because the real one failed to read, so a parent that
+        // is not there means it guessed. Creating the file would satisfy the call and change nothing
+        // the game reads.
+        _files.List("inst", "Config/Linux_server", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Fail(FileOpOutcome.NotFound));
+
+        var result = await Create().PrepareInstanceSettingEditAsync(
+            "inst", "Config/Linux_server/PalWorldSettings.ini", "ExpRate", "2.000000",
+            copyFromPath: "DefaultPalWorldSettings.ini");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("find_files");
+        _files.DidNotReceive().Read("inst", "DefaultPalWorldSettings.ini", Arg.Any<long>());
+    }
+
+    [Fact]
+    public async Task PrepareEdit_SeededIntoADirectoryThatDoesNotExist_Refuses()
+    {
+        _files.List("inst", "Config/Linux_server", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Fail(FileOpOutcome.NotFound));
+
+        var result = await Create().PrepareInstanceFileEditAsync(
+            "inst", "Config/Linux_server/PalWorldSettings.ini", "", "",
+            copyFromPath: "DefaultPalWorldSettings.ini");
+
+        result.IsSuccess.Should().BeFalse();
+        (result.Error ?? string.Empty).Should().Contain("find_files");
+    }
+
+    [Fact]
+    public async Task PrepareSettingEdit_SeededIntoADirectoryThatExists_Proceeds()
+    {
+        _files.List("inst", "Config/LinuxServer", Arg.Any<int>())
+            .Returns(FileOpResult<DirListing>.Ok(new DirListing { Entries = [] }));
+        FileHolds("DefaultPalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceSettingEditAsync(
+            "inst", "Config/LinuxServer/PalWorldSettings.ini", "ExpRate", "2.000000",
+            copyFromPath: "DefaultPalWorldSettings.ini");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.PreviousValue.Should().Be("1.000000");
+    }
+
+    [Fact]
+    public async Task PrepareSettingEdit_UnseededEditIsNotGuarded()
+    {
+        // Only a seeded write reads one file and targets another. An ordinary edit already proves the
+        // target exists by reading it, so it must not pay for a directory listing.
+        FileHolds("Config/LinuxServer/PalWorldSettings.ini", Config);
+
+        var result = await Create().PrepareInstanceSettingEditAsync(
+            "inst", "Config/LinuxServer/PalWorldSettings.ini", "ExpRate", "2.000000");
+
+        result.IsSuccess.Should().BeTrue();
+        _files.DidNotReceive().List("inst", Arg.Any<string>(), Arg.Any<int>());
+    }
 }

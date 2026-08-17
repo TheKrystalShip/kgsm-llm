@@ -122,6 +122,17 @@ public class ToolDispatcherTests
     private static LlmToolCall FetchUrlCall(string? url) =>
         new(LlmTools.FetchUrl, new Dictionary<string, string?> { ["url"] = url });
 
+    private static LlmToolCall SetGameSettingCall(
+        string instance, string? path, string? setting, string? value, string? copyFrom = null) =>
+        new(LlmTools.SetGameSetting, new Dictionary<string, string?>
+        {
+            ["instance_name"] = instance,
+            ["path"] = path,
+            ["setting"] = setting,
+            ["value"] = value,
+            ["copy_from"] = copyFrom,
+        });
+
     private static LlmToolCall WriteFileCall(
         string instance, string? path, string? oldText, string? newText, string? copyFrom = null) =>
         new(LlmTools.WriteFile, new Dictionary<string, string?>
@@ -1699,5 +1710,130 @@ public class ToolDispatcherTests
 
         await _search.Received(1).SearchAsync(
             "what is kgsm", SearchScope.Auto, Arg.Any<CancellationToken>());
+    }
+
+    // --- set_game_setting staging (address by key; the path is resolved, not transcribed) -------
+
+    /// <summary>The instance's files, as the finder sees them — the lookup that spares the model from
+    /// copying a path back.</summary>
+    private void InstanceContains(string instance, params string[] paths) =>
+        _operations.FindInstanceFilesAsync(instance, Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(ci => Result.Success(new InstanceFileMatches(
+                paths.Where(p => p.EndsWith("/" + ci.ArgAt<string>(1), StringComparison.Ordinal)
+                              || p == ci.ArgAt<string>(1)).ToList(),
+                Truncated: false, Incomplete: false)));
+
+    private void SettingHolds(string instance, string path, string previous, string content) =>
+        _operations.PrepareInstanceSettingEditAsync(
+                instance, path, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(ci => Result.Success(new SettingEditSummary(content, previous, ci.ArgAt<string>(3))));
+
+    [Fact]
+    public async Task SetGameSetting_StagesTheEditedFile_AndDoesNotWrite()
+    {
+        InstanceContains("minecraft", "server.properties");
+        SettingHolds("minecraft", "server.properties", "easy", "difficulty=hard\n");
+
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(SetGameSettingCall("minecraft", "server.properties", "difficulty", "hard"));
+
+            result.Should().Contain("Staged").And.Contain("confirm");
+            // The value it replaced is named: the model never read the file, so this is the only way
+            // it can tell a person what actually changed.
+            result.Should().Contain("easy").And.Contain("hard");
+
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Should().BeEquivalentTo(new PendingConfirmation(
+                    ConfirmationKind.WriteFile, "minecraft",
+                    InstanceName: null, ConfigKey: "server.properties",
+                    ConfigValue: "difficulty=hard\n"));
+        }
+
+        await _operations.DidNotReceive().WriteInstanceFileAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetGameSetting_CorrectsAMistranscribedDirectory()
+    {
+        // The measured failure: the model is handed the real path and hands back a corrupted one. The
+        // file name survived, so the edit still reaches the file the game actually reads.
+        InstanceContains("minecraft", "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini");
+        SettingHolds("minecraft", "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini", "1.000000", "edited");
+
+        using (_confirmations.BeginTurn())
+        {
+            await Summary(SetGameSettingCall(
+                "minecraft", "install/Pal/Saved/Config/Linux_Server/PalWorldSettings.ini",
+                "DayTimeSpeedRate", "0.500000"));
+
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.ConfigKey.Should().Be("install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini");
+        }
+    }
+
+    [Fact]
+    public async Task SetGameSetting_AcceptsABareFileName()
+    {
+        InstanceContains("minecraft", "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini");
+        SettingHolds("minecraft", "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini", "1.000000", "edited");
+
+        using (_confirmations.BeginTurn())
+        {
+            await Summary(SetGameSettingCall("minecraft", "PalWorldSettings.ini", "DayTimeSpeedRate", "0.500000"));
+
+            await _operations.Received(1).FindInstanceFilesAsync(
+                "minecraft", "PalWorldSettings.ini", Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.ConfigKey.Should().Be("install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini");
+        }
+    }
+
+    [Fact]
+    public async Task SetGameSetting_NameMatchesSeveralFiles_ListsThemAndStagesNothing()
+    {
+        InstanceContains("minecraft", "a/settings.ini", "b/settings.ini");
+
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(SetGameSettingCall("minecraft", "settings.ini", "Difficulty", "Hard"));
+
+            result.Should().StartWith("Error:").And.Contain("a/settings.ini").And.Contain("b/settings.ini");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task SetGameSetting_NoSuchFile_SaysSoAndStagesNothing()
+    {
+        InstanceContains("minecraft", "install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini");
+
+        using (_confirmations.BeginTurn())
+        {
+            // The name itself was corrupted, which no lookup can recover — it has to fail loudly.
+            var result = await Summary(SetGameSettingCall("minecraft", "PaulWorldSettings.ini", "Difficulty", "Hard"));
+
+            result.Should().StartWith("Error:").And.Contain("find_files");
+            _confirmations.Staged.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task SetGameSetting_AMissingSettingStagesNothing()
+    {
+        InstanceContains("minecraft", "server.properties");
+        _operations.PrepareInstanceSettingEditAsync(
+                "minecraft", "server.properties", Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Result.Failure<SettingEditSummary>("'pvp' is not a setting in 'server.properties'."));
+
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(SetGameSettingCall("minecraft", "server.properties", "pvp", "false"));
+
+            result.Should().StartWith("Error:").And.Contain("Nothing was staged");
+            _confirmations.Staged.Should().BeEmpty();
+        }
     }
 }

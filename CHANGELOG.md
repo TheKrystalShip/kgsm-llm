@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] - 2026-08-17
+
+### Added — a setting can be changed by naming it
+
+`TheKrystalShip.Kgsm.Assistant` **3.0.0** (breaking: `IServerOperations` gains
+`PrepareInstanceSettingEditAsync`). A new staged tool, `set_game_setting`, changes one `Key=Value`
+setting in a game's own config file by naming the key. The value on disk is read server-side, so the
+call carries a key and a value and nothing else.
+
+`write_file` asks a caller to reproduce the text it is replacing, which a packed config defeats.
+Palworld keeps every setting on a single `OptionSettings=(...)` line of around two thousand
+characters, so changing one number means echoing the other fifty back byte-perfect. Measured on
+gemma4:12b, it cannot: it mangles a key or a decimal somewhere in the middle, the anchor fails to
+match, and it retries variants until the turn hits its iteration cap — with nothing staged.
+
+`SettingEdit` addresses the value instead. A key matches as a whole token before its `=`, so `Rate`
+does not match inside `ExpRate`; the value runs to the first `,`, `)` or line end, which is what makes
+one call work on a packed line and on a plain `key=value` file alike; a quoted value keeps whatever
+those characters mean inside its quotes. It refuses on the same terms the anchored editor does — a key
+that occurs nowhere, or in more than one place, changes nothing and says so.
+
+The staged proposal is identical either way: same `ConfirmationKind.WriteFile`, same preview, same
+human confirmation. Only how the caller addressed the change differs. The tool result names the value
+that was replaced, because a caller that never read the file has no other way to tell a person what
+actually moved.
+
+**The tool looks its file up by name rather than being handed a path.** The anchor text was only half
+of what defeated a config edit; the other half is that a model cannot copy a path back. Handed
+`install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini`, gemma4:12b returns
+`PaulWorldSettings.ini`, `Linux_Server/`, `LinuxSerum/` — a fresh corruption per attempt, each one a
+file that does not exist. So `path` takes the file's NAME, which the model knows from the game, and
+the name is resolved under the instance: one match is the answer, several are listed to choose
+between, none is reported. A guessed directory is corrected instead of refused, and the reply names
+the file the edit resolved to, since that is exactly where it differs from what was asked for.
+
+**A seeded write whose target directory does not exist is refused.** `copy_from` is the one path that
+reads one file and writes another, so nothing else checked the target — and a caller reaches it after
+the real path failed to read. Without the check it stages happily and creates
+`Config/Linux_server/PalWorldSettings.ini` beside the real `Config/LinuxServer/`: a file the game
+never reads, in a preview that looks correct. A wrong path that fails loudly is recoverable; one that
+succeeds quietly is not.
+
 ## [1.28.0] - 2026-08-17
 
 ### Changed — the system prompt states definitions, and the tool catalog disambiguates itself

@@ -771,44 +771,30 @@ internal sealed class KgsmServerOperations : IServerOperations
             var seeded = !string.IsNullOrWhiteSpace(copyFromPath);
             var sourcePath = seeded ? copyFromPath!.Trim() : relativePath;
 
-            var read = await Task.Run(
-                () => _files.Read(instance, sourcePath, MaxEditSourceBytes), cancellationToken);
+            if (seeded)
+            {
+                var reachable = await SeededTargetIsReachableAsync(instance, relativePath, cancellationToken);
+                if (!reachable.IsSuccess)
+                    return Result.Failure<string>(reachable.Error!);
+            }
 
-            if (read.Outcome != FileOpOutcome.Ok)
-                return Result.Failure<string>(read.Outcome switch
-                {
-                    FileOpOutcome.NotFound when seeded =>
-                        $"'{sourcePath}' does not exist, so there is nothing to copy from. Find the real "
-                        + "reference file with find_files or list_files first.",
-                    FileOpOutcome.NotFound =>
-                        $"'{sourcePath}' does not exist yet. To create it from the game's default/reference "
-                        + "file, pass that file's path as copy_from; its content is copied here and your "
-                        + "replacement applied to the copy.",
-                    FileOpOutcome.OutOfJail => $"the path '{sourcePath}' is outside the instance directory.",
-                    FileOpOutcome.NotAFile =>
-                        $"'{sourcePath}' isn't a regular file (it may be a directory, socket, pipe, or device).",
-                    FileOpOutcome.Binary => $"'{sourcePath}' isn't a text file, so it cannot be edited as text.",
-                    FileOpOutcome.TooLarge =>
-                        $"'{sourcePath}' is over the {MaxEditSourceBytes / 1024} KB edit limit.",
-                    FileOpOutcome.InstanceUnavailable => $"'{instance}' is not a known instance.",
-                    _ => read.Message ?? $"could not read '{sourcePath}'.",
-                });
-
-            var source = read.Value!.Content;
+            var source = await ReadEditSourceAsync(instance, sourcePath, seeded, cancellationToken);
+            if (!source.IsSuccess)
+                return Result.Failure<string>(source.Error!);
 
             // An empty anchor is a copy, and only a seeded write can mean one: there is no text to
             // replace, so the reference file's content IS the proposal.
             if (oldText.Length == 0)
                 return seeded
-                    ? Result.Success(source)
+                    ? Result.Success(source.Value!)
                     : Result.Failure<string>(
                         "no text to replace was given. Pass old_string exactly as read_file showed it.");
 
-            var edit = FileEdit.Apply(source, oldText, newText);
+            var edit = FileEdit.Apply(source.Value!, oldText, newText);
             return edit.Outcome switch
             {
                 FileEditOutcome.Applied => Result.Success(edit.Content!),
-                FileEditOutcome.NoMatch when source.Trim().Length == 0 =>
+                FileEditOutcome.NoMatch when source.Value!.Trim().Length == 0 =>
                     Result.Failure<string>(
                         $"'{sourcePath}' is empty, so there is nothing to replace in it. Pass the game's "
                         + "default/reference file as copy_from to fill it in."),
@@ -831,6 +817,132 @@ internal sealed class KgsmServerOperations : IServerOperations
             _logger.LogError(ex, "PrepareInstanceFileEdit failed for {Instance} ({Path})", instance, relativePath);
             return Result.Failure<string>(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Reads the same source the anchored edit reads, through the same jail and the same size cap, then
+    /// replaces one <c>Key=Value</c> setting with <see cref="SettingEdit"/>. Sharing the read is what
+    /// keeps the two ways of naming a change honest about the same file: a path that is outside the
+    /// instance, binary, absent or oversized fails identically whichever way the caller addressed the
+    /// setting.
+    /// </summary>
+    public async Task<Result<SettingEditSummary>> PrepareInstanceSettingEditAsync(
+        string instance, string relativePath, string settingKey, string settingValue,
+        string? copyFromPath = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var seeded = !string.IsNullOrWhiteSpace(copyFromPath);
+            var sourcePath = seeded ? copyFromPath!.Trim() : relativePath;
+
+            if (seeded)
+            {
+                var reachable = await SeededTargetIsReachableAsync(instance, relativePath, cancellationToken);
+                if (!reachable.IsSuccess)
+                    return Result.Failure<SettingEditSummary>(reachable.Error!);
+            }
+
+            var source = await ReadEditSourceAsync(instance, sourcePath, seeded, cancellationToken);
+            if (!source.IsSuccess)
+                return Result.Failure<SettingEditSummary>(source.Error!);
+
+            var edit = SettingEdit.Apply(source.Value!, settingKey, settingValue);
+            return edit.Outcome switch
+            {
+                SettingEditOutcome.Applied => Result.Success(
+                    new SettingEditSummary(edit.Content!, edit.PreviousValue!, settingValue)),
+                SettingEditOutcome.NoMatch when source.Value!.Trim().Length == 0 =>
+                    Result.Failure<SettingEditSummary>(
+                        $"'{sourcePath}' is empty, so it holds no settings to change. Pass the game's "
+                        + "default/reference file as copy_from to fill it in."),
+                // The key is the whole address here, so a miss is answerable: search_files finds which
+                // file actually carries it, which is a cheaper next step than guessing at spellings.
+                SettingEditOutcome.NoMatch => Result.Failure<SettingEditSummary>(
+                    $"'{settingKey}' is not a setting in '{sourcePath}'. Check the spelling against the "
+                    + "file, or find the file that does carry it with search_files."),
+                SettingEditOutcome.Ambiguous => Result.Failure<SettingEditSummary>(
+                    $"'{settingKey}' is set in more than one place in '{sourcePath}', so which one was "
+                    + "meant is unknown. Name the exact text to replace with write_file instead."),
+                SettingEditOutcome.NoChange => Result.Failure<SettingEditSummary>(
+                    $"'{settingKey}' is already '{settingValue}' in '{sourcePath}', so this changes nothing."),
+                _ => Result.Failure<SettingEditSummary>(
+                    $"'{settingKey}' is not a setting name. Pass the key on its own, without an '=' or "
+                    + "the rest of the line."),
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PrepareInstanceSettingEdit failed for {Instance} ({Path})", instance, relativePath);
+            return Result.Failure<SettingEditSummary>(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a seeded write whose target sits in a directory that does not exist.
+    /// <para>
+    /// A seeded write is the one path that reads a different file from the one it writes, so nothing
+    /// else ever checks the target — and a caller guessing at a config's location lands here after the
+    /// real path failed to read. Without this it stages happily and creates
+    /// <c>Config/Linux_server/PalWorldSettings.ini</c> beside the real <c>Config/LinuxServer/</c>: a
+    /// file the game will never read, proposed in a preview that looks entirely correct. A wrong path
+    /// that fails loudly is recoverable; one that succeeds quietly is not.
+    /// </para>
+    /// </summary>
+    private async Task<Result> SeededTargetIsReachableAsync(
+        string instance, string relativePath, CancellationToken cancellationToken)
+    {
+        var separator = relativePath.LastIndexOfAny(['/', '\\']);
+        if (separator <= 0)
+            return Result.Success();
+
+        var parent = relativePath[..separator];
+        var list = await Task.Run(() => _files.List(instance, parent, MaxListEntries), cancellationToken);
+
+        return list.Outcome switch
+        {
+            FileOpOutcome.Ok => Result.Success(),
+            FileOpOutcome.NotFound or FileOpOutcome.NotAFile => Result.Failure(
+                $"'{parent}' is not a directory in this instance, so '{relativePath}' is not where that "
+                + "file goes. Find the real path with find_files before writing to it."),
+            FileOpOutcome.OutOfJail => Result.Failure(
+                $"the path '{relativePath}' is outside the instance directory."),
+            FileOpOutcome.InstanceUnavailable => Result.Failure($"'{instance}' is not a known instance."),
+            _ => Result.Success(),
+        };
+    }
+
+    /// <summary>
+    /// The content an edit resolves against: the target file, or the reference file when the content is
+    /// seeded from one. Every refusal comes back as a message naming what to do instead, because the
+    /// caller is a model that will otherwise retry the same call.
+    /// </summary>
+    private async Task<Result<string>> ReadEditSourceAsync(
+        string instance, string sourcePath, bool seeded, CancellationToken cancellationToken)
+    {
+        var read = await Task.Run(
+            () => _files.Read(instance, sourcePath, MaxEditSourceBytes), cancellationToken);
+
+        if (read.Outcome == FileOpOutcome.Ok)
+            return Result.Success(read.Value!.Content);
+
+        return Result.Failure<string>(read.Outcome switch
+        {
+            FileOpOutcome.NotFound when seeded =>
+                $"'{sourcePath}' does not exist, so there is nothing to copy from. Find the real "
+                + "reference file with find_files or list_files first.",
+            FileOpOutcome.NotFound =>
+                $"'{sourcePath}' does not exist yet. To create it from the game's default/reference "
+                + "file, pass that file's path as copy_from; its content is copied here and your "
+                + "replacement applied to the copy.",
+            FileOpOutcome.OutOfJail => $"the path '{sourcePath}' is outside the instance directory.",
+            FileOpOutcome.NotAFile =>
+                $"'{sourcePath}' isn't a regular file (it may be a directory, socket, pipe, or device).",
+            FileOpOutcome.Binary => $"'{sourcePath}' isn't a text file, so it cannot be edited as text.",
+            FileOpOutcome.TooLarge =>
+                $"'{sourcePath}' is over the {MaxEditSourceBytes / 1024} KB edit limit.",
+            FileOpOutcome.InstanceUnavailable => $"'{instance}' is not a known instance.",
+            _ => read.Message ?? $"could not read '{sourcePath}'.",
+        });
     }
 
     private async Task<Result> RunAsync(

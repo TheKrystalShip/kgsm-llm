@@ -142,6 +142,9 @@ public class ToolDispatcher : IToolDispatcher
             if (call.Name == LlmTools.WriteFile)
                 return await StageWriteFileAsync(call, cancellationToken);
 
+            if (call.Name == LlmTools.SetGameSetting)
+                return await StageSetGameSettingAsync(call, cancellationToken);
+
             return $"Error: '{call.Name}' is not a known tool.";
         }
         catch (Exception ex)
@@ -1442,6 +1445,121 @@ public class ToolDispatcher : IToolDispatcher
                "with a preview has been shown to the user. This is NOT done yet and will only run if a " +
                "permitted human confirms it — tell the user it's awaiting their confirmation, and that " +
                "a running server picks up the change on its next restart.";
+    }
+
+    /// <summary>
+    /// Turns whatever the caller called the file into the path it actually has, by looking the name up
+    /// under the instance rather than trusting the directories around it.
+    /// <para>
+    /// A model cannot be relied on to copy a path back. Handed
+    /// <c>install/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini</c>, gemma4:12b returns
+    /// <c>PaulWorldSettings.ini</c>, <c>Linux_Server/</c>, <c>LinuxSerum/</c> — a fresh corruption each
+    /// attempt, each one a file that does not exist, and it retries until the turn's iteration budget
+    /// is gone. Measured, repeatedly: it is the single largest cost in the config-editing cases.
+    /// </para>
+    /// <para>
+    /// So only the file's NAME has to survive the round trip, and the name is something the model knows
+    /// from the game rather than something it has to transcribe. The lookup is by that name alone,
+    /// which is what lets a guessed directory be corrected instead of refused. Exactly one match is the
+    /// answer; several are listed for the caller to choose between, and none is reported honestly —
+    /// picking the closest would be guessing which file a person meant to edit.
+    /// </para>
+    /// </summary>
+    private async Task<(string? Path, string? Error)> ResolveInstanceFilePathAsync(
+        string instance, string path, CancellationToken cancellationToken)
+    {
+        var separator = path.LastIndexOfAny(['/', '\\']);
+        var name = separator >= 0 ? path[(separator + 1)..] : path;
+        if (string.IsNullOrWhiteSpace(name))
+            return (null, $"Error: '{path}' does not name a file.");
+
+        var found = await _operations.FindInstanceFilesAsync(instance, name, null, cancellationToken);
+        if (!found.IsSuccess)
+            return (path, null);
+
+        var paths = found.Value!.Paths;
+        if (paths.Count == 1)
+            return (paths[0], null);
+
+        // A name that matched several files may still have been given exactly: the caller's own path
+        // wins over asking it to choose again.
+        var exact = paths.FirstOrDefault(p => string.Equals(p, path, StringComparison.Ordinal));
+        if (exact is not null)
+            return (exact, null);
+
+        if (paths.Count == 0)
+            return (null, $"Error: no file named '{name}' exists under '{instance}'. Find the real name "
+                        + "with find_files, or the file that carries the setting with search_files.");
+
+        return (null, $"Error: '{name}' matches {paths.Count} files under '{instance}', so which one was "
+                    + $"meant is unknown: {string.Join(", ", paths.Take(8))}. Pass the full path of the one "
+                    + "to change.");
+    }
+
+    /// <summary>
+    /// Stages a change to one <c>Key=Value</c> setting in a game's own config file, addressed by the
+    /// key rather than by the text around it.
+    /// <para>
+    /// The call carries a key and a value — a dozen characters — and the value currently on disk is
+    /// read here rather than echoed back by the model. That is the whole point: an anchored edit asks
+    /// a caller to reproduce what it is replacing, which a packed config makes impossible, and a model
+    /// that cannot reproduce it retries variants until the turn's iteration budget is gone. Nothing
+    /// about the staged result differs — same <see cref="ConfirmationKind.WriteFile"/>, same preview,
+    /// same human confirmation — so a change made this way is confirmed and applied exactly like any
+    /// other file edit.
+    /// </para>
+    /// <para>
+    /// The reply names the value it replaced. The model never read the file, so <c>before → after</c>
+    /// is the only thing that lets it tell the user what actually moved instead of restating the value
+    /// it asked for.
+    /// </para>
+    /// </summary>
+    private async Task<string> StageSetGameSettingAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
+        var (resolved, error) = await ResolveInstanceAsync(call.Arg("instance_name"), cancellationToken);
+        if (error is not null)
+            return error;
+
+        var path = call.Arg("path")?.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+            return "Error: no path was provided. Pass the game's own config file — find_files locates "
+                 + "it by name and search_files locates the file that carries a given setting.";
+
+        var setting = call.Arg("setting")?.Trim();
+        if (string.IsNullOrWhiteSpace(setting))
+            return "Error: no setting was provided. Pass the setting's key on its own, without an '=' "
+                 + "or the rest of the line.";
+
+        // The value is not trimmed: leading and trailing spaces are part of what a config file holds,
+        // and an empty value is a legitimate setting rather than a missing argument.
+        var value = call.Arg("value");
+        if (value is null)
+            return $"Error: no value was provided. Pass the value '{setting}' should be set to.";
+
+        var (file, unresolved) = await ResolveInstanceFilePathAsync(resolved!, path, cancellationToken);
+        if (unresolved is not null)
+            return unresolved;
+
+        var prepared = await _operations.PrepareInstanceSettingEditAsync(
+            resolved!, file!, setting, value, call.Arg("copy_from")?.Trim(), cancellationToken);
+        if (!prepared.IsSuccess)
+            return $"Error: {prepared.Error ?? "the setting could not be changed."} Nothing was staged.";
+
+        var summary = prepared.Value!;
+        var byteCount = System.Text.Encoding.UTF8.GetByteCount(summary.Content);
+        if (byteCount > MaxWriteBytes)
+            return $"Error: the resulting file is {byteCount:N0} bytes, over the {MaxWriteBytes / (1024 * 1024)} MB limit.";
+
+        _confirmations.Stage(new PendingConfirmation(
+            ConfirmationKind.WriteFile, resolved!, InstanceName: null, ConfigKey: file!, ConfigValue: summary.Content));
+
+        // The reply names the file the edit resolved to, not the one the caller asked for: those differ
+        // exactly when a path was corrected, which is the case a person most needs to see.
+        return $"Staged a change to '{setting}' in '{file}' on '{resolved}' for confirmation: "
+             + $"'{summary.PreviousValue}' becomes '{summary.NewValue}', every other setting in the file "
+             + "untouched. A confirmation prompt with a preview has been shown to the user. This is NOT "
+             + "done yet and will only run if a permitted human confirms it — tell the user it's awaiting "
+             + "their confirmation, and that a running server picks up the change on its next restart.";
     }
 
     /// <summary>

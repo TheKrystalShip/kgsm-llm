@@ -148,6 +148,18 @@ public class ToolDispatcher : IToolDispatcher
 
     public async Task<ToolOutput> ExecuteAsync(LlmToolCall call, CancellationToken cancellationToken = default)
     {
+        var output = await DispatchAsync(call, cancellationToken);
+
+        // Every figure the model is about to read, recorded for the reply review. One place, after
+        // the whole chain below, because a tool's answer is what it RETURNS — recording it per
+        // handler would leave whichever handler was added last silently unrecorded, and a figure
+        // missing from the ledger reads as one the model invented.
+        MeasuredValues.Note(output.Summary);
+        return output;
+    }
+
+    private async Task<ToolOutput> DispatchAsync(LlmToolCall call, CancellationToken cancellationToken)
+    {
         _logger.LogInformation("Dispatching tool '{Tool}' args={Args}",
             call.Name, string.Join(", ", call.Arguments.Select(kv => $"{kv.Key}={kv.Value}")));
 

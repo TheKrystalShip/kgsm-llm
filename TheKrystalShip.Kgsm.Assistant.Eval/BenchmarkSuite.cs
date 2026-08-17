@@ -106,7 +106,12 @@ internal static class BenchmarkSuite
     /// and neither a measurement nor a passing remark is. The three are one group because each is
     /// trivially passed alone — by remembering everything, or nothing — and only the pair of opposite
     /// expectations measures the distinction the feature rests on.
-    public const string Version = "v22";
+    /// v23 adds the figures group (Q), which reads the assistant's own fabricated-figure guard: Q1 asks
+    /// for "the port" where the tool reported two — the phrasing measured to make the model state a
+    /// plausible neighbour instead of either measured value — and Q2 asks the same question in the
+    /// plural as the control. The check is on what the turn produced, never on whether a port number is
+    /// right in the world.
+    public const string Version = "v23";
 
     // "Does the reply say something is pending?" has ONE definition, and it is the assistant's own
     // (PendingConfirmationNote) — reached through C.SaysConfirmationPending. A copy of the pattern
@@ -233,6 +238,27 @@ internal static class BenchmarkSuite
         Single("F2", "find something with no URL in hand", true, Array.Empty<FixtureRole>(),
             "what's the latest version of Terraria? can you look it up online?",
             C.CalledTool(LlmTools.Search, "starts from search when no URL is in hand")),
+
+        // --- Figures (Q): a measured value survives the trip into the sentence.
+        //
+        // The singular phrasing is the one that fails: asked for THE port where the tool reported two,
+        // the model picks one, and what it picks is a plausible neighbour rather than either measured
+        // value. The plural phrasing is the control — same instance, same tool, same figures, and it
+        // was already correct — so a red Q1 beside a green Q2 says the wording broke it rather than
+        // the read.
+
+        // Neither asserts WHICH tool answers. A ports question about a game reads equally well as a
+        // question about the installed server (get_instance_status) or about the game type
+        // (get_blueprint_info), and both report ports — the model was measured using each, correctly.
+        // Routing is covered by the B group; pinning it here would fail a case whose transcript is fine.
+        Single("Q1", "the port, singular, where the tool reported two", true,
+            new[] { FixtureRole.UniqueGame },
+            "what port is {unique_game} on?",
+            C.NoFabricatedFigure("the port it reports is one the tool returned")),
+
+        Single("Q2", "the ports, plural — the control", true, new[] { FixtureRole.UniqueGame },
+            "what ports does {unique_game} use?",
+            C.NoFabricatedFigure("the ports it reports are the ones the tool returned")),
 
         // --- Memory (J): what outlasts the conversation gets written down, and what a tool measures
         // never does. The two halves are one rubric because either alone is easy to pass by being

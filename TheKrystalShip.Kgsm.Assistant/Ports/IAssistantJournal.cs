@@ -118,6 +118,9 @@ public enum ClaimCheck
 
     /// <summary>The person asked for the web and the turn looked nothing up.</summary>
     UnsearchedWeb,
+
+    /// <summary>The reply reported a figure that appears in nothing the turn was given.</summary>
+    FabricatedFigure,
 }
 
 /// <summary>What was done about a reply that failed its check.</summary>

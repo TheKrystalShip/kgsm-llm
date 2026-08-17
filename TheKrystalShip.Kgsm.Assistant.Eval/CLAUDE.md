@@ -229,7 +229,15 @@ run in CI without a model. A live run is the only thing that exercises the model
   fails it. The harm is bounded rather than fixed — with a deliberately wrong port memory seeded, the
   model still called the status tool and did not answer from the memory. **The one measured lever is
   `Llm:Think`**, which is a latency trade, not a free fix.
-- **Unrelated defect the corpus cannot see: a port number is fabricated on the SINGULAR phrasing.**
+- **Fabricated figures are now guarded, and the `Q` group reads the guard.** `FabricatedFigureClaim`
+  compares every run of four or more digits in the reply against everything the turn was given
+  (`MeasuredValues`: tool output, the request, the injected lists). Unbacked ⇒ one re-prompt quoting
+  the figures back, then a correction appended if the second attempt is unbacked too. `Q1`/`Q2` assert
+  the correction is absent, which is a property of what the turn produced — invariant #1 kept, the
+  same footing as `StagesFaithfulFileEdit`. Four digits is the floor because measured values start
+  there and derived ones (counts, percentages, ordinals) stop below it; checking those would argue
+  with arithmetic the model is entitled to do.
+- **The defect that guard exists for: a port number is fabricated on the SINGULAR phrasing.**
   Measured with zero memories present, against an instance whose config says `8211/udp|27015/udp`:
 
   | question | correct |
@@ -242,9 +250,13 @@ run in CI without a model. A live run is the only thing that exercises the model
   indirection — asked for one number the model picks one, and what it picks is a plausible
   neighbouring value (`21075`, `17015`, `21015`) rather than either measured port. Those values appear
   in no config on the host. The tool call and its result are correct; the digits change on the way into
-  the prose, and the reply is exactly as confident either way. Invariant #1 is why no check here
-  catches it — scoring the world fact is what the corpus refuses to do — so it is recorded rather than
-  encoded as a case. Unfixed.
+  the prose, and the reply is exactly as confident either way. It is not confined to ports — the same
+  guard caught a mangled backup timestamp (`Ketchup-2026015…`) on a listing question.
+
+  Scoring the world fact is what the corpus refuses to do, so the case asserts the guard's verdict
+  rather than the port. With the guard in place `Q1` is 3/3, and a sweep of five number-dense
+  questions — including a thirteen-port host listing — flagged nothing, so the check does not argue
+  with correct answers.
 - **Known model finding (corpus v2):** gemma4:12b handles the ambiguous `G` cases well;
   **qwen3.5:9b intermittently returns an EMPTY reply after tool calls** on open-ended diagnostic
   prompts (CLI-confirmed, not a harness artifact) and misses network-exposure reasoning. The

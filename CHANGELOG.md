@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.0] - 2026-08-17
+
+### Added — a figure the tools did not report never stands unchallenged
+
+A measured value can be correct in the tool result and wrong in the sentence. Asked "what port is
+Ketchup on?" where the config says `8211/udp|27015/udp`, gemma4:12b answers correctly one time in
+three and otherwise reports a plausible neighbour — `21075`, `17015`, `21015` — that appears in no
+configuration on this host. The tool call is right, its result is right, and the digits change on the
+way into the prose. Nothing downstream can tell that answer from a correct one.
+
+`FabricatedFigureClaim` holds every run of four or more digits in the reply against everything the
+turn was given (`MeasuredValues`: the tool output, the request, and the injected instance list and
+clock). An unbacked figure re-prompts the turn once, quoting the figures back so the model knows
+which to re-read; a second unbacked attempt appends a correction that deliberately names no correct
+value, because none is known.
+
+Four digits is the floor. Measured values start there and the numbers a reply computes rather than
+copies — how many servers are up, a percentage, an ordinal — stop below it, so the check never argues
+with arithmetic the model is entitled to do. It runs only on a turn that called a tool: a turn that
+called none is answering from the model's own knowledge, where "Minecraft uses 25565 by default" is a
+fair answer. An empty ledger flags nothing, so a fault in the recording can never contradict every
+correct figure at once.
+
+Measured on the live host: the failing question is 3/3 clean with the guard in place, and a sweep of
+five number-dense questions — including a thirteen-port host listing — flagged nothing. It also
+caught something unlooked-for: a mangled backup timestamp (`Ketchup-2026015…`), so the drift is not
+confined to ports.
+
+Benchmark corpus v23 adds the `Q` group, which asserts the guard's verdict rather than the port —
+scoring what the turn produced, never whether a number is right in the world.
+
 ## [1.35.0] - 2026-08-17
 
 ### Added — a person can see and prune what is remembered about them

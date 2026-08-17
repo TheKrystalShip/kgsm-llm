@@ -263,6 +263,10 @@ public class ServerAssistant : IServerAssistant
         // by the model — see MemoryOwner.
         using var remembering = MemoryOwner.BeginTurn(MemoryScope.OwnerOf(conversationId));
 
+        // Every figure the turn is given, for the reply review. Seeded with what the model may quote
+        // before any tool has run — the request, and the prompt carrying the instance list and clock.
+        using var figures = MeasuredValues.BeginTurn(userPrompt, turn.SystemPrompt);
+
         // The review reads the scope, so it is attached here rather than at construction: the scope
         // exists only for the duration of the turn.
         var result = await _agent.RunAsync(
@@ -388,6 +392,9 @@ public class ServerAssistant : IServerAssistant
             // ⚠ Opened HERE for exactly the reason above: this is the yield-free flow the dispatcher
             // runs on, and a memory scope opened in the iterator would be gone by the first tool call.
             using var remembering = MemoryOwner.BeginTurn(MemoryScope.OwnerOf(turn.ConversationId));
+            // Opened HERE for the same reason as the scopes above — this is the yield-free flow the
+            // dispatcher notes each tool's answer onto.
+            using var figures = MeasuredValues.BeginTurn(turn.UserPrompt, turn.SystemPrompt);
 
             var finalText = string.Empty;
             LlmUsage? finalUsage = null;
@@ -534,6 +541,7 @@ public class ServerAssistant : IServerAssistant
     {
         var rePrompted = false;
         var rePromptedForSearch = false;
+        var rePromptedForFigures = false;
         return text =>
         {
             // Asked to look online, and nothing was looked up. Checked before the action claim: this
@@ -561,6 +569,39 @@ public class ServerAssistant : IServerAssistant
                     ClaimCheck.UnsearchedWeb, ClaimResolution.Corrected,
                     ClaimNet.Review, conversationId);
                 return ReplyReview.Amend(UnsearchedWebRequest.Correction);
+            }
+
+            // A figure the tools did not report. Checked on any turn that called one, whether or not it
+            // also staged something: a reply can stage a real backup and still misquote the port beside
+            // it, and the misquote is what the reader has no way to catch.
+            if (MeasuredValues.AnyToolReported)
+            {
+                var unbacked = FabricatedFigureClaim.UnbackedIn(text, MeasuredValues.Given);
+                if (unbacked.Count > 0)
+                {
+                    if (!rePromptedForFigures)
+                    {
+                        rePromptedForFigures = true;
+                        _logger.LogWarning(
+                            "Reply reported figure(s) {Figures} that no tool returned this turn; re-prompting "
+                            + "once. Conversation {ConversationId}",
+                            string.Join(", ", unbacked), conversationId);
+                        _journal.ClaimCorrected(
+                            ClaimCheck.FabricatedFigure, ClaimResolution.RePrompted,
+                            ClaimNet.Review, conversationId);
+                        return ReplyReview.Retry(
+                            FabricatedFigureClaim.NudgeFor(unbacked), FabricatedFigureClaim.RetryNotice);
+                    }
+
+                    _logger.LogWarning(
+                        "Reply still reported figure(s) {Figures} that no tool returned; correction appended. "
+                        + "Conversation {ConversationId}",
+                        string.Join(", ", unbacked), conversationId);
+                    _journal.ClaimCorrected(
+                        ClaimCheck.FabricatedFigure, ClaimResolution.Corrected,
+                        ClaimNet.Review, conversationId);
+                    return ReplyReview.Amend(FabricatedFigureClaim.Correction);
+                }
             }
 
             if (scope.Staged.Count > 0 || scope.ActionPerformed)

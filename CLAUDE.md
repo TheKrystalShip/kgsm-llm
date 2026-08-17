@@ -225,6 +225,16 @@ Things that bite if you don't know them:
 - **Never fabricate a status or metric.** Measured, or explicitly "unknown" — never invented. The
   ecosystem-wide rule; it's also why the eval scores *trajectory* (which tool was called), never a
   world fact (`TheKrystalShip.Kgsm.Assistant.Eval/CLAUDE.md` invariant #1).
+- **The rule covers the figures in the reply, not just the tool call.** A measured value can be right
+  in the tool result and wrong in the sentence: `gemma4:12b` reports a port correctly one time in three
+  when asked for "the port" of a server that has two, and states a plausible neighbour otherwise.
+  `FabricatedFigureClaim` holds every run of 4+ digits in the reply against everything the turn was
+  given (`MeasuredValues` — tool output, the request, the injected lists); unbacked figures re-prompt
+  the turn once, quoting them back, and a second failure appends a correction that claims no correct
+  value, because none is known. Four digits is the floor: measured values start there and the numbers
+  a reply computes rather than copies stop below it. It runs only on a turn that called a tool — a
+  turn that called none is answering from the model's own knowledge, where a well-known default port
+  is a fair answer.
 - **The rule covers the model's account of its own turn.** A reply is held against what the turn did:
   on a turn that staged nothing and ran nothing, a first-person claim of a staged or completed action
   is false by construction (`UnbackedActionClaim`). The check is one-sided — it never runs on a turn

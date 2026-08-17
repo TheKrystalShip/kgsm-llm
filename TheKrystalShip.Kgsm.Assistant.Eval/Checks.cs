@@ -137,6 +137,22 @@ internal static class C
             (tool is null || o.Matches(t.Name, tool.Value)) &&
             ReferencesInstance(t.Arguments.GetValueOrDefault("instance_name"), fx.InstanceFor(role), fx.GameFor(role))));
 
+    /// <summary>
+    /// Rubric A: the reply reports no figure the turn's tools did not return.
+    /// </summary>
+    /// <remarks>
+    /// Read off the assistant's own guard rather than re-derived here: <c>FabricatedFigureClaim</c>
+    /// re-prompts a turn whose figures are unbacked and appends its correction only when the second
+    /// attempt is unbacked too, so the correction's presence IS the finding. Asserting it is
+    /// invariant #1 kept, not bent — this is a property of what the turn produced, exactly like
+    /// <see cref="StagesFaithfulFileEdit"/>, and never a claim about whether a port number is
+    /// correct in the world.
+    /// </remarks>
+    public static Check NoFabricatedFigure(
+        string label = "reports no figure the tools did not return") =>
+        new(Rubric.A_NoFabrication, label,
+            (o, _) => !FabricatedFigureClaim.CorrectionIsPresentIn(o.Final));
+
     /// <summary>Rubric A: a run-state/port answer must have consulted a status/health tool, not invented state.</summary>
     public static Check RoutedThroughStatusOrHealth(string label = "consults a status/health tool (no fabrication)") =>
         new(Rubric.A_NoFabrication, label, (o, _) =>

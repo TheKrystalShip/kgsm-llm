@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-08-18
+
+### Added — every journal line now carries its own id
+
+Every event the assistant writes carries an `Id`: a UUIDv7 the shared writer mints per line, inherited by pinning
+kgsm-lib 4.41.0. Nothing in this repo changed but the pin.
+
+Why it exists: every durable reference to an event on this host is a byte offset into a named segment,
+which holds only while a segment is appended to and deleted whole (conformance §2·l). An id makes a
+rewrite **detectable** — a reference carrying both finds the line by position and proves it is the
+right one by id, where before a shifted offset resolved to a real, parseable event of the wrong kind
+with nothing to notice.
+
+⚠ Optional and optional forever: lines written before this are on disk for as long as retention holds
+them, and **absent means unknown, never a mismatch**. Authority: `journal-entry-id-plan.md`.
+
 ### Fixed — the indexer binary can no longer drift behind the unit that launches it
 
 `deploy/deploy.sh` rebuilds the RAG indexer on every deploy of a host that already has one.

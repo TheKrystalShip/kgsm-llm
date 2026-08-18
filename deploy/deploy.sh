@@ -25,8 +25,17 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/deploy-common.sh"
 
+# The indexer is opt-in to INSTALL, never opt-in to KEEP CURRENT. Once a host has it, every deploy
+# rebuilds it — because its unit lives in this repo and moves with the source, and a flag that had to
+# be remembered is a flag that eventually is not: an option added to the indexer arrives in the unit
+# on the next deploy while the binary that must accept it stays behind, and the service crashloops on
+# an argument it has never heard of.
 WITH_INDEXER=0
 [[ "${1:-}" == "--with-indexer" ]] && WITH_INDEXER=1
+if [[ "$WITH_INDEXER" -eq 0 && -x "$PREFIX/indexer/kgsm-rag-indexer" ]]; then
+    WITH_INDEXER=1
+    log "indexer is installed here, so it is rebuilt with the rest (--with-indexer is for the first time)"
+fi
 
 SVC_PROJ="$REPO_DIR/TheKrystalShip.Kgsm.Assistant.Service/TheKrystalShip.Kgsm.Assistant.Service.csproj"
 CLI_PROJ="$REPO_DIR/TheKrystalShip.Kgsm.Assistant.Cli/TheKrystalShip.Kgsm.Assistant.Cli.csproj"

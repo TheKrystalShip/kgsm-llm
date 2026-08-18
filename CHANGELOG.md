@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the indexer binary can no longer drift behind the unit that launches it
+
+`deploy/deploy.sh` rebuilds the RAG indexer on every deploy of a host that already has one.
+`--with-indexer` now means "install it here for the first time" rather than "remember to type this
+each time".
+
+The indexer's unit lives in this repo and moves with the source, while its binary was rebuilt only
+when the flag was passed. So an option added to the indexer reached the unit on the next ordinary
+deploy and the binary that had to accept it stayed behind — `kgsm-rag-indexer: unknown option
+'--provider'`, exit 2, and a crashloop against a flag the installed build had never heard of.
+
 ### Fixed — a first setup on a host where nothing is installed yet completes
 
 `deploy/setup.sh` enables its unit at boot and starts it only when something exists at the unit's

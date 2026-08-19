@@ -271,6 +271,25 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task New_AnswersWithTheConversationItStarted_NamedTheWayTheListingNamesIt()
+    {
+        // The whole point of answering with the row: the surface that pressed New chat adopts the leaf's
+        // conversation instead of composing one of its own. Two surfaces then show one name for one
+        // conversation, because neither of them chose it.
+        var client = await AuthedAsync(Factory());
+
+        var started = await RunAsync(client, "new", "named-chat");
+        var carried = started.GetProperty("conversation");
+        carried.GetProperty("id").GetString().Should().Be("named-chat");
+        carried.GetProperty("title").GetString().Should().Be(ConversationTitle.NewConversation);
+
+        // Byte-for-byte the row every other surface reads out of the listing.
+        var listed = await client.GetFromJsonAsync<JsonElement>("/conversations");
+        var fromListing = listed.EnumerateArray().Single(c => c.GetProperty("id").GetString() == "named-chat");
+        fromListing.GetProperty("title").GetString().Should().Be(carried.GetProperty("title").GetString());
+    }
+
+    [Fact]
     public async Task New_StartsADIFFERENTConversation_WhenTheOneItIsTypedInHasBeenSpokenIn()
     {
         // "Start a fresh conversation" typed mid-chat cannot mean the chat it was typed in. The leaf

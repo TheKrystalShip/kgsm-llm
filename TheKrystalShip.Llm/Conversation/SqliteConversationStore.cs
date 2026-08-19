@@ -106,9 +106,6 @@ public sealed class SqliteConversationStore : IConversationStore
         cmd.ExecuteNonQuery();
     }
 
-    // The longest a derived title is kept (first prompt, single-lined). Slack over the ~40 the SPA shows.
-    private const int TitleMaxLength = 80;
-
     // The actor namespace of a conversation id: everything up to its SECOND ':' — {surface}:{user} —
     // or the whole id when it carries no chat segment (the bare per-user conversation). Derived from
     // the ids themselves because the store holds no user table, and inventing one would create a
@@ -271,7 +268,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 var turn = JsonSerializer.Deserialize<ConversationTurnRecord>(reader.GetString(1), Json);
                 if (turn is not null)
-                    titles[reader.GetString(0)] = DeriveTitle(turn.UserPrompt);
+                    titles[reader.GetString(0)] = turn.UserPrompt;
             }
         }
 
@@ -299,7 +296,7 @@ public sealed class SqliteConversationStore : IConversationStore
         return summaries.Select(s => new ConversationSummary
         {
             ConversationId = s.Id,
-            Title = titles.TryGetValue(s.Id, out var t) ? t : null,
+            Title = ConversationTitle.For(titles.TryGetValue(s.Id, out var t) ? t : null),
             CreatedAt = s.Created,
             LastActivityAt = s.Last,
             TurnCount = s.Turns,
@@ -563,7 +560,7 @@ public sealed class SqliteConversationStore : IConversationStore
                             ConversationId = v.ConversationId,
                             TurnId = reader.GetInt64(9),
                             Note = v.Note!,
-                            Prompt = reader.IsDBNull(10) ? null : DeriveTitle(reader.GetString(10)),
+                            Prompt = reader.IsDBNull(10) ? null : ConversationTitle.Shorten(reader.GetString(10)),
                             At = v.At,
                         });
                     }
@@ -698,13 +695,6 @@ public sealed class SqliteConversationStore : IConversationStore
         var sorted = values.OrderBy(v => v).ToList();
         var rank = (int)Math.Ceiling(percentile / 100.0 * sorted.Count);
         return Math.Round(sorted[Math.Clamp(rank - 1, 0, sorted.Count - 1)], 1);
-    }
-
-    // A conversation's display title: its first prompt, collapsed to a single line and length-capped.
-    private static string DeriveTitle(string prompt)
-    {
-        var oneLine = prompt.ReplaceLineEndings(" ").Trim();
-        return oneLine.Length <= TitleMaxLength ? oneLine : oneLine[..TitleMaxLength].TrimEnd() + "…";
     }
 
     public IReadOnlyList<ConversationEntry> GetHistory(string conversationId) =>

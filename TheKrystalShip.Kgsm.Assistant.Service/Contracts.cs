@@ -104,6 +104,13 @@ public sealed record CommandDto(
 /// <param name="Compaction">What <c>/compact</c> did.</param>
 /// <param name="Commands">The catalog, from <c>/help</c>.</param>
 /// <param name="Tools">What the assistant can do, from <c>/tools</c>.</param>
+/// <param name="Memories">What the assistant has written down, from <c>/memory</c>.</param>
+/// <param name="Conversation">
+/// The conversation <c>/new</c> started, as the listing states it. A client adopts this row rather than
+/// composing one: a fresh chat has a NAME, and it is this leaf's to give — the alternative is the
+/// surface that pressed the button showing a different word for the conversation than every other
+/// surface reads out of <c>GET /conversations</c>.
+/// </param>
 public sealed record CommandResultDto(
     string Command,
     string Message,
@@ -112,7 +119,8 @@ public sealed record CommandResultDto(
     CompactionResultDto? Compaction = null,
     IReadOnlyList<CommandDto>? Commands = null,
     IReadOnlyList<ToolDto>? Tools = null,
-    IReadOnlyList<MemoryDto>? Memories = null);
+    IReadOnlyList<MemoryDto>? Memories = null,
+    ConversationSummaryDto? Conversation = null);
 
 /// <summary>
 /// One thing the assistant remembers about the caller, as a surface shows it.
@@ -372,8 +380,10 @@ public sealed record TranscriptResponse(string Text);
 /// One row of <c>GET /conversations</c>: a past chat in the caller's namespace. <see cref="Id"/> is the
 /// per-chat sub-scope the client sent as <c>conversationId</c> (empty for the legacy bare per-user
 /// conversation), so a client joins this list to its own chats by id and fetches one by it.
-/// <see cref="Title"/> is the first prompt (null for an empty conversation); the timestamps + count let
-/// the client order and label without loading the transcript.
+/// <see cref="Title"/> is what the conversation is called — its first prompt, shortened, or the name a
+/// conversation with no turn carries. It is NEVER null, and never something a client composes: two
+/// surfaces must show one conversation under one name, which they cannot do if each labels a null
+/// itself. The timestamps + count let the client order without loading the transcript.
 /// <para>
 /// <see cref="Think"/> and <see cref="Autorun"/> are the switches standing on each conversation,
 /// EFFECTIVE (already resolved against the host's configured default) exactly as
@@ -384,7 +394,7 @@ public sealed record TranscriptResponse(string Text);
 /// </summary>
 public sealed record ConversationSummaryDto(
     string Id,
-    string? Title,
+    string Title,
     DateTimeOffset CreatedAt,
     DateTimeOffset LastActivityAt,
     int TurnCount,
@@ -458,7 +468,7 @@ public sealed record AdminConversationUserDto(
 /// </summary>
 public sealed record AdminConversationDto(
     string Id,
-    string? Title,
+    string Title,
     DateTimeOffset CreatedAt,
     DateTimeOffset LastActivityAt,
     int TurnCount,

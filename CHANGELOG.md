@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-08-19
+
+### Changed — the leaf names every conversation, so two clients cannot call one chat two things
+
+`title` on a `GET /conversations` row is never null. It is the first prompt on one line, capped at 80
+with an ellipsis, and a conversation that holds no turn yet is called **New chat**. `ConversationTitle`
+is the one place either half of that is decided; `ConversationSummary.Title` is `required string`, and
+the review listing (`GET /admin/conversations`) is named the same way off the same index.
+
+A null was a word each surface had to invent, and they invented different ones — the same fresh
+conversation read `New chat` in the Control Panel's dock and `Untitled chat` in the standalone
+assistant, because the panel had composed a row locally and the standalone was labelling a listing row
+it had never seen. Naming a conversation is a cross-client fact, so it is answered once, here.
+
+`POST /commands/new` answers with the conversation it started (`conversation`), not only its id — the
+listing row, read back rather than assembled, so the surface that pressed New chat adopts the identical
+row every other surface will read. `/new` also still answers `conversationId`, unchanged.
+
+Wire contract **2.1**. Neither change obliges a client to move: an unknown field is ignored, and a
+client still carrying its own name for an unnamed conversation stops reaching it. The guarantee runs
+the other way — a client that renders `title` as given needs a leaf at 2.1 to have one to render.
+
 ## [1.38.0] - 2026-08-19
 
 ### Added — a person can correct what the assistant remembers about them, not only drop it

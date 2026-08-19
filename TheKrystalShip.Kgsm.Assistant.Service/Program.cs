@@ -1007,8 +1007,20 @@ secured.MapPost("/commands/{name}", async (
             conversations.CreateConversation($"{WebSurface}:{principal.UserId}:{started}");
             bus.Publish(principal.UserId, new ConversationEvent(
                 ConversationStream.Started, new ConversationChanged(started, origin)));
+
+            // Hand back the conversation itself, not only its id. A fresh chat has a name, and it is
+            // this leaf's to give — a client that composed its own would be showing a different word
+            // for the same conversation than the one every OTHER surface reads out of the listing.
+            // Read back rather than assembled from what was just written, for the same reason the
+            // switches are: the row the asking surface adopts is then the identical row the listing
+            // will hand everybody else.
+            var row = conversations.ListConversations($"{WebSurface}:{principal.UserId}")
+                .FirstOrDefault(c => ConversationHistoryMapper.ChatIdOf(c.ConversationId, principal.UserId) == started);
             return Results.Ok(new CommandResultDto(
-                command.Name, "Started a fresh conversation.", ConversationId: started));
+                command.Name, "Started a fresh conversation.", ConversationId: started,
+                Conversation: row is null
+                    ? null
+                    : ConversationHistoryMapper.ToSummaryDto(row, principal.UserId, llmOptions.Value.Think)));
         }
 
         case "compact":

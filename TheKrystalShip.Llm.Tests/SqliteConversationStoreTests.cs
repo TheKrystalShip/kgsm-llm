@@ -1050,10 +1050,26 @@ public sealed class SqliteConversationStoreTests : IDisposable
         store.CreateConversation("web:u:fresh").Should().BeTrue();
 
         // Started, not yet spoken into — and visible, so another device sees the chat that was opened.
+        // It is NAMED, not left nameless: every surface reading this row shows the same word for it,
+        // which is only true while none of them is choosing that word itself.
         var listed = Create().ListConversations("web:u").Single();
         listed.ConversationId.Should().Be("web:u:fresh");
         listed.TurnCount.Should().Be(0);
-        listed.Title.Should().BeNull();
+        listed.Title.Should().Be(ConversationTitle.NewConversation);
+    }
+
+    [Fact]
+    public void ListConversations_ShortensALongFirstPromptWithAnEllipsis()
+    {
+        var store = Create();
+        var prompt = new string('a', ConversationTitle.MaxLength + 20);
+        store.AppendTurn(Turn("web:u:long", prompt, "sure"));
+
+        // The cap and the ellipsis are the title, everywhere. A surface that shortened a prompt itself
+        // would show a different name for this conversation than every surface that did not.
+        var listed = Create().ListConversations("web:u").Single();
+        listed.Title.Should().Be(new string('a', ConversationTitle.MaxLength) + "\u2026");
+        listed.Title!.Length.Should().Be(ConversationTitle.MaxLength + 1);
     }
 
     [Fact]

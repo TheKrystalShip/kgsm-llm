@@ -1,6 +1,6 @@
 # The assistant wire contract
 
-**Contract version 2.0.**
+**Contract version 2.1.**
 
 The public HTTP contract between the assistant leaf and any browser client. Two clients consume
 it — `kgsm-web`'s assistant dock and the standalone assistant SPA — on independent deploy
@@ -81,6 +81,23 @@ Both are **read back**: `GET /conversations` carries `think` and `autorun` on ev
 client shows is what the next turn will run on. A surface displaying the switches states what it read,
 never what it last remembered, since any other surface may have moved them since. A move made while
 it is watching arrives on the event stream (§5), so it need not wait to be asked.
+
+### A conversation is named by the leaf
+
+`title` on a `GET /conversations` row is **never null**. It is the conversation's first prompt on one
+line, capped at 80 characters with an ellipsis; a conversation that holds no turn yet is called
+**`New chat`**.
+
+Naming is the leaf's, not a client's, because a null is a word each surface has to invent and they
+invent different ones — which is how one conversation comes to read `New chat` in one client and
+`Untitled chat` in the next. A client therefore renders `title` as given and shortens nothing: a
+surface applying its own cap shows a different name for a long first prompt than a surface that does
+not.
+
+The one conversation a client may hold that this does not cover is one it has minted an id for and
+the leaf has not authored yet — the moment between pressing New chat and `/new` answering. `New chat`
+is the name for that moment too, which is why the string is stated here rather than left to each
+surface: both sides say it, so the name does not change when the leaf takes the conversation over.
 
 `GET /conversations/{id}` also carries **`pending`**: the proposals still awaiting this caller in that
 conversation, each shaped exactly as the `command.proposed` frame (§5) that first announced it, with
@@ -353,6 +370,7 @@ command produced:
 | Field | From |
 |---|---|
 | `conversationId` | `/new` — the conversation that now stands |
+| `conversation` | `/new` — that conversation's listing row, so a client adopts it rather than composing one |
 | `state` | `/think`, `/autorun` — the state the switch now stands at |
 | `compaction` | `/compact` — `{ compacted, messagesCompacted, summary }` |
 | `commands` | `/help` — the same catalog the listing answers |
@@ -366,7 +384,9 @@ question, so a client's typo surfaces as one instead of reaching the model.
 `conversationId` is taken up only while it holds nothing — a surface that minted an id and is asking
 for it to be brought into being. Sent from a conversation that has been spoken in, the leaf starts a
 different one and names it, because "start a fresh conversation" cannot mean the one it was typed in.
-Either way the answer is the conversation the next turn should carry.
+Either way the answer is the conversation the next turn should carry, and it comes back as the whole
+listing row (`conversation`) rather than only an id — including its **name**, so the surface that
+started it shows what every other surface will read.
 
 The gate is re-checked at the POST rather than trusted from the listing: a client can post any name,
 and the listing is a convenience, never the authorization.
@@ -518,6 +538,12 @@ The contract version at the top of this document changes when a client must chan
 **Additive, no version change:** a new frame type; a new optional field; a new `verb`; a new
 `error.code`; a card lit on a tool that had none; a new `data` shape under an existing card. All
 of these are safe because clients ignore what they do not recognise and fall back to `summary`.
+
+**2.1** added `conversation` to the `/new` result and made `title` on a conversation row always
+present (§ *A conversation is named by the leaf*). Neither obliges an existing client to change: an
+unknown field is ignored, and a client still carrying its own name for an unnamed conversation simply
+stops reaching it. It is recorded as a version because the guarantee runs the other way — a client
+that renders `title` as given needs a leaf at 2.1 to have one to render.
 
 **Breaking, requires a version change:** removing or renaming a frame or a field; changing the
 type of an existing field; making an optional field required; changing what an existing `verb` or

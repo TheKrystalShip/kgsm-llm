@@ -77,7 +77,7 @@ internal sealed class TestConversationStore : IConversationStore
         return new ConversationSummary
         {
             ConversationId = id,
-            Title = turns.Count > 0 ? turns[0].Turn!.UserPrompt : null,
+            Title = ConversationTitle.For(turns.Count > 0 ? turns[0].Turn!.UserPrompt : null),
             CreatedAt = entries[0].CreatedAt,
             LastActivityAt = entries[^1].CreatedAt,
             TurnCount = turns.Count,

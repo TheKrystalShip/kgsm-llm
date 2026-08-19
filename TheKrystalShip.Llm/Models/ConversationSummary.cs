@@ -3,8 +3,8 @@ namespace TheKrystalShip.Llm.Models;
 /// <summary>
 /// A one-line index entry for a stored conversation — the shape <see cref="Interfaces.IConversationStore.ListConversations"/>
 /// returns so a surface can render a "your past chats" list without loading every transcript. Derived
-/// cheaply from the append-only log: <see cref="Title"/> is the first turn's prompt (the conversation's
-/// natural label; <c>null</c> when the conversation has no turn yet), the timestamps bound the log, and
+/// cheaply from the append-only log: <see cref="Title"/> is what it is called (see
+/// <see cref="ConversationTitle"/>), the timestamps bound the log, and
 /// <see cref="TurnCount"/> is how many turns it holds. The full transcript is fetched separately by
 /// <see cref="Interfaces.IConversationStore.GetHistory"/>.
 /// </summary>
@@ -13,8 +13,12 @@ public sealed record ConversationSummary
     /// <summary>The full stored conversation id (e.g. <c>web:{userId}:{chatId}</c>).</summary>
     public required string ConversationId { get; init; }
 
-    /// <summary>The first turn's prompt, single-lined and length-capped; <c>null</c> for an empty conversation.</summary>
-    public string? Title { get; init; }
+    /// <summary>
+    /// What the conversation is called — the first turn's prompt, single-lined and length-capped, or
+    /// <see cref="ConversationTitle.NewConversation"/> while it holds no turn. Never null: a name is the
+    /// store's to give, and a null here is a word each surface would have to invent separately.
+    /// </summary>
+    public required string Title { get; init; }
 
     /// <summary>When the conversation's first entry was appended.</summary>
     public required DateTimeOffset CreatedAt { get; init; }

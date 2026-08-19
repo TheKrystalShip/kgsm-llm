@@ -1069,19 +1069,85 @@ secured.MapPost("/commands/{name}", async (
     }
 });
 
-// What the assistant remembers about the caller, and dropping one of them.
+// What the assistant remembers about the caller: reading it, writing one by hand, and dropping one.
 //
 // ⚠ The owner is resolved through ConversationSurfaces.Key + MemoryScope, never composed inline as
 // web:{userId}. In a room these must address the ROOM's memory — composing it per-endpoint is exactly
 // how compacting a room quietly folded the caller's own chat and reported success.
 //
-// Memory is personal, so both are viewer-gated like the conversation reads beside them: seeing and
-// deleting what is remembered about YOU needs no authority over any server.
+// Memory is personal, so all of them are viewer-gated like the conversation reads beside them: seeing,
+// correcting and deleting what is remembered about YOU needs no authority over any server.
 secured.MapGet("/memories", (HttpContext http, IMemoryStore memories) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.UserId, chatScope: null));
     return Results.Ok(memories.List(owner).Select(MemoryDto.From).ToArray());
+});
+
+// The bounds a surface writes within, so an editor's counters are read from the host rather than
+// restated in a client that cannot know when they change.
+secured.MapGet("/memories/limits", (IOptions<MemoryOptions> options) =>
+    Results.Ok(new MemoryLimitsDto(
+        options.Value.MaxPerOwner, options.Value.MaxSummaryLength, options.Value.MaxBodyLength)));
+
+// Writing one by hand. Create and correct are the same call because that is what the store does: a
+// memory is revised by rewriting its key, so an edit verb here would be inventing a second mechanism
+// for the one the model already uses.
+//
+// Every refusal names the limit it hit and what to do about it, in the same terms the remember tool
+// refuses the model with — a person correcting a memory is owed the same sentence the assistant gets.
+secured.MapPut("/memories/{key}", (
+    string key, MemoryWriteRequest request, HttpContext http,
+    IMemoryStore memories, IOptions<MemoryOptions> options) =>
+{
+    var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.UserId, chatScope: null));
+
+    // Sanitised exactly as the tool sanitises what the model writes, and idempotently, so a key read
+    // out of the listing rewrites the row it was shown rather than filing a near-duplicate beside it.
+    var sanitized = MemoryKey.Sanitize(key);
+    if (sanitized is null)
+        return Results.BadRequest(new { error = "A memory needs a name made of letters and numbers." });
+
+    var summary = request.Summary?.Trim();
+    if (string.IsNullOrWhiteSpace(summary))
+        return Results.BadRequest(new
+        {
+            error = "A memory needs a summary — the one line the assistant reads back. State the fact "
+                  + "itself, not that a note exists.",
+        });
+
+    var limits = options.Value;
+    if (summary.Length > limits.MaxSummaryLength)
+        return Results.BadRequest(new
+        {
+            error = $"That summary is {summary.Length} characters and the limit is "
+                  + $"{limits.MaxSummaryLength}. Shorten it to the fact itself and put the detail in the body.",
+        });
+
+    var body = request.Body?.Trim() ?? string.Empty;
+    if (body.Length > limits.MaxBodyLength)
+        return Results.BadRequest(new
+        {
+            error = $"That body is {body.Length} characters and the limit is {limits.MaxBodyLength}. "
+                  + "Keep what matters and drop the rest.",
+        });
+
+    // ⚠ Origin null, which is what the record reserves for a memory a person entered themselves. It
+    // applies to a correction too: once somebody has rewritten the sentence, it is theirs and no
+    // longer an account of what some conversation concluded.
+    var record = new MemoryRecord(sanitized, summary, body, DateTimeOffset.UtcNow, Origin: null);
+
+    // ⚠ A refusal here is only ever "this would be a NEW memory past the cap" — the store allows a
+    // rewrite at the cap on purpose, so a full owner can still correct one that is wrong.
+    if (!memories.Write(owner, record))
+        return Results.Json(new
+        {
+            error = $"You already have {limits.MaxPerOwner} memories, which is the limit. Forget one "
+                  + "that no longer matters, then write this one again.",
+        }, statusCode: StatusCodes.Status409Conflict);
+
+    return Results.Ok(MemoryDto.From(record));
 });
 
 secured.MapDelete("/memories/{key}", (string key, HttpContext http, IMemoryStore memories) =>

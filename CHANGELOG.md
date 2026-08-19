@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-08-19
+
+### Added — a person can correct what the assistant remembers about them, not only drop it
+
+`PUT /memories/{key}` writes one memory by hand. Create and correct are the same call, because that is
+what the store does: a memory is revised by rewriting its key, and an edit verb here would be a second
+mechanism for the one the model already uses.
+
+Every refusal names the limit it hit and what to do about it, in the same terms the `remember` tool
+refuses the model with — somebody fixing a memory is owed the sentence the assistant gets. A blank or
+over-long summary and an over-long body are `400`; a **new** memory past `Memory:MaxPerOwner` is `409`.
+
+⚠ A correction at the cap is accepted, and only a new key is refused. The count is what is capped and a
+rewrite adds nothing to it, so a full owner can still fix a memory that is wrong.
+
+`GET /memories/limits` reports `maxPerOwner`, `maxSummaryLength` and `maxBodyLength`, so an editor's
+counters are read from the host rather than restated in a client that cannot know when they change.
+
+`MemoryDto` carries `source`: `you` for a memory a person wrote or rewrote by hand, `conversation` for
+one the assistant drew out of a chat. It is derived from the record's origin rather than carrying it —
+the origin holds an owner key, which is a user id, and a surface has no reason to print one. A
+correction makes a memory the person's: once they have rewritten the sentence it is no longer an
+account of what some conversation concluded.
+
+All three are viewer-gated like the listing beside them. Seeing, correcting and dropping what is
+remembered about **you** needs authority over no server.
+
 ## [1.37.0] - 2026-08-18
 
 ### Added — every journal line now carries its own id

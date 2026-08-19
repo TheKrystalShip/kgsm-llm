@@ -221,4 +221,207 @@ public class MemoryEndpointTests : IClassFixture<WebApplicationFactory<Program>>
 
         commands!.Select(c => c.Name).Should().Contain("memory");
     }
+
+    // ---- writing one by hand -----------------------------------------------------------------
+
+    [Fact]
+    public async Task Write_RequiresABearer()
+    {
+        var response = await Factory().CreateClient()
+            .PutAsJsonAsync("/memories/anything", new MemoryWriteRequest("Something."));
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Write_StoresItUnderTheCallersOwnOwner()
+    {
+        var factory = Factory();
+        var client = await AuthedAsync(factory, "writing-user");
+
+        var response = await client.PutAsJsonAsync(
+            "/memories/preferred-game", new MemoryWriteRequest("Tests with Factorio.", "Boots fast."));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var written = await response.Content.ReadFromJsonAsync<MemoryDto>();
+        written!.Key.Should().Be("preferred-game");
+        written.Summary.Should().Be("Tests with Factorio.");
+        written.Body.Should().Be("Boots fast.");
+
+        var listed = await client.GetFromJsonAsync<MemoryDto[]>("/memories");
+        listed.Should().ContainSingle().Which.Summary.Should().Be("Tests with Factorio.");
+
+        // Under the caller's own owner and no other — the same claim the read and delete paths hold.
+        factory.Services.GetRequiredService<IMemoryStore>()
+            .Get("web:writing-user", "preferred-game").Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Write_ByHand_IsSourcedToThePerson()
+    {
+        // Origin null is what the record reserves for a memory somebody entered themselves, and it is
+        // the only thing that lets a surface say why a memory exists.
+        var factory = Factory();
+        var client = await AuthedAsync(factory, "sourcing-user");
+        Remember(factory, "web:sourcing-user", "learned-note", "The assistant worked this out.");
+
+        await client.PutAsJsonAsync("/memories/typed-note", new MemoryWriteRequest("I typed this."));
+
+        var listed = (await client.GetFromJsonAsync<MemoryDto[]>("/memories"))!;
+        listed.Single(m => m.Key == "typed-note").Source.Should().Be("you");
+        listed.Single(m => m.Key == "learned-note").Source.Should().Be("conversation");
+    }
+
+    [Fact]
+    public async Task Write_SameKeyAgain_SupersedesRatherThanDuplicating()
+    {
+        var client = await AuthedAsync(Factory(), "correcting-user");
+
+        await client.PutAsJsonAsync("/memories/note", new MemoryWriteRequest("First reading."));
+        await client.PutAsJsonAsync("/memories/note", new MemoryWriteRequest("Corrected reading."));
+
+        var listed = await client.GetFromJsonAsync<MemoryDto[]>("/memories");
+        listed.Should().ContainSingle().Which.Summary.Should().Be("Corrected reading.");
+    }
+
+    [Fact]
+    public async Task Write_CorrectingOneTheAssistantWrote_MakesItThePersons()
+    {
+        var factory = Factory();
+        var client = await AuthedAsync(factory, "reclaiming-user");
+        Remember(factory, "web:reclaiming-user", "note", "What the chat concluded.");
+
+        await client.PutAsJsonAsync("/memories/note", new MemoryWriteRequest("What I actually meant."));
+
+        var listed = await client.GetFromJsonAsync<MemoryDto[]>("/memories");
+        listed.Should().ContainSingle().Which.Source.Should().Be("you");
+    }
+
+    [Fact]
+    public async Task Write_KeyIsSanitizedTheSameWayTheListingShowsIt()
+    {
+        // A key read out of a listing must address the row it was shown, and a key a person typed in
+        // their own spelling must land on the same one — or a correction files a near-duplicate.
+        var client = await AuthedAsync(Factory(), "spelling-user");
+
+        await client.PutAsJsonAsync("/memories/Preferred Game!", new MemoryWriteRequest("First."));
+        await client.PutAsJsonAsync("/memories/preferred-game", new MemoryWriteRequest("Second."));
+
+        var listed = await client.GetFromJsonAsync<MemoryDto[]>("/memories");
+        listed.Should().ContainSingle().Which.Key.Should().Be("preferred-game");
+        listed![0].Summary.Should().Be("Second.");
+    }
+
+    [Theory]
+    [InlineData("!!!")]
+    [InlineData("---")]
+    public async Task Write_KeyThatNamesNothing_IsRefused(string key)
+    {
+        var client = await AuthedAsync(Factory(), "unnameable-user");
+
+        var response = await client.PutAsJsonAsync(
+            "/memories/" + Uri.EscapeDataString(key), new MemoryWriteRequest("Something."));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Write_WithoutASummary_IsRefused(string? summary)
+    {
+        // The summary is the line every later turn reads. A memory without one is a note that says
+        // nothing, injected into every prompt.
+        var client = await AuthedAsync(Factory(), "blank-user");
+
+        var response = await client.PutAsJsonAsync(
+            "/memories/blank", new MemoryWriteRequest(summary));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await client.GetFromJsonAsync<MemoryDto[]>("/memories"))!.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Write_OverlongSummary_IsRefusedNamingTheLimit()
+    {
+        var factory = Factory();
+        var client = await AuthedAsync(factory, "verbose-user");
+        var limits = await client.GetFromJsonAsync<MemoryLimitsDto>("/memories/limits");
+
+        var response = await client.PutAsJsonAsync(
+            "/memories/long", new MemoryWriteRequest(new string('a', limits!.MaxSummaryLength + 1)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Contain(limits.MaxSummaryLength.ToString());
+    }
+
+    [Fact]
+    public async Task Write_OverlongBody_IsRefusedNamingTheLimit()
+    {
+        var client = await AuthedAsync(Factory(), "essay-user");
+        var limits = await client.GetFromJsonAsync<MemoryLimitsDto>("/memories/limits");
+
+        var response = await client.PutAsJsonAsync("/memories/long-body",
+            new MemoryWriteRequest("Fine.", new string('a', limits!.MaxBodyLength + 1)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Contain(limits.MaxBodyLength.ToString());
+    }
+
+    [Fact]
+    public async Task Write_AtTheCap_RefusesANewOneAndStillAcceptsACorrection()
+    {
+        // The two halves of the cap are one test because they are one rule: the count is what is
+        // capped, and a rewrite adds nothing to it. Refusing the correction would leave somebody full
+        // and unable to fix a memory that is wrong.
+        var factory = Factory();
+        var client = await AuthedAsync(factory, "full-user");
+        var limits = (await client.GetFromJsonAsync<MemoryLimitsDto>("/memories/limits"))!;
+
+        for (var i = 0; i < limits.MaxPerOwner; i++)
+            Remember(factory, "web:full-user", "note-" + i, "Note " + i);
+
+        var overflow = await client.PutAsJsonAsync(
+            "/memories/one-too-many", new MemoryWriteRequest("Would be the next one."));
+        overflow.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var refusal = await overflow.Content.ReadFromJsonAsync<JsonElement>();
+        refusal.GetProperty("error").GetString().Should().Contain(limits.MaxPerOwner.ToString());
+
+        var correction = await client.PutAsJsonAsync(
+            "/memories/note-0", new MemoryWriteRequest("Corrected at the cap."));
+        correction.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Write_CannotReachAnotherPersonsMemory()
+    {
+        var factory = Factory();
+        Remember(factory, "web:write-victim", "keep-this", "Still true.");
+
+        var client = await AuthedAsync(factory, "write-attacker");
+        var response = await client.PutAsJsonAsync(
+            "/memories/keep-this", new MemoryWriteRequest("Overwritten."));
+
+        // It succeeds — for the ATTACKER, who now has a memory of their own by that name. The victim's
+        // is untouched, because the key never addressed it.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        factory.Services.GetRequiredService<IMemoryStore>()
+            .Get("web:write-victim", "keep-this")!.Summary.Should().Be("Still true.");
+    }
+
+    [Fact]
+    public async Task Limits_AreReadableByAViewer()
+    {
+        // An editor reads its counters from here, so this is as viewer-gated as the listing it sits
+        // beside — and it describes the host, never the caller.
+        var client = await AuthedAsync(Factory(), "limits-user");
+
+        var limits = await client.GetFromJsonAsync<MemoryLimitsDto>("/memories/limits");
+
+        limits!.MaxPerOwner.Should().BePositive();
+        limits.MaxSummaryLength.Should().BePositive();
+        limits.MaxBodyLength.Should().BeGreaterThan(limits.MaxSummaryLength);
+    }
 }

@@ -117,22 +117,54 @@ public sealed record CommandResultDto(
 /// <summary>
 /// One thing the assistant remembers about the caller, as a surface shows it.
 /// </summary>
-/// <param name="Key">Its stable slug — what <c>DELETE /memories/{key}</c> names.</param>
+/// <param name="Key">
+/// Its stable slug — what <c>PUT /memories/{key}</c> and <c>DELETE /memories/{key}</c> name. It is
+/// the whole update mechanism, so a surface offering a rename is offering a write plus a forget.
+/// </param>
 /// <param name="Summary">The line injected into every turn.</param>
 /// <param name="Body">The detail, read on demand; empty when the summary said everything.</param>
 /// <param name="WrittenAt">
 /// When it was written. Shown rather than hidden: a memory is something the assistant was told, and
 /// how long ago is the only thing that says how much weight it still carries.
 /// </param>
+/// <param name="Source">
+/// Who put the sentence there: <c>you</c> for one a person wrote or rewrote by hand, <c>conversation</c>
+/// for one the assistant drew out of a chat. It answers "why does it think that" for somebody reading
+/// their own memory back.
+/// <para>
+/// ⚠ Derived from <see cref="TheKrystalShip.Llm.Models.MemoryRecord.Origin"/> rather than carrying it:
+/// the origin holds an owner key, which is a user id, and a surface has no reason to print one.
+/// </para>
+/// </param>
 public sealed record MemoryDto(
     string Key,
     string Summary,
     string Body,
-    DateTimeOffset WrittenAt)
+    DateTimeOffset WrittenAt,
+    string Source)
 {
     public static MemoryDto From(TheKrystalShip.Llm.Models.MemoryRecord memory) =>
-        new(memory.Key, memory.Summary, memory.Body, memory.WrittenAt);
+        new(memory.Key, memory.Summary, memory.Body, memory.WrittenAt,
+            memory.Origin is null ? "you" : "conversation");
 }
+
+/// <summary>
+/// The body of <c>PUT /memories/{key}</c> — what a person wants remembered, in the two parts the
+/// store keeps them in. The key rides the path, and the owner is derived server-side and is never
+/// anything a caller can name.
+/// </summary>
+/// <param name="Summary">
+/// Required. The one line that reaches every later turn, so it carries the whole cost of the feature's
+/// context budget.
+/// </param>
+/// <param name="Body">The detail, read only when something asks for it. Omitted means none.</param>
+public sealed record MemoryWriteRequest(string? Summary = null, string? Body = null);
+
+/// <summary>
+/// What a memory may weigh, from <c>GET /memories/limits</c>. An editor reads its counters from here
+/// rather than restating them, because a client cannot know when a host re-tunes them.
+/// </summary>
+public sealed record MemoryLimitsDto(int MaxPerOwner, int MaxSummaryLength, int MaxBodyLength);
 
 /// <summary>
 /// The body of <c>POST /commands/{name}</c>: which conversation the command applies to, and the

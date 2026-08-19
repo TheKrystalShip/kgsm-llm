@@ -11,6 +11,15 @@ using TheKrystalShip.KGSM.LeafConfig;
     unit: "kgsm-assistant-service.service",
     role: "The KGSM assistant — answers questions about this host and performs authorized actions on it.")]
 
+// The GPU this leaf's work costs is spent by the model backends it drives over HTTP; the service
+// itself holds no GPU context of its own, so nothing in its cgroup shows where the work goes. The
+// monitor attributes these units' VRAM and compute here and labels the figure with the unit it came
+// from, rather than folding it into this service's own resource numbers. A backend that is masked or
+// not running contributes nothing.
+[assembly: LeafGpuBackend("kgsm-llama-chat.service")]
+[assembly: LeafGpuBackend("kgsm-llama-embed.service")]
+[assembly: LeafGpuBackend("ollama.service")]
+
 // The sections this leaf owns live a layer below the host that binds them. Named rather than
 // discovered: kgsm-bot compiles against some of the same projects, and a section it did not ask for
 // appearing in its descriptor would fail a build in a repo nobody touched.

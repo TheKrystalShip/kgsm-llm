@@ -6,6 +6,11 @@
   "role": "The KGSM assistant — answers questions about this host and performs authorized actions on it.",
   "onDemand": false,
   "applyMode": "restart",
+  "gpuBackendUnits": [
+    "kgsm-llama-chat.service",
+    "kgsm-llama-embed.service",
+    "ollama.service"
+  ],
   "floorSources": [
     {
       "kind": "appsettings",

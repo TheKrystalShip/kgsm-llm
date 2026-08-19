@@ -10,7 +10,7 @@
          ships under. The three published libraries (TheKrystalShip.Llm, .Kgsm.Assistant and
          .Kgsm.Assistant.Relay) each version independently of it and of each other. Read by
          deploy/version.sh, which is the single source for packaging. -->
-    <Version>1.39.0</Version>
+    <Version>1.40.0</Version>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>
@@ -31,7 +31,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.2.0" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.3.0-dev.1" PrivateAssets="all" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="3.0.0" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Discord" Version="4.0.0" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Sessions" Version="2.0.0" />

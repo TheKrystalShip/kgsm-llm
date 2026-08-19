@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the leaf declares the GPU backends it drives
+
+`deploy/kgsm-llm.leaf.json` carries `gpuBackendUnits`: `kgsm-llama-chat.service`,
+`kgsm-llama-embed.service` and `ollama.service`. The service is an HTTP client to those backends and
+holds no GPU context of its own, so its own cgroup shows nothing of where its GPU work is spent —
+kgsm-monitor attributes those units' VRAM and compute to this leaf and labels each figure with the
+unit it came from, rather than folding a backend's memory into this service's own numbers.
+
+`kgsm-llama-embed` is also driven directly by `kgsm-rag-indexer`, so its figure is a claim that the
+backend is busy, not that the assistant is computing — which is why the block names the unit. A
+backend that is masked or not running contributes nothing and is not a fault.
+
+`TheKrystalShip.KGSM.LeafConfig` is pinned at `2.3.0-dev.1`, which is where the `[LeafGpuBackend]`
+attribute comes from.
+
 ## [1.39.0] - 2026-08-19
 
 ### Changed — the leaf names every conversation, so two clients cannot call one chat two things

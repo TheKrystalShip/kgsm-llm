@@ -16,13 +16,20 @@
 
 pkgbase=kgsm-llm
 pkgname=('kgsm-llm' 'kgsm-rag-indexer' 'kgsm-llm-llamacpp')
-pkgver=1.46.0
+pkgver=1.47.0
 pkgrel=1
 arch=('x86_64')
 url="https://github.com/TheKrystalShip/kgsm-llm"
 license=('GPL-3.0-or-later')
 # No separate debug package: these are shipped to a private fleet, not a distro archive.
-options=('!debug')
+#
+# !strip is load-bearing, not a preference. This is a .NET single-file publish: the managed
+# assemblies are appended to the apphost ELF and located through a footer at the end of the file.
+# `strip` rewrites the ELF and drops everything past its section table, which takes the bundle with
+# it — leaving a 78KB apphost that starts, finds no bundle, and exits with "Failure processing
+# application bundle; Arithmetic overflow while reading bundle." A Native-AOT binary is a real ELF
+# and survives stripping, which is why only the single-file packages carry this.
+options=('!debug' '!strip')
 
 _stage() { printf '%s' "${KGSM_STAGE:-${startdir}/../artifacts/publish}"; }
 

@@ -623,15 +623,22 @@ internal sealed class KgsmServerOperations : IServerOperations
     {
         try
         {
-            // Long-running; completion is also broadcast via events. Mirror the bot: run it
-            // and report queued-successfully unless it throws synchronously.
+            // The install runs to completion here and its exit code is the verdict: kgsm refuses an
+            // unknown or offline library, a name already taken and a full disk, each with a reason on
+            // stderr. That reason is what the model reads back, so it is passed through verbatim —
+            // reporting a refused install as a new server is a fabricated status.
             var (actor, origin) = Provenance();
-            await Task.Run(
+            var result = await Task.Run(
                 () => _instances.Install(
                     blueprint, library: library, version: version, name: instanceName,
                     actor: actor, origin: origin, port: port),
                 cancellationToken);
-            return Result.Success();
+            if (result.IsSuccess)
+                return Result.Success();
+
+            _logger.LogWarning("Install refused for blueprint {Blueprint} (name={Name}): {Error}",
+                blueprint, instanceName, result.Stderr);
+            return Result.Failure(NullIfEmpty(result.Stderr) ?? "unknown error");
         }
         catch (Exception ex)
         {
@@ -640,19 +647,11 @@ internal sealed class KgsmServerOperations : IServerOperations
         }
     }
 
-    public async Task<Result> UninstallAsync(string instance, CancellationToken cancellationToken = default)
+    public Task<Result> UninstallAsync(string instance, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var (actor, origin) = Provenance();
-            await Task.Run(() => _instances.Uninstall(instance, actor, origin), cancellationToken);
-            return Result.Success();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Uninstall failed for {Instance}", instance);
-            return Result.Failure(ex.Message);
-        }
+        var (actor, origin) = Provenance();
+        return RunAsync(nameof(UninstallAsync), instance,
+            () => _instances.Uninstall(instance, actor, origin), cancellationToken);
     }
 
     public Task<Result> SetInstanceConfigValueAsync(
@@ -1000,7 +999,9 @@ internal sealed class KgsmServerOperations : IServerOperations
                 return Result.Success();
 
             _logger.LogWarning("{Op} failed for {Instance}: {Error}", op, instance, result.Stderr);
-            return Result.Failure(result.Stderr ?? "unknown error");
+            // A refusal the model is handed with no words is one it retries verbatim; say that the
+            // reason is unknown rather than passing an empty message off as the engine's answer.
+            return Result.Failure(NullIfEmpty(result.Stderr) ?? "unknown error");
         }
         catch (Exception ex)
         {

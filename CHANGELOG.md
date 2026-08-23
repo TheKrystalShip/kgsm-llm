@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — an install the engine refused is reported as refused
+
+`install_server` and `uninstall_server` report the engine's verdict. kgsm answers a mutating call
+with an exit code, and it refuses the ones it cannot make — a library it does not know or cannot
+reach, a name already taken, a disk with no room on it, a server still running — writing the reason
+to stderr. That reason reaches the model verbatim, which is what lets it say what actually stopped
+the install instead of announcing a server that was never installed.
+
+A refusal carrying no words is reported as an unknown reason rather than an empty message, on every
+verb `RunAsync` covers — a blank refusal is one the model re-sends the identical call against.
+
 ### Fixed — a server nobody could read is unknown, not stopped
 
 An instance whose library disk is not mounted has no run state: every reading the engine would take

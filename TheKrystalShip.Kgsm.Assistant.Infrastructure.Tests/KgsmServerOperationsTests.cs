@@ -88,6 +88,71 @@ public sealed class KgsmServerOperationsTests
         _instances.Received(1).Start("inst", null, null); // honest-unknown, never fabricated
     }
 
+    // --- install/uninstall: the engine's exit code is the verdict, and its stderr is the reason ---
+
+    /// <remarks>
+    /// kgsm refuses an install it cannot make — an unknown or offline library, a name already taken,
+    /// a full disk — with a distinct exit code and a sentence on stderr. The model reads this text
+    /// verbatim, so a refusal reported as a success tells somebody they have a server that was never
+    /// installed.
+    /// </remarks>
+    [Fact]
+    public async Task InstallAsync_WhenTheEngineRefuses_FailsWithTheEngineStderr()
+    {
+        _instances.Install("valheim", "cold-storage", null, "my-server", null, null)
+            .Returns(new KgsmResult(55, string.Empty, "Library 'cold-storage' is offline"));
+
+        var result = await Create().InstallAsync("valheim", "my-server", library: "cold-storage");
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("Library 'cold-storage' is offline");
+    }
+
+    /// <summary>
+    /// A refusal carrying no words still reads as a refusal, and the stand-in claims only that the
+    /// reason is unknown — a blank message is one the model re-sends the identical call against.
+    /// </summary>
+    [Fact]
+    public async Task InstallAsync_RefusedWithNoStderr_FailsWithoutInventingAReason()
+    {
+        _instances.Install("valheim", null, null, null, null, null)
+            .Returns(new KgsmResult(56));
+
+        var result = await Create().InstallAsync("valheim", null);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("unknown error");
+    }
+
+    [Fact]
+    public async Task InstallAsync_OnAZeroExit_Succeeds()
+    {
+        _instances.Install("valheim", null, null, "my-server", null, null)
+            .Returns(new KgsmResult(0, "ok"));
+
+        (await Create().InstallAsync("valheim", "my-server")).IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UninstallAsync_WhenTheEngineRefuses_FailsWithTheEngineStderr()
+    {
+        _instances.Uninstall("inst", null, null)
+            .Returns(new KgsmResult(57, string.Empty, "Instance 'inst' is running"));
+
+        var result = await Create().UninstallAsync("inst");
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("Instance 'inst' is running");
+    }
+
+    [Fact]
+    public async Task UninstallAsync_OnAZeroExit_Succeeds()
+    {
+        _instances.Uninstall("inst", null, null).Returns(new KgsmResult(0, "ok"));
+
+        (await Create().UninstallAsync("inst")).IsSuccess.Should().BeTrue();
+    }
+
     /// <summary>
     /// The jail itself (traversal/symlink/special-file/atomic-write/.kgsmbak) is kgsm-lib's —
     /// covered exhaustively by <c>InstanceFilesTests</c> there. These tests only assert that

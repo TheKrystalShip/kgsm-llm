@@ -1,19 +1,31 @@
-# pacman's own hooks run systemd-sysusers, systemd-tmpfiles and daemon-reload. Enabling a unit is
-# the administrator's call, not a package's.
+# The preset policy in kgsm-base decides whether the assistant runs on a node; applying it is
+# symlink manipulation on disk, so it works during the transaction and in a chroot alike. Starting
+# it is the node's post-transaction hook's job — and that hook will NOT start it until the signing
+# key below is set, because a blank key means a per-process key and every sign-in dies with the
+# service.
+#
+# post_install only. An administrator who disabled this unit keeps it disabled across every later
+# version — re-presetting on upgrade would quietly undo that.
 
 post_install() {
+    systemctl preset kgsm-assistant-service.service >/dev/null 2>&1 || true
+
     cat <<'MSG'
 
-  kgsm-assistant is installed but not running. Before starting it:
+  kgsm-assistant is enabled and waiting on one value:
 
-    1. Set real values in /etc/kgsm-assistant/service.env
-    2. Make sure Ollama is reachable — the assistant has no other inference path, and every turn
-       fails without it. Keep it bound to 127.0.0.1: a routable bind is an unauthenticated
-       inference endpoint on the internet.
-    3. systemctl enable --now kgsm-assistant-service.service
+    Auth__SigningKey  in  /etc/kgsm-assistant/service.env      openssl rand -base64 48
 
-  Install kgsm-rag-indexer to build the retrieval index. Without it the assistant still answers —
-  it just has no local corpus to draw on.
+  Set it, then start the service:
+
+    systemctl start kgsm-assistant-service.service
+
+  It also needs a model server it can reach — Ollama, or the llama.cpp units in kgsm-llm-llamacpp.
+  Every turn fails without one. Keep Ollama bound to 127.0.0.1: a routable bind is an
+  unauthenticated inference endpoint on the internet.
+
+  Install kgsm-rag-indexer to build the retrieval index. Without it the assistant still answers — it
+  just has no local corpus to draw on.
 
 MSG
 }
@@ -21,9 +33,8 @@ MSG
 post_upgrade() {
     cat <<'MSG'
 
-  Restart to pick up the new build:
-
-    systemctl restart kgsm-assistant-service.service
+  If pacman wrote a .pacnew beside /etc/kgsm-assistant/service.env, merge it — new settings are
+  declared there and a key the file never declares binds to nothing.
 
 MSG
 }

@@ -16,7 +16,7 @@
 
 pkgbase=kgsm-llm
 pkgname=('kgsm-llm' 'kgsm-rag-indexer' 'kgsm-llm-llamacpp')
-pkgver=1.10.0
+pkgver=1.46.0
 pkgrel=1
 arch=('x86_64')
 url="https://github.com/TheKrystalShip/kgsm-llm"
@@ -43,7 +43,9 @@ build() {
 package_kgsm-llm() {
     pkgdesc="KGSM assistant — a local tool-calling AI assistant over a KGSM host"
     groups=('kgsm-node')
-    depends=('kgsm' 'systemd' 'glibc' 'aspnet-runtime')
+    # kgsm-base carries the kgsm service account this unit runs as, the /var/lib/kgsm tree it writes
+    # its descriptor and command manifest into, and the preset policy deciding whether it runs here.
+    depends=('kgsm-base' 'kgsm' 'systemd' 'glibc' 'aspnet-runtime')
     optdepends=(
         'ollama: one of the two inference backends the assistant reaches a model through'
         'kgsm-llm-llamacpp: the other one — llama.cpp units serving the chat and embedding models'
@@ -70,9 +72,6 @@ package_kgsm-llm() {
     install -Dm644 "${repo}/deploy/kgsm-assistant-service.service" \
         "${pkgdir}/usr/lib/systemd/system/kgsm-assistant-service.service"
 
-    install -Dm644 "${repo}/deploy/sysusers.d/kgsm-llm.conf" \
-        "${pkgdir}/usr/lib/sysusers.d/kgsm-llm.conf"
-
     install -Dm640 "${repo}/deploy/assistant.env.example" \
         "${pkgdir}/etc/kgsm-assistant/service.env"
 
@@ -98,12 +97,13 @@ package_kgsm-llm() {
 
 package_kgsm-rag-indexer() {
     pkgdesc="KGSM assistant RAG indexer — builds the retrieval index the assistant reads"
-    depends=('kgsm-llm' 'glibc')
+    depends=('kgsm-base' 'kgsm-llm' 'glibc')
     optdepends=(
         'ollama: computes the embeddings'
         'kgsm-llm-llamacpp: computes the embeddings with llama.cpp instead'
     )
     backup=('etc/kgsm-assistant/rag-indexer.env')
+    install="kgsm-rag-indexer.install"
 
     local repo="${startdir}/.." stage; stage="$(_stage)"
 
@@ -133,7 +133,7 @@ package_kgsm-rag-indexer() {
 package_kgsm-llm-llamacpp() {
     pkgdesc="KGSM assistant llama.cpp backend — units serving the chat and embedding models"
     arch=('any')   # units, an env template and three shell scripts
-    depends=('kgsm-llm' 'systemd' 'curl')
+    depends=('kgsm-base' 'kgsm-llm' 'systemd' 'curl')
     # Every unit here execs /usr/bin/llama-server. Several packages provide that one binary and only
     # one of them can be installed, so naming a single hard dependency would refuse the GPU build a
     # node with a card actually wants.
@@ -141,6 +141,7 @@ package_kgsm-llm-llamacpp() {
         'llama-cpp: provides /usr/bin/llama-server (a GPU build providing the same binary — llama.cpp-cuda, llama.cpp-vulkan, llama.cpp-rocm — serves instead)'
     )
     backup=('etc/kgsm-assistant/llama-server.env')
+    install="kgsm-llm-llamacpp.install"
 
     local repo="${startdir}/.."
 

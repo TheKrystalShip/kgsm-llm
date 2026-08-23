@@ -1,0 +1,25 @@
+# The preset policy in kgsm-base leaves the indexer disabled: it starts building a retrieval corpus,
+# which costs GPU time and disk on a host that may have wanted the assistant alone. Applying that
+# policy here is what makes the state explicit rather than inherited from Arch's `disable *` default.
+#
+# post_install only, like every other kgsm package — the decision, once made, survives an upgrade.
+
+post_install() {
+    systemctl preset kgsm-rag-indexer.service >/dev/null 2>&1 || true
+
+    cat <<'MSG'
+
+  kgsm-rag-indexer is installed and deliberately not running. Building an index is a decision:
+
+    systemctl enable --now kgsm-rag-indexer.service
+
+  It embeds against whichever backend /etc/kgsm-assistant/rag-indexer.env names, and it is told
+  rather than left to infer — Ollama and llama-server expose different embedding routes.
+
+  Changing that backend does NOT rebuild the index: the indexer is incremental by content hash and
+  the header records the model name, which does not change when the server behind it does. Delete
+  the .krag and re-run after a switch, or retrieval degrades quietly against vectors from the
+  previous embedder.
+
+MSG
+}

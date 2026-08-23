@@ -1,0 +1,27 @@
+# The preset policy in kgsm-base leaves these units disabled. Ollama is the alternative and a host
+# runs one backend or the other, so neither can be a default: enabling these on a host serving
+# models through Ollama would bind their ports and load a second copy of the weights.
+#
+# post_install only, like every other kgsm package — the decision, once made, survives an upgrade.
+
+post_install() {
+    systemctl preset kgsm-llama-chat.socket kgsm-llama-chat.service kgsm-llama-embed.service \
+        >/dev/null 2>&1 || true
+
+    cat <<'MSG'
+
+  The llama.cpp backend is installed and not running. Three steps put this host on it:
+
+    1. Set the model paths, ports and idle timeout in /etc/kgsm-assistant/llama-server.env
+    2. Fetch the GGUFs into /var/lib/llama/models:   kgsm-llama-fetch-models
+    3. Move the assistant and the indexer onto it:   kgsm-llama-use-backend llamacpp
+
+  Step 3 moves the units, the assistant's config AND the indexer's together. Moving one alone points
+  something at a dead port.
+
+  Every unit here execs /usr/bin/llama-server, which several packages provide and only one of them
+  can be installed — llama.cpp-cuda, -vulkan or -rocm on a host with a card, plain llama-cpp
+  otherwise. That is why none of them is a hard dependency.
+
+MSG
+}

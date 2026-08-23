@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a packaged install enables the assistant and leaves the opt-ins off (`1.46.0`)
+
+All three packages apply kgsm-base's `50-kgsm.preset` to their own units in `post_install`:
+`kgsm-llm.install` enables `kgsm-assistant-service.service`, while `kgsm-rag-indexer.install` and
+`kgsm-llm-llamacpp.install` make their units' disabled state explicit rather than inherited from
+Arch's `disable *`. Building an index and serving models through llama.cpp are both decisions —
+Ollama is the alternative, and enabling the llama units on a host running Ollama would bind their
+ports and load a second copy of the weights. `post_upgrade` does not preset: an administrator's
+`disable` survives every later version.
+
+⚠ The node's post-transaction hook refuses to START the assistant until `Auth__SigningKey` is set in
+`/etc/kgsm-assistant/service.env`: a blank key means a per-process key, so every sign-in dies with
+the service.
+
+`deploy/assistant.env.example` comments out `Assistant__Webhook__Secret`, `Assistant__Relay__Secret`
+and `WebSearch__ApiKey`. Each is documented as "empty disables this", so shipping them blank made a
+node report three keys as outstanding when only the signing key is. A blank key is now what a leaf
+waiting on somebody looks like.
+
+All three declare `depends=('kgsm-base')`, which carries the `kgsm` account and the `/var/lib/kgsm`
+tree — so this package no longer ships `/usr/lib/sysusers.d/kgsm-llm.conf`, and `deploy/sysusers.d/`
+is gone.
+
 ### Added — the prompts are a shipped file, wherever the assistant came from
 
 `Prompts__Directory` is set by the unit: `/usr/share/kgsm-assistant/prompts` as committed, which the

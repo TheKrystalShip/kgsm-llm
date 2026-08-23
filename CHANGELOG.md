@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a server nobody could read is unknown, not stopped
+
+An instance whose library disk is not mounted has no run state: every reading the engine would take
+comes out of a directory that is not there. The status and health tools now report that as unknown,
+name the unmounted disk, and say in the tool text itself that it is not stopped — the model reads
+these strings, and "STOPPED" for a server nobody looked at is the sentence that sends somebody
+hunting a crash that never happened.
+
+- `server_info` on one server prints `UNKNOWN` with the reason, and stops there for an offline
+  library rather than printing the defaults underneath it. "No backups." and "No ports are
+  configured for it." are measurements, and neither was made.
+- The fleet read lands an unmeasured instance in `Unavailable` with the reason, beside the instances
+  whose status could not be read at all — a bare `false` there would have counted as stopped.
+- `run_health_check` warns on liveness instead of skipping it, so a sweep in which every other check
+  stood down for want of a run state cannot report a clean bill; its headline says the run state
+  could not be measured rather than passing a verdict, and the three liveness-dependent skips say so
+  rather than "not running".
+- `trace_root_cause` calls a split-brain only on a measured not-running: an absence contradicts
+  nothing. Blueprint authoring's boot probe likewise fails an attempt only on a measured stop.
+
+`ServerLibraryStates.WhyUnmeasured` is the one wording for all of it, so the same question asked
+three ways is never answered three ways.
+
+Pins kgsm-lib 6.0.0, where `InstanceRuntimeStatus.Status` is `bool?`, `Instance.Runtime` is nullable
+and both carry an `InstanceLibraryState`. `InstanceStatusFacts.Running` and
+`InstanceHealthSnapshot.Running` are `bool?` to match and each gains a `LibraryState` — a
+source-breaking change to `TheKrystalShip.Kgsm.Assistant`, which goes to 7.0.0.
+
+
 ### Added — an install can name the disk it lands on
 
 `install_instance` takes an optional `library`: the named root the engine places the new server's

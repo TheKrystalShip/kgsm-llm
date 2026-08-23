@@ -66,7 +66,12 @@ public sealed record InstanceRestart(
 /// draws). Surfaces only <b>fetch + map</b>; <b>all judgment lives once in the
 /// aggregator</b> (so the error tally can't drift between the Service and bot impls).
 /// </summary>
-/// <param name="Running">Whether the instance is currently running.</param>
+/// <param name="Running">
+/// Whether the instance is currently running, or <c>null</c> when nothing measured it — the run state
+/// is read out of the instance's own directory, so an instance whose library is away has no reading
+/// rather than a negative one. Null is NOT false, and every check that depends on liveness skips on it
+/// rather than reporting a stopped server. <paramref name="LibraryState"/> says why.
+/// </param>
 /// <param name="RecentLogLines">
 /// Recent log lines (a tail). The aggregator scans these for error severity — it does
 /// the tally so the two surface implementations never have to.
@@ -108,8 +113,14 @@ public sealed record InstanceRestart(
 /// running, has only one run on record, or the run list could not be read — the stability check then
 /// skips, never reporting an unknown history as a stable one.
 /// </param>
+/// <param name="LibraryState">
+/// Where the instance's files stand relative to the host's libraries, or <c>null</c> when the engine
+/// did not say. <see cref="ServerLibraryState.Offline"/> is why <paramref name="Running"/> and every
+/// reading taken from inside the instance's directory are absent, and naming the unmounted disk is far
+/// more useful to a reader than a bare unknown.
+/// </param>
 public sealed record InstanceHealthSnapshot(
-    bool Running,
+    bool? Running,
     IReadOnlyList<string> RecentLogLines,
     int RecentLogLinesRequested,
     bool? UpdatesAvailable,
@@ -119,4 +130,5 @@ public sealed record InstanceHealthSnapshot(
     string? HostDiskUnavailableReason,
     bool? PortsReachable = null,
     string? PortsDetail = null,
-    InstanceRestart? Restart = null);
+    InstanceRestart? Restart = null,
+    ServerLibraryState? LibraryState = null);

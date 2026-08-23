@@ -615,7 +615,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 // into the kept blueprint so it isn't a fabricated-from-nothing signal.
                 var genericPattern = successRegex is null && !portsUp ? MatchGenericReady(fullLog) : null;
 
-                if (snap.Running && (portsUp || regexMatched || genericPattern is not null))
+                if (snap.Running == true && (portsUp || regexMatched || genericPattern is not null))
                 {
                     if (portsUp)
                         return (true, "it booted and is listening on its configured port", snap, null);
@@ -627,9 +627,12 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 // Fast-fail on a crash: a server that came up and then exited (a bad argument, a missing
                 // dependency) won't recover — stop polling now so the repair cycle starts in seconds instead
                 // of waiting out the whole timeout. The full log is captured for repair either way.
-                if (snap.Running)
+                // Only a measured stop after a measured start is a probe that died. A run state that
+                // could not be read is not evidence the server exited, so the poll keeps waiting for
+                // one that is rather than failing the attempt on an absence.
+                if (snap.Running == true)
                     sawRunning = true;
-                else if (sawRunning)
+                else if (snap.Running == false && sawRunning)
                     return (false, null, snap, null);
             }
 

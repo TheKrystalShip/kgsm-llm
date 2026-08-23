@@ -77,7 +77,7 @@ public static class HealthCheckAggregator
         var skipped = checks.Count(c => c.State == CheckState.Skip);
 
         var data = new HealthData(overall, checks, passed, checks.Length, skipped);
-        var summary = BuildSummary(instanceId, snapshot.Running, overall, stability, logs, updates, disk, ports);
+        var summary = BuildSummary(instanceId, snapshot, overall, liveness, stability, logs, updates, disk, ports);
 
         return new ToolResult<HealthData>(
             Tool: ResultCardKinds.Health,
@@ -89,11 +89,31 @@ public static class HealthCheckAggregator
 
     // --- Individual checks -------------------------------------------------
 
-    private static HealthCheck CheckLiveness(InstanceHealthSnapshot s) =>
-        s.Running
-            // Stateless KGSM: stopped is NOT a failure — it may be intentional.
-            ? new HealthCheck("liveness", CheckState.Pass, Severity.Success, "Running.")
-            : new HealthCheck("liveness", CheckState.Pass, Severity.Info, "Stopped (idle).");
+    /// <summary>
+    /// Whether the instance is up. An unmeasured run state is a <see cref="CheckState.Warn"/> rather
+    /// than a skip: every other check depends on liveness and skips without it, so a skip here would
+    /// leave a sweep of nothing but skips reporting the instance as healthy. It names the unmounted
+    /// disk when the engine said that is what it was, because that is the whole of the answer.
+    /// </summary>
+    private static HealthCheck CheckLiveness(InstanceHealthSnapshot s) => s.Running switch
+    {
+        // Stateless KGSM: stopped is NOT a failure — it may be intentional.
+        true => new HealthCheck("liveness", CheckState.Pass, Severity.Success, "Running."),
+        false => new HealthCheck("liveness", CheckState.Pass, Severity.Info, "Stopped (idle)."),
+        null => new HealthCheck(
+            "liveness", CheckState.Warn, Severity.Warn,
+            $"Run state unknown — {ServerLibraryStates.WhyUnmeasured(s.LibraryState)}. It is not stopped."),
+    };
+
+    /// <summary>
+    /// Why a liveness-dependent check is standing down, in its own words: an instance that is measured
+    /// stopped and one nothing could read both skip, and telling a reader the second was "not running"
+    /// states a measurement nobody made.
+    /// </summary>
+    private static string NotLive(InstanceHealthSnapshot s, string what) =>
+        s.Running is null
+            ? $"{what} — the run state could not be read."
+            : $"{what} — instance not running.";
 
     /// <summary>
     /// Whether this run has been up long enough to stand on its own, and what ended the run before it.
@@ -112,9 +132,9 @@ public static class HealthCheckAggregator
     /// </summary>
     private static HealthCheck CheckStability(InstanceHealthSnapshot s, DateTimeOffset now)
     {
-        if (!s.Running)
+        if (s.Running is not true)
             return new HealthCheck(
-                "stability", CheckState.Skip, Severity.Info, "Stability not assessed — instance not running.");
+                "stability", CheckState.Skip, Severity.Info, NotLive(s, "Stability not assessed"));
 
         if (s.Restart is not { } restart)
             return new HealthCheck(
@@ -194,9 +214,9 @@ public static class HealthCheckAggregator
     private static HealthCheck CheckLogs(InstanceHealthSnapshot s)
     {
         // Logs are only meaningful for a running server; a stopped one's logs are stale.
-        if (!s.Running)
+        if (s.Running is not true)
             return new HealthCheck(
-                "logs", CheckState.Skip, Severity.Info, "Log scan skipped — instance not running.");
+                "logs", CheckState.Skip, Severity.Info, NotLive(s, "Log scan skipped"));
 
         // Honesty: a probe that only ASKED for a handful of lines cannot support "no errors",
         // however clean it reads — it is a keyhole, not a scan, and a server that has been up for
@@ -278,9 +298,9 @@ public static class HealthCheckAggregator
     private static HealthCheck CheckPorts(InstanceHealthSnapshot s)
     {
         // Port binding is only meaningful for a running server; a stopped one binds nothing.
-        if (!s.Running)
+        if (s.Running is not true)
             return new HealthCheck(
-                "ports", CheckState.Skip, Severity.Info, "Port reachability skipped — instance not running.");
+                "ports", CheckState.Skip, Severity.Info, NotLive(s, "Port reachability skipped"));
 
         // Honest unknown: not probed / no ports configured / probe failed → skip, never a fabricated pass.
         if (s.PortsReachable is null)
@@ -331,21 +351,30 @@ public static class HealthCheckAggregator
     /// paraphrases this; it never invents facts.
     /// </summary>
     private static string BuildSummary(
-        string id, bool running, CheckState overall,
+        string id, InstanceHealthSnapshot s, CheckState overall, HealthCheck liveness,
         HealthCheck stability, HealthCheck logs, HealthCheck updates, HealthCheck disk, HealthCheck ports)
     {
-        var headline = (overall, running) switch
-        {
-            (CheckState.Fail, _) => $"{id}: health check found problems.",
-            (CheckState.Warn, _) => $"{id}: passed with warnings.",
-            (_, true) => $"{id}: healthy.",
-            (_, false) => $"{id}: stopped (idle).",
-        };
+        // An unmeasured run state is stated first and on its own terms. Every other check stood down
+        // for want of it, so a verdict headline here would be a judgment of nothing — and the two
+        // sentences a reader must not be able to confuse are this one and "stopped".
+        var headline = s.Running is null
+            ? $"{id}: its run state could not be measured, so this is not a health verdict."
+            : (overall, s.Running) switch
+            {
+                (CheckState.Fail, _) => $"{id}: health check found problems.",
+                (CheckState.Warn, _) => $"{id}: passed with warnings.",
+                (_, true) => $"{id}: healthy.",
+                _ => $"{id}: stopped (idle).",
+            };
 
         // Stability leads the details: when it warns, it is the reason the headline is not "healthy",
         // and it reframes every check after it as being about this run rather than about the server.
-        var rest = string.Join(" ", new[] { stability.Detail, logs.Detail, updates.Detail, disk.Detail, ports.Detail }
-            .Where(d => !string.IsNullOrWhiteSpace(d)));
+        // The liveness detail joins them only when it carries the reason nothing else could be judged.
+        var details = s.Running is null
+            ? new[] { liveness.Detail, stability.Detail, logs.Detail, updates.Detail, disk.Detail, ports.Detail }
+            : [stability.Detail, logs.Detail, updates.Detail, disk.Detail, ports.Detail];
+
+        var rest = string.Join(" ", details.Where(d => !string.IsNullOrWhiteSpace(d)));
 
         return string.IsNullOrEmpty(rest) ? headline : $"{headline} {rest}";
     }

@@ -342,7 +342,10 @@ public static class RootCauseAggregator
         string instance, IReadOnlyList<AuditEventRow> ascending,
         InstanceHealthSnapshot health, IReadOnlyList<HealthCheck> healthChecks, IReadOnlyList<MetricFact> metricFacts)
     {
-        if (health.Running)
+        // Only a MEASURED not-running contradicts the event log. A run state nothing could read
+        // disagrees with nothing, and calling that a split-brain would report a contradiction between
+        // one measurement and an absence.
+        if (health.Running is not false)
             return null;
 
         var lastRunState = ascending.LastOrDefault(e =>

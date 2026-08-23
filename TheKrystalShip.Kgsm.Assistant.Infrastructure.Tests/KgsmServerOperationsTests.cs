@@ -8,6 +8,7 @@ using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
+using TheKrystalShip.KGSM.Core.Models.Enums;
 
 using Xunit;
 
@@ -609,6 +610,66 @@ public sealed class KgsmServerOperationsTests
         byName["broken"].Availability.Should().Be(FleetStatusAvailability.Unavailable);
         byName["broken"].Running.Should().BeNull();
         byName["broken"].Reason.Should().NotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// The read succeeded and carried no run state — the engine measures an instance behind an
+    /// unmounted library as an absence. That lands in the same place a failed read does, because
+    /// nothing measured whether the server is up, and the reason names the disk.
+    /// </summary>
+    [Fact]
+    public async Task GetFleetStatus_UnmeasuredRunState_IsUnavailableNamingTheOfflineLibrary()
+    {
+        _instances.GetAllStatuses(Arg.Any<bool>()).Returns(new Dictionary<string, Reading<InstanceRuntimeStatus>>
+        {
+            ["away"] = Reading<InstanceRuntimeStatus>.Measured(new InstanceRuntimeStatus
+            {
+                InstanceName = "away",
+                Status = null,
+                LibraryState = InstanceLibraryState.Offline,
+            }),
+            ["nostate"] = Reading<InstanceRuntimeStatus>.Measured(
+                new InstanceRuntimeStatus { InstanceName = "nostate", Status = null }),
+        });
+
+        var result = await Create().GetFleetStatusAsync();
+
+        result.IsSuccess.Should().BeTrue();
+        var byName = result.Value!.ToDictionary(e => e.Instance);
+
+        byName["away"].Availability.Should().Be(FleetStatusAvailability.Unavailable);
+        byName["away"].Running.Should().BeNull();
+        byName["away"].Reason.Should().Contain("disk is not mounted");
+
+        // No library state to explain it: still unknown, and still not "stopped".
+        byName["nostate"].Availability.Should().Be(FleetStatusAvailability.Unavailable);
+        byName["nostate"].Running.Should().BeNull();
+        byName["nostate"].Reason.Should().Contain("nothing measured it");
+    }
+
+    /// <summary>
+    /// The health snapshot carries the absent run state through as absent, and does not probe ports
+    /// for it: an instance nothing could read binds nothing the probe would find, and asking would
+    /// turn "we could not look" into "they are not up".
+    /// </summary>
+    [Fact]
+    public async Task GetHealthSnapshot_UnmeasuredRunState_CarriesItThroughAndSkipsThePortProbe()
+    {
+        _instances.GetInstanceStatus("away").Returns(new InstanceRuntimeStatus
+        {
+            InstanceName = "away",
+            Status = null,
+            LibraryState = InstanceLibraryState.Offline,
+        });
+
+        var result = await Create().GetHealthSnapshotAsync("away");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Running.Should().BeNull();
+        result.Value!.LibraryState.Should().Be(ServerLibraryState.Offline);
+        result.Value!.PortsReachable.Should().BeNull();
+        result.Value!.Restart.Should().BeNull();
+        _watcher.DidNotReceive().TestPortWatch(Arg.Any<string>());
     }
 
     // --- GetHealthSnapshot (fetch + map; judgment lives in the aggregator) ---

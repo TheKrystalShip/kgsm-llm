@@ -4,6 +4,7 @@ using TheKrystalShip.Kgsm.Assistant.Files;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
+using TheKrystalShip.KGSM.Core.Models.Enums;
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
@@ -322,15 +323,45 @@ internal sealed class KgsmServerOperations : IServerOperations
     /// <see cref="FleetStatusEntry"/>, preserving the measured-vs-unavailable
     /// distinction. A non-measured reading becomes <see cref="FleetStatusAvailability.Unavailable"/>
     /// with <c>Running = null</c> — never a fabricated "stopped."
+    /// <para>
+    /// A reading that came back with no run state on it lands in the same place. The read itself
+    /// succeeded, so it is tempting to treat the instance as answered; nothing measured whether it is
+    /// up, which is exactly what <see cref="FleetStatusAvailability.Unavailable"/> means at this
+    /// boundary. The reason names the unmounted disk when the engine says that is what it was.
+    /// </para>
     /// </summary>
-    private static FleetStatusEntry MapFleetEntry(string name, Reading<InstanceRuntimeStatus> reading) =>
-        reading.State == ReadingState.Measured
-            ? new FleetStatusEntry(name, FleetStatusAvailability.Read, reading.Value!.Status, Reason: null)
-            : new FleetStatusEntry(
+    private static FleetStatusEntry MapFleetEntry(string name, Reading<InstanceRuntimeStatus> reading)
+    {
+        if (reading.State != ReadingState.Measured)
+            return new FleetStatusEntry(
                 name,
                 FleetStatusAvailability.Unavailable,
                 Running: null,
                 Reason: reading.Reason ?? DescribeReadingCode(reading.Code));
+
+        var status = reading.Value!;
+        if (status.Status is not { } running)
+            return new FleetStatusEntry(
+                name,
+                FleetStatusAvailability.Unavailable,
+                Running: null,
+                Reason: ServerLibraryStates.WhyUnmeasured(MapLibraryState(status.LibraryState)));
+
+        return new FleetStatusEntry(name, FleetStatusAvailability.Read, running, Reason: null);
+    }
+
+    /// <summary>
+    /// Maps the engine's library placement onto the toolbox-boundary mirror. A value this build does
+    /// not know maps to null — an unrecognised token is a capability that cannot be established, not
+    /// a reason to pick the nearest known one.
+    /// </summary>
+    internal static ServerLibraryState? MapLibraryState(InstanceLibraryState? state) => state switch
+    {
+        InstanceLibraryState.Online => ServerLibraryState.Online,
+        InstanceLibraryState.Offline => ServerLibraryState.Offline,
+        InstanceLibraryState.Unregistered => ServerLibraryState.Unregistered,
+        _ => null,
+    };
 
     private static string DescribeReadingCode(ReadingCode? code) => code switch
     {
@@ -399,9 +430,11 @@ internal sealed class KgsmServerOperations : IServerOperations
             // Port reachability is best-effort and only meaningful while running: its absence skips the
             // ports check, it never fails the read. `watcher ports test` probes whether the configured
             // ports are currently bound (host-local `ss`), NOT firewall/router reachability.
+            // Gated on a MEASURED running instance: an instance nothing could read binds no ports the
+            // probe would find, and probing it would turn "we could not look" into "they are not up".
             bool? portsReachable = null;
             string? portsDetail = null;
-            if (status.Status)
+            if (status.Status == true)
                 (portsReachable, portsDetail) = await Task.Run(
                     () => ProbePorts(instance), cancellationToken);
 
@@ -416,7 +449,8 @@ internal sealed class KgsmServerOperations : IServerOperations
                 HostDiskUnavailableReason: diskReason,
                 PortsReachable: portsReachable,
                 PortsDetail: portsDetail,
-                Restart: status.Status ? await ReadRestartAsync(instance, cancellationToken) : null);
+                Restart: status.Status == true ? await ReadRestartAsync(instance, cancellationToken) : null,
+                LibraryState: MapLibraryState(status.LibraryState));
 
             return Result.Success(snapshot);
         }

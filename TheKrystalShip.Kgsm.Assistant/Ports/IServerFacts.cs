@@ -62,15 +62,70 @@ public sealed record NoteFacts(
     FactsState State, string? Body, string? UpdatedBy, string? UpdatedAt);
 
 /// <summary>
+/// Where an instance's files stand relative to the host's registered libraries — the toolbox-boundary
+/// mirror of the engine's own measurement, kept here so the assistant library stays decoupled from
+/// kgsm-lib (the host maps its own type onto this, the same boundary
+/// <see cref="FleetStatusAvailability"/> draws).
+/// <para>
+/// This is the field that says <em>why</em> an instance's other readings are absent. An instance
+/// under an <see cref="Offline"/> library still exists and is still registered; its name, blueprint
+/// and directories are real, and everything that lives inside its own directory — run state,
+/// version, disk usage, backups — is unreadable rather than empty.
+/// </para>
+/// </summary>
+public enum ServerLibraryState
+{
+    /// <summary>The library is registered and its root is reachable; every reading is available.</summary>
+    Online,
+
+    /// <summary>The library is registered and its root is not reachable — an unmounted disk.</summary>
+    Offline,
+
+    /// <summary>The instance's directory sits under no registered library. A measurement, not an absence.</summary>
+    Unregistered,
+}
+
+/// <summary>
+/// The one wording for why an instance's run state was not measured. Every surface that has to say it
+/// — the fleet read's reason, the single-server status line, the health check's liveness verdict —
+/// says it from here, so a person asking the same question two ways is never told two things.
+/// </summary>
+public static class ServerLibraryStates
+{
+    /// <summary>
+    /// One clause, phrased to be carried into a sentence verbatim. Naming the unmounted disk is the
+    /// useful half of the answer; a bare "unknown" leaves the reader with nothing to act on. Anything
+    /// the engine did not explain stays an honest, unelaborated unknown rather than a guess at a cause.
+    /// </summary>
+    public static string WhyUnmeasured(ServerLibraryState? state) => state switch
+    {
+        ServerLibraryState.Offline =>
+            "its library's disk is not mounted, so nothing inside its directory could be read",
+        ServerLibraryState.Unregistered =>
+            "nothing measured it, and its directory sits under no registered library",
+        _ => "nothing measured it",
+    };
+}
+
+/// <summary>
 /// One instance's runtime status, as the engine measured it — the structured form of what a status
 /// read returns, rather than the engine's own report text.
 /// </summary>
 /// <param name="State">Whether the engine answered at all.</param>
-/// <param name="Running">Whether the instance is running. Meaningless unless the read succeeded.</param>
+/// <param name="Running">
+/// Whether the instance is running. Null when nothing measured it — the run state is read out of the
+/// instance's own directory, so an instance whose library is away has no reading rather than a
+/// negative one. Null is NOT false: rendering the two alike tells an operator their server is down
+/// when what happened is that a disk came out. <paramref name="LibraryState"/> says which it is.
+/// </param>
+/// <param name="LibraryState">
+/// Where the instance's files stand relative to the host's libraries, or null when the engine did not
+/// say. <see cref="ServerLibraryState.Offline"/> is the reason every other reading here is absent.
+/// </param>
 /// <param name="Pid">The process id, when the engine has one.</param>
 /// <param name="StartedAt">When the process started, when the engine recorded it.</param>
 /// <param name="Blueprint">The blueprint the instance was made from.</param>
-/// <param name="Runtime">How it runs — <c>native</c> or <c>container</c>.</param>
+/// <param name="Runtime">How it runs — <c>native</c> or <c>container</c>. Null when it could not be read.</param>
 /// <param name="Directory">Where it is installed.</param>
 /// <param name="DiskUsage">How much disk it occupies, as the engine reported it.</param>
 /// <param name="Ports">Its configured ports, each as <c>port/protocol</c>.</param>
@@ -80,7 +135,7 @@ public sealed record NoteFacts(
 /// <param name="BackupCount">How many backups exist.</param>
 public sealed record InstanceStatusFacts(
     FactsState State,
-    bool Running,
+    bool? Running,
     int? Pid,
     DateTimeOffset? StartedAt,
     string? Blueprint,
@@ -91,7 +146,8 @@ public sealed record InstanceStatusFacts(
     string? InstalledVersion,
     string? LatestVersion,
     bool? UpdateAvailable,
-    int BackupCount);
+    int BackupCount,
+    ServerLibraryState? LibraryState = null);
 
 /// <summary>An instance's backups, most-recent-first.</summary>
 public sealed record BackupListing(FactsState State, IReadOnlyList<BackupEntry> Backups);
@@ -286,7 +342,7 @@ public sealed class UnavailableServerFacts : IServerFacts
 
     public Task<InstanceStatusFacts> GetStatusAsync(string instance, CancellationToken cancellationToken = default) =>
         Task.FromResult(new InstanceStatusFacts(
-            FactsState.Unavailable, false, null, null, null, null, null, null, [], null, null, null, 0));
+            FactsState.Unavailable, null, null, null, null, null, null, null, [], null, null, null, 0));
 
     public Task<InstanceConfigFacts> GetConfigAsync(string instance, CancellationToken cancellationToken = default) =>
         Task.FromResult(new InstanceConfigFacts(FactsState.Unavailable, []));

@@ -76,7 +76,9 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
             try
             {
                 var all = await Task.Run(() => _instances.GetAll(), cancellationToken);
-                _instancesCache = all.ToDictionary(kv => kv.Key, kv => kv.Value.Blueprint ?? string.Empty);
+                // The engine's record carries the blueprint's bare name, which is the spelling every
+                // catalog lookup and every sentence the model reads is keyed on.
+                _instancesCache = all.ToDictionary(kv => kv.Key, kv => kv.Value.Blueprint);
                 _instancesFetchedUtc = DateTime.UtcNow;
                 _instancesDirty = false;
                 _logger.LogDebug("Instance cache refreshed ({Count} instances)", _instancesCache.Count);

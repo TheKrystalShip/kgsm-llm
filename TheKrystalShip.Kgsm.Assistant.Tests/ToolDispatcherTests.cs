@@ -809,6 +809,51 @@ public class ToolDispatcherTests
         output.Data.Should().BeNull();
     }
 
+    /// <summary>
+    /// The engine answered, and nothing in that answer measured whether the server is up. The one
+    /// thing the report must not do is round that to "stopped": an operator reading it would go
+    /// looking for a crash that never happened.
+    /// </summary>
+    [Fact]
+    public async Task Status_UnmeasuredRunState_IsUnknownRatherThanStopped()
+    {
+        var facts = new StubStatusFacts(new InstanceStatusFacts(
+            FactsState.Available, Running: null, Pid: null, StartedAt: null,
+            Blueprint: "minecraft.bp.yaml", Runtime: null, Directory: "/mnt/vault/minecraft",
+            DiskUsage: null, Ports: [], InstalledVersion: null,
+            LatestVersion: null, UpdateAvailable: null, BackupCount: 0,
+            LibraryState: ServerLibraryState.Offline));
+
+        var output = await Create(serverFacts: facts).ExecuteAsync(StatusCall("minecraft"));
+
+        output.Summary.Should().Contain("UNKNOWN")
+            .And.Contain("disk is not mounted")
+            .And.Contain("NOT stopped");
+        output.Summary.Should().NotContain("STOPPED.");
+    }
+
+    /// <summary>
+    /// Everything an offline instance would otherwise report is a default nothing read. The report
+    /// states that they are unknown instead of printing them, because "No backups." and "no ports
+    /// configured" are measurements, and neither was made.
+    /// </summary>
+    [Fact]
+    public async Task Status_OfflineLibrary_StatesNoDefaultsAsFacts()
+    {
+        var facts = new StubStatusFacts(new InstanceStatusFacts(
+            FactsState.Available, Running: null, Pid: null, StartedAt: null,
+            Blueprint: "minecraft.bp.yaml", Runtime: null, Directory: "/mnt/vault/minecraft",
+            DiskUsage: null, Ports: [], InstalledVersion: null,
+            LatestVersion: null, UpdateAvailable: null, BackupCount: 0,
+            LibraryState: ServerLibraryState.Offline));
+
+        var output = await Create(serverFacts: facts).ExecuteAsync(StatusCall("minecraft"));
+
+        output.Summary.Should().NotContain("No backups");
+        output.Summary.Should().NotContain("No ports are configured");
+        output.Summary.Should().Contain("unreadable").And.Contain("None of them are zero");
+    }
+
     [Fact]
     public async Task Status_EngineUnavailable_IsNotReportedAsStopped()
     {

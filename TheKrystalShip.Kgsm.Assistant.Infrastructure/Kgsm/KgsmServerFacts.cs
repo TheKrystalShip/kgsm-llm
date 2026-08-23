@@ -156,7 +156,8 @@ internal sealed class KgsmServerFacts : IServerFacts
                 HostDiskMapping.NullIfEmpty(status.Version?.Current),
                 HostDiskMapping.NullIfEmpty(status.Version?.Latest),
                 status.Version?.Checked == true ? status.Version.UpdatesAvailable : null,
-                status.Backups?.Count ?? 0);
+                status.Backups?.Count ?? 0,
+                KgsmServerOperations.MapLibraryState(status.LibraryState));
         }
         catch (Exception ex)
         {
@@ -165,7 +166,7 @@ internal sealed class KgsmServerFacts : IServerFacts
         }
 
         static InstanceStatusFacts Unknown() => new(
-            FactsState.Unavailable, false, null, null, null, null, null, null, [], null, null, null, 0);
+            FactsState.Unavailable, null, null, null, null, null, null, null, [], null, null, null, 0);
     }
 
     /// <summary>

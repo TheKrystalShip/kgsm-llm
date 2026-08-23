@@ -722,7 +722,10 @@ public class ToolDispatcher : IToolDispatcher
         var now = DateTimeOffset.UtcNow;
         var lines = new List<string>
         {
-            $"{resolved} is {(facts.Running ? "RUNNING" : "STOPPED")}.",
+            facts.Running is { } isRunning
+                ? $"{resolved} is {(isRunning ? "RUNNING" : "STOPPED")}."
+                : $"{resolved}'s run state is UNKNOWN — {ServerLibraryStates.WhyUnmeasured(facts.LibraryState)}. "
+                  + "It is NOT stopped; nothing measured whether it is up.",
         };
 
         var game = facts.Blueprint is null
@@ -731,7 +734,21 @@ public class ToolDispatcher : IToolDispatcher
         if (game is not null)
             lines.Add($"- Game: {game}{(facts.Runtime is null ? "" : $", running {facts.Runtime}")}");
 
-        if (facts.Running && facts.Pid is { } pid)
+        // An instance whose library is away answers its name, its game and where its files belong, and
+        // nothing else — every remaining reading is taken from inside a directory that is not there. The
+        // lines below would print those absences as measured zeroes ("No backups", "no ports configured"),
+        // so the report stops here and says what is missing instead of stating defaults as facts.
+        if (facts.LibraryState == ServerLibraryState.Offline)
+        {
+            if (facts.Directory is not null)
+                lines.Add($"- Its files belong at {facts.Directory}, which is not reachable right now.");
+            lines.Add(
+                "- Its version, disk usage, ports and backups are all unreadable until that disk is back. "
+                + "None of them are zero — they are unknown.");
+            return string.Join("\n", lines);
+        }
+
+        if (facts.Running == true && facts.Pid is { } pid)
             lines.Add(facts.StartedAt is { } started
                 ? $"- Process {pid}, started {Elapsed.Moment(started, now)}"
                 : $"- Process {pid} (when it started was not recorded)");

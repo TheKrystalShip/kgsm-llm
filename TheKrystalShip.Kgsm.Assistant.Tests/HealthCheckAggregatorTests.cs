@@ -17,7 +17,7 @@ public class HealthCheckAggregatorTests
 {
     /// <summary>A healthy running instance: running, no error logs, up to date, disk 26%.</summary>
     private static InstanceHealthSnapshot Healthy(
-        bool running = true,
+        bool? running = true,
         IReadOnlyList<string>? logs = null,
         int logsRequested = 200,
         bool? updatesAvailable = false,
@@ -29,7 +29,8 @@ public class HealthCheckAggregatorTests
         bool? portsReachable = true,
         string? portsDetail = null,
         InstanceRestart? restart = null,
-        bool hasRestart = true) =>
+        bool hasRestart = true,
+        ServerLibraryState? libraryState = null) =>
         new(
             Running: running,
             // A healthy running server HAS clean log output; the logs check now Skips on an
@@ -50,7 +51,8 @@ public class HealthCheckAggregatorTests
             // history" — the stability check then skips rather than assuming a settled run.
             Restart: hasRestart
                 ? (restart ?? new InstanceRestart(Now.AddDays(-3), "stopped", null))
-                : null);
+                : null,
+            LibraryState: libraryState);
 
     /// <summary>Fixed "now", so a test's uptime wording cannot drift with the clock.</summary>
     private static readonly DateTimeOffset Now = new(2026, 8, 12, 12, 0, 0, TimeSpan.Zero);
@@ -91,6 +93,46 @@ public class HealthCheckAggregatorTests
         r.Data.Overall.Should().Be(CheckState.Pass);
         r.Data.Skipped.Should().Be(3);
         r.Summary.Should().Contain("stopped").And.Contain("skipped");
+    }
+
+    /// <summary>
+    /// Nothing measured whether the server is up. Every liveness-dependent check stands down, so a
+    /// skip on liveness too would leave a sweep of nothing but skips reporting a clean bill — which is
+    /// why liveness warns instead, and why the headline says what happened rather than passing a
+    /// verdict.
+    /// </summary>
+    [Fact]
+    public void UnmeasuredRunState_IsNotStopped_AndIsNotAVerdict()
+    {
+        var r = Run(Healthy(running: null), "minecraft");
+
+        Check(r, "liveness").State.Should().Be(CheckState.Warn);
+        Check(r, "liveness").Detail.Should().Contain("Run state unknown").And.Contain("not stopped");
+        Check(r, "stability").State.Should().Be(CheckState.Skip);
+        Check(r, "logs").State.Should().Be(CheckState.Skip);
+        Check(r, "ports").State.Should().Be(CheckState.Skip);
+
+        // The three liveness-dependent skips say the run state could not be read — never "not running",
+        // which is a measurement nobody made.
+        Check(r, "logs").Detail.Should().Contain("run state could not be read");
+        Check(r, "logs").Detail.Should().NotContain("not running");
+
+        r.Summary.Should().Contain("run state could not be measured").And.Contain("not a health verdict");
+        r.Summary.Should().NotContain("healthy");
+        r.Summary.Should().NotContain("stopped (idle)");
+    }
+
+    /// <summary>
+    /// The engine says the instance's library disk is away. Naming the disk is the whole of the useful
+    /// answer; a bare "unknown" leaves the reader with nothing to do about it.
+    /// </summary>
+    [Fact]
+    public void UnmeasuredRunState_OnAnOfflineLibrary_NamesTheDisk()
+    {
+        var r = Run(Healthy(running: null, libraryState: ServerLibraryState.Offline), "minecraft");
+
+        Check(r, "liveness").Detail.Should().Contain("disk is not mounted");
+        r.Summary.Should().Contain("disk is not mounted");
     }
 
     [Fact]

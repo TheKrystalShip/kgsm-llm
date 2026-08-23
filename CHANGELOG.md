@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the assistant generates and keeps its own signing key (`1.47.0`)
+
+`Auth__SigningKey` still wins whenever it is set. With none, `Security/HostSigningKey.cs` generates
+384 random bits on the first start, keeps them in `<state-dir>/signing-key` at `0600`
+(`/var/lib/kgsm-assistant/signing-key` on a deployed host, the unit's `StateDirectory=`), and reads
+them back on every later start — so sign-ins survive a restart and an upgrade on a host nobody handed
+a secret to. The mode is narrowed through the open handle before the key is written, so the file never
+exists world-readable. A key that cannot be written still starts the service, on a key that lasts as
+long as the process, and says so.
+
+It is resolved at startup rather than at the first sign-in, so the file exists on the start that
+generated it and the one line reporting that lands there too.
+
+`deploy/assistant.env.example` comments `Auth__SigningKey` out with what it is for, so a node reports
+nothing outstanding for it; `packaging/kgsm-llm.install` no longer names it as a prerequisite.
+
+The Service tests redirect `$STATE_DIRECTORY` to a temp directory for the whole assembly
+(`StateDirectoryIsolation`, the same module-initializer shape as `JournalIsolation`) — a test host
+inherits this machine's paths, and one booted without a database path of its own has been opening the
+running assistant's live conversation database.
+
 ### Changed — a packaged install enables the assistant and leaves the opt-ins off (`1.46.0`)
 
 All three packages apply kgsm-base's `50-kgsm.preset` to their own units in `post_install`:
@@ -16,10 +37,6 @@ Arch's `disable *`. Building an index and serving models through llama.cpp are b
 Ollama is the alternative, and enabling the llama units on a host running Ollama would bind their
 ports and load a second copy of the weights. `post_upgrade` does not preset: an administrator's
 `disable` survives every later version.
-
-⚠ The node's post-transaction hook refuses to START the assistant until `Auth__SigningKey` is set in
-`/etc/kgsm-assistant/service.env`: a blank key means a per-process key, so every sign-in dies with
-the service.
 
 `deploy/assistant.env.example` comments out `Assistant__Webhook__Secret`, `Assistant__Relay__Secret`
 and `WebSearch__ApiKey`. Each is documented as "empty disables this", so shipping them blank made a

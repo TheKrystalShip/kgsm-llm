@@ -235,8 +235,16 @@ builder.Services.AddSingleton<PushConfirmationRunner>();
 // SCOPED — so no singleton ever captures the transient client.
 var authOptions = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>() ?? new AuthOptions();
 
+// What tokens are signed with, settled once. A configured Auth:SigningKey wins; a host given none
+// generates one and keeps it in the state directory, so a restart does not sign everyone out on a
+// machine nobody handed a secret to.
+builder.Services.AddSingleton(sp => new HostSigningKey(
+    sp.GetRequiredService<IOptions<AuthOptions>>().Value.SigningKey,
+    StatePaths.SigningKeyPath,
+    sp.GetRequiredService<ILogger<HostSigningKey>>()));
 builder.Services.AddSingleton<ISessionTokenService>(sp => new SessionTokenService(
-    sp.GetRequiredService<IOptions<AuthOptions>>().Value.ToSessionTokenOptions(),
+    sp.GetRequiredService<IOptions<AuthOptions>>().Value.ToSessionTokenOptions()
+        with { SigningKey = sp.GetRequiredService<HostSigningKey>().Value },
     sp.GetRequiredService<ILogger<SessionTokenService>>()));
 builder.Services.AddSingleton<ISessionRegistry, SqliteSessionRegistry>();
 builder.Services.AddMemoryCache();
@@ -353,6 +361,12 @@ app.UseStaticFiles();
     var opts = app.Services.GetRequiredService<IOptions<AssistantServiceOptions>>().Value;
     var sharedAuth = app.Services.GetRequiredService<IOptions<KgsmAuthOptions>>().Value;
     var accounts = app.Services.GetRequiredService<UserDirectory>();
+
+    // Asking for the key here is what makes it exist. It is built on demand, so on a host nobody
+    // signs in to the file it is kept in would otherwise never be written, and the one line saying it
+    // was generated would land at some arbitrary later moment instead of on the start that did it.
+    if (app.Services.GetRequiredService<HostSigningKey>().FilePath is { } signingKeyPath)
+        app.Logger.LogDebug("Sessions on this host are signed with the key at {Path}.", signingKeyPath);
 
     if (!accounts.Available)
         app.Logger.LogError(

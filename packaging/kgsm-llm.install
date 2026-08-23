@@ -1,8 +1,6 @@
 # The preset policy in kgsm-base decides whether the assistant runs on a node; applying it is
 # symlink manipulation on disk, so it works during the transaction and in a chroot alike. Starting
-# it is the node's post-transaction hook's job — and that hook will NOT start it until the signing
-# key below is set, because a blank key means a per-process key and every sign-in dies with the
-# service.
+# it is the node's post-transaction hook's job, and this unit needs nothing from a person first.
 #
 # post_install only. An administrator who disabled this unit keeps it disabled across every later
 # version — re-presetting on upgrade would quietly undo that.
@@ -12,15 +10,11 @@ post_install() {
 
     cat <<'MSG'
 
-  kgsm-assistant is enabled and waiting on one value:
+  kgsm-assistant is enabled and starts on its own. It generates the key its sign-ins are signed
+  with on that first start, in /var/lib/kgsm-assistant/signing-key, and reuses it forever after.
+  Set Auth__SigningKey in /etc/kgsm-assistant/service.env only to pin one deliberately.
 
-    Auth__SigningKey  in  /etc/kgsm-assistant/service.env      openssl rand -base64 48
-
-  Set it, then start the service:
-
-    systemctl start kgsm-assistant-service.service
-
-  It also needs a model server it can reach — Ollama, or the llama.cpp units in kgsm-llm-llamacpp.
+  It needs a model server it can reach — Ollama, or the llama.cpp units in kgsm-llm-llamacpp.
   Every turn fails without one. Keep Ollama bound to 127.0.0.1: a routable bind is an
   unauthenticated inference endpoint on the internet.
 

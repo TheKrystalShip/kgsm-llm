@@ -42,7 +42,7 @@ any committed settings file — which declares each of them blank so the Control
 | Secret | Used by |
 |--------|---------|
 | `KgsmAuth__Providers__discord__ClientSecret` | Service (shared, `/etc/kgsm/kgsm-auth.env`) |
-| `Auth__SigningKey` | Service (keep **stable** across restarts) |
+| `Auth__SigningKey` | Service (optional — blank means the host generates and keeps its own) |
 | `Assistant__Webhook__Secret` | Service |
 | `Assistant__Relay__Secret` | Service (optional) |
 | `WebSearch__ApiKey` | Service & CLI |
@@ -386,7 +386,7 @@ is on their KGSM account (`Auth:UsersDbPath`).
 
 | Key | Default | Env | Notes |
 |-----|---------|-----|-------|
-| `SigningKey` | _(empty)_ | `Auth__SigningKey` | **Secret.** Signs session tokens; unset ⇒ a per-process key, so every restart signs everyone out |
+| `SigningKey` | _(empty)_ | `Auth__SigningKey` | **Secret.** Signs session tokens; empty ⇒ this host generates one on first start and keeps it in `<state-dir>/signing-key` (0600) |
 | `HostId` | _(empty)_ | `Auth__HostId` | Token audience; empty ⇒ the machine name. A bearer minted here is refused by any other host |
 | `AccessTtlSeconds` | `900` | `Auth__AccessTtlSeconds` | Access-bearer lifetime — short, because it is what bounds privilege between re-checks |
 | `SessionTtlSeconds` | `2592000` | `Auth__SessionTtlSeconds` | Absolute sign-in cap (30d). Each refresh slides it forward |

@@ -285,8 +285,10 @@ Things that bite if you don't know them:
   provider answered. Authority is re-derived per request (cached for `Auth:RoleCacheTtlSeconds`,
   default 5), never read off the bearer, so a change made in the panel takes effect without a new
   sign-in.
-- **`Auth:SigningKey` must be stable on any real host.** Unset means a per-process key: every restart
-  invalidates every issued token and signs everyone out.
+- **The key sessions are signed with is stable whether or not anyone sets one.** `Auth:SigningKey` wins
+  when it is set; blank means `HostSigningKey` generates 384 bits on the first start and keeps them in
+  `/var/lib/kgsm-assistant/signing-key` (0600), reusing them forever after. Rotating either invalidates
+  every issued token and signs everyone out.
 - **`Directory.Build.props` carries a scoped NuGet-audit suppression** (one transitive SQLite
   advisory, no fixed version yet). It's deliberate and documented inline — don't widen it to
   `NuGetAudit=off`; delete it when a patched bundle ships.

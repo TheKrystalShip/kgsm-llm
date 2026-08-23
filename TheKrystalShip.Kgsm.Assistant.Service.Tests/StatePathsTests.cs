@@ -79,4 +79,12 @@ public sealed class StatePathsTests : IDisposable
 
         Resolve(configured).Should().Be(configured);
     }
+
+    [Fact]
+    public void The_signing_key_lives_in_the_state_directory()
+    {
+        Environment.SetEnvironmentVariable(Variable, "/var/lib/kgsm-assistant");
+
+        StatePaths.SigningKeyPath.Should().Be("/var/lib/kgsm-assistant/signing-key");
+    }
 }

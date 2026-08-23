@@ -36,7 +36,7 @@ from `~/.config/kgsm-assistant/appsettings.json` or its own environment instead 
 | `KgsmAuth__Providers__discord__ClientId` · `__ClientSecret` | **yes** for Discord sign-in | The host's shared Discord application, seeded by `setup.sh` in `/etc/kgsm/kgsm-auth.env` and loaded before this file. `ClientSecret` is a **secret**. Password sign-in needs neither. (The CLI needs none of these.) |
 | `Auth__UsersDbPath` | for any sign-in | The host's KGSM account store, which is what says who may do what. Default `/var/lib/kgsm/auth/users.db`; its directory must be readable and writable by this unit's user. |
 | `DiscordOAuth__RedirectUri` | **yes** for web login | This service's own `/auth/discord/callback`, registered on the Discord application exactly. |
-| `Auth__SigningKey` | **yes** for web login | Signs session tokens. `openssl rand -base64 48`, once. Unset ⇒ a per-process key, so every restart signs everyone out. **Secret.** |
+| `Auth__SigningKey` | no | Signs session tokens. Left unset, the service generates one on its first start and keeps it in `/var/lib/kgsm-assistant/signing-key` (0600). Set it (`openssl rand -base64 48`) only to pin one deliberately. **Secret.** |
 | `Auth__AllowedOrigins__0` | **yes** for the SPA | Your panel origin (scheme + host, no trailing slash). Empty ⇒ browser calls are CORS-blocked. |
 | `Assistant__ActionsEnabled` | for actions | Set `true`. A staged action is held by the Service itself, so there is no key to keep stable and a restart does not void one. |
 | `Assistant__Relay__Secret` | if fronted by kgsm-api | Shared secret for the trusted-relay hop (kgsm-api → assistant). Empty ⇒ that path is off. **Secret.** |
@@ -307,12 +307,13 @@ register **this service's** `/auth/discord/callback` as a redirect URI. Then sup
 | `KgsmAuth__Providers__discord__ClientSecret` | code→token exchange (**secret**) | login denied |
 | `Auth__UsersDbPath` | the KGSM accounts that decide who may do what | sign-in unavailable |
 | `DiscordOAuth__RedirectUri` | must match the portal exactly | callback rejected |
-| `Auth__SigningKey` | signs session tokens — **keep stable** (**secret**) | everyone signed out on restart |
+| `Auth__SigningKey` | signs session tokens (**secret**) | nothing — the host generates and keeps its own |
 | `Auth__AllowedOrigins__0` | your SPA origin (CORS) | browser calls blocked |
 | `Assistant__ActionsEnabled` | master switch for actions | actions off |
 
-Generate a stable signing key once: `openssl rand -base64 48`. If it changes (or is empty),
-pending confirmations are rejected and the service falls back to read-only.
+The signing key is stable with nothing set: the service generates one on its first start and keeps
+it. Set `Auth__SigningKey` (`openssl rand -base64 48`) only to pin one deliberately — changing it
+rejects pending confirmations and signs everyone out.
 
 ### 6.3 Run under systemd
 
@@ -333,9 +334,8 @@ curl -fsS http://127.0.0.1:5180/health                  # acceptance
 
 > **Run the unit as the user that owns the kgsm registry** (the `User=` in the unit). The
 > service shells out to kgsm.sh through kgsm-lib; a different user sees zero instances.
-> **Sessions live in SQLite**, beside the conversation history, so a restart signs nobody out —
-> provided `Auth__SigningKey` is stable. Leave it unset and each start signs tokens with a fresh
-> key, which invalidates every one already issued.
+> **Sessions live in SQLite**, beside the conversation history, and the key they are signed with is
+> stable whether it is configured or generated — so a restart signs nobody out.
 
 ---
 
@@ -447,7 +447,7 @@ Full indexer reference: [`../TheKrystalShip.Rag.Indexer/README.md`](../TheKrysta
 | **CLI exits `2` immediately** | `KGSM:Path` missing/wrong. Set `KGSM__Path` or the config key to a real `kgsm.sh`. |
 | **Index is stale after a reboot; `journalctl -u kgsm-rag-indexer` shows an embed failure at boot** | **Known gap:** if Ollama is down when the indexer starts, the initial build fails and there is **no periodic retry** — it only rebuilds on the next doc change. Fix: the unit's `After=ollama.service` ordering (already set). If Ollama isn't a systemd unit, fix the ordering or `--once` it manually after Ollama is up. |
 | **Service logs "index … model mismatch" / RAG returns nothing** | The `.krag` was built with a different `EmbeddingModel` than `Rag:EmbeddingModel`. Re-index with the configured model (or align the config). |
-| **Every web user re-logged-in after a deploy** | `Auth__SigningKey` is unset, so each start signs with a fresh per-process key and every issued token becomes unverifiable. Generate one (`openssl rand -base64 48`) and keep it. |
+| **Every web user re-logged-in after a deploy** | The signing key changed. Either `Auth__SigningKey` was edited, or `/var/lib/kgsm-assistant/signing-key` could not be read and the journal carries the warning saying so — a per-process key makes every issued token unverifiable. |
 | **Turns 502 / "couldn't reach the model"** | Ollama down or the model not pulled. `ollama ps` should show the chat model `100% GPU`. |
 | **SSE replies arrive all-at-once at the end** | The reverse proxy is buffering. Set `proxy_buffering off` ([§7](#7--reverse-proxy--tls)). |
 | **`search` tool never offered** | Both sources are off: `Rag:Enabled=false` *and* no `WebSearch:ApiKey`. Enable at least one. |

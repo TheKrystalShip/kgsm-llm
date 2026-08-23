@@ -90,7 +90,7 @@ store that cannot be *read* denies the check and is not cached — "we could not
 answer is no".
 
 Required secrets (env-only — see [configuration](../docs/CONFIGURATION.md#secrets--environment-only-never-in-a-file)):
-`KgsmAuth__Providers__discord__ClientSecret`, `Auth__SigningKey`, `Assistant__Confirmation__Key`, plus the non-secret
+`KgsmAuth__Providers__discord__ClientSecret`, `Assistant__Confirmation__Key`, plus the non-secret
 `KgsmAuth__Providers__discord__ClientId`, `DiscordOAuth__RedirectUri` and `Auth__AllowedOrigins`. The `KgsmAuth__*`
 application is the host's, shared with the Control Panel API.
 

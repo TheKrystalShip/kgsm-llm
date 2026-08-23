@@ -36,6 +36,16 @@ internal static class StatePaths
     public const string ConversationDbFileName = "conversations.db";
 
     /// <summary>
+    /// The file this host keeps the key it signs sessions with, used only when
+    /// <c>Auth:SigningKey</c> is blank.
+    /// </summary>
+    /// <remarks>
+    /// Resolved against <see cref="Directory"/> rather than <see cref="Resolve"/>, because it has no
+    /// configured path to defer to: an operator who wants to name the key names the key itself.
+    /// </remarks>
+    public static string SigningKeyPath => Path.Combine(Directory, "signing-key");
+
+    /// <summary>
     /// The directory systemd provisioned for this unit, or <see cref="DefaultDirectory"/> when the
     /// process is not running under one.
     /// </summary>

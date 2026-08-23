@@ -222,11 +222,11 @@ public sealed class AuthOptions
     public const string Section = "Auth";
 
     /// <summary>
-    /// The HMAC secret session tokens are signed with. Unset generates an ephemeral per-process key,
-    /// which is fine for a test run and means every restart signs everyone out on a real host.
+    /// The HMAC secret session tokens are signed with. Blank means this host generates one for itself
+    /// and keeps it in its state directory, so sessions survive a restart with nothing configured.
     /// </summary>
-    /// <panel>Secret this service signs sign-in tokens with. Generate one and keep it stable: change it,
-    /// or leave it unset, and everyone is signed out the next time the service restarts.</panel>
+    /// <panel>Secret this service signs sign-in tokens with. Leave it blank and this host generates one
+    /// for itself on first start and reuses it forever after. Changing it signs everyone out at once.</panel>
     [LeafField("authSigningKey", "Session signing key", Group = "session", Type = LeafType.Secret,
         Risk = LeafRisk.Wiring, NoDefault = true)]
     public string SigningKey { get; set; } = string.Empty;

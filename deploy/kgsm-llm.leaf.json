@@ -525,7 +525,7 @@
       "key": "authSigningKey",
       "env": "Auth__SigningKey",
       "label": "Session signing key",
-      "description": "Secret this service signs sign-in tokens with. Generate one and keep it stable: change it, or leave it unset, and everyone is signed out the next time the service restarts.",
+      "description": "Secret this service signs sign-in tokens with. Leave it blank and this host generates one for itself on first start and reuses it forever after. Changing it signs everyone out at once.",
       "group": "session",
       "type": "secret",
       "risk": "wiring"

@@ -1,8 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 
-using Microsoft.Extensions.Logging;
-
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
@@ -43,6 +41,7 @@ internal sealed class HostSigningKey
     /// <param name="configured">What <c>Auth:SigningKey</c> holds. Blank means generate and keep one.</param>
     /// <param name="path">Where the generated key lives — <see cref="StatePaths.SigningKeyPath"/> in the
     /// composition, handed in so a test can name a directory of its own.</param>
+    /// <param name="logger">Reports a key being generated, and the fallback when one cannot be written.</param>
     public HostSigningKey(string? configured, string path, ILogger<HostSigningKey> logger)
     {
         if (!string.IsNullOrWhiteSpace(configured))

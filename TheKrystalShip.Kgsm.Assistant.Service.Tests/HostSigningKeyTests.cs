@@ -1,3 +1,5 @@
+using System.Runtime.Versioning;
+
 using FluentAssertions;
 
 using Microsoft.Extensions.Logging.Abstractions;
@@ -41,6 +43,7 @@ public sealed class HostSigningKeyTests : IDisposable
     }
 
     [Fact]
+    [SupportedOSPlatform("linux")]
     public void The_generated_key_file_is_readable_by_nobody_else()
     {
         Resolve("");

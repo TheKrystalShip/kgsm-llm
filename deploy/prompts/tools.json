@@ -481,6 +481,12 @@
         "description": "Optional. Override the blueprint's primary game port. Omit unless the user asked for a specific port or a conflict needs avoiding.",
         "required": false,
         "type": "string"
+      },
+      {
+        "name": "library",
+        "description": "Optional. The library — the disk the new server's files go on — by the name the user gave for it. Pass it ONLY when the user named one; omit it otherwise and the host puts the server on its usual disk. Never guess a name: the libraries this host has are not listed here, so an invented one is refused when the install is confirmed.",
+        "required": false,
+        "type": "string"
       }
     ]
   },

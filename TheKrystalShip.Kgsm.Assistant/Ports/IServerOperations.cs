@@ -134,12 +134,15 @@ public interface IServerOperations
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     /// <param name="version">Optional specific version; null installs the latest.</param>
     /// <param name="port">Optional override of the blueprint's primary game port; null keeps it.</param>
+    /// <param name="library">Optional library to place the instance in, by name; null lets kgsm
+    /// resolve placement from its configured default.</param>
     Task<Result> InstallAsync(
         string blueprint,
         string? instanceName,
         CancellationToken cancellationToken = default,
         string? version = null,
-        int? port = null);
+        int? port = null,
+        string? library = null);
 
     /// <summary>
     /// PERMANENTLY uninstalls an instance and all its data. Called only by

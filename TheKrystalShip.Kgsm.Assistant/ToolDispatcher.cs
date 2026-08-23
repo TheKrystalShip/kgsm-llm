@@ -1976,15 +1976,23 @@ public class ToolDispatcher : IToolDispatcher
             return $"Error: '{port}' is not a valid port number. Pass a whole number from 1 to 65535, "
                  + "or leave port out to take the blueprint's own default.";
 
+        // The library name is not checked here. The host's registered libraries are not among the
+        // facts this turn was given, so anything this could compare against would be invented; the
+        // engine refuses an unknown one at confirm time and its message names it. The confirmation
+        // shows the library, so a person sees where it would land before anything runs.
+        var library = call.Arg("library")?.Trim();
+
         _confirmations.Stage(new PendingConfirmation(
             ConfirmationKind.Install, blueprint!, instanceName,
-            ConfigKey: NullIfBlank(version), ConfigValue: NullIfBlank(port)));
+            ConfigKey: NullIfBlank(version), ConfigValue: NullIfBlank(port),
+            Library: NullIfBlank(library)));
 
         var named = instanceName is null ? "" : $" named '{instanceName}'";
         var at = string.IsNullOrWhiteSpace(port) ? "" : $" on port {port}";
         var ver = string.IsNullOrWhiteSpace(version) ? "" : $" at version {version}";
+        var into = string.IsNullOrWhiteSpace(library) ? "" : $" in library '{library}'";
         var game = await GameLabelAsync(blueprint!, cancellationToken);
-        return $"Staged an install of a new {game} server{named}{ver}{at} for confirmation. A confirmation " +
+        return $"Staged an install of a new {game} server{named}{ver}{at}{into} for confirmation. A confirmation " +
                "prompt with a button has been shown to the user. This is NOT done yet and will only run " +
                "if a permitted human clicks Confirm — tell the user it's awaiting their confirmation.";
     }

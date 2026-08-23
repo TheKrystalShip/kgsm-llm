@@ -58,7 +58,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                 announce_provider TEXT,
                 announce_name     TEXT,
                 announced_at      TEXT,
-                conversation_id   TEXT
+                conversation_id   TEXT,
+                library           TEXT
             );
             """;
         cmd.ExecuteNonQuery();
@@ -68,7 +69,7 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
         // start after the first rather than a fault.
         foreach (var column in (string[])
                  ["announce_provider TEXT", "announce_name TEXT", "announced_at TEXT",
-                  "conversation_id TEXT"])
+                  "conversation_id TEXT", "library TEXT"])
         {
             try
             {
@@ -104,9 +105,9 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                 """
                 INSERT INTO pending_confirmations
                     (id, kind, target, instance_name, config_key, config_value, staged_by, expires_at,
-                     announce_provider, announce_name, conversation_id)
+                     announce_provider, announce_name, conversation_id, library)
                 VALUES ($id, $kind, $target, $instance, $ckey, $cvalue, $by, $expires,
-                        $provider, $name, $conversation);
+                        $provider, $name, $conversation, $library);
                 """;
             // Both null is the ordinary case and is what makes a row unannounceable: there is nobody
             // recorded to announce it to, which is the same statement as "do not".
@@ -119,6 +120,7 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
             cmd.Parameters.AddWithValue("$instance", (object?)confirmation.InstanceName ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$ckey", (object?)confirmation.ConfigKey ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$cvalue", (object?)confirmation.ConfigValue ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$library", (object?)confirmation.Library ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$by", userId ?? string.Empty);
             cmd.Parameters.AddWithValue("$expires", expiry.ToString("O"));
             cmd.ExecuteNonQuery();
@@ -158,7 +160,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
             {
                 select.CommandText =
                     """
-                    SELECT kind, target, instance_name, config_key, config_value, staged_by, expires_at
+                    SELECT kind, target, instance_name, config_key, config_value, staged_by, expires_at,
+                           library
                     FROM pending_confirmations WHERE id = $id;
                     """;
                 select.Parameters.AddWithValue("$id", id);
@@ -170,7 +173,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                         reader.GetString(1),
                         reader.IsDBNull(2) ? null : reader.GetString(2),
                         reader.IsDBNull(3) ? null : reader.GetString(3),
-                        reader.IsDBNull(4) ? null : reader.GetString(4));
+                        reader.IsDBNull(4) ? null : reader.GetString(4),
+                        reader.IsDBNull(7) ? null : reader.GetString(7));
                     by = reader.GetString(5);
                     expiresAt = DateTimeOffset.Parse(reader.GetString(6));
                 }
@@ -213,7 +217,7 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
         cmd.CommandText =
             """
             SELECT id, kind, target, instance_name, config_key, config_value, staged_by, expires_at,
-                   announce_provider, announce_name
+                   announce_provider, announce_name, library
             FROM pending_confirmations
             WHERE announce_provider IS NOT NULL AND announced_at IS NULL AND expires_at > $now
             ORDER BY expires_at;
@@ -239,7 +243,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                     reader.GetString(2),
                     reader.IsDBNull(3) ? null : reader.GetString(3),
                     reader.IsDBNull(4) ? null : reader.GetString(4),
-                    reader.IsDBNull(5) ? null : reader.GetString(5)),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(10) ? null : reader.GetString(10)),
                 DateTimeOffset.Parse(reader.GetString(7))));
         }
         return waiting;
@@ -257,7 +262,7 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
         // person's staged action.
         cmd.CommandText =
             """
-            SELECT id, kind, target, instance_name, config_key, config_value, expires_at
+            SELECT id, kind, target, instance_name, config_key, config_value, expires_at, library
             FROM pending_confirmations
             WHERE staged_by = $by AND conversation_id = $conversation AND expires_at > $now
             ORDER BY expires_at;
@@ -281,7 +286,8 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
                     reader.GetString(2),
                     reader.IsDBNull(3) ? null : reader.GetString(3),
                     reader.IsDBNull(4) ? null : reader.GetString(4),
-                    reader.IsDBNull(5) ? null : reader.GetString(5)),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(7) ? null : reader.GetString(7)),
                 DateTimeOffset.Parse(reader.GetString(6))));
         }
         return pending;

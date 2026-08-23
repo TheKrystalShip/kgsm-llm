@@ -430,7 +430,9 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 installAttempted = true;
                 _progress.Report(ResultCardKinds.BlueprintDraft, "install", "Test-installing a copy to try it out…");
                 KgsmResult installResult = await Task.Run(
-                    () => _instances.Install(slug, null, null, probeName, actor, origin, null, start: true),
+                    () => _instances.Install(
+                        slug, library: null, version: null, name: probeName,
+                        actor: actor, origin: origin, port: null, start: true),
                     cancellationToken);
 
                 installSucceeded = installResult.IsSuccess;

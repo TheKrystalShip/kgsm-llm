@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — an install can name the disk it lands on
+
+`install_instance` takes an optional `library`: the named root the engine places the new server's
+files in. It travels with the staged confirmation and reaches `kgsm install --library` when a person
+confirms, and the confirmation names it, so nobody approves an install without seeing where it lands.
+
+The name is not checked when the call is staged. The host's registered libraries are not among the
+facts a turn is given, so anything this could compare against would be invented; the engine refuses
+an unknown one at confirm time and its message names it. The catalog entry tells the model to pass
+the argument only when the user named a library, and to guess nothing otherwise — omitted, the
+engine places the server on its configured default.
+
+Pins kgsm-lib 5.0.0, in which `Install` takes a library name where it took an install directory. The
+engine has no `--install-dir` flag; both call sites here already passed null, so nothing changed
+about where anything is installed by default.
+
+
 ### Added — the leaf declares the GPU backends it drives
 
 `deploy/kgsm-llm.leaf.json` carries `gpuBackendUnits`: `kgsm-llama-chat.service`,

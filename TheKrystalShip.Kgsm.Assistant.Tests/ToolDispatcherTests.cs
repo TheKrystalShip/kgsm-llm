@@ -1271,6 +1271,38 @@ public class ToolDispatcherTests
     }
 
     [Fact]
+    public async Task InstallServer_WithALibrary_StagesTheNameForTheConfirmationToShow()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            var result = await Summary(new LlmToolCall(ShippedText.Name(LlmTools.InstallServer),
+                new Dictionary<string, string?>
+                {
+                    ["blueprint_name"] = "valheim",
+                    ["library"] = "ssd",
+                }));
+
+            result.Should().Contain("Staged").And.Contain("ssd");
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Library.Should().Be("ssd");
+        }
+    }
+
+    // Placement is the engine's to resolve when nobody named a library, and staging one here would
+    // be this process deciding it — the confirmation would then show a disk nobody chose.
+    [Fact]
+    public async Task InstallServer_WithNoLibrary_StagesNone()
+    {
+        using (_confirmations.BeginTurn())
+        {
+            await Summary(InstallCall("valheim", "my-valheim"));
+
+            _confirmations.Staged.Should().ContainSingle()
+                .Which.Library.Should().BeNull();
+        }
+    }
+
+    [Fact]
     public async Task InstallServer_UnknownGame_ListsTheGamesByName()
     {
         using (_confirmations.BeginTurn())

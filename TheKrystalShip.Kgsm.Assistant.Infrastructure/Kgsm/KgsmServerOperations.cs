@@ -584,7 +584,8 @@ internal sealed class KgsmServerOperations : IServerOperations
         string? instanceName,
         CancellationToken cancellationToken = default,
         string? version = null,
-        int? port = null)
+        int? port = null,
+        string? library = null)
     {
         try
         {
@@ -593,7 +594,7 @@ internal sealed class KgsmServerOperations : IServerOperations
             var (actor, origin) = Provenance();
             await Task.Run(
                 () => _instances.Install(
-                    blueprint, installDir: null, version: version, name: instanceName,
+                    blueprint, library: library, version: version, name: instanceName,
                     actor: actor, origin: origin, port: port),
                 cancellationToken);
             return Result.Success();

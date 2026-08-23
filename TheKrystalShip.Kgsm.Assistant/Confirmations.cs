@@ -166,13 +166,20 @@ public static class ConfirmationKinds
 /// the length of one prompt, the Service in its pending-confirmation store — because what a client
 /// holds is a handle, so there is no size a payload has to fit into.
 /// </para>
+/// <para>
+/// <see cref="Library"/> is Install-only: the library the new instance is placed in, by name. It has
+/// a field of its own rather than a third overloaded slot because it is a name the confirming surface
+/// shows the person — an install landing on a disk they did not pick is exactly what the confirmation
+/// exists to prevent. Null means the engine resolves placement itself.
+/// </para>
 /// </summary>
 public sealed record PendingConfirmation(
     ConfirmationKind Kind,
     string Target,
     string? InstanceName = null,
     string? ConfigKey = null,
-    string? ConfigValue = null);
+    string? ConfigValue = null,
+    string? Library = null);
 
 /// <summary>
 /// Ambient, per-turn sink for destructive operations staged during an agent run.

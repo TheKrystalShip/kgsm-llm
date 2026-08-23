@@ -56,7 +56,7 @@
     <!-- The single C#<->kgsm chokepoint, consumed as the packed NuGet from the local feed
          (nuget.config → /home/heisen/local-nuget), same pattern as kgsm-watchdog / kgsm-api /
          kgsm-monitor. Bump this version when a new kgsm-lib is packed. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="4.41.1" />
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="5.0.0" />
   </ItemGroup>
 
 </Project>

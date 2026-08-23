@@ -58,6 +58,25 @@ public sealed class SqlitePendingConfirmationStoreTests : IDisposable
     }
 
     /// <summary>
+    /// Where an install would land survives the handle. It is the one part of a staged install a
+    /// person is asked to approve that nothing else can restate: the engine has no record of a
+    /// proposal, so a library dropped here is a server appearing on a disk nobody picked.
+    /// </summary>
+    [Fact]
+    public void AnInstallsLibraryRoundTrips()
+    {
+        var store = Create();
+        var staged = new PendingConfirmation(
+            ConfirmationKind.Install, "factorio", InstanceName: "factorio-prod",
+            ConfigKey: null, ConfigValue: null, Library: "ssd");
+
+        var handle = store.Put(staged, Owner, InFiveMinutes);
+
+        store.TryTake(handle, Owner, out var taken).Should().BeTrue();
+        taken!.Library.Should().Be("ssd");
+    }
+
+    /// <summary>
     /// The whole point of holding the operation here: a file body has no size to fit into and no
     /// encoding to survive, because it never leaves the host.
     /// </summary>

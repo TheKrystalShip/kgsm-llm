@@ -670,7 +670,7 @@ public class ServerAssistant : IServerAssistant
             // Install overloads ConfigKey/ConfigValue with the optional version and port overrides.
             ConfirmationKind.Install => await ConfirmInstallAsync(
                 confirmation.Target, confirmation.InstanceName, cancellationToken,
-                confirmation.ConfigKey, confirmation.ConfigValue),
+                confirmation.ConfigKey, confirmation.ConfigValue, confirmation.Library),
             ConfirmationKind.SetConfig => await ConfirmSetConfigAsync(
                 confirmation.Target, confirmation.ConfigKey, confirmation.ConfigValue, cancellationToken),
             ConfirmationKind.WriteFile => await ConfirmWriteFileAsync(
@@ -912,7 +912,7 @@ public class ServerAssistant : IServerAssistant
     /// </summary>
     private async Task<ConfirmOutcome> ConfirmInstallAsync(
         string blueprint, string? instanceName, CancellationToken cancellationToken,
-        string? version = null, string? port = null)
+        string? version = null, string? port = null, string? library = null)
     {
         var verb = ConfirmationKinds.Verb(ConfirmationKind.Install);
         var blueprints = await _inventory.GetBlueprintNamesAsync(cancellationToken);
@@ -941,10 +941,14 @@ public class ServerAssistant : IServerAssistant
         var result = await _operations.InstallAsync(
             match, instanceName, cancellationToken,
             version: string.IsNullOrWhiteSpace(version) ? null : version,
-            port: parsedPort);
+            port: parsedPort,
+            library: string.IsNullOrWhiteSpace(library) ? null : library);
         var named = instanceName is null ? "" : $" (named '{instanceName}')";
+        // The library is stated only when one was chosen. Naming the engine's own default here would
+        // be reporting a placement decision this path did not make.
+        var placed = string.IsNullOrWhiteSpace(library) ? "" : $" in '{library}'";
         return result.IsSuccess
-            ? ConfirmOutcome.Accepted($"Installed a new '{match}' server{named}.", verb, instanceName ?? match)
+            ? ConfirmOutcome.Accepted($"Installed a new '{match}' server{named}{placed}.", verb, instanceName ?? match)
             : ConfirmOutcome.Failed(
                 $"Could not install '{match}': {result.Error ?? "unknown error"}.", verb, match, result.Error);
     }

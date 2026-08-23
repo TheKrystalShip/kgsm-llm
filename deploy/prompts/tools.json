@@ -466,7 +466,7 @@
       },
       {
         "name": "instance_name",
-        "description": "Optional custom name for the new instance. Omit to let the system name it.",
+        "description": "Optional display name for the new server \u2014 free text, what it will be shown as. Its id is generated either way, so this never has to be spelled like an identifier. Omit to let it be shown as its id.",
         "required": false,
         "type": "string"
       },

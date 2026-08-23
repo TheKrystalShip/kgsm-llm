@@ -75,6 +75,49 @@ public sealed class SystemPromptBuilderTests : IDisposable
         File.WriteAllText(Path.Combine(_dir, fileName), text);
     }
 
+    /// <summary>The installed servers as the engine hands them over: an id, its game, and its label.</summary>
+    private void Installed(params (string id, string game, string label)[] instances)
+    {
+        _inventory.GetInstancesAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(
+                instances.ToDictionary(i => i.id, i => i.game)));
+        _inventory.GetInstanceLabelsAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(
+                instances.ToDictionary(i => i.id, i => i.label)));
+    }
+
+    /// <summary>
+    /// <b>Both names of every server are listed, and the model is told which one a tool takes.</b>
+    /// A list of ids alone leaves "restart My Factorio" with nothing to match; a list of labels alone
+    /// leaves the model handing a tool a string that resolves to nothing.
+    /// </summary>
+    [Fact]
+    public async Task InstanceList_CarriesTheLabelBesideTheId()
+    {
+        Catalog(("factorio", "Factorio"));
+        Installed(("factorio-42", "factorio", "My Factorio"));
+
+        BuiltPrompt prompt = await Build().BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().Contain("- factorio-42 — called \"My Factorio\" (game: Factorio)");
+        prompt.Text.Should().Contain("Pass the id");
+    }
+
+    /// <summary>
+    /// A server that was never labelled reads as its id, and is written down once — a line naming it
+    /// twice is what teaches the model that the two are different servers.
+    /// </summary>
+    [Fact]
+    public async Task InstanceList_NamesAnUnlabelledServerOnce()
+    {
+        Catalog(("factorio", "Factorio"));
+        Installed(("factorio", "factorio", "factorio"));
+
+        BuiltPrompt prompt = await Build().BuildAsync(canPerformActions: false);
+
+        prompt.Text.Should().Contain("- factorio (game: Factorio)").And.NotContain("called");
+    }
+
     [Fact]
     public async Task ShippedFiles_ProvideThePreambleAndDeniedText()
     {

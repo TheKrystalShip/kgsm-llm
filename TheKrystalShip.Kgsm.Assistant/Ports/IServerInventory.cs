@@ -7,8 +7,24 @@ namespace TheKrystalShip.Kgsm.Assistant.Ports;
 /// </summary>
 public interface IServerInventory
 {
-    /// <summary>Installed instances as a map of instance name → game (blueprint) type.</summary>
+    /// <summary>Installed instances as a map of instance id → game (blueprint) type.</summary>
     Task<IReadOnlyDictionary<string, string>> GetInstancesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Installed instances as a map of instance id → the label a person calls it by.
+    /// </summary>
+    /// <remarks>
+    /// A server has two names. Its <b>id</b> is generated at install, never changes, and is what every
+    /// tool argument, path and event carries; its <b>display name</b> is free text somebody chose and
+    /// changes whenever they like. Both are shown wherever the model reads a list of servers, so
+    /// "restart My Factorio" can be turned into the id the tool takes — and a value never leaves this
+    /// process as anything but the id.
+    /// <para>
+    /// Never blank: a server with no label of its own reads as its id, so a caller can print the value
+    /// without checking it.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyDictionary<string, string>> GetInstanceLabelsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Names of the installable blueprints (game types).</summary>
     Task<IReadOnlyCollection<string>> GetBlueprintNamesAsync(CancellationToken cancellationToken = default);

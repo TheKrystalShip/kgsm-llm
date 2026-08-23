@@ -53,6 +53,18 @@ public class ToolDispatcherTests
         _inventory.GetInstancesAsync(Arg.Any<CancellationToken>())
             .Returns((IReadOnlyDictionary<string, string>)instances);
 
+        // What each is called, as opposed to what it is keyed by. `minecraft` carries no label of its
+        // own, which the engine reports as its id — the shape a caller must handle without printing
+        // the same word twice.
+        var labels = new Dictionary<string, string>
+        {
+            ["terraria-pvp"] = "The Arena",
+            ["terraria-creative"] = "Sandbox",
+            ["minecraft"] = "minecraft",
+        };
+        _inventory.GetInstanceLabelsAsync(Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyDictionary<string, string>)labels);
+
         // A catalog carrying both names a blueprint has: the identifier kgsm installs, and the name a
         // person says. `projectzomboid` earns its place by being the pair that differ most.
         var blueprints = new BlueprintSummary[]
@@ -167,6 +179,49 @@ public class ToolDispatcherTests
         await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "pvp"), serverFacts: facts);
 
         await facts.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// <b>A person says the label; the tool takes the id.</b> "restart The Arena" has to reach
+    /// <c>terraria-pvp</c>, and what leaves the resolver is always the id — a label is something to
+    /// match against and never something to pass on.
+    /// </summary>
+    [Fact]
+    public async Task DisplayName_Resolves_ToTheId()
+    {
+        var facts = Substitute.For<IServerFacts>();
+
+        await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "The Arena"), serverFacts: facts);
+
+        await facts.Received(1).GetStatusAsync("terraria-pvp", Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// A partial label is worth matching for the same reason a partial id is: it is what somebody
+    /// says. It resolves only while exactly one server answers to it.
+    /// </summary>
+    [Fact]
+    public async Task PartOfADisplayName_Resolves_WhenOnlyOneServerCarriesIt()
+    {
+        var facts = Substitute.For<IServerFacts>();
+
+        await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "sandbox"), serverFacts: facts);
+
+        await facts.Received(1).GetStatusAsync("terraria-creative", Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// The miss names every server the way it can be asked for, because a refusal listing only the
+    /// keys leaves somebody's own word for a server unaccounted for and the next call unchanged.
+    /// </summary>
+    [Fact]
+    public async Task UnknownName_NamesEachServerByBothItsNames()
+    {
+        var result = await Summary(Call(ShippedText.Name(LlmTools.ServerInfo), "doesnotexist"));
+
+        result.Should().Contain("terraria-pvp (\"The Arena\")");
+        // A server with no label of its own is named once, not twice.
+        result.Should().Contain("minecraft,").And.NotContain("minecraft (\"minecraft\")");
     }
 
     [Fact]
@@ -1366,7 +1421,7 @@ public class ToolDispatcherTests
         {
             var result = await Summary(InstallCall("valheim", "minecraft"));
 
-            result.Should().Contain("already exists");
+            result.Should().Contain("already the id of an installed server");
             _confirmations.Staged.Should().BeEmpty();
         }
     }

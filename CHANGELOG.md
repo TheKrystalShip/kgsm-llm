@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a server can be asked for by the name a person calls it
+
+Every server has two names: the **id** kgsm generates at install, which never changes and is what
+every tool argument, path and event carries, and the **display name** somebody chose, which changes
+whenever they like. Both now reach the model, and the id is still the only thing that leaves it.
+
+- **The injected instance list carries both** — `- factorio-42 — called "My Factorio" (game:
+  Factorio)` — and says outright which of the two a tool takes. A list of ids alone leaves "restart
+  My Factorio" with nothing to match against; a list of labels alone leaves the model handing a tool
+  a string that resolves to nothing. A server that was never labelled is written down once.
+- **Resolution accepts a label** — exactly, and by substring — and always answers with the id. Two
+  servers sharing a label is a question for the user, never a coin toss: labels are decoration and
+  are not unique.
+- **Every refusal names each server both ways** (`terraria-pvp ("The Arena"), minecraft`), so a
+  person's own word for a server is accounted for and the next call has a key it can pass.
+- **The recogniser is primed with both names**, so a spoken "The Arena" is heard as the words it is.
+
+`install_instance`'s `instance_name` is the **display name**: free text, what the new server will be
+shown as, with its id generated either way. A name matching an existing server's **id** is still
+refused — an id always wins a lookup, so a label spelled like one could never resolve.
+
+⚠ **A blueprint's test-install carries an id, and an id may not begin with an underscore.** kgsm
+validates an explicitly-chosen id as `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` and refuses anything else,
+so the probe is installed as `bpprobe__<slug>__` — everything after the install addresses it by that
+string, and a refused probe install is a blueprint that can never be verified. The startup sweep also
+recognises the underscore-led spelling, because a leftover it does not recognise is one nothing ever
+removes.
+
+kgsm-lib pin: **6.1.0**. `TheKrystalShip.Kgsm.Assistant` **8.0.0** — `IServerInventory` gained
+`GetInstanceLabelsAsync`.
+
 ### Fixed — an install the engine refused is reported as refused
 
 `install_server` and `uninstall_server` report the engine's verdict. kgsm answers a mutating call

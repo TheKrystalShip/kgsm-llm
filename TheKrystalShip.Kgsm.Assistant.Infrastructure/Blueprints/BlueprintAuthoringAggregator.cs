@@ -430,8 +430,11 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
                 installAttempted = true;
                 _progress.Report(ResultCardKinds.BlueprintDraft, "install", "Test-installing a copy to try it out…");
                 KgsmResult installResult = await Task.Run(
+                    // The probe's name is an ID this code minted and then addresses everything by —
+                    // the log read, the file walk, the teardown — so it is passed as the id rather
+                    // than as a label the engine would generate an id beside.
                     () => _instances.Install(
-                        slug, library: null, version: null, name: probeName,
+                        slug, library: null, version: null, id: probeName,
                         actor: actor, origin: origin, port: null, start: true),
                     cancellationToken);
 

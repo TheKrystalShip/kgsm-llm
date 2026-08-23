@@ -32,6 +32,7 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
     private readonly SemaphoreSlim _blueprintsLock = new(1, 1);
 
     private IReadOnlyDictionary<string, string>? _instancesCache;
+    private IReadOnlyDictionary<string, string>? _labelsCache;
     private DateTime _instancesFetchedUtc = DateTime.MinValue;
     private volatile bool _instancesDirty = true;
 
@@ -64,14 +65,34 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
 
     public async Task<IReadOnlyDictionary<string, string>> GetInstancesAsync(CancellationToken cancellationToken = default)
     {
+        await RefreshInstancesAsync(cancellationToken);
+        return _instancesCache ?? EmptyInstances;
+    }
+
+    public async Task<IReadOnlyDictionary<string, string>> GetInstanceLabelsAsync(CancellationToken cancellationToken = default)
+    {
+        await RefreshInstancesAsync(cancellationToken);
+        return _labelsCache ?? EmptyInstances;
+    }
+
+    /// <summary>
+    /// Brings both instance views up to date from one engine read.
+    /// </summary>
+    /// <remarks>
+    /// The games and the labels come off the same roster entry, so reading them separately would pay
+    /// twice for one call and could answer two questions about two different moments — a server
+    /// renamed between them would be listed under a game it is not running.
+    /// </remarks>
+    private async Task RefreshInstancesAsync(CancellationToken cancellationToken)
+    {
         if (IsFresh(_instancesCache, _instancesFetchedUtc, _instancesDirty, _options.InstancesTtlSeconds))
-            return _instancesCache!;
+            return;
 
         await _instancesLock.WaitAsync(cancellationToken);
         try
         {
             if (IsFresh(_instancesCache, _instancesFetchedUtc, _instancesDirty, _options.InstancesTtlSeconds))
-                return _instancesCache!;
+                return;
 
             try
             {
@@ -79,6 +100,9 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
                 // The engine's record carries the blueprint's bare name, which is the spelling every
                 // catalog lookup and every sentence the model reads is keyed on.
                 _instancesCache = all.ToDictionary(kv => kv.Key, kv => kv.Value.Blueprint);
+                // The label is never blank — kgsm-lib answers with the id for an instance carrying no
+                // label of its own — so a reader can print it without deciding what an empty one means.
+                _labelsCache = all.ToDictionary(kv => kv.Key, kv => kv.Value.DisplayName);
                 _instancesFetchedUtc = DateTime.UtcNow;
                 _instancesDirty = false;
                 _logger.LogDebug("Instance cache refreshed ({Count} instances)", _instancesCache.Count);
@@ -88,8 +112,6 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
                 _logger.LogWarning(ex, "Instance cache refresh failed; serving {State}",
                     _instancesCache is null ? "empty" : "stale snapshot");
             }
-
-            return _instancesCache ?? EmptyInstances;
         }
         finally
         {

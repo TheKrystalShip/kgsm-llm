@@ -629,8 +629,10 @@ internal sealed class KgsmServerOperations : IServerOperations
             // reporting a refused install as a new server is a fabricated status.
             var (actor, origin) = Provenance();
             var result = await Task.Run(
+                // The name a person asked for is the server's LABEL, not its identifier: the engine
+                // generates the id, and free text somebody spoke could not be one anyway.
                 () => _instances.Install(
-                    blueprint, library: library, version: version, name: instanceName,
+                    blueprint, library: library, version: version, displayName: instanceName,
                     actor: actor, origin: origin, port: port),
                 cancellationToken);
             if (result.IsSuccess)

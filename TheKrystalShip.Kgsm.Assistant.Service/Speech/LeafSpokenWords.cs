@@ -105,12 +105,17 @@ internal sealed class LeafSpokenWords : ISpokenWords, IDisposable
 
         try
         {
-            IReadOnlyDictionary<string, string> instances = await _inventory.GetInstancesAsync(ct);
+            IReadOnlyDictionary<string, string> instances = await _inventory.GetInstanceLabelsAsync(ct);
             IReadOnlyCollection<string> blueprints = await _inventory.GetBlueprintNamesAsync(ct);
+
+            // Both names of every server: somebody says the label out loud and the id is what the
+            // engine calls it, and a recogniser primed with only one of them mishears the other.
+            IReadOnlyCollection<string> spoken =
+                [.. instances.Keys.Concat(instances.Values).Distinct(StringComparer.OrdinalIgnoreCase)];
 
             // No trigger phrase: somebody pressed a button to start recording, so there is no wake word
             // in the audio and naming one would prime the recogniser to hear one that was never said.
-            string composed = SpokenVocabulary.Compose([], instances.Keys, blueprints);
+            string composed = SpokenVocabulary.Compose([], spoken, blueprints);
 
             if (composed != _vocabulary)
             {

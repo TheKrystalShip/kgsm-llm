@@ -1975,9 +1975,12 @@ public class ToolDispatcher : IToolDispatcher
         var instanceName = call.Arg("instance_name")?.Trim();
         if (!string.IsNullOrWhiteSpace(instanceName))
         {
+            // The name is a label and labels need not be unique — but one spelled exactly like another
+            // server's id is a label nothing can ever resolve, since an id always wins a lookup.
             var instances = await _inventory.GetInstancesAsync(cancellationToken);
             if (instances.Keys.Any(k => string.Equals(k, instanceName, StringComparison.OrdinalIgnoreCase)))
-                return $"Error: an instance named '{instanceName}' already exists. Ask the user for a different name.";
+                return $"Error: '{instanceName}' is already the id of an installed server, so a new one "
+                     + "shown under that name could never be told apart from it. Ask the user for a different name.";
         }
         else
         {
@@ -2004,7 +2007,8 @@ public class ToolDispatcher : IToolDispatcher
             ConfigKey: NullIfBlank(version), ConfigValue: NullIfBlank(port),
             Library: NullIfBlank(library)));
 
-        var named = instanceName is null ? "" : $" named '{instanceName}'";
+        // Shown as, not named: the engine generates the id, and this is the label it will be read by.
+        var named = instanceName is null ? "" : $" shown as '{instanceName}'";
         var at = string.IsNullOrWhiteSpace(port) ? "" : $" on port {port}";
         var ver = string.IsNullOrWhiteSpace(version) ? "" : $" at version {version}";
         var into = string.IsNullOrWhiteSpace(library) ? "" : $" in library '{library}'";
@@ -2371,22 +2375,29 @@ public class ToolDispatcher : IToolDispatcher
 
     /// <summary>
     /// Resolves a model-supplied instance name against the live kgsm list:
-    /// exact (case-insensitive) wins; otherwise candidates are gathered by
-    /// substring or matching game type. Exactly one candidate resolves; more than
+    /// exact (case-insensitive) on the id or the display name wins; otherwise candidates are gathered
+    /// by substring of either name or by matching game type. Exactly one candidate resolves; more than
     /// one returns an ambiguity prompt (the model must ask the user, NOT guess);
     /// none returns a miss listing known instances so the model can self-correct.
     /// </summary>
+    /// <remarks>
+    /// <b>What comes back is always the id.</b> A person says a server's label and a tool takes its
+    /// id, so the label is something to match against and never something to pass on — every path out
+    /// of here hands the caller the key the engine, the paths and the events are written in.
+    /// </remarks>
     private async Task<(string? resolved, string? error)> ResolveInstanceAsync(string? name, CancellationToken cancellationToken)
     {
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
         if (instances.Count == 0)
             return (null, "Error: there are no installed instances to act on.");
 
+        var labels = await _inventory.GetInstanceLabelsAsync(cancellationToken);
+
         // A blank subject is the case that most needs the roster, so it gets the same list a typo
         // gets below. Naming only the missing argument leaves nothing to change between one call and
         // the next, and the observed behaviour then is the identical call, repeated.
         if (string.IsNullOrWhiteSpace(name))
-            return (null, $"Error: no instance_name was provided. Pass one of: {Roster(instances)}.");
+            return (null, $"Error: no instance_name was provided. Pass one of: {Roster(instances, labels)}.");
 
         var query = name.Trim();
 
@@ -2395,9 +2406,29 @@ public class ToolDispatcher : IToolDispatcher
         if (exact is not null)
             return (exact, null);
 
+        // An exact label is as good an answer as an exact id, and it is what somebody typing a
+        // server's name gives — but only when one server carries it: labels are decoration and are
+        // not unique, so two of them is a question for the user rather than a coin toss.
+        var labelled = instances.Keys
+            .Where(k => labels.TryGetValue(k, out var label)
+                        && string.Equals(label, query, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (labelled.Count == 1)
+            return (labelled[0], null);
+
+        if (labelled.Count > 1)
+            return (null,
+                $"Ambiguous: '{name}' is the display name of more than one instance: " +
+                $"{string.Join(", ", labelled)}. Ask the user which one they mean (list these options) " +
+                "and do not act until they choose.");
+
         var candidates = instances
             .Where(kv =>
                 kv.Key.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                (labels.TryGetValue(kv.Key, out var label)
+                    && label.Contains(query, StringComparison.OrdinalIgnoreCase)) ||
                 string.Equals(kv.Value, query, StringComparison.OrdinalIgnoreCase))
             .Select(kv => kv.Key)
             .OrderBy(k => k)
@@ -2411,12 +2442,25 @@ public class ToolDispatcher : IToolDispatcher
                 $"Ambiguous: '{name}' matches multiple instances: {string.Join(", ", candidates)}. " +
                 "Ask the user which one they mean (list these options) and do not act until they choose.");
 
-        return (null, $"Error: no instance named '{name}'. Known instances: {Roster(instances)}.");
+        return (null, $"Error: no instance named '{name}'. Known instances: {Roster(instances, labels)}.");
     }
 
-    /// <summary>The installed instance names, in the one order every refusal states them in.</summary>
-    private static string Roster(IReadOnlyDictionary<string, string> instances) =>
-        string.Join(", ", instances.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+    /// <summary>
+    /// The installed instances, in the one order every refusal states them in.
+    /// </summary>
+    /// <remarks>
+    /// Each is written as the id a tool takes, with the label beside it where a server carries one —
+    /// a refusal listing only ids leaves somebody's own word for a server unaccounted for, and one
+    /// listing only labels names nothing the next call can pass.
+    /// </remarks>
+    private static string Roster(
+        IReadOnlyDictionary<string, string> instances, IReadOnlyDictionary<string, string> labels) =>
+        string.Join(", ", instances.Keys
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .Select(k => labels.TryGetValue(k, out var label)
+                         && !string.Equals(label, k, StringComparison.Ordinal)
+                ? $"{k} (\"{label}\")"
+                : k));
 
     /// <summary>
     /// The refusal for a per-instance read called with no subject. It answers the question the caller
@@ -2427,10 +2471,12 @@ public class ToolDispatcher : IToolDispatcher
     private async Task<string> NeedsOneInstanceAsync(Tool tool, CancellationToken cancellationToken)
     {
         var instances = await _inventory.GetInstancesAsync(cancellationToken);
-        return instances.Count == 0
-            ? $"Error: {tool} reports on one server, and no instances are installed to report on."
-            : $"Error: {tool} reports on one server, so it needs an instance_name. To cover more than "
-            + $"one, call it once per server. The installed servers are: {Roster(instances)}.";
+        if (instances.Count == 0)
+            return $"Error: {tool} reports on one server, and no instances are installed to report on.";
+
+        var labels = await _inventory.GetInstanceLabelsAsync(cancellationToken);
+        return $"Error: {tool} reports on one server, so it needs an instance_name. To cover more than "
+            + $"one, call it once per server. The installed servers are: {Roster(instances, labels)}.";
     }
 
     /// <summary>

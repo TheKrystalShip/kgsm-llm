@@ -150,7 +150,7 @@ public sealed class BlueprintAuthoringAggregatorTests
         // the catalog clean.
         _instances.Received(1).Install(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>());
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>(), Arg.Any<string?>());
         await _repair.DidNotReceiveWithAnyArgs().RepairAsync(default!, default);
         _files.Received().Remove("terraria");
         _instances.Received(1).Uninstall(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>());
@@ -413,10 +413,14 @@ public sealed class BlueprintAuthoringAggregatorTests
 
         await Create().AuthorAsync("Terraria");
 
+        // The probe goes in as the instance's ID, not as a label: everything after the install —
+        // the log read, the file walk, the teardown — addresses it by that string, and a label
+        // would leave the engine generating an id nothing here holds.
         _instances.Received(1).Install(
             Arg.Is("terraria"), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Is<string?>(n => n != null && BlueprintProbeNaming.IsProbe(n)),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Is<bool?>(true));
+            Arg.Is<string?>(displayName => displayName == null),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Is<bool?>(true),
+            Arg.Is<string?>(id => id != null && BlueprintProbeNaming.IsProbe(id)));
     }
 
     [Fact]
@@ -468,7 +472,7 @@ public sealed class BlueprintAuthoringAggregatorTests
         result.Data.Outcome.Should().Be(BlueprintAuthoringOutcome.Failed);
         _instances.Received(1).Install(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>());
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>(), Arg.Any<string?>());
         _instances.Received(1).Uninstall(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>());
         _files.Received().Remove("terraria"); // catalog stays clean
     }
@@ -502,7 +506,7 @@ public sealed class BlueprintAuthoringAggregatorTests
 
         _instances.Received(3).Install(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>());
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<int?>(), Arg.Any<bool?>(), Arg.Any<string?>());
         _instances.Received(3).Uninstall(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>());
         await _repair.Received(2).RepairAsync(Arg.Any<BlueprintRepairContext>(), Arg.Any<CancellationToken>());
     }
@@ -523,15 +527,15 @@ public sealed class BlueprintAuthoringAggregatorTests
             .Returns(Result.Success(NeverBoots()));
         // The boot log fed to repair now comes from the full captured log (kgsm-lib GetLogsAsync), not the
         // status snapshot's 3-line tail.
-        _instances.GetLogsAsync("__bp_probe_terraria__", Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _instances.GetLogsAsync(BlueprintProbeNaming.ForSlug("terraria"), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns<ICollection<string>>(["ERROR: unknown argument -world"]);
         _instances.Uninstall(default!, default, default).ReturnsForAnyArgs(new KgsmResult(0));
-        _instanceFiles.List("__bp_probe_terraria__", "install", Arg.Any<int>())
+        _instanceFiles.List(BlueprintProbeNaming.ForSlug("terraria"), "install", Arg.Any<int>())
             .Returns(FileOpResult<DirListing>.Ok(new DirListing
             {
                 Entries = [new FileEntry("start_server_bepinex.sh", FileKind.File, 512, null)],
             }));
-        _instanceFiles.Read("__bp_probe_terraria__", "install/start_server_bepinex.sh", Arg.Any<long>())
+        _instanceFiles.Read(BlueprintProbeNaming.ForSlug("terraria"), "install/start_server_bepinex.sh", Arg.Any<long>())
             .Returns(FileOpResult<FileContent>.Ok(new FileContent { Content = "export LD_LIBRARY_PATH=./linux64\n./valheim_server.x86_64 -serverport 2456" }));
         _repair.RepairAsync(Arg.Any<BlueprintRepairContext>(), Arg.Any<CancellationToken>())
             .Returns((BlueprintRepairProposal?)null);
@@ -539,8 +543,8 @@ public sealed class BlueprintAuthoringAggregatorTests
         await Create(FastOptions(maxAttempts: 2)).AuthorAsync("Terraria");
 
         // The tree was listed and the script read...
-        _instanceFiles.Received().List("__bp_probe_terraria__", "install", Arg.Any<int>());
-        _instanceFiles.Received().Read("__bp_probe_terraria__", "install/start_server_bepinex.sh", Arg.Any<long>());
+        _instanceFiles.Received().List(BlueprintProbeNaming.ForSlug("terraria"), "install", Arg.Any<int>());
+        _instanceFiles.Received().Read(BlueprintProbeNaming.ForSlug("terraria"), "install/start_server_bepinex.sh", Arg.Any<long>());
         // ...and both surfaced to the repair step, along with the boot-log line.
         await _repair.Received(1).RepairAsync(
             Arg.Is<BlueprintRepairContext>(c =>

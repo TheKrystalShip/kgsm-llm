@@ -79,12 +79,28 @@ public class SystemPromptBuilder : ISystemPromptBuilder
             var catalog = await _inventory.GetBlueprintCatalogAsync(cancellationToken);
             var labels = catalog.ToDictionary(b => b.Name, b => b.Label, StringComparer.OrdinalIgnoreCase);
 
+            // A server has two names, and both are listed. The id is what every tool argument takes
+            // and what nobody says out loud; the display name is what a person asked for it by. A
+            // list carrying only ids leaves "restart My Factorio" with nothing to match against, and
+            // one carrying only labels leaves the model handing a tool a string it cannot resolve.
             var instances = await _inventory.GetInstancesAsync(cancellationToken);
+            var instanceLabels = await _inventory.GetInstanceLabelsAsync(cancellationToken);
             builder.Append("\n\nCurrently installed instances:\n");
             if (instances.Count > 0)
             {
                 foreach (var (name, game) in instances.OrderBy(kv => kv.Key))
-                    builder.Append($"- {name} (game: {GameLabel(game, labels)})\n");
+                {
+                    var label = instanceLabels.TryGetValue(name, out var shown) && !string.IsNullOrWhiteSpace(shown)
+                        ? shown
+                        : name;
+
+                    builder.Append(string.Equals(label, name, StringComparison.Ordinal)
+                        ? $"- {name} (game: {GameLabel(game, labels)})\n"
+                        : $"- {name} — called \"{label}\" (game: {GameLabel(game, labels)})\n");
+                }
+
+                builder.Append("Pass the id — the first word of each line — to a tool. " +
+                               "A person naming a server by its label means that id.\n");
             }
             else
             {

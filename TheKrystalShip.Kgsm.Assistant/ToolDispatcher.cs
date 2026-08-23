@@ -2459,7 +2459,7 @@ public class ToolDispatcher : IToolDispatcher
             .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
             .Select(k => labels.TryGetValue(k, out var label)
                          && !string.Equals(label, k, StringComparison.Ordinal)
-                ? $"{k} (\"{label}\")"
+                ? $"{k} ({PromptLabel.Quoted(label)})"
                 : k));
 
     /// <summary>

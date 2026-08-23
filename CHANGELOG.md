@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the prompts are a shipped file, wherever the assistant came from
+
+`Prompts__Directory` is set by the unit: `/usr/share/kgsm-assistant/prompts` as committed, which the
+package installs the segments and `tools.json` into, and `deploy.sh` rewrites to `<prefix>/prompts`
+when it renders the unit for a host. A blank value is a fatal startup error naming the missing file,
+so the path belongs somewhere every install path supplies it rather than in an env file each host
+has to remember. Setting it in an env file still wins — systemd reads those after `Environment=`.
+
+`deploy/kgsm-llm.commands.json` is packaged too, into `/var/lib/kgsm/leaves/commands/assistant.json`
+— one directory below the config descriptors, because the descriptor scan globs `*.json` at the top
+level and would read a manifest there as a malformed descriptor.
+
+### Added — `kgsm-llm-llamacpp`, the llama.cpp backend as its own package
+
+The four `kgsm-llama-*` units, `llama-server.env` and the three operator commands —
+`kgsm-llama-fetch-models`, `kgsm-llama-use-backend`, `kgsm-llama-use-chat-mode` — installed on PATH
+under the name of the thing they act on. The units ship verbatim: they already name
+`/usr/bin/llama-server` and the packaged `kgsm` account, so packaging rewrites nothing.
+
+Split out because Ollama is the alternative and a host runs one of the two. `llama-cpp` is an
+`optdepends` rather than a dependency: several packages provide the one `/usr/bin/llama-server`
+binary, and naming one would refuse the GPU build a node with a card wants.
+
+`kgsm-rag-indexer` gains `deploy/rag-indexer.env.example` — the two keys that say which embedding
+server to build against, commented, with the unit's own defaults in force until they are not.
+
+### Changed — the seeded env file describes no particular host
+
+`KGSM__Path` is `/usr/bin/kgsm`, the entry point the engine's package installs; `/usr/local` belongs
+to the local administrator and no package may write there. `DiscordOAuth__RedirectUri` and
+`Auth__AllowedOrigins__0` are commented examples — each names one host's public address, and a live
+value in the file every host is seeded from describes some other machine.
+
 ### Security — a display name is data in the prompt, never an instruction
 
 A display name is free text an operator sets, and it is injected into the system prompt and into the

@@ -6,15 +6,16 @@
 # /opt/kgsm-assistant, configured from /etc/kgsm-assistant. The package is named for the repo so it
 # matches the git remote and the rest of the fleet.
 #
-# Two packages from one build:
+# Three packages from one build:
 #   kgsm-llm              the assistant service + CLI
 #   kgsm-rag-indexer      the RAG index builder — opt-in, and the assistant answers without it
+#   kgsm-llm-llamacpp     the llama.cpp model units — opt-in, and Ollama is the alternative
 #
 # The Service is framework-dependent, so it declares the ASP.NET runtime. Every release builds
 # against the current .NET, which is what Arch's aspnet-runtime tracks.
 
 pkgbase=kgsm-llm
-pkgname=('kgsm-llm' 'kgsm-rag-indexer')
+pkgname=('kgsm-llm' 'kgsm-rag-indexer' 'kgsm-llm-llamacpp')
 pkgver=1.10.0
 pkgrel=1
 arch=('x86_64')
@@ -44,7 +45,8 @@ package_kgsm-llm() {
     groups=('kgsm-node')
     depends=('kgsm' 'systemd' 'glibc' 'aspnet-runtime')
     optdepends=(
-        'ollama: the model backend — the assistant has no other inference path'
+        'ollama: one of the two inference backends the assistant reaches a model through'
+        'kgsm-llm-llamacpp: the other one — llama.cpp units serving the chat and embedding models'
         'kgsm-watchdog: lifecycle tools act through it'
         'kgsm-rag-indexer: builds the retrieval index this reads'
         'nginx: public TLS ingress for the assistant’s own site'
@@ -77,13 +79,31 @@ package_kgsm-llm() {
     install -Dm644 "${repo}/deploy/kgsm-llm.leaf.json" \
         "${pkgdir}/var/lib/kgsm/leaves/assistant.json"
 
+    # The command catalog the Control Panel lists this leaf's commands from. One directory below the
+    # descriptors, because the descriptor scan globs *.json at the top level and would read a
+    # manifest there as a malformed descriptor.
+    install -Dm644 "${repo}/deploy/kgsm-llm.commands.json" \
+        "${pkgdir}/var/lib/kgsm/leaves/commands/assistant.json"
+
+    # The prompt segments and tool definitions. These are shipped artifacts, not state: the service
+    # reads them every turn and refuses to start without them, naming what is missing. The unit's
+    # Prompts__Directory names this directory.
+    install -dm755 "${pkgdir}/usr/share/kgsm-assistant/prompts"
+    cp -a "${repo}/deploy/prompts/." "${pkgdir}/usr/share/kgsm-assistant/prompts/"
+    find "${pkgdir}/usr/share/kgsm-assistant/prompts" -type f -exec chmod 0644 {} +
+    find "${pkgdir}/usr/share/kgsm-assistant/prompts" -type d -exec chmod 0755 {} +
+
     install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
 
 package_kgsm-rag-indexer() {
     pkgdesc="KGSM assistant RAG indexer — builds the retrieval index the assistant reads"
     depends=('kgsm-llm' 'glibc')
-    optdepends=('ollama: computes the embeddings')
+    optdepends=(
+        'ollama: computes the embeddings'
+        'kgsm-llm-llamacpp: computes the embeddings with llama.cpp instead'
+    )
+    backup=('etc/kgsm-assistant/rag-indexer.env')
 
     local repo="${startdir}/.." stage; stage="$(_stage)"
 
@@ -101,6 +121,63 @@ package_kgsm-rag-indexer() {
 
     install -Dm644 "${repo}/deploy/kgsm-rag-indexer.service" \
         "${pkgdir}/usr/lib/systemd/system/kgsm-rag-indexer.service"
+
+    # Which embedding server to build against. All commented — the unit's own Environment= defaults
+    # apply — and rewritten wholesale by kgsm-llama-use-backend when the inference backend moves.
+    install -Dm640 "${repo}/deploy/rag-indexer.env.example" \
+        "${pkgdir}/etc/kgsm-assistant/rag-indexer.env"
+
+    install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
+
+package_kgsm-llm-llamacpp() {
+    pkgdesc="KGSM assistant llama.cpp backend — units serving the chat and embedding models"
+    arch=('any')   # units, an env template and three shell scripts
+    depends=('kgsm-llm' 'systemd' 'curl')
+    # Every unit here execs /usr/bin/llama-server. Several packages provide that one binary and only
+    # one of them can be installed, so naming a single hard dependency would refuse the GPU build a
+    # node with a card actually wants.
+    optdepends=(
+        'llama-cpp: provides /usr/bin/llama-server (a GPU build providing the same binary — llama.cpp-cuda, llama.cpp-vulkan, llama.cpp-rocm — serves instead)'
+    )
+    backup=('etc/kgsm-assistant/llama-server.env')
+
+    local repo="${startdir}/.."
+
+    # Installed verbatim. The committed units already name /usr/bin/llama-server and the packaged
+    # kgsm account, so there is nothing to rewrite — which is the point: a unit rewritten at
+    # packaging time is a unit nobody tested.
+    local unit
+    for unit in kgsm-llama-chat.service kgsm-llama-chat.socket \
+                kgsm-llama-chat-proxy.service kgsm-llama-embed.service; do
+        install -Dm644 "${repo}/deploy/llama-server/${unit}" \
+            "${pkgdir}/usr/lib/systemd/system/${unit}"
+    done
+
+    # Model paths, ports and the idle timeout. Required, not optional: the units read it with a bare
+    # EnvironmentFile= and every model path they exec with comes out of it. Listed in backup=(), so
+    # an upgrade writes .pacnew beside the paths a host chose.
+    install -Dm640 "${repo}/deploy/llama-server/llama-server.env.example" \
+        "${pkgdir}/etc/kgsm-assistant/llama-server.env"
+
+    # Where the GGUFs go. The units read them under ReadOnlyPaths=/var/lib/llama and run as the kgsm
+    # account, which is also what fetches them.
+    install -Dm644 /dev/stdin "${pkgdir}/usr/lib/tmpfiles.d/${pkgname}.conf" <<'TMPFILES'
+d /var/lib/llama         0755 kgsm kgsm -
+d /var/lib/llama/models  0755 kgsm kgsm -
+TMPFILES
+
+    # The three operator commands, on PATH under the name of the thing they act on. Each reads only
+    # absolute paths, so relocating them out of the source tree changes nothing.
+    install -Dm755 "${repo}/deploy/llama-server/fetch-models.sh" \
+        "${pkgdir}/usr/bin/kgsm-llama-fetch-models"
+    install -Dm755 "${repo}/deploy/llama-server/use-backend.sh" \
+        "${pkgdir}/usr/bin/kgsm-llama-use-backend"
+    install -Dm755 "${repo}/deploy/llama-server/use-chat-mode.sh" \
+        "${pkgdir}/usr/bin/kgsm-llama-use-chat-mode"
+
+    install -Dm644 "${repo}/deploy/llama-server/README.md" \
+        "${pkgdir}/usr/share/doc/${pkgname}/README.md"
 
     install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

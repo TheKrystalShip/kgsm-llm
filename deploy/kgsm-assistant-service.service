@@ -31,6 +31,12 @@ Environment=ASPNETCORE_URLS=http://127.0.0.1:5180
 # shared — nothing is bound and nothing on the engine side names this reader. Unset, the service
 # reads no events and falls back to the cache TTL.
 Environment=KGSM__JournalDir=/var/lib/kgsm/events
+# The prompt segments and tool definitions the assistant runs on. They are files, not code, and a
+# blank value is a fatal startup error naming the file — so the path is declared here rather than
+# left to an env file every host would have to remember to set. This names the packaged location;
+# deploy.sh rewrites it to the prefix it installs the same files into, and either way a
+# Prompts__Directory in an env file below still wins, because systemd reads those last.
+Environment=Prompts__Directory=/usr/share/kgsm-assistant/prompts
 # Secrets + non-default config live here (chmod 600, root:root or kgsm:kgsm). Template: assistant.env.example
 # Who may do what on this host, shared with every other KGSM surface. Loaded FIRST so the per-leaf
 # file below can still override a value deliberately; setting one there is how a host ends up

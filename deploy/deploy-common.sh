@@ -61,7 +61,9 @@ NGINX_FRAGMENT="${REPO_DIR}/deploy/nginx/kgsm-assistant.conf"
 LEAF_ID="assistant"
 
 render_unit() {   # $1 = unit filename
-    sed "s/^User=.*/User=${DEPLOY_USER}/; s/^Group=.*/Group=${DEPLOY_GROUP}/" \
+    sed -e "s/^User=.*/User=${DEPLOY_USER}/" \
+        -e "s/^Group=.*/Group=${DEPLOY_GROUP}/" \
+        -e "s|^Environment=Prompts__Directory=.*|Environment=Prompts__Directory=${PREFIX}/prompts|" \
         "${REPO_DIR}/deploy/$1"
 }
 

@@ -12,6 +12,13 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
 
+  <!-- Every test project in this repo runs inside a temp directory of its own, so a run takes back
+       the databases, indexes and state files its fixtures wrote. One source, compiled into each test
+       assembly, because the type is internal and does not cross an assembly boundary. -->
+  <ItemGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <Compile Include="$(MSBuildThisFileDirectory)TestTempRoot.cs" Link="TestTempRoot.cs" />
+  </ItemGroup>
+
   <Target Name="SetSourceRevisionId" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo;CoreCompile"
           Condition="'$(SourceRevisionId)' == ''">
     <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --short=12 HEAD"

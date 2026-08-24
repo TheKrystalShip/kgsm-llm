@@ -10,9 +10,9 @@ guide* for mechanics; read this before changing how scoring works.
 A console app (`kgsm-assistant-eval`) that drives the **real** assistant in-process (the CLI's
 `AddLocalLlm` + `AddKgsmAssistant` + `AddKgsmAdapters` backend, with the conversation store pointed at a
 throwaway temp DB) over a fixed prompt corpus, reads each turn's tool trajectory back from the store
-(the canonical history IS the per-turn record now), and scores it. It is the codified
-version of the one-off hand-eval (preserved in `mcq/corpus/gemma-assistant-eval.md`); the memory
-`assistant-eval-harness.md` is the durable summary. It's a **leaf** in the ecosystem (see
+(the canonical history IS the per-turn record), and scores it. The reference hand-eval it must
+reproduce lives in `mcq/corpus/gemma-assistant-eval.md` (see *The acceptance test*). It's a
+**leaf** in the ecosystem (see
 `~/tks/system-architecture.md`) — depends only on the assistant + kgsm-lib, never the API/Service.
 
 ## Invariants — do NOT break these (they ARE the design)
@@ -39,13 +39,13 @@ version of the one-off hand-eval (preserved in `mcq/corpus/gemma-assistant-eval.
    judged by reading `--transcript`. The score guides; the transcript decides.
 4. **Don't chase brittle prose regexes.** The D11 lesson: the model was 3/3 *correct* ("I don't see a
    Minecraft server", "isn't installed", "I can install one") and the regex kept missing the
-   phrasings — so it got dropped to robust trajectory checks. If a prose check is red while the
+   phrasings — so D11 asserts robust trajectory checks instead. If a prose check is red while the
    transcript is clearly fine, **the check is wrong** — broaden to a robust signal or move the
    judgment to the transcript. Don't tune the regex until it's green; that's overfitting.
 5. **The bar lives in code, on purpose.** Cases + checks are C# in `BenchmarkSuite.cs`/`Checks.cs`
    because changing the *bar* should be deliberate and reviewed. The fast-iteration surface is the
    prompt files (`~/.config/kgsm-assistant/prompts/*`), NOT the eval. Don't make the corpus
-   data-driven/hot-editable — that was considered and rejected.
+   data-driven/hot-editable.
 6. **Fixtures by role + loud preflight.** Cases template `{unique_game}`/`{never_game}`, resolved
    from live inventory; the preflight prints the inventory and **aborts on empty**. Keep it loud — a
    silent empty-inventory run that "passes" is the single worst failure mode (see gotcha #1).
@@ -59,8 +59,8 @@ the harness is wrong** — the hand-eval is ground truth.
 
 ## MCQ mode (ground-truth accuracy) — a SECOND, separate harness
 
-`mcq` mode (the `Mcq*.cs` files) is a different instrument from the routing benchmark above, added in
-Phase 5 of the RAG work. The routing harness scores *what tool the model called* (and deliberately
+`mcq` mode (the `Mcq*.cs` files) is a different instrument from the routing benchmark above. The
+routing harness scores *what tool the model called* (and deliberately
 **never** a world fact — invariant #1). The lift chart the RAG work needs is **100% world-fact**: is
 the answer correct, closed-book vs with-RAG vs oracle. That can't be bolted onto the routing scorer
 without breaking invariant #1, so it's a parallel mode with its own design rules:
@@ -96,9 +96,9 @@ model; `McqLiveTests` (gated `KGSM_LIVE_OLLAMA=1`) smokes the whole pipeline on 
 **Acceptance for the mode:** a live `mcq --seed 42` reproduces the reference chart *shape* (closed <
 with-rag ≤ oracle≈100%) and at least one `--sweep` knob moves with-RAG accuracy.
 
-### `--diagnose` — the Phase 6 retrieval read (and why no lever was built)
+### `--diagnose` — the retrieval read (and why no hybrid retriever exists)
 
-`--diagnose` answers the question Phase 6 hinges on: *where does the with-RAG → oracle gap live, and is it
+`--diagnose` answers one question: *where does the with-RAG → oracle gap live, and is it
 worth a retriever change?* It is a measurement of **retrieval**, never of the answer. For each with-rag
 question it captures the raw cosine top-k (`EvalRetrieval.LastRawHits`, stashed **before** the MinScore
 filter so recall is honest), measures each chunk's lexical **gold coverage** (`TextOverlap`, a recall-flavoured
@@ -121,13 +121,12 @@ Design rules that keep the read honest (don't regress them):
 - **The verdict refuses to recommend a lever below `MinActionableGap` (3) attributable questions** — the
   advisor's "you can't drive a lever off two data points." A 1–2 question gap reads "WITHIN NOISE."
 
-**Phase 6 outcome (gemma4:12b, embeddinggemma, `--seed 42`): NO-GO on building a retriever.** recall@5 is
+**The measurement behind not building a retriever (gemma4:12b, embeddinggemma, `--seed 42`):** recall@5 is
 84% — imperfect — yet **3 of the 5 top-k misses and all 3 context-cap drops were answered correctly anyway**,
 so the model is robust to imperfect retrieval. The retrieval-attributable, *parsed* accuracy gap is **one
 borderline question** (Q31, gold coverage 0.44 vs the 0.5 cut, and its *right doc was retrieved* — an
 intra-doc ranking near-miss). Oracle sits ~1 question above with-rag, capping what any retriever could buy.
-Building a hybrid here would be the speculative machinery the plan's §8 forbids. **The Phase 6 deliverable
-is this diagnosis mode plus the data-backed decision NOT to build** — the lever stays deferred until the
+A hybrid here would be speculative machinery serving no measured gap — the lever stays deferred until the
 corpus is re-powered (general expansion for statistical power, *not* identifier-fishing: the read found no
 lexical-recall failure to justify it). `TextOverlap` + the bucket classifier are unit-tested in
 `McqDiagnosisTests`.
@@ -169,13 +168,13 @@ Its design rules:
 
 ```bash
 dotnet build TheKrystalShip.Llm.slnx                                   # whole solution
-dotnet test  TheKrystalShip.Kgsm.Assistant.Eval.Tests/*.csproj         # 30 logic tests, no live deps
+dotnet test  TheKrystalShip.Kgsm.Assistant.Eval.Tests/*.csproj         # logic tests, no live deps
 # A live ROUTING run needs Ollama + a kgsm host with ≥1 instance:
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- --kgsm ~/tks/kgsm/kgsm.sh --shipped-prompts --transcript
 # A live MCQ run needs Ollama only (chat + embedder), no kgsm:
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --seed 42            # the lift chart
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --sweep min-score    # tune a knob
-dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --diagnose           # recall@k + gap buckets (Phase 6 read)
+dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- mcq --diagnose           # recall@k + gap buckets
 # A live VOICE run needs the same things a routing run does (Ollama + a kgsm host):
 dotnet run --project TheKrystalShip.Kgsm.Assistant.Eval -- voice --shipped-prompts --transcript
 ```
@@ -188,8 +187,8 @@ run in CI without a model. A live run is the only thing that exercises the model
 - **Never override `XDG_DATA_HOME`** when driving the assistant — kgsm's instance registry lives under
   `~/.local/share/kgsm`, so overriding it hides EVERY instance and the model truthfully says "no
   servers installed". The eval points the conversation store at a throwaway temp DB (so eval turns
-  never touch the user's real corpus), but anything you script around it is not immune. This cost a
-  full battery once. The preflight aborting on empty is the guardrail.
+  never touch the user's real corpus), but anything you script around it is not immune. The
+  preflight aborting on empty is the guardrail.
 - **This host has only `factorio-test` (stopped).** So `MultipleInstances`-gated `M1` and any
   run-state-dependent richness skip or converge on "it's stopped". To exercise ambiguity + live
   run-state, install/start a second instance first. Cases that don't need run-state run fully anyway.
@@ -222,14 +221,14 @@ run in CI without a model. A live run is the only thing that exercises the model
   state is live and lives in the tools") combined with a rewritten tool description and the rule
   repositioned last in the prompt, where recency is highest. All four scored 0. The reading is that a
   rule of this shape needs a deliberation step to be applied at all, and without one the model matches
-  "person stated a fact" → "write it down" directly. **Everything except the committed wording was
-  reverted** — an unmeasured prompt edit is churn, and this prompt carries 195 other checks.
+  "person stated a fact" → "write it down" directly. **Only the measured wording ships** — an
+  unmeasured prompt edit is churn against every other check the corpus holds this prompt to.
 
   Left red rather than softened: the check is a correct trajectory assertion and the model is what
   fails it. The harm is bounded rather than fixed — with a deliberately wrong port memory seeded, the
   model still called the status tool and did not answer from the memory. **The one measured lever is
   `Llm:Think`**, which is a latency trade, not a free fix.
-- **Fabricated figures are now guarded, and the `Q` group reads the guard.** `FabricatedFigureClaim`
+- **Fabricated figures are guarded, and the `Q` group reads the guard.** `FabricatedFigureClaim`
   compares every run of four or more digits in the reply against everything the turn was given
   (`MeasuredValues`: tool output, the request, the injected lists). Unbacked ⇒ one re-prompt quoting
   the figures back, then a correction appended if the second attempt is unbacked too. `Q1`/`Q2` assert

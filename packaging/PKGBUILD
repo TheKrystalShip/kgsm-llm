@@ -16,7 +16,7 @@
 
 pkgbase=kgsm-llm
 pkgname=('kgsm-llm' 'kgsm-rag-indexer' 'kgsm-llm-llamacpp')
-pkgver=1.47.0
+pkgver=1.47.1
 pkgrel=1
 arch=('x86_64')
 url="https://github.com/TheKrystalShip/kgsm-llm"

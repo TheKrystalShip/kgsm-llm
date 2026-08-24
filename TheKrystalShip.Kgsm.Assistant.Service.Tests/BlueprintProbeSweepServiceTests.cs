@@ -12,7 +12,8 @@ using Xunit;
 namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 
 /// <summary>
-/// Verifies the startup orphan sweep (<c>assistant-blueprint-authoring-plan.md</c> step 10's backstop):
+/// Verifies the startup orphan sweep — the backstop for a process killed mid-authoring, the one
+/// case the authoring pipeline's own guaranteed teardown can never reach:
 /// on startup it uninstalls only instances matching <see cref="Kgsm.Assistant.Blueprints.BlueprintProbeNaming"/>'s
 /// reserved prefix, leaves every real user instance untouched, and never lets a read/uninstall failure
 /// stop the host from starting.

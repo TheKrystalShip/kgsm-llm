@@ -16,8 +16,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Blueprints;
 
 /// <summary>
 /// The real <see cref="IBlueprintAuthoring"/> — the full research→draft→persist→install→verify→
-/// self-repair→teardown→keep/stash pipeline (<c>assistant-blueprint-authoring-plan.md</c>, "The
-/// pipeline"). Lives in Infrastructure (not the Assistant domain project, unlike
+/// self-repair→teardown→keep/stash pipeline. Lives in Infrastructure (not the Assistant domain project, unlike
 /// <c>SearchAggregator</c>) because it needs kgsm-lib's write-side authorities directly
 /// (<see cref="IBlueprintFiles"/>, <see cref="IInstanceService"/>, <see cref="IBlueprintService"/>) —
 /// the same layering reason <see cref="KgsmServerOperations"/> lives here rather than in the domain

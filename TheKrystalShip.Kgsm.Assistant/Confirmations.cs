@@ -38,8 +38,8 @@ public enum ConfirmationKind
     // content on ConfigValue, and has its own confirm path. Not Destructive (a .kgsmbak backup
     // + the confirm-time preview are the friction, not a type-the-name gate).
     WriteFile = 9,
-    // Finalize an assistant-authored blueprint the user reviewed/edited in the chat (the human-review
-    // checkpoint — assistant-blueprint-review-plan.md). Unlike the rest, "confirm" runs a long pipeline
+    // Finalize an assistant-authored blueprint the user reviewed/edited in the chat (the mandatory
+    // human-review checkpoint). Unlike the rest, "confirm" runs a long pipeline
     // (test-install → verify → repair → keep) and its RESULT is a rich card, not a one-line outcome — so it
     // has its own confirm entrypoint that returns a BlueprintAuthoringData rather than ConfirmAsync's text.
     // Carries the resolved slug on Target, the game display name on InstanceName, and the DRAFT YAML on

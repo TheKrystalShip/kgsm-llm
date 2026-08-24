@@ -24,7 +24,7 @@ public enum BlueprintAuthoringOutcome
     Verified,
 
     /// <summary>A draft is rendered and awaiting the user's in-chat review before it is test-installed —
-    /// the human-review checkpoint (<c>assistant-blueprint-review-plan.md</c>). Also the recovery surface
+    /// the mandatory human-review checkpoint. Also the recovery surface
     /// when the autonomous repair loop exhausts: the last draft plus its boot evidence is returned for the
     /// user to edit rather than stopping at <see cref="Failed"/>. Nothing has been (or will be) persisted
     /// to the catalog on this outcome — the draft only rides in the card, to come back on the finalize

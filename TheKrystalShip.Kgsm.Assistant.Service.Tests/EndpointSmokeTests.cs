@@ -452,7 +452,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     /// <summary>A blueprint_* event from kgsm must reach the inventory invalidation seam — the
-    /// whole reason Phase 2 of blueprint-editor-plan.md emits these events. A web-originated
+    /// whole reason the engine emits these events. A web-originated
     /// blueprint edit lands via this webhook; without an invalidate the assistant's blueprint
     /// catalog serves stale data on the next turn. The webhook has no secret configured here, so
     /// the signature check is silently bypassed (the dev/host path; production requires it).

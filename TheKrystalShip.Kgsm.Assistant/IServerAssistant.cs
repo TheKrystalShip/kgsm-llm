@@ -263,7 +263,7 @@ public interface IServerAssistant
 
     /// <summary>
     /// Finalizes an assistant-authored blueprint after the user reviewed/edited it in the chat (the
-    /// human-review checkpoint — <c>assistant-blueprint-review-plan.md</c>): re-validates the possibly-edited
+    /// mandatory human-review checkpoint): re-validates the possibly-edited
     /// YAML, then runs the test-install → verify → repair → keep/stash pipeline. Separate from
     /// <see cref="ConfirmAsync"/> because its result is a rich <see cref="Envelope.ToolResult{TData}"/> card
     /// (a Verified card, or a fresh <see cref="Blueprints.BlueprintAuthoringOutcome.DraftReady"/> card for

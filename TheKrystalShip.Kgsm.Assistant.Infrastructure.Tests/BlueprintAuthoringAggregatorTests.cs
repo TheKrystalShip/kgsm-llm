@@ -762,7 +762,7 @@ public sealed class BlueprintAuthoringAggregatorTests
         result.Data.Reason.Should().NotBeNullOrEmpty();
     }
 
-    // --- Human-review checkpoint: DraftAsync + FinalizeAsync (assistant-blueprint-review-plan.md) -------
+    // --- Human-review checkpoint: DraftAsync + FinalizeAsync ------------------------------------------
 
     private static NativeBlueprintDraft ParsedDraft(string args = "-config serverconfig.txt") => new()
     {

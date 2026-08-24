@@ -159,9 +159,11 @@ ls -l /usr/local/bin/kgsm        # or wherever this host's kgsm lives; note the 
 
 ## 2 · Ollama GPU tuning
 
-Inference must stay **100% in VRAM** — any spill to CPU/RAM tanks latency and competes with
-the game servers. On the reference 12 GB card the layout is `gemma4:12b` ~8 GB (at 32k ctx)
-+ `embeddinggemma` ~0.7 GB, with headroom to spare. Set these on the Ollama service
+Inference must stay **100% in VRAM** — the CPU and system RAM are reserved for the game servers
+(tick-rate-sensitive, largely single-threaded), so any spill steals real-time resources from live
+gameplay. This is an isolation requirement, not a performance nicety. On the reference 12 GB card
+the layout is `gemma4:12b` ~8.4 GB (at 32k ctx; a 64k context would also fit) + `embeddinggemma`
+~0.7 GB, with headroom to spare. Set these on the Ollama service
 (`/etc/systemd/system/ollama.service.d/override.conf` via `systemctl edit ollama`, or the
 environment Ollama starts with):
 
@@ -169,7 +171,7 @@ environment Ollama starts with):
 [Service]
 Environment="OLLAMA_FLASH_ATTENTION=1"     # shrink the KV cache so the big context fits
 Environment="OLLAMA_KV_CACHE_TYPE=q8_0"    # ditto (confirmed engaged in server logs)
-Environment="OLLAMA_KEEP_ALIVE=-1"         # pin models in VRAM — no cold reloads
+Environment="OLLAMA_KEEP_ALIVE=-1"         # pin models in VRAM — no cold reloads (nvidia-persistenced keeps only the driver warm, not the model)
 Environment="OLLAMA_NUM_PARALLEL=1"        # one request at a time; parallel slots multiply KV (num_ctx × slots)
 Environment="OLLAMA_MAX_LOADED_MODELS=2"   # keep chat + embedder both resident (needed for RAG)
 ```

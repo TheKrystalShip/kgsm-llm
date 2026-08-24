@@ -7,8 +7,7 @@ using TheKrystalShip.Kgsm.Assistant.Ports;
 namespace TheKrystalShip.Kgsm.Assistant.Service;
 
 /// <summary>
-/// Startup-only sweep for orphaned <c>create_blueprint</c> test-install probes
-/// (<c>assistant-blueprint-authoring-plan.md</c> step 10's backstop). A probe is normally torn down in
+/// Startup-only sweep for orphaned <c>create_blueprint</c> test-install probes. A probe is normally torn down in
 /// the aggregator's own guaranteed <c>finally</c> block — an orphan surviving here means the whole
 /// process (not just the pipeline call) was killed mid-authoring, which is the one case the aggregator's
 /// own teardown can never reach. Runs once at startup over <see cref="IServerInventory"/>'s cached

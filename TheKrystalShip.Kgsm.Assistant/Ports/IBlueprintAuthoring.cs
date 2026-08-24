@@ -4,7 +4,7 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 namespace TheKrystalShip.Kgsm.Assistant.Ports;
 
 /// <summary>
-/// The <c>create_blueprint</c> capability (<c>assistant-blueprint-authoring-plan.md</c>): given a game
+/// The <c>create_blueprint</c> capability: given a game
 /// missing from the catalog, researches it, drafts and test-installs a native-Linux blueprint, verifies
 /// it empirically (boots + listens), and keeps it only if verified — the whole pipeline behind ONE
 /// model-facing tool. Implementations MUST NOT throw; a run that cannot proceed (disabled, infeasible,
@@ -21,7 +21,7 @@ public interface IBlueprintAuthoring
     /// entry is kept for callers that want the unattended pipeline.</summary>
     Task<ToolResult<BlueprintAuthoringData>> AuthorAsync(string game, CancellationToken cancellationToken = default);
 
-    /// <summary>The draft half of the human-review flow (<c>assistant-blueprint-review-plan.md</c>):
+    /// <summary>The draft half of the mandatory human-review flow:
     /// research → build, then return a <see cref="BlueprintAuthoringOutcome.DraftReady"/> card carrying the
     /// rendered YAML for the user to review and edit in the chat — NO test-install runs. A run that stops
     /// before a draft (disabled, already-present, infeasible, no launchable draft) returns that terminal

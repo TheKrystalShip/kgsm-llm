@@ -15,8 +15,8 @@ Two ways to read a run, use whichever fits:
   where behavior moved. The checks are deliberately conservative (routing/staging, not prose) — they
   flag *where to look*, the transcript decides *whether it's actually good*.
 
-It is the codified, repeatable version of the one-off hand-evaluation in
-`~/tks/gemma-assistant-eval.md`.
+It is the codified, repeatable version of the one-off hand-evaluation preserved in
+`mcq/corpus/gemma-assistant-eval.md`.
 
 ## Quick guide
 

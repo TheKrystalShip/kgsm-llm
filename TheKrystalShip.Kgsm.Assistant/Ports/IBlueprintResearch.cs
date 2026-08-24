@@ -1,9 +1,9 @@
 namespace TheKrystalShip.Kgsm.Assistant.Ports;
 
 /// <summary>
-/// Whether research concluded a game can go through the native-Linux authoring pipeline
-/// (<c>assistant-blueprint-authoring-plan.md</c>, "Scope (locked)"). Container/Wine servers are out of
-/// scope for v1 — a game whose only self-host path is one of those reads
+/// Whether research concluded a game can go through the native-Linux authoring pipeline.
+/// The pipeline authors native-Linux blueprints only — container/Wine servers are out of
+/// its scope, so a game whose only self-host path is one of those reads
 /// <see cref="NoNativeLinuxServer"/>, the same honest stop as a game with no dedicated server at all.
 /// </summary>
 public enum BlueprintFeasibility
@@ -15,7 +15,7 @@ public enum BlueprintFeasibility
     NotSelfHostable,
 
     /// <summary>A dedicated server exists but not for native Linux (Windows-only, or container/Wine-only —
-    /// both out of scope for v1).</summary>
+    /// both outside the authoring pipeline's scope).</summary>
     NoNativeLinuxServer,
 
     /// <summary>A native-Linux server exists, but its files download only through a Steam account that

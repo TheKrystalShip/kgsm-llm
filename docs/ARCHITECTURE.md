@@ -67,8 +67,11 @@ an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, se
 Every turn, the **host** (Service or CLI) decides policy and hands it to the loop:
 
 1. **Build the system prompt fresh** — persona + the live instance/blueprint list injected, so the
-   model reasons over *this host's* servers (a load-bearing trick: the model picks the right server
-   from context instead of guessing).
+   model reasons over *this host's* servers. This is load-bearing, and measured: without the lists
+   in the prompt the model spends its first round-trip calling `list_instances` to ground itself
+   before acting on a name it cannot verify — disabling thinking does not change the behaviour, and
+   reordering the tools rules out positional bias — while with them injected it routes directly to
+   the right tool, saving a full model pass on a single-GPU, latency-sensitive host.
 2. **Choose the tool whitelist** — read-only vs full, based on the user's authority. The offered
    set *is* the whitelist.
 3. **Provide a per-call gate** — a closure that authorizes each tool call (and can hold state, e.g.
@@ -208,6 +211,18 @@ The wire formats are not equivalent, and the differences live entirely in the tw
 - **Tool calling has to be switched on.** llama-server needs `--jinja` and a tools-capable chat
   template. Without it the `tools` array is accepted and no tool call is ever emitted, which reads
   as an unhelpful model rather than a broken configuration.
+
+## The default chat model: `gemma4:12b`
+
+`Ollama:Model` defaults to `gemma4:12b`, chosen on a measured bake-off against the other
+tool-calling candidate that fits the reference 12 GB card, `qwen3.5:9b` (the next Qwen
+generation's smallest variant is 17 GB and does not fit). Over an 18-prompt tool-routing harness
+mirroring the assistant's ops — clean commands, slang, typos, query-vs-command, chitchat that must
+call nothing, multi-intent, prompt injection — gemma picks the correct tool with correct arguments
+on 15 of 16 tool-expecting prompts (qwen: 14), and it refuses an "uninstall everything" injection
+prompt that qwen answered with seven uninstall calls. That refusal is a bonus layer, never the
+guarantee: action safety lives in the dispatcher's whitelist, the authority tiers and the
+propose-then-confirm flow, which hold regardless of what the model emits.
 
 ## Authentication & authority
 

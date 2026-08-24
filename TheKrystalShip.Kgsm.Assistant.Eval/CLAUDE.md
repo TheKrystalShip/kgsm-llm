@@ -11,7 +11,7 @@ A console app (`kgsm-assistant-eval`) that drives the **real** assistant in-proc
 `AddLocalLlm` + `AddKgsmAssistant` + `AddKgsmAdapters` backend, with the conversation store pointed at a
 throwaway temp DB) over a fixed prompt corpus, reads each turn's tool trajectory back from the store
 (the canonical history IS the per-turn record now), and scores it. It is the codified
-version of the one-off hand-eval (`~/tks/gemma-assistant-eval.md`); the memory
+version of the one-off hand-eval (preserved in `mcq/corpus/gemma-assistant-eval.md`); the memory
 `assistant-eval-harness.md` is the durable summary. It's a **leaf** in the ecosystem (see
 `~/tks/system-architecture.md`) — depends only on the assistant + kgsm-lib, never the API/Service.
 

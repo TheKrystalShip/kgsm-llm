@@ -138,7 +138,7 @@ internal static class ConfirmationFlow
     };
 
     /// <summary>
-    /// The blueprint-review checkpoint on the CLI (assistant-blueprint-review-plan.md P4): open the
+    /// The blueprint-review checkpoint on the CLI: open the
     /// drafted YAML in <c>$EDITOR</c> for the mandatory human review, then finalize the saved text —
     /// re-validate → test-install → boot + verify → keep. The surface-agnostic parity of the in-chat
     /// Monaco card, including the recovery loop: when the autonomous repair exhausts, the assistant

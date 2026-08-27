@@ -1640,7 +1640,7 @@ public class ToolDispatcher : IToolDispatcher
     {
         // The most recent crash: the one a person asking "why did it crash" means.
         var crash = events.Events
-            .Where(e => e.Type is "instance_crashed")
+            .Where(e => e.Type is "server.crashed")
             .OrderByDescending(e => e.Ts)
             .FirstOrDefault();
 

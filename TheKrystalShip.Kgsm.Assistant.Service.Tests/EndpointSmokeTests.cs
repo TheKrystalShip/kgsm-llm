@@ -474,7 +474,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             });
         }).CreateClient();
 
-        var envelope = """{"EventType":"blueprint_updated","Data":{"BlueprintName":"factorio","Tier":"user","OverridesSystem":true,"Runtime":"native"},"Timestamp":"2026-07-28T12:00:00Z"}""";
+        var envelope = """{"EventType":"blueprint.updated","Data":{"BlueprintName":"factorio","Tier":"user","OverridesSystem":true,"Runtime":"native"},"Timestamp":"2026-07-28T12:00:00Z"}""";
         var response = await client.PostAsync("/events",
             new StringContent(envelope, Encoding.UTF8, "application/json"));
 

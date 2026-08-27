@@ -50,9 +50,9 @@ internal sealed class KgsmEventListener : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _events.RegisterHandler<BlueprintCreatedData>(e => OnBlueprintChanged("blueprint_created", e.BlueprintName));
-        _events.RegisterHandler<BlueprintUpdatedData>(e => OnBlueprintChanged("blueprint_updated", e.BlueprintName));
-        _events.RegisterHandler<BlueprintRemovedData>(e => OnBlueprintChanged("blueprint_removed", e.BlueprintName));
+        _events.RegisterHandler<BlueprintCreatedData>(e => OnBlueprintChanged("blueprint.created", e.BlueprintName));
+        _events.RegisterHandler<BlueprintUpdatedData>(e => OnBlueprintChanged("blueprint.updated", e.BlueprintName));
+        _events.RegisterHandler<BlueprintRemovedData>(e => OnBlueprintChanged("blueprint.removed", e.BlueprintName));
 
         // The four moments `kgsm instances list` answers differently: the record appearing and the
         // install succeeding, the record going and the uninstall succeeding. Both halves of each pair
@@ -60,19 +60,19 @@ internal sealed class KgsmEventListener : IHostedService
         // event is when the change is known to have worked — a cache that dropped on only one of them
         // is stale for the window between them. Invalidation is idempotent and the refresh is lazy, so
         // the pair costs one re-read, not two.
-        _events.RegisterHandler<InstanceCreatedData>(e => OnInstanceRosterChanged("instance_created", e.InstanceName));
-        _events.RegisterHandler<InstanceInstalledData>(e => OnInstanceRosterChanged("instance_installed", e.InstanceName));
-        _events.RegisterHandler<InstanceRemovedData>(e => OnInstanceRosterChanged("instance_removed", e.InstanceName));
-        _events.RegisterHandler<InstanceUninstalledData>(e => OnInstanceRosterChanged("instance_uninstalled", e.InstanceName));
+        _events.RegisterHandler<InstanceCreatedData>(e => OnInstanceRosterChanged("server.install.created", e.InstanceName));
+        _events.RegisterHandler<InstanceInstalledData>(e => OnInstanceRosterChanged("server.installed", e.InstanceName));
+        _events.RegisterHandler<InstanceRemovedData>(e => OnInstanceRosterChanged("server.uninstall.removed", e.InstanceName));
+        _events.RegisterHandler<InstanceUninstalledData>(e => OnInstanceRosterChanged("server.uninstalled", e.InstanceName));
 
         // An update rewrites the instance's own record, so the roster snapshot describing it is a
         // reading from before the change. Both the run ending and the version actually moving are
         // handled: the engine emits the first for every update and the second only when the version
         // differs, and a cache that waited for the second would hold a stale record through every
         // update that reinstalled the same version.
-        _events.RegisterHandler<InstanceUpdatedData>(e => OnInstanceRosterChanged("instance_updated", e.InstanceName));
+        _events.RegisterHandler<InstanceUpdatedData>(e => OnInstanceRosterChanged("server.update.completed", e.InstanceName));
         _events.RegisterHandler<InstanceVersionUpdatedData>(
-            e => OnInstanceRosterChanged("instance_version_updated", e.InstanceName));
+            e => OnInstanceRosterChanged("server.updated", e.InstanceName));
 
         // Starts the journal read loop. kgsm-lib tolerates a journal directory that does not exist
         // yet and picks up the first segment when it appears, so a kgsm redeploy — or a host that

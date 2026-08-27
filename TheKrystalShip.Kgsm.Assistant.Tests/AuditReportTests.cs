@@ -31,10 +31,10 @@ public class AuditReportTests
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            Row("instance_started", minutesAgo: 5),
-            Row("instance_started", minutesAgo: 65),
-            Row("instance_stopped", minutesAgo: 30),
-            Row("instance_crashed", minutesAgo: 120),
+            Row("server.started", minutesAgo: 5),
+            Row("server.started", minutesAgo: 65),
+            Row("server.stopped", minutesAgo: 30),
+            Row("server.crashed", minutesAgo: 120),
         });
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
@@ -67,7 +67,7 @@ public class AuditReportTests
         var at = new DateTimeOffset(2026, 8, 7, 10, 28, 26, TimeSpan.Zero);
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            new AuditEventRow("evt_1", at, "instance_stopped", "minecraft", "discord:claude", "api"),
+            new AuditEventRow("evt_1", at, "server.stopped", "minecraft", "discord:claude", "api"),
         });
 
         var result = AuditReport.Build(reading, "minecraft", "24h");
@@ -86,8 +86,8 @@ public class AuditReportTests
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            Row("instance_started", instance: "minecraft", minutesAgo: 5),
-            Row("instance_backup_created", instance: "romestead", actor: "scheduler", minutesAgo: 30),
+            Row("server.started", instance: "minecraft", minutesAgo: 5),
+            Row("backup.created", instance: "romestead", actor: "scheduler", minutesAgo: 30),
         });
 
         var result = AuditReport.Build(reading, instance: null, "24h");
@@ -119,7 +119,7 @@ public class AuditReportTests
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            new AuditEventRow("evt_1", DateTimeOffset.UtcNow, "blueprint_updated",
+            new AuditEventRow("evt_1", DateTimeOffset.UtcNow, "blueprint.updated",
                 Instance: null, Actor: "heisen", Origin: "ui", Blueprint: "factorio"),
         });
 
@@ -138,7 +138,7 @@ public class AuditReportTests
     public void Build_LongWindow_ListsTheNewest_AndDeclaresTheRemainder()
     {
         var rows = Enumerable.Range(0, 130)
-            .Select(i => Row("instance_started", minutesAgo: i))
+            .Select(i => Row("server.started", minutesAgo: i))
             .ToArray();
 
         var result = AuditReport.Build(new EventHistoryReading(AuditReadState.Available, rows), "factorio-test", "24h");
@@ -175,7 +175,7 @@ public class AuditReportTests
     [Fact]
     public void Build_NoInstance_ScopesToPrimaryHost_AndFleetWording()
     {
-        var reading = new EventHistoryReading(AuditReadState.Available, new[] { Row("instance_started", instance: "minecraft") });
+        var reading = new EventHistoryReading(AuditReadState.Available, new[] { Row("server.started", instance: "minecraft") });
 
         var result = AuditReport.Build(reading, null, "24h");
 
@@ -189,7 +189,7 @@ public class AuditReportTests
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            Row("instance_started", actor: null),
+            Row("server.started", actor: null),
         });
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
@@ -208,7 +208,7 @@ public class AuditReportTests
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            Row("instance_started", actor: "system:watchdog"),
+            Row("server.started", actor: "system:watchdog"),
         });
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");
@@ -225,8 +225,8 @@ public class AuditReportTests
     {
         var reading = new EventHistoryReading(AuditReadState.Available, new[]
         {
-            Row("instance_started", actor: "discord:claude", minutesAgo: 5),
-            Row("instance_stopped", actor: null, minutesAgo: 10),
+            Row("server.started", actor: "discord:claude", minutesAgo: 5),
+            Row("server.stopped", actor: null, minutesAgo: 10),
         });
 
         var result = AuditReport.Build(reading, "factorio-test", "24h");

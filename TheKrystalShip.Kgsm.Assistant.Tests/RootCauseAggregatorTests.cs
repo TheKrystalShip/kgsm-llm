@@ -59,8 +59,8 @@ public class RootCauseAggregatorTests
     public void PortConflict_StartThenCrashWithNoReady_MatchesAtLikely()
     {
         var events = Events(
-            Ev("instance_started", T0, "e1"),
-            Ev("instance_crashed", T0.AddMinutes(1), "e2"));
+            Ev("server.started", T0, "e1"),
+            Ev("server.crashed", T0.AddMinutes(1), "e2"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
@@ -78,9 +78,9 @@ public class RootCauseAggregatorTests
         // Reached "ready" before crashing — a normal running server that later crashed, not a
         // failed-to-bind pattern.
         var events = Events(
-            Ev("instance_started", T0, "e1"),
-            Ev("instance_ready", T0.AddSeconds(30), "e2"),
-            Ev("instance_crashed", T0.AddMinutes(2), "e3"));
+            Ev("server.started", T0, "e1"),
+            Ev("server.ready", T0.AddSeconds(30), "e2"),
+            Ev("server.crashed", T0.AddMinutes(2), "e3"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
@@ -91,8 +91,8 @@ public class RootCauseAggregatorTests
     public void PortConflict_CrashOutsideWindow_DoesNotMatch()
     {
         var events = Events(
-            Ev("instance_started", T0, "e1"),
-            Ev("instance_crashed", T0.AddHours(1), "e2")); // well outside the 3-minute startup window
+            Ev("server.started", T0, "e1"),
+            Ev("server.crashed", T0.AddHours(1), "e2")); // well outside the 3-minute startup window
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
@@ -105,8 +105,8 @@ public class RootCauseAggregatorTests
     public void UpdateCrashLoop_SingleCrashAfterUpdate_MatchesAtLikely()
     {
         var events = Events(
-            Ev("instance_update_finished", T0, "u1"),
-            Ev("instance_crashed", T0.AddMinutes(5), "c1"));
+            Ev("server.update.finished", T0, "u1"),
+            Ev("server.crashed", T0.AddMinutes(5), "c1"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
@@ -119,9 +119,9 @@ public class RootCauseAggregatorTests
     public void UpdateCrashLoop_TwoCrashesAfterUpdate_MatchesAtConfirmed()
     {
         var events = Events(
-            Ev("instance_update_finished", T0, "u1"),
-            Ev("instance_crashed", T0.AddMinutes(2), "c1"),
-            Ev("instance_crashed", T0.AddMinutes(6), "c2"));
+            Ev("server.update.finished", T0, "u1"),
+            Ev("server.crashed", T0.AddMinutes(2), "c1"),
+            Ev("server.crashed", T0.AddMinutes(6), "c2"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
@@ -136,8 +136,8 @@ public class RootCauseAggregatorTests
     public void UpdateCrashLoop_CrashFarAfterUpdate_DoesNotMatch()
     {
         var events = Events(
-            Ev("instance_update_finished", T0, "u1"),
-            Ev("instance_crashed", T0.AddHours(2), "c1")); // outside the 15-minute window
+            Ev("server.update.finished", T0, "u1"),
+            Ev("server.crashed", T0.AddHours(2), "c1")); // outside the 15-minute window
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
@@ -149,7 +149,7 @@ public class RootCauseAggregatorTests
     [Fact]
     public void DiskFull_CriticalDiskPlusFailureEvent_MatchesAtConfirmed()
     {
-        var events = Events(Ev("instance_deploy_failed", T0, "d1"));
+        var events = Events(Ev("server.deploy.failed", T0, "d1"));
         var health = Healthy(disk: new HostDisk(97, "100G", "2G"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);
@@ -164,7 +164,7 @@ public class RootCauseAggregatorTests
     [Fact]
     public void DiskFull_CriticalDiskButNoFailureEvent_DoesNotMatch()
     {
-        var events = Events(Ev("instance_started", T0, "e1"));
+        var events = Events(Ev("server.started", T0, "e1"));
         var health = Healthy(disk: new HostDisk(97, "100G", "2G"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);
@@ -175,7 +175,7 @@ public class RootCauseAggregatorTests
     [Fact]
     public void DiskFull_FailureEventButDiskHealthy_DoesNotMatch()
     {
-        var events = Events(Ev("instance_deploy_failed", T0, "d1"));
+        var events = Events(Ev("server.deploy.failed", T0, "d1"));
         var health = Healthy(disk: new HostDisk(40, "100G", "60G"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);
@@ -188,7 +188,7 @@ public class RootCauseAggregatorTests
     [Fact]
     public void SplitBrain_StartedButLiveSnapshotSaysNotRunning_MatchesAtConfirmed()
     {
-        var events = Events(Ev("instance_started", T0, "e1"));
+        var events = Events(Ev("server.started", T0, "e1"));
         var health = Healthy(running: false);
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);
@@ -204,8 +204,8 @@ public class RootCauseAggregatorTests
     {
         // The event log and live state AGREE (both say not running) — no split.
         var events = Events(
-            Ev("instance_started", T0, "e1"),
-            Ev("instance_stopped", T0.AddMinutes(10), "e2"));
+            Ev("server.started", T0, "e1"),
+            Ev("server.stopped", T0.AddMinutes(10), "e2"));
         var health = Healthy(running: false);
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);
@@ -216,7 +216,7 @@ public class RootCauseAggregatorTests
     [Fact]
     public void SplitBrain_StartedAndLiveSnapshotSaysRunning_DoesNotMatch()
     {
-        var events = Events(Ev("instance_started", T0, "e1"));
+        var events = Events(Ev("server.started", T0, "e1"));
         var health = Healthy(running: true);
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);
@@ -230,8 +230,8 @@ public class RootCauseAggregatorTests
     public void NothingMatches_ReturnsRankedCorrelation_AtPossible_NeverAGuessedCause()
     {
         var events = Events(
-            Ev("instance_backup_created", T0, "b1"),
-            Ev("instance_player_joined", T0.AddMinutes(1), "p1"));
+            Ev("backup.created", T0, "b1"),
+            Ev("player.joined", T0.AddMinutes(1), "p1"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), Healthy());
 
@@ -280,8 +280,8 @@ public class RootCauseAggregatorTests
         // disk-full/split-brain (which both need the snapshot) are silently un-evaluatable, never
         // faked into a false negative OR a false positive.
         var events = Events(
-            Ev("instance_started", T0, "e1"),
-            Ev("instance_crashed", T0.AddMinutes(1), "e2"));
+            Ev("server.started", T0, "e1"),
+            Ev("server.crashed", T0.AddMinutes(1), "e2"));
 
         var r = RootCauseAggregator.Run(
             Instance, "24h", events, UnavailableMetrics(), health: null, healthUnavailableReason: "monitor offline");
@@ -297,7 +297,7 @@ public class RootCauseAggregatorTests
     [Fact]
     public void MetricsUnavailable_DoesNotBlockAnyRule_FactsStayEmpty()
     {
-        var events = Events(Ev("instance_deploy_failed", T0, "d1"));
+        var events = Events(Ev("server.deploy.failed", T0, "d1"));
         var health = Healthy(disk: new HostDisk(97, "100G", "2G"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);
@@ -310,7 +310,7 @@ public class RootCauseAggregatorTests
     [Fact]
     public void MetricsLive_AttachesAvgPeakFactsAsContext_NeverGatingARule()
     {
-        var events = Events(Ev("instance_deploy_failed", T0, "d1"));
+        var events = Events(Ev("server.deploy.failed", T0, "d1"));
         var health = Healthy(disk: new HostDisk(97, "100G", "2G"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, LiveMetrics(), health);
@@ -325,9 +325,9 @@ public class RootCauseAggregatorTests
     public void MultipleMatches_RankConfirmedBeforeLikely()
     {
         var events = Events(
-            Ev("instance_deploy_failed", T0, "d1"),                              // disk-full (Confirmed)
-            Ev("instance_update_finished", T0.AddHours(1), "u1"),                // crash-loop (Likely)
-            Ev("instance_crashed", T0.AddHours(1).AddMinutes(5), "c1"));
+            Ev("server.deploy.failed", T0, "d1"),                              // disk-full (Confirmed)
+            Ev("server.update.finished", T0.AddHours(1), "u1"),                // crash-loop (Likely)
+            Ev("server.crashed", T0.AddHours(1).AddMinutes(5), "c1"));
         var health = Healthy(disk: new HostDisk(96, "100G", "3G"));
 
         var r = RootCauseAggregator.Run(Instance, "24h", events, UnavailableMetrics(), health);

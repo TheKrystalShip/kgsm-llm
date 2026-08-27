@@ -43,17 +43,17 @@ public static class RootCauseAggregator
 
     private static readonly IReadOnlySet<string> UpdateEventTypes = new HashSet<string>(StringComparer.Ordinal)
     {
-        "instance_update_finished", "instance_updated", "instance_version_updated",
+        "server.update.finished", "server.update.completed", "server.updated",
     };
 
     private static readonly IReadOnlySet<string> DiskFailureAdjacentEventTypes = new HashSet<string>(StringComparer.Ordinal)
     {
-        "instance_deploy_failed", "instance_download_failed", "instance_uninstall_failed",
+        "server.deploy.failed", "server.download.failed", "server.uninstall.failed",
     };
 
     private static readonly IReadOnlySet<string> RunningImpliesEventTypes = new HashSet<string>(StringComparer.Ordinal)
     {
-        "instance_started", "instance_restarted", "instance_ready",
+        "server.started", "server.restarted", "server.ready",
     };
 
     private const int MaxSalientCorrelation = 5;
@@ -211,20 +211,20 @@ public static class RootCauseAggregator
         {
             switch (e.Type)
             {
-                case "instance_started" or "instance_restarted":
+                case "server.started" or "server.restarted":
                     pendingStart = e;
                     reachedReady = false;
                     break;
-                case "instance_ready":
+                case "server.ready":
                     reachedReady = true;
                     break;
-                case "instance_crashed" or "instance_failed":
+                case "server.crashed" or "server.crash.exhausted":
                     if (pendingStart is not null && !reachedReady && (e.Ts - pendingStart.Ts) <= StartupWindow)
                         pairs.Add((pendingStart, e));
                     pendingStart = null;
                     reachedReady = false;
                     break;
-                case "instance_stopped":
+                case "server.stopped":
                     // A deliberate stop resolves the pending start — not a failed-to-bind signal.
                     pendingStart = null;
                     reachedReady = false;
@@ -269,7 +269,7 @@ public static class RootCauseAggregator
             return null;
 
         var pairs = new List<(AuditEventRow Update, AuditEventRow Crash)>();
-        foreach (var crash in ascending.Where(e => e.Type == "instance_crashed"))
+        foreach (var crash in ascending.Where(e => e.Type == "server.crashed"))
         {
             var precedingUpdate = updates
                 .Where(u => u.Ts <= crash.Ts && (crash.Ts - u.Ts) <= UpdateCrashWindow)
@@ -349,7 +349,7 @@ public static class RootCauseAggregator
             return null;
 
         var lastRunState = ascending.LastOrDefault(e =>
-            RunningImpliesEventTypes.Contains(e.Type) || e.Type is "instance_stopped" or "instance_crashed" or "instance_failed");
+            RunningImpliesEventTypes.Contains(e.Type) || e.Type is "server.stopped" or "server.crashed" or "server.crash.exhausted");
         if (lastRunState is null || !RunningImpliesEventTypes.Contains(lastRunState.Type))
             return null;
 
@@ -373,7 +373,7 @@ public static class RootCauseAggregator
         // events is already ts-DESC (most-recent-first). Prefer non-routine activity (skip player
         // join/leave noise); fall back to whatever there is, even routine events, rather than an
         // empty correlation when SOME activity exists.
-        var salient = events.Where(e => e.Type is not ("instance_player_joined" or "instance_player_left"))
+        var salient = events.Where(e => e.Type is not ("player.joined" or "player.left"))
             .Take(MaxSalientCorrelation)
             .ToList();
         if (salient.Count == 0)
@@ -515,21 +515,21 @@ public static class RootCauseAggregator
     /// this host has never seen — honest, never a guessed grammar (mirrors <see cref="Audit.AuditReport"/>).</summary>
     private static string FriendlyType(string type) => type switch
     {
-        "instance_started" => "started",
-        "instance_restarted" => "restarted",
-        "instance_stopped" => "stopped",
-        "instance_ready" => "became ready",
-        "instance_crashed" => "crashed",
-        "instance_failed" => "failed (gave up restarting)",
-        "instance_updated" => "updated",
-        "instance_update_finished" => "update finished",
-        "instance_version_updated" => "version updated",
-        "instance_installed" => "installed",
-        "instance_uninstalled" => "uninstalled",
-        "instance_backup_created" => "backed up",
-        "instance_deploy_failed" => "deploy failed",
-        "instance_download_failed" => "download failed",
-        "instance_uninstall_failed" => "uninstall failed",
+        "server.started" => "started",
+        "server.restarted" => "restarted",
+        "server.stopped" => "stopped",
+        "server.ready" => "became ready",
+        "server.crashed" => "crashed",
+        "server.crash.exhausted" => "failed (gave up restarting)",
+        "server.update.completed" => "updated",
+        "server.update.finished" => "update finished",
+        "server.updated" => "version updated",
+        "server.installed" => "installed",
+        "server.uninstalled" => "uninstalled",
+        "backup.created" => "backed up",
+        "server.deploy.failed" => "deploy failed",
+        "server.download.failed" => "download failed",
+        "server.uninstall.failed" => "uninstall failed",
         _ => type,
     };
 }

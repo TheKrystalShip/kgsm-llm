@@ -953,7 +953,7 @@ public class ToolDispatcherTests
         });
 
     private static readonly AuditEventRow SampleStart =
-        new("evt_1", DateTimeOffset.UtcNow, "instance_started", "minecraft", "discord:tester", "assistant");
+        new("evt_1", DateTimeOffset.UtcNow, "server.started", "minecraft", "discord:tester", "assistant");
 
     [Fact]
     public async Task GetAuditLog_NoInstance_ReadsFleetWide_AndSurfacesCard()

@@ -34,7 +34,7 @@ public class KgsmEventHistoryTests
         new(journal, NullLogger<KgsmEventHistory>.Instance);
 
     private static EventHistoryEntry Entry(
-        string id, string type = "instance_started", string? instance = "factorio",
+        string id, string type = "server.started", string? instance = "factorio",
         string? actor = "discord:haru", string? origin = "ui") =>
         new(id, DateTimeOffset.Parse("2026-08-07T10:00:00Z"), type, instance, null, actor, origin, "hotrod", null);
 
@@ -46,14 +46,14 @@ public class KgsmEventHistoryTests
     {
         var journal = new StubJournal(_ => Page(
             Entry("evt_2026-08-07_000000000000"),
-            Entry("evt_2026-08-07_000000000128", type: "instance_stopped")));
+            Entry("evt_2026-08-07_000000000128", type: "server.stopped")));
 
         EventHistoryReading reading = await Create(journal).GetEventsAsync(null, null, 50);
 
         reading.State.Should().Be(AuditReadState.Available);
         reading.Events.Should().HaveCount(2);
         reading.Events[0].Id.Should().Be("evt_2026-08-07_000000000000");
-        reading.Events[0].Type.Should().Be("instance_started");
+        reading.Events[0].Type.Should().Be("server.started");
         reading.Events[0].Instance.Should().Be("factorio");
         reading.Events[0].Actor.Should().Be("discord:haru");
         reading.Events[0].Origin.Should().Be("ui");

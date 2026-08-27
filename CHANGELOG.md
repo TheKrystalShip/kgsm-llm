@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — events speak the one dotted vocabulary (`1.49.0`)
+
+Events are named the way a reader groups them — domain first, past tense, an outcome as its own
+segment. One vocabulary, so nothing translates between an engine name and a display one.
+
+⚠ The container channel is a different protocol and does not move with it. A line the in-container
+shim writes is spelled however that shim spells it, and the event this daemon records from it is a
+separate name.
+
 ### Changed — an event is named by a type (`1.48.0`)
 
 An event's name is a type rather than a string, so a name that is not a name cannot reach the journal.

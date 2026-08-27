@@ -182,7 +182,7 @@ public class FatalConsoleOutputRuleTests
     private static readonly DateTimeOffset CrashTs = new(2026, 8, 11, 18, 16, 46, TimeSpan.Zero);
 
     private static readonly AuditEventRow CrashEvent =
-        new("evt_1", CrashTs, "instance_crashed", Instance, Actor: "system:watchdog", Origin: "system");
+        new("evt_1", CrashTs, "server.crashed", Instance, Actor: "system:watchdog", Origin: "system");
 
     private static EventHistoryReading Timeline(params AuditEventRow[] rows) =>
         new(AuditReadState.Available, rows.OrderByDescending(r => r.Ts).ToList());
@@ -327,7 +327,7 @@ public class FatalConsoleOutputRuleTests
         // The tool answers plenty of questions that have no crash in them; none of this may change
         // what those say.
         var started = new AuditEventRow(
-            "evt_2", CrashTs.AddHours(-3), "instance_started", Instance, Actor: "heisen", Origin: "cli");
+            "evt_2", CrashTs.AddHours(-3), "server.started", Instance, Actor: "heisen", Origin: "cli");
 
         var r = Run(CrashConsole.NoCrash, started);
 

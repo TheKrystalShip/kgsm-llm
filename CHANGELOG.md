@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — an event is named by a type (`1.48.0`)
+
+An event's name is a type rather than a string, so a name that is not a name cannot reach the journal.
+Where this producer chooses a name at run time, the name is read at that boundary and a value that is
+not one is reported and dropped — a line no consumer matches fails silently everywhere downstream,
+which is the failure this refuses to write.
+
 ### Fixed — the packaged binary carries its bundle again (`1.47.1`)
 
 `packaging/PKGBUILD` declares `!strip`. This project publishes single-file: the managed assemblies

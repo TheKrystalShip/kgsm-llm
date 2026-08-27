@@ -168,6 +168,15 @@ public sealed class AssistantJournal(
     /// </remarks>
     private void Write(string eventType, Action<Utf8JsonWriter> payload)
     {
+        // Parsed at this boundary rather than declared, because the names are the shared contract's
+        // constants and a leaf does not restate them. A name that is not a name is dropped loudly:
+        // writing it would put a line on the journal that no consumer matches.
+        if (!EventName.TryParse(eventType, out EventName name))
+        {
+            _logger.LogError("'{EventType}' is not a valid event name; nothing was recorded", eventType);
+            return;
+        }
+
         string? actor = DefaultActor;
         string? origin = DefaultOrigin;
 
@@ -175,7 +184,7 @@ public sealed class AssistantJournal(
         {
             try
             {
-                await RecordAsync(eventType, payload, actor, origin).ConfigureAwait(false);
+                await RecordAsync(name, payload, actor, origin).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

@@ -365,7 +365,7 @@ internal sealed class Harness
         var passed = allChecks.Count(c => c.Pass);
         var tools = rep.Steps.SelectMany(s => s.Tools).ToList();
         var staged = rep.Steps.SelectMany(s => s.Staged).ToList();
-        var trail = tools.Count == 0 && staged.Count == 0 ? "(no tools)" : string.Join(" ", tools.Concat(staged.Select(s => $"⏸{s}")));
+        var trail = tools.Count == 0 && staged.Count == 0 ? "(no tools)" : string.Join(" ", tools.Concat(staged.Select(s => $"staged:{s}")));
         return $"{passed}/{allChecks.Count} checks · {trail}";
     }
 

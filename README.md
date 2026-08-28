@@ -18,13 +18,13 @@ plus a self-contained RAG subsystem:
 | **`TheKrystalShip.Llm`** | Generic Ollama tool-calling **agent loop** library (transport, memory, loop). Knows nothing about KGSM. → [README](TheKrystalShip.Llm/README.md) |
 | **`TheKrystalShip.Kgsm.Assistant`** | The KGSM **brain**: tool catalog, ports, system prompt, action policy, the `search` aggregator |
 | **`TheKrystalShip.Kgsm.Assistant.Infrastructure`** | **Adapters** that bind the ports to reality — kgsm-lib, Tavily web search, the RAG index |
-| **`TheKrystalShip.Kgsm.Assistant.Service`** | 🚀 **HTTP/SSE turn API** (for the web SPA), Discord-OAuth auth → [README](TheKrystalShip.Kgsm.Assistant.Service/README.md) |
-| **`TheKrystalShip.Kgsm.Assistant.Cli`** | 🚀 **`kgsm-assistant-cli`** terminal app (one-shot / pipe / REPL) → [README](TheKrystalShip.Kgsm.Assistant.Cli/README.md) |
+| **`TheKrystalShip.Kgsm.Assistant.Service`** | **HTTP/SSE turn API** (for the web SPA), Discord-OAuth auth → [README](TheKrystalShip.Kgsm.Assistant.Service/README.md) |
+| **`TheKrystalShip.Kgsm.Assistant.Cli`** | **`kgsm-assistant-cli`** terminal app (one-shot / pipe / REPL) → [README](TheKrystalShip.Kgsm.Assistant.Cli/README.md) |
 | **`TheKrystalShip.Rag`** | AOT-safe **RAG core**: embed client, chunker, versioned index, cosine search |
-| **`TheKrystalShip.Rag.Indexer`** | 🚀 **`kgsm-rag-indexer`** — standalone Native-AOT indexer daemon → [README](TheKrystalShip.Rag.Indexer/README.md) |
+| **`TheKrystalShip.Rag.Indexer`** | **`kgsm-rag-indexer`** — standalone Native-AOT indexer daemon → [README](TheKrystalShip.Rag.Indexer/README.md) |
 | **`TheKrystalShip.Kgsm.Assistant.Eval`** | Reproducible **benchmark** (routing + ground-truth RAG accuracy) → [README](TheKrystalShip.Kgsm.Assistant.Eval/README.md) |
 
-🚀 = a **deployable** (the rest are libraries). Each `*.Tests` project is its xUnit suite.
+= a **deployable** (the rest are libraries). Each `*.Tests` project is its xUnit suite.
 
 ## Quick start (CLI, ~5 minutes)
 

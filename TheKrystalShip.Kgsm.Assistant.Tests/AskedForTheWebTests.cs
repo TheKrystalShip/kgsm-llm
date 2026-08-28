@@ -83,7 +83,7 @@ public class AskedForTheWebTests
     [Fact]
     public void ATurnRecordsWhetherAnythingWasActuallySearched()
     {
-        // ⚠ Forcing the scope only bites on a search that HAPPENS. Measured: asked to look it up
+        // Forcing the scope only bites on a search that HAPPENS. Measured: asked to look it up
         // online, the model answered with no tool call at all — there was no scope to force. This is
         // what lets the reply review tell looking something up from appearing to.
         using (SearchIntent.BeginTurn(SearchScope.Web))

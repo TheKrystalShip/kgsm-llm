@@ -313,7 +313,7 @@ internal sealed class BlueprintAuthoringAggregator : IBlueprintAuthoring
     /// a reader can fold those rows into a span instead of reading them as somebody's new server.
     /// </para>
     /// <para>
-    /// ⚠ <b>Wrapped rather than hooked at each return.</b> The run below ends at a dozen places — a
+    /// <b>Wrapped rather than hooked at each return.</b> The run below ends at a dozen places — a
     /// persist failure, a readback throw, an exhausted repair loop, success — and a bracket that opens
     /// and does not always close is worse than none: a reader cannot tell a run still going from one
     /// that ended without saying so.

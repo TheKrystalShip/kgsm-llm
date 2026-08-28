@@ -15,7 +15,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Ports;
 /// record empty — from its side nothing occurred — and so exist nowhere else on the host.
 /// </para>
 /// <para>
-/// ⚠ <b>A port rather than a direct write, because this library is shared.</b> The CLI and the
+/// <b>A port rather than a direct write, because this library is shared.</b> The CLI and the
 /// benchmark compose the same graph as the resident service, and neither is a leaf: the CLI is a
 /// one-shot with no residency to report, and an eval run would put hundreds of turn-quality lines in
 /// the live journal. Only the service registers a real implementation, so the other two write nothing
@@ -32,7 +32,7 @@ public interface IAssistantJournal
     /// <param name="net">Which net caught it.</param>
     /// <param name="conversationId">The conversation it happened in.</param>
     /// <remarks>
-    /// ⚠ <b>Never give this the prompt or the reply.</b> The journal is readable by anything on the
+    /// <b>Never give this the prompt or the reply.</b> The journal is readable by anything on the
     /// host that can open the directory; a transcript belongs to the person who spoke it.
     /// </remarks>
     void ClaimCorrected(
@@ -44,13 +44,13 @@ public interface IAssistantJournal
     /// <param name="tool">The tool that was refused.</param>
     /// <param name="instance">The instance it would have touched, when it named one.</param>
     /// <remarks>
-    /// ⚠ <b>No reason is passed, because the gate does not know it.</b> It sees one boolean, false
+    /// <b>No reason is passed, because the gate does not know it.</b> It sees one boolean, false
     /// whether this host has actions switched off for everybody or this person's tier does not carry
     /// them — two very different facts for whoever reads the record. The host knows which, so the
     /// adapter decides; guessing here would file a config state as somebody exceeding their permissions.
     /// </remarks>
     /// <remarks>
-    /// ⚠ Authorization only. The blast-radius refusals — too many staged commands, too many searches, a
+    /// Authorization only. The blast-radius refusals — too many staged commands, too many searches, a
     /// repeated lookup — are loop guards firing on ordinary model over-eagerness, not somebody reaching
     /// past their permissions, and recording them would bury the ones that matter.
     /// </remarks>
@@ -64,7 +64,7 @@ public interface IAssistantJournal
     /// <param name="instance">The instance it would act on, when it names one.</param>
     /// <param name="expiresInSec">How long it stays redeemable.</param>
     /// <remarks>
-    /// ⚠ <b>Never give this the handle.</b> The handle is the capability that redeems the action, and a
+    /// <b>Never give this the handle.</b> The handle is the capability that redeems the action, and a
     /// journal readable by anything on the host is not where a capability goes.
     /// </remarks>
     void ActionProposed(string kind, string? tool, string? instance, long? expiresInSec);
@@ -107,7 +107,7 @@ public sealed class NoAssistantJournal : IAssistantJournal
 
 /// <summary>Which integrity check found a reply wanting.</summary>
 /// <remarks>
-/// ⚠ An enum rather than the wire string, because this library must not depend on kgsm-lib — the
+/// An enum rather than the wire string, because this library must not depend on kgsm-lib — the
 /// brain stays domain-pure and the adapter owns the one mapping onto the journal's vocabulary. That
 /// also makes the mapping exhaustive: a member added here fails to compile until it is spelled.
 /// </remarks>

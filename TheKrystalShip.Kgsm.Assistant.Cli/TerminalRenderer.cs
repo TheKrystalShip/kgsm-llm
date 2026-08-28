@@ -8,7 +8,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Cli;
 /// <list type="bullet">
 ///   <item><c>Token</c> → the reply, streamed to <b>stdout</b> with no trailing newline.</item>
 ///   <item><c>Thinking</c> → the model's reasoning, streamed dim to <b>stderr</b> under a one-time
-///   <c>💭 thinking…</c> header (no per-delta newline — the fragments flow as one block), gated on
+///   <c>thinking…</c> header (no per-delta newline — the fragments flow as one block), gated on
 ///   stderr being a TTY so <c>2&gt;/dev/null</c> drops it. Any later event closes the block with a
 ///   blank separator, so the reasoning never runs into the reply.</item>
 ///   <item><c>ToolStart</c>/<c>ToolResult</c> → a dim status line on <b>stderr</b>, only when
@@ -80,7 +80,7 @@ internal sealed class TerminalRenderer
                 {
                     if (!_inThinking)
                     {
-                        _err.Write(Ansi.Paint("💭 thinking…", Ansi.Dim, _color));
+                        _err.Write(Ansi.Paint("thinking…", Ansi.Dim, _color));
                         _err.Write(Environment.NewLine);
                         _inThinking = true;
                     }
@@ -92,7 +92,7 @@ internal sealed class TerminalRenderer
             case AssistantEventKind.ToolStart:
                 if (_showStatus)
                     _err.WriteLine(
-                        Ansi.Paint("⚙ ", Ansi.Dim, _color)
+                        Ansi.Paint("→ ", Ansi.Dim, _color)
                         + Ansi.Paint(ev.ToolName?.Name ?? string.Empty, Ansi.Cyan, _color)
                         + Ansi.Paint($"({FormatArgs(ev.ToolArguments)})", Ansi.Dim, _color));
                 break;

@@ -31,8 +31,8 @@ internal static class Transcripts
                 foreach (var s in rep.Steps)
                 {
                     w.WriteLine($"{indent}user> {s.Prompt}");
-                    foreach (var t in s.Tools) w.WriteLine($"{indent}  ⚙ {t}");
-                    foreach (var st in s.Staged) w.WriteLine($"{indent}  ⏸ staged {st}");
+                    foreach (var t in s.Tools) w.WriteLine($"{indent}  - {t}");
+                    foreach (var st in s.Staged) w.WriteLine($"{indent}  - staged {st}");
                     foreach (var line in s.Final.Split('\n'))
                         w.WriteLine($"{indent}bot> {line}");
                     var failed = s.Checks.Where(x => !x.Pass).Select(x => $"[{x.Dimension.Split('_')[0]}] {x.Label}").ToList();

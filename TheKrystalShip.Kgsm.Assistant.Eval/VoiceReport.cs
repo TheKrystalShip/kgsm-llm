@@ -135,7 +135,7 @@ internal static class VoiceReport
 
             var trail = sample.Tools.Count == 0 && sample.Staged.Count == 0
                 ? "(no tools)"
-                : string.Join(" ", sample.Tools.Concat(sample.Staged.Select(s => $"⏸{s}")));
+                : string.Join(" ", sample.Tools.Concat(sample.Staged.Select(s => $"staged:{s}")));
             output.WriteLine(
                 $"   {label}: {sample.Chars} chars · {sample.Sentences} sentence(s) · {trail} · " +
                 $"floor {(floorHeld ? "ok" : "FAIL")}");

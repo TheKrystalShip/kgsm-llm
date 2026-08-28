@@ -13,7 +13,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// concurrent turns stay isolated.
 /// </para>
 /// <para>
-/// ⚠ <b>What is set here beats what the model asked for.</b> A scope on the tool call is the model's
+/// <b>What is set here beats what the model asked for.</b> A scope on the tool call is the model's
 /// reading of the request; this is the request. When they disagree the person wins — that is the whole
 /// point of recording it, since the measured failure was the model quietly declining to set the scope
 /// at all.
@@ -31,7 +31,7 @@ public static class SearchIntent
     /// Whether a search has actually run this turn.
     /// </summary>
     /// <remarks>
-    /// ⚠ <b>Forcing the scope was still not enough on its own.</b> Where the model previously called
+    /// <b>Forcing the scope was still not enough on its own.</b> Where the model previously called
     /// <c>search</c> without a scope, it was measured going one step further and not calling it at
     /// all — answering "look it up online" out of its own parametric knowledge, with no tool call to
     /// apply a scope to. Recording that a search happened is what lets the reply review notice the

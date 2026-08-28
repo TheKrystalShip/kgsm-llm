@@ -41,7 +41,7 @@ and the refresh token in its body is the credential.
 |--------|------|---------|-----|
 | GET | `/auth/me` | Identity, live tier, and `canPerformActions` | — |
 | GET | `/tools` | The tool picker the user is allowed to see (authority + availability filtered) | — |
-| POST | `/turn` | **Run a turn** — `{prompt, think?, tools?}` | ✅ if `Accept: text/event-stream` |
+| POST | `/turn` | **Run a turn** — `{prompt, think?, tools?}` | ✓ if `Accept: text/event-stream` |
 | POST | `/confirm` | Execute a staged mutating action — `{token}` | — |
 | POST | `/auth/logout` | Revoke the session — the bearer stops working at once | — |
 

@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — no emoji in prose or output
+
+Docs, comments and command output carry no emoji. The information lives in the words, and a status
+that has to be read by a machine or a reader with a plain terminal reads the same either way. Marks
+that are typography rather than pictures — `✓`, `✗`, arrows, `§` — stay, and a glyph a chat surface
+sends to a person is that surface's output rather than prose, so it is untouched.
+
 ### Changed — events speak the one dotted vocabulary (`1.49.0`)
 
 Events are named the way a reader groups them — domain first, past tense, an outcome as its own
 segment. One vocabulary, so nothing translates between an engine name and a display one.
 
-⚠ The container channel is a different protocol and does not move with it. A line the in-container
+The container channel is a different protocol and does not move with it. A line the in-container
 shim writes is spelled however that shim spells it, and the event this daemon records from it is a
 separate name.
 
@@ -147,7 +154,7 @@ whenever they like. Both now reach the model, and the id is still the only thing
 shown as, with its id generated either way. A name matching an existing server's **id** is still
 refused — an id always wins a lookup, so a label spelled like one could never resolve.
 
-⚠ **A blueprint's test-install carries an id, and an id may not begin with an underscore.** kgsm
+**A blueprint's test-install carries an id, and an id may not begin with an underscore.** kgsm
 validates an explicitly-chosen id as `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` and refuses anything else,
 so the probe is installed as `bpprobe__<slug>__` — everything after the install addresses it by that
 string, and a refused probe install is a blueprint that can never be verified. The startup sweep also
@@ -263,7 +270,7 @@ Every refusal names the limit it hit and what to do about it, in the same terms 
 refuses the model with — somebody fixing a memory is owed the sentence the assistant gets. A blank or
 over-long summary and an over-long body are `400`; a **new** memory past `Memory:MaxPerOwner` is `409`.
 
-⚠ A correction at the cap is accepted, and only a new key is refused. The count is what is capped and a
+A correction at the cap is accepted, and only a new key is refused. The count is what is capped and a
 rewrite adds nothing to it, so a full owner can still fix a memory that is wrong.
 
 `GET /memories/limits` reports `maxPerOwner`, `maxSummaryLength` and `maxBodyLength`, so an editor's
@@ -291,7 +298,7 @@ rewrite **detectable** — a reference carrying both finds the line by position 
 right one by id, where before a shifted offset resolved to a real, parseable event of the wrong kind
 with nothing to notice.
 
-⚠ Optional and optional forever: lines written before this are on disk for as long as retention holds
+Optional and optional forever: lines written before this are on disk for as long as retention holds
 them, and **absent means unknown, never a mismatch**. Authority: `journal-entry-id-plan.md`.
 
 ### Fixed — the indexer binary can no longer drift behind the unit that launches it
@@ -319,7 +326,7 @@ plus one `manage-units` call on this project's own service — `start` when the 
 is not running). Both are dispatched as the same `manage-units` action, so a host without the grant is
 refused either way and the probe measures the grant rather than the unit.
 
-⚠ Measured in the positive direction only. The deploying user on the development host is in
+Measured in the positive direction only. The deploying user on the development host is in
 `wheel`, and two pre-existing polkit rules there grant that group every
 `org.freedesktop.systemd1.*` action outright, so no systemctl call by that user can be refused
 and the negative path cannot be exercised on it. That `try-restart` consults polkit before it
@@ -376,7 +383,7 @@ A standing instruction is written down (`J1`), and neither a measurement (`J2`) 
 (`J3`) is. Each is trivially passed alone by remembering everything or nothing, so the opposite
 expectations are what measure the distinction.
 
-⚠ **`J2` is red and three wordings did not move it.** Told a measurement conversationally, gemma4:12b
+**`J2` is red and three wordings did not move it.** Told a measurement conversationally, gemma4:12b
 writes it down 3/3 against a rule stated in the preamble, the tool description and the injected memory
 block. It is left red rather than softened — the check is correct and the model is what fails it. The
 harm is bounded rather than fixed: with a deliberately wrong port memory seeded, the model still
@@ -411,7 +418,7 @@ already uses for tombstones, verdicts and preferences — writing a key again su
 appends a tombstone, and nothing is updated or deleted in place. Memories live in a `memory_entries`
 table in the conversation database.
 
-⚠ **A memory carries what it was told, never what a tool measured.** Ports, versions, player counts
+**A memory carries what it was told, never what a tool measured.** Ports, versions, player counts
 and run-state change without anyone saying so, and a remembered reading repeated later is a wrong
 answer stated confidently. The rule is in the tool description, in the preamble, and restated in the
 injected block itself; every injected line is dated so a memory that has gone stale is visibly old.
@@ -571,7 +578,7 @@ its own name-to-label map. The panel's had gone stale without failing: it named 
 longer existed and knew nothing of any tool added since, and its prettify-the-name fallback hid that.
 A frame with no label still gets that fallback.
 
-⚠ **A result card's `tool` is a card-shape id, not a tool name** (`ResultCardKinds`). The two were one
+**A result card's `tool` is a card-shape id, not a tool name** (`ResultCardKinds`). The two were one
 string, which meant a name chosen to route a model well decided whether a browser rendered a card —
 and three had already silently stopped rendering. Card kinds change with the surface that reads them,
 never with routing.
@@ -692,11 +699,11 @@ capability), a tool the file invents that nothing implements (the model would ca
 would fail), a blank description, or an unknown parameter type. Both hosts report it as one line
 rather than a stack trace.
 
-⚠ **A deploy overwrites `<prefix>/prompts` (`rsync --delete`).** Tuning on a live host is the intended
+**A deploy overwrites `<prefix>/prompts` (`rsync --delete`).** Tuning on a live host is the intended
 loop, but the wording has to be pasted back into `deploy/prompts/` or the next deploy discards it —
 the deploy is the commit.
 
-⚠ **A pre-existing `~/.config/kgsm-assistant/prompts/tools.json` is in the old format** (`params` as an
+**A pre-existing `~/.config/kgsm-assistant/prompts/tools.json` is in the old format** (`params` as an
 object of name→description) and is now rejected. Delete it; the CLI then reads the installed set. A
 personal copy still wins when it contains a `tools.json` in the current format.
 
@@ -799,7 +806,7 @@ host. Two halves.
 **Lifecycle** — the four shared `leaf_*` events, with components `llm-backend`, `rag-index`,
 `conversation-store` and `web-search`.
 
-⚠ **The model backend is measured by being used, never probed.** It is socket-activated: connecting to
+**The model backend is measured by being used, never probed.** It is socket-activated: connecting to
 `Llm:Endpoint` is what *loads* it, and the proxy in front unloads it after 15 minutes idle to return
 ~8.7GB of VRAM. A liveness probe on a timer would reset that timer before it could expire and pin the
 model resident forever — defeating the on-demand design to answer a question every turn already
@@ -808,7 +815,7 @@ iteration cap or somebody pressing stop is never reported as a dead backend.
 
 `Lifecycle:ResidentBackendPort` is the one free probe: the model binds its own port only while loaded,
 and that is not the port activation listens on, so a connect attempt tells an unloaded model from a
-broken one without starting anything. ⚠ Pointed at the activating port it does the exact opposite,
+broken one without starting anything. Pointed at the activating port it does the exact opposite,
 which is why it defaults to 0.
 
 **Conduct** — what the assistant did that nothing else can see. Deliberately *not* a log of what it
@@ -819,15 +826,15 @@ attributed to the person who asked. These are the turn that did **not** act.
   stopped at a log line; 30 days of production traffic holds 22 of them. The only measurement of the
   deployed model's fabrication rate on real prompts.
 - `assistant_action_declined` — somebody reached past their tier. Previously recorded nowhere at all:
-  the refusal went back to the model as a tool result and stopped. ⚠ Authorization only — the
+  the refusal went back to the model as a tool result and stopped. Authorization only — the
   blast-radius caps are loop guards, and journalling them would bury these.
 - `assistant_action_proposed` — a mutation staged and waiting on a person. Recorded in the store, which
-  every staging path comes through. ⚠ Never carries the handle: the handle *is* the capability.
+  every staging path comes through. Never carries the handle: the handle *is* the capability.
 - `assistant_blueprint_authoring_started` / `assistant_blueprint_authored` — brackets around a run whose
   ~25 probe install/uninstall events the engine records in full without being able to say they belong
   together, or how the run ended. On a failed run the close is the only event either way.
 
-⚠ **`IAssistantJournal` is a port with a no-op default, and that is what keeps the CLI and the
+**`IAssistantJournal` is a port with a no-op default, and that is what keeps the CLI and the
 benchmark silent.** Both compose the same graph as the resident service and neither is a leaf; only the
 service registers a real implementation, so the other two write nothing by construction.
 
@@ -848,7 +855,7 @@ the guard.
 ### Fixed — federation cannot be registered in the wrong order
 
 kgsm-lib 4.30.0 makes `AddKgsmServices` and `AddKgsmJournalFederation` register the same resolution
-rule, so either call order yields a federated reader. ⚠ **The bug it removes had no symptom**: a
+rule, so either call order yields a federated reader. **The bug it removes had no symptom**: a
 consumer that federated too early kept reading the engine's journal *successfully* — healthy journal,
 quiet host, nothing to catch — while every other producer's events sat in files it never opened.
 `JournalDiscovery` also scans once per process now, instead of once for the history reader and again
@@ -968,7 +975,7 @@ only `/v1/embeddings`, and an index that quietly stayed as it was. It now takes 
 `use-backend.sh` moves the units, the service's configuration **and** the indexer's together —
 moving one alone points something at a dead port.
 
-⚠ Switching the embedding backend still does not rebuild the RAG index. The indexer is incremental
+Switching the embedding backend still does not rebuild the RAG index. The indexer is incremental
 by content hash and the index header records the model's *name*, which does not change when the
 server behind it does. Delete the `.krag` and restart the indexer; `use-backend.sh` says so on every
 switch.
@@ -1042,7 +1049,7 @@ live entirely inside the clients:
 `deploy/llama-server/` carries the two units, their env template and the setup runbook. They are not
 installed by `deploy.sh`: they decide what occupies the GPU and need root.
 
-⚠ **llama-server has to be started with `--jinja` and a tools-capable chat template.** Without it the
+**llama-server has to be started with `--jinja` and a tools-capable chat template.** Without it the
 `tools` array is accepted and no tool call is ever emitted — the assistant answers normally and
 silently never acts. Ollama does not use that path at all (it runs llama-server with
 `--no-jinja --chat-template chatml` and parses tool calls itself), so the two backends encode tool
@@ -1107,7 +1114,7 @@ riding out with the next — so what a listener hears here is very nearly unchan
 
 What did change:
 
-- ⚠ **A fence marker counts only at the true start of a line.** A sentence ending part-way along a
+- **A fence marker counts only at the true start of a line.** A sentence ending part-way along a
   line left the rest of it in a fresh buffer, and reading that as a line start took
   "Done. \`\`\`yaml" for a fence — silencing every word after it for the rest of the answer. Neither
   implementation had noticed.
@@ -1133,13 +1140,13 @@ after the last word and delivered nothing until then.
   keep in step. `ISpokenAudio` has a null implementation registered first and always, the same
   fail-closed shape as `DisabledRetrieval`: a host without that leaf emits no audio frame and answers
   in text, which is the ordinary case rather than a degraded one.
-- ⚠ **The terminal frame is held until the audio catches up.** `done` is what a client tears a turn
+- **The terminal frame is held until the audio catches up.** `done` is what a client tears a turn
   down on, so emitting it while sentences were still being synthesised would deliver them to a turn
   that had already been closed. A spoken turn is not over when its last word is written.
-- ⚠ **What is spoken is the reply minus its markup, never a rewrite.** A fenced code block is skipped
+- **What is spoken is the reply minus its markup, never a rewrite.** A fenced code block is skipped
   rather than recited line by line; a link is read as its text and not its address; headings and list
   bullets lose their punctuation. Nothing is summarised and nothing is cut short.
-- ⚠ **A sentence ends at punctuation followed by a space**, decided one character late — because
+- **A sentence ends at punctuation followed by a space**, decided one character late — because
   `kgsm.sh`, `1.2.3` and `ggml-small.en.bin` are full of dots, and cutting at one splits a sentence
   mid-word and spends a synthesis request saying half of it.
 
@@ -1170,7 +1177,7 @@ identifier alone, RAG game-scoping among them.
 
 ### Fixed — a shared room's conversation could not be managed at all
 
-⚠ **Only `POST /turn` understood rooms.** Every other route composed a `web:{userId}` key of its own,
+**Only `POST /turn` understood rooms.** Every other route composed a `web:{userId}` key of its own,
 so a conversation belonging to a place could be appended to and nothing else — not compacted, not
 cleared. A leaf asking to compact a room folded the *caller's private chat* instead and reported that
 it had worked. The resolution now lives in one place (`ConversationSurfaces.Key`) and every route that
@@ -1184,7 +1191,7 @@ the transcript keeps every word. **It is a checkpoint carrying no summary** — 
 history into a briefing and replays that, a reset folds it into silence. One mechanism, one append,
 one rule deciding where a replay begins.
 
-⚠ **`SoftDelete` is not this and looks like it is.** A tombstone hides a conversation from a listing
+**`SoftDelete` is not this and looks like it is.** A tombstone hides a conversation from a listing
 while the model goes on remembering every word of it.
 
 **`/new` in a room resets rather than minting an id.** A room's id is derived from the place it
@@ -1212,14 +1219,14 @@ reported, never an estimate; a turn that reported none is left alone.
 messages after its latest checkpoint. That is bounded for a chat somebody starts fresh and unbounded
 for a room keyed to a channel. The projection now reads from the latest checkpoint forward in SQL.
 
-⚠ The narrowed read is for the projection only: a transcript, a listing or a resolved preference must
+The narrowed read is for the projection only: a transcript, a listing or a resolved preference must
 see the whole log, or it answers from the newest fragment as though nothing preceded it.
 
 ## [1.14.0] - 2026-08-14
 
 ### Fixed — the assistant may now search the docs, then search the web
 
-⚠ **Searching again after the local docs came up short was structurally forbidden.** The per-message
+**Searching again after the local docs came up short was structurally forbidden.** The per-message
 duplicate guard keyed on the query **alone**, so `search("next Valheim update")` against the
 documentation and the same words against the web looked like one repeated call — and the second was
 refused, with a message stating that *"repeating a search returns the same thing"*. That is true of one
@@ -1248,7 +1255,7 @@ server difficulty setting do"* still answers from the local documentation.
 
 ### Fixed — asked to look online, the model was not calling search at all
 
-⚠ **Each fix here was one step behind the failure.** First `search` ran and local documentation
+**Each fix here was one step behind the failure.** First `search` ran and local documentation
 shadowed the web. Then it ran without the scope that would have reached the web, so the scope was
 forced from the request. Then — measured on this host — it answered *"look it up online"* with **no
 tool call whatsoever**, out of its own parametric knowledge. There was no scope to force and nothing
@@ -1273,7 +1280,7 @@ real answer to "check online", and only never looking is the failure.
 
 ### Fixed — "look it up online" now reaches the web whatever the model decides
 
-⚠ **Adding the `scope` parameter was not enough, because the model never passed it.** Measured on this
+**Adding the `scope` parameter was not enough, because the model never passed it.** Measured on this
 host with `gemma4:12b`: asked in plain English to check online, it called `search` with the query alone
 and no scope at all — every attempt, on the shipped build. The default ladder then ran, local
 documentation matched the game on topic, and the web was never reached. An optional parameter is a
@@ -1282,7 +1289,7 @@ suggestion to a model, not an instruction from a person.
 So the turn now reads the request off **what the person actually typed**. `AskedForTheWeb` matches
 phrases that are somebody saying where to look — "check online", "search the web", "google it" — and
 `SearchIntent` carries that for the turn in the same ambient per-turn scope the confirmation context
-and the progress sink already use. ⚠ It is opened inside the yield-free producer, not the streaming
+and the progress sink already use. It is opened inside the yield-free producer, not the streaming
 iterator: an async iterator's yields drop the ambient value, and the streaming path is the one every
 surface actually uses.
 
@@ -1295,14 +1302,14 @@ whether a question needs current information, which stays the model's judgement.
 can do is answer from the web something the docs also covered. Bare "online" and "web" are excluded
 deliberately, because a server being online is the opposite subject.
 
-⚠ Also worth knowing: stopping `kgsm-rag-indexer` does **not** disable retrieval. The indexer only
+Also worth knowing: stopping `kgsm-rag-indexer` does **not** disable retrieval. The indexer only
 *writes* the index; the read path uses the file on disk while `Rag:Enabled` is true.
 
 ## [1.13.0] - 2026-08-14
 
 ### Added — `search` takes a scope, so "look it up online" reaches the web
 
-⚠ **The local index shadowed the web for any question about a game it has documentation for.** The
+**The local index shadowed the web for any question about a game it has documentation for.** The
 ladder answers from the operator's own docs whenever a passage scores above `LocalMinScore`, which is
 right — until the passage matches on *topic* alone. Measured on this host: `search("next Valheim
 update date")` retrieved against fifty-four Valheim guide chunks, cleared the threshold, and **never
@@ -1472,7 +1479,7 @@ same way.
 `AddKgsmAdapters` now registers `AddKgsmJournalFederation`, so both the history reader behind those
 tools and the live source read every producer's journal.
 
-⚠ **`AddKgsmEventListener` must keep running after `AddKgsmAdapters`.** It no longer registers a
+**`AddKgsmEventListener` must keep running after `AddKgsmAdapters`.** It no longer registers a
 reader of its own — it adds dispatch on top of the federated source and starts it — because a later
 single-journal registration would win and quietly undo this. `JournalFederationWiringTests` asserts
 both halves against the composed graph, in that order.
@@ -2276,7 +2283,7 @@ It shadows no endpoint: static middleware serves only files that exist, so `/tur
 HTML body. The client is hash-routed, so serving `index.html` at `/` is all it needs. A test pins
 this rather than leaving it to be reasoned about.
 
-⚠ `deploy/setup.sh` now creates `wwwroot` up front, because ASP.NET resolves the web root **once at
+`deploy/setup.sh` now creates `wwwroot` up front, because ASP.NET resolves the web root **once at
 startup**: a directory that appears later is invisible until the service restarts.
 
 ### Added — the callback carries Discord's own refusal back

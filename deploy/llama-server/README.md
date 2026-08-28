@@ -32,7 +32,7 @@ sudo ./install.sh     # units + env template, templated to the assistant's user 
 
 Then put the GGUFs where `/etc/kgsm-assistant/llama-server.env` points.
 
-⚠ **Take the models from their published GGUF repo, not from Ollama's blob store.** Ollama's blobs
+**Take the models from their published GGUF repo, not from Ollama's blob store.** Ollama's blobs
 are not portable: its embeddinggemma blob fails to load in mainline llama.cpp with *wrong number of
 tensors; expected 316, got 314*, even though Ollama's own bundled server reads it happily.
 `ggml-org` and `unsloth` publish ones that work.
@@ -59,7 +59,7 @@ curl -s localhost:8081/props | jq '{chat_template, chat_template_tool_use}'
 against the configured number, so the two disagreeing makes every usage figure wrong with nothing
 reporting an error.
 
-⚠ **Rebuild the RAG index after switching the embedding backend.** The indexer is incremental by
+**Rebuild the RAG index after switching the embedding backend.** The indexer is incremental by
 content hash, and the index header records the embedding model's *name* — which does not change when
 the server behind it does. A switch therefore reports `0 embedded, N reused` and quietly keeps the
 previous embedder's vectors. Force it:
@@ -108,11 +108,11 @@ The hop is transparent to streaming, which is the property that had to hold befo
 doing: a streamed tool call measured through it reassembles byte-identical arguments, and
 time-to-first-frame is **0.09s through the proxy against 0.10s direct**.
 
-⚠ `StopWhenUnneeded=` is a `[Unit]` setting. Put it in `[Service]` and systemd parses it as an
+`StopWhenUnneeded=` is a `[Unit]` setting. Put it in `[Service]` and systemd parses it as an
 unknown key and does nothing — which presents as an idle timeout that fires, a proxy that exits, and
 a model that stays loaded forever.
 
-⚠ A socket unit reads no `EnvironmentFile`, so `ListenStream=` cannot reference `LLAMA_CHAT_PORT`.
+A socket unit reads no `EnvironmentFile`, so `ListenStream=` cannot reference `LLAMA_CHAT_PORT`.
 `install.sh` writes the port into the socket unit from the env file; change the port there and
 re-run `install.sh`.
 

@@ -452,7 +452,7 @@ public sealed class SystemPromptBuilderTests : IDisposable
     [Fact]
     public async Task Memories_DoNotMoveThePromptHash()
     {
-        // ⚠ THE invariant. The hash fingerprints the operator's editable template; memories are
+        // THE invariant. The hash fingerprints the operator's editable template; memories are
         // per-person live state injected below it. Hashed in, every user would produce a different
         // prompt id and every roll-up bucketed by prompt version would shatter into one bucket each.
         var before = await Build().BuildAsync(canPerformActions: false, ownerKey: "web:alice");

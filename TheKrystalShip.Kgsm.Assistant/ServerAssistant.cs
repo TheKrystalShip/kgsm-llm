@@ -384,12 +384,12 @@ public class ServerAssistant : IServerAssistant
             // step by writing straight onto it (see ITurnProgress), landing on the stream immediately
             // instead of waiting for its own terminal tool.result.
             using var progressScope = _progress.BeginTurn(writer);
-            // ⚠ Opened HERE and not in the iterator above, for the same reason as the two scopes
+            // Opened HERE and not in the iterator above, for the same reason as the two scopes
             // beside it: an async iterator's yields drop the ambient value, and this method is the
             // yield-free flow the dispatcher actually runs on. Opened in the iterator it would be
             // gone by the first tool call — which is the streaming path every surface uses.
             using var looking = SearchIntent.BeginTurn(SearchIntent.From(turn.UserPrompt));
-            // ⚠ Opened HERE for exactly the reason above: this is the yield-free flow the dispatcher
+            // Opened HERE for exactly the reason above: this is the yield-free flow the dispatcher
             // runs on, and a memory scope opened in the iterator would be gone by the first tool call.
             using var remembering = MemoryOwner.BeginTurn(MemoryScope.OwnerOf(turn.ConversationId));
             // Opened HERE for the same reason as the scopes above — this is the yield-free flow the
@@ -1056,7 +1056,7 @@ public class ServerAssistant : IServerAssistant
     /// The per-call authorization and blast-radius gate for one message.
     /// </summary>
     /// <remarks>
-    /// ⚠ <b>Only the authorization refusals are recorded.</b> The caps below — staged commands,
+    /// <b>Only the authorization refusals are recorded.</b> The caps below — staged commands,
     /// searches, fetches, a repeated lookup — are loop guards firing on ordinary model over-eagerness,
     /// and journalling them would bury the ones that mean somebody reached past their tier under a
     /// stream of the model being enthusiastic.
@@ -1144,7 +1144,7 @@ public class ServerAssistant : IServerAssistant
                 // spends the budget and the turn's iterations on an answer already in context. Refused
                 // WITHOUT counting against the cap: the call was free of information, so charging for
                 // it would punish the model twice for one mistake and leave less room to recover.
-                // ⚠ Keyed on the query AND where it looked. The same words asked of the local
+                // Keyed on the query AND where it looked. The same words asked of the local
                 // documentation and of the web are two different questions with two different answers,
                 // and refusing the second as a repeat is what made "it wasn't in the docs, try online"
                 // impossible — the model asked, was told it had already searched, and gave up. The

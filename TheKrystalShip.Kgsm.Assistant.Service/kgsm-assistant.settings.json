@@ -128,7 +128,7 @@
     },
     // What this leaf measures about ITSELF, for the leaf_* events it writes to its own journal.
     //
-    // ⚠ The model backend is deliberately NOT probed. It is socket-activated: connecting to
+    // The model backend is deliberately NOT probed. It is socket-activated: connecting to
     // Llm:Endpoint is what LOADS the model, so a liveness probe on a timer would reset the idle timer
     // that unloads it and pin its VRAM resident forever. A turn is the measurement instead — the first
     // one that fails reports the fault, the next that succeeds clears it.
@@ -136,7 +136,7 @@
       // The port the model server itself binds once loaded, which on a socket-activated host is a
       // DIFFERENT port from the one the assistant connects to. Set to that one and a connect attempt
       // tells an unloaded model from a broken one for free — it starts nothing and extends nothing.
-      // ⚠ Set to the activating port it does the exact opposite. 0 asks nothing.
+      // Set to the activating port it does the exact opposite. 0 asks nothing.
       "ResidentBackendPort": 0
     }
   },

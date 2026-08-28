@@ -121,7 +121,7 @@ log "syncing publish trees → ${PREFIX}"
 # prefix is still a sibling's artifact. setup.sh creates the directory for the same reason.
 rsync -a --delete --exclude='*.pdb' --exclude='*.xml' --exclude='/wwwroot/' \
     "$PUB/service/" "$PREFIX/service/"
-# ⚠ The CLI resolves its conversation database to a file BESIDE its binary — it has no state
+# The CLI resolves its conversation database to a file BESIDE its binary — it has no state
 # directory of its own, unlike the service — so the database lives inside the tree being synced.
 # Excluded from --delete because it is state, not an artifact: without this, every deploy destroys
 # the CLI's whole conversation history and everything the assistant has remembered about anyone who
@@ -135,7 +135,7 @@ rsync -a --delete --exclude='*.pdb' --exclude='*.xml' \
 # why they live under the prefix rather than the state directory — the state directory is for what
 # must SURVIVE a deploy (the conversation database, the RAG index), and these must not.
 #
-# ⚠ A local edit here is overwritten by the next deploy. That is the intended loop: tune the file on
+# A local edit here is overwritten by the next deploy. That is the intended loop: tune the file on
 # the running host, confirm it, then paste the wording back into deploy/prompts/ so it ships. The
 # deploy is the commit.
 log "installing prompts + tool definitions → ${PREFIX}/prompts"

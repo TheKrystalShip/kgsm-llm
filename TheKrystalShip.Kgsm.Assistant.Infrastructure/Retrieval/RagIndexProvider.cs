@@ -59,7 +59,7 @@ public sealed class RagIndexProvider
     /// <see langword="null"/> when the two agree.
     /// </summary>
     /// <remarks>
-    /// ⚠ <b>The state a success cannot express.</b> When a reload fails, <see cref="Get"/> deliberately
+    /// <b>The state a success cannot express.</b> When a reload fails, <see cref="Get"/> deliberately
     /// keeps serving the last good index rather than going dark — so it returns success while answering
     /// from something that is no longer what the indexer wrote. That is working, and not with the
     /// current corpus, which no caller can tell from the result alone. Retrieval reads this and does not

@@ -24,7 +24,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// what it reports is what it measured.
 /// </para>
 /// <para>
-/// ⚠ <b>Registered by the resident service alone.</b> The CLI and the benchmark compose the same
+/// <b>Registered by the resident service alone.</b> The CLI and the benchmark compose the same
 /// backend and are not leaves — neither has a journal, and an eval run would report a dead backend
 /// against a host whose backend is fine.
 /// </para>
@@ -84,7 +84,7 @@ public sealed class MeasuredLlmClient(ILlmClient inner, LeafLifecycle lifecycle)
     /// The streaming counterpart.
     /// </summary>
     /// <remarks>
-    /// ⚠ The reading is taken on the <b>first</b> chunk, not on the last. A stream that begins and is
+    /// The reading is taken on the <b>first</b> chunk, not on the last. A stream that begins and is
     /// then abandoned — the consumer stops enumerating, the turn is cancelled — reached the backend
     /// perfectly well, and waiting for an end that never comes would leave a working backend reported
     /// as broken until the next turn happened to finish.

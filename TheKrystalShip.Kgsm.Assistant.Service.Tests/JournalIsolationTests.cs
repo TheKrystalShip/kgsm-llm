@@ -9,7 +9,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 /// The guard that keeps this assembly out of the host's real journal is itself guarded.
 /// </summary>
 /// <remarks>
-/// ⚠ Without this, <see cref="JournalIsolation"/> is a module initializer nobody exercises: delete it,
+/// Without this, <see cref="JournalIsolation"/> is a module initializer nobody exercises: delete it,
 /// rename the environment variable it sets, or change how the writer resolves its root, and every test
 /// run quietly resumes writing hundreds of lines into <c>/var/lib/kgsm-assistant/events</c> — with
 /// nothing failing, which is how it went unnoticed the first time.

@@ -49,7 +49,7 @@ public sealed class SearchAggregator : ISearch
     {
         query = query.Trim();
 
-        // 1. Local retrieval — skipped outright when the caller asked for the web. ⚠ Skipped rather
+        // 1. Local retrieval — skipped outright when the caller asked for the web. Skipped rather
         //    than retrieved-and-ignored: a local hit is only ever a reason NOT to call the web, so
         //    fetching one here could only produce an answer nobody asked for. A disabled/unbuilt index
         //    returns a failed Result (never throws) — treated the same as "no local hits", so we
@@ -70,7 +70,7 @@ public sealed class SearchAggregator : ISearch
         if (localHits.Length > 0 && localHits[0].Score >= _options.LocalMinScore)
             return Envelope(query, SearchState.LocalStrong, FormatLocal(query, localHits, weak: false), LocalPassages(localHits));
 
-        // 3. The web. ⚠ Not consulted when the caller confined the search to the documentation — an
+        // 3. The web. Not consulted when the caller confined the search to the documentation — an
         //    answer from somewhere they ruled out is worse than no answer.
         Result<IReadOnlyList<WebSearchHit>> web = scope == SearchScope.Local
             ? Result.Failure<IReadOnlyList<WebSearchHit>>("the search was limited to the local documentation")
@@ -161,7 +161,7 @@ public sealed class SearchAggregator : ISearch
               "not directly answer it (say so if you rely on them):"
             : $"From the operator's indexed docs for \"{query}\" (local knowledge base — cite the source paths):";
 
-        // ⚠ Said HERE, where the decision is actually made. This text is what the model reads at the
+        // Said HERE, where the decision is actually made. This text is what the model reads at the
         // moment it has an answer in front of it and is deciding whether it will do — a rule stated
         // once in the system prompt, thousands of tokens earlier, competes with everything since.
         // Measured: given local passages that matched a game on topic and said nothing about the

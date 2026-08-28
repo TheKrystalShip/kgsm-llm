@@ -1,6 +1,6 @@
 # Assistant CLI — Integration Plan
 
-> **STATUS: ✅ IMPLEMENTED.** Drafted + built 2026-06-17. All four branching decisions
+> **STATUS: IMPLEMENTED.** Drafted + built 2026-06-17. All four branching decisions
 > locked (§1) and all 7 steps (§6) shipped. A **new terminal surface** onto the existing
 > kgsm assistant — a thin console host, parallel to the Discord bot and the HTTP/SSE
 > service — plus one structural refactor (the kgsm-lib adapters extracted into a shared
@@ -8,7 +8,7 @@
 > suite green (244 tests). Committed to `kgsm-llm` main (`69f8dfa` → `255883d`).
 >
 > **Implementation progress (§6):**
-> - ✅ **Step 0 — Extract infra lib** (commit `69f8dfa`). `TheKrystalShip.Kgsm.Assistant.Infrastructure`
+> - **Step 0 — Extract infra lib** (commit `69f8dfa`). `TheKrystalShip.Kgsm.Assistant.Infrastructure`
 >   + `.Tests` created; adapters + options moved; `AddKgsmAdapters` seam, `IInventoryInvalidation`,
 >   `Invocation.ForCli` added; Service `Program.cs` collapsed to the one-liner; tests migrated.
 >   Full suite green (216 tests), no behavior change. One refinement vs the plan: the Service's
@@ -16,23 +16,23 @@
 >   `IInventoryInvalidation`** interface rather than `InternalsVisibleTo` (cleaner, and the CLI
 >   needs the same seam). Infra deps floored at **9.0.0** not 8.0.0 (kgsm-lib requires ≥9.0.0;
 >   8.0.0 is an NU1605 downgrade).
-> - ✅ **Step 1 — CLI scaffold** (commit `b1f5998`). `TheKrystalShip.Kgsm.Assistant.Cli` Exe;
+> - **Step 1 — CLI scaffold** (commit `b1f5998`). `TheKrystalShip.Kgsm.Assistant.Cli` Exe;
 >   three-call composition root; config resolution (defaults→file→env→`--model`); quiet
 >   stderr logging (`--verbose` opts up); `Invocation.ForCli`; friendly startup errors;
 >   `CliOptions`. Note: `LogToStandardErrorThreshold` is a `ConsoleLoggerOptions` (not formatter)
 >   setting — used `AddSimpleConsole` + `Configure<ConsoleLoggerOptions>`; the plan's
 >   `AddSimpleConsole(o => o.LogToStandardErrorThreshold)` wouldn't compile.
-> - ✅ **Step 2 — Renderer** (commit `d006733`). `TerminalRenderer` maps the stream to the
+> - **Step 2 — Renderer** (commit `d006733`). `TerminalRenderer` maps the stream to the
 >   terminal; status lines gate on stdout-is-TTY (so `… | cat` is clean); `--no-color`/`NO_COLOR`
 >   disables both renderer + framework-log color; Ctrl-C cancels. Verified live (0 ANSI in piped stdout).
-> - ✅ **Step 3 — Confirm** (commit `c31b229`). `ConfirmationFlow` (y/N, ConfirmAsync, post-action
+> - **Step 3 — Confirm** (commit `c31b229`). `ConfirmationFlow` (y/N, ConfirmAsync, post-action
 >   Invalidate; non-TTY never executes, L8). `Cli.Tests` added with the L8 safety test + 4 more.
-> - ✅ **Step 4 — Args/modes** (commit `827968e`). stdin-pipe one-shot + REPL (`/exit /reset /help`,
+> - **Step 4 — Args/modes** (commit `827968e`). stdin-pipe one-shot + REPL (`/exit /reset /help`,
 >   Ctrl-D); `TurnInterruptor` (per-turn Ctrl-C); `CliRunner`/`Repl` split. All three forms verified live.
-> - ✅ **Step 5 — Packaging** (commit `e398fa5`). Self-contained single-file publish (linux-x64,
+> - **Step 5 — Packaging** (commit `e398fa5`). Self-contained single-file publish (linux-x64,
 >   no trim; symbols embedded). Verified: the ~70MB binary runs a live query under `env -i`
 >   (no SDK/PATH). Install = copy `kgsm-assistant` to `/usr/local/bin`.
-> - ✅ **Step 6 — Tests & docs** (commit `255883d`). Renderer + arg-parse tests + env-gated live
+> - **Step 6 — Tests & docs** (commit `255883d`). Renderer + arg-parse tests + env-gated live
 >   smoke (28 CLI tests; live smoke verified to pass with `KGSM_LIVE_OLLAMA=1`). CLI README;
 >   keystone surface table gains a `cli` row + edge; `architecture.html §3·d` adds `cli` to the
 >   audit origin set (L7 — done, not just flagged).
@@ -270,7 +270,7 @@ The CLI analogue of `SseTurnWriter` — consume `RunStreamAsync`, map events to 
 | `AssistantStreamEvent` | Terminal behavior |
 |---|---|
 | `Token` | write delta to **stdout**, no newline |
-| `ToolStart` | dim status line to **stderr** (TTY only): `⚙ get_status(instance=terraria)` |
+| `ToolStart` | dim status line to **stderr** (TTY only): `get_status(instance=terraria)` |
 | `ToolResult` | optional dim one-liner to stderr (TTY only) |
 | `Confirmation` | **collect** into a list; do not print yet |
 | `Final` | flush trailing newline |
@@ -290,7 +290,7 @@ After the stream ends, drain collected confirmations (§5).
 Each staged `PendingConfirmation` is rendered human-readably and gated interactively:
 
 ```
-⚠ Proposed action: uninstall 'terraria'
+Proposed action: uninstall 'terraria'
   Proceed? [y/N]
 ```
 

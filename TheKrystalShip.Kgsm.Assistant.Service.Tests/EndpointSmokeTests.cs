@@ -63,7 +63,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             // presents it (a blank key is per-process ephemeral, which is fine but noisier to reason
             // about), and durable state confined to this run.
             builder.UseSetting("Auth:SigningKey", "endpoint-smoke-signing-key");
-            // ⚠ Never the default. /var/lib/kgsm/auth/users.db is the HOST's real account store,
+            // Never the default. /var/lib/kgsm/auth/users.db is the HOST's real account store,
             // shared with every KGSM service on the box, and opening it CREATES it — so an unpinned
             // test run would hand the operator a live accounts file that nobody made.
             builder.UseSetting("Auth:UsersDbPath",
@@ -1932,7 +1932,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Command_New_InARoom_NeedsOperator()
     {
-        // ⚠ Gated where the same command is free in a private chat: clearing a room takes the memory
+        // Gated where the same command is free in a private chat: clearing a room takes the memory
         // from everybody in it, and they are not the person who asked.
         var store = new RecordingConversationStore();
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();

@@ -136,7 +136,7 @@ llamacpp)
     systemctl restart "$ASSISTANT_UNIT"
     echo "switched to llama.cpp"
     echo
-    echo "⚠ the RAG index holds vectors from whichever embedder built it. Switching the embedding"
+    echo "the RAG index holds vectors from whichever embedder built it. Switching the embedding"
     echo "  backend changes the vectors without changing the index's header, so retrieval degrades"
     echo "  quietly rather than failing. Rebuild it:  systemctl start kgsm-rag-indexer"
     ;;

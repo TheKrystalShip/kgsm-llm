@@ -5,7 +5,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// </summary>
 /// <remarks>
 /// <para>
-/// ⚠ <b>The third and last way this failed, each one a step further than the fix before it.</b>
+/// <b>The third and last way this failed, each one a step further than the fix before it.</b>
 /// First the model called <c>search</c> and local documentation shadowed the web. Then it called
 /// <c>search</c> without the scope that would have reached the web. Then — measured on this host —
 /// it answered <em>"look it up online"</em> with no tool call whatsoever, out of its own parametric

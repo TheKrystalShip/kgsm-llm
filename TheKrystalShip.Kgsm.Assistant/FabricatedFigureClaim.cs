@@ -96,7 +96,7 @@ public static partial class FabricatedFigureClaim
     /// ends: without that, <c>2701</c> would be "found" inside <c>27015</c> and a truncated port
     /// would pass as measured.
     /// <para>
-    /// ⚠ <b>An empty <paramref name="given"/> flags nothing.</b> It means the turn recorded nothing,
+    /// <b>An empty <paramref name="given"/> flags nothing.</b> It means the turn recorded nothing,
     /// which is a fault in the ledger and not evidence that every figure in the reply was invented —
     /// and a check that fails closed here would contradict every correct answer on the way to
     /// reporting its own bug.

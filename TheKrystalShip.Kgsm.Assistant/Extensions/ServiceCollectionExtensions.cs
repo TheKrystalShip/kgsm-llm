@@ -98,7 +98,7 @@ public static class ServiceCollectionExtensions
         // proposal, a claim of an action that never happened. Writes nowhere by default, and the
         // resident service registers the real one after this so it wins.
         //
-        // ⚠ The default is what keeps the OTHER two hosts silent. The CLI is a one-shot with no
+        // The default is what keeps the OTHER two hosts silent. The CLI is a one-shot with no
         // residency to report and the benchmark runs hundreds of turns; either writing to the live
         // journal would be a record of things no person did.
         services.TryAddSingleton<IAssistantJournal, NoAssistantJournal>();

@@ -131,7 +131,7 @@ public class ServerAssistantTests
     /// A refusal for want of authority is recorded, because it exists nowhere else.
     /// </summary>
     /// <remarks>
-    /// ⚠ The engine's journal cannot hold this: nothing ran, so from its side nothing happened.
+    /// The engine's journal cannot hold this: nothing ran, so from its side nothing happened.
     /// Somebody reaching for an action their tier does not carry currently leaves no trace on the host
     /// at all — the refusal goes back to the model as a tool result and stops there.
     /// </remarks>
@@ -147,7 +147,7 @@ public class ServerAssistantTests
     }
 
     /// <summary>
-    /// ⚠ A blast-radius cap is not a refusal worth recording.
+    /// A blast-radius cap is not a refusal worth recording.
     /// </summary>
     /// <remarks>
     /// The caps fire on ordinary model over-eagerness — a runaway loop, an over-keen refine — and
@@ -307,7 +307,7 @@ public class ServerAssistantTests
     [Fact]
     public async Task Gate_LetsTheSameWordsGoToTheWebAfterTheDocsDidNotAnswerThem()
     {
-        // ⚠ The one that made "it wasn't in the docs, try online" impossible. Keyed on the query
+        // The one that made "it wasn't in the docs, try online" impossible. Keyed on the query
         // alone, the second call looked like a repeat and was refused — with a message saying a repeat
         // returns the same thing, which is simply untrue of a different source. The model asked, was
         // told it had already searched, and gave up.
@@ -653,7 +653,7 @@ public class ServerAssistantTests
     }
 
     /// <summary>
-    /// ⚠ The record carries no transcript.
+    /// The record carries no transcript.
     /// </summary>
     /// <remarks>
     /// The journal is readable by anything on the host that can open the directory, and what somebody

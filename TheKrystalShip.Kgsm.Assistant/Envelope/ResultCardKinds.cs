@@ -13,7 +13,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Envelope;
 /// with the surface that consumes them.
 /// </para>
 /// <para>
-/// ⚠ Changing a value here is a breaking change to <c>kgsm-web</c>'s <c>adaptResultCard</c>. A key it
+/// Changing a value here is a breaking change to <c>kgsm-web</c>'s <c>adaptResultCard</c>. A key it
 /// does not know falls through to no card at all — the answer still renders as text, so nothing fails
 /// loudly and the loss is invisible until somebody notices the card is gone.
 /// </para>

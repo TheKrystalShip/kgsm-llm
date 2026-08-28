@@ -330,7 +330,7 @@ printf '\n   deploy from now on with:  %s/deploy/deploy.sh   (no sudo, no prompt
 # not install: they decide what occupies the GPU, and that is a choice, not a consequence of
 # provisioning. Everything needed to make it is right here.
 if [[ ! -s /var/lib/llama/models/gemma4-12b-q4_k_m.gguf ]]; then
-    printf '\n   ⚠  no model yet — the assistant is configured for llama.cpp and will not answer until:\n'
+    printf '\n   no model yet — the assistant is configured for llama.cpp and will not answer until:\n'
     printf '        %s/deploy/llama-server/fetch-models.sh          # ~7.5 GB, as %s\n' "$REPO_DIR" "$DEPLOY_USER"
     printf '        sudo %s/deploy/llama-server/install.sh\n' "$REPO_DIR"
     printf '        sudo %s/deploy/llama-server/use-backend.sh llamacpp\n' "$REPO_DIR"

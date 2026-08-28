@@ -9,7 +9,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// ⚠ <b>Measured, not theorised.</b> These tests boot the real <c>Program</c> through
+/// <b>Measured, not theorised.</b> These tests boot the real <c>Program</c> through
 /// <see cref="Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory{T}"/>, which is deliberately
 /// fake-free — so the host they start inherits this machine's paths, and the service now writes a
 /// <c>leaf_ready</c> the moment it starts. One full run put <b>474 ready/stopping pairs</b> into

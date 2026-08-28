@@ -93,7 +93,7 @@ internal sealed class SqlitePushSubscriptionStore : IPushSubscriptionStore
                     INSERT OR IGNORE INTO push_vapid (id, public_key, private_key, created_at)
                     VALUES (1, $public, $private, $now);
                     """;
-                // ⚠ VapidKeyPair is positionally (PrivateKey, PublicKey). Every construction and read
+                // VapidKeyPair is positionally (PrivateKey, PublicKey). Every construction and read
                 // of it here names its arguments, because getting the two the wrong way round produces
                 // a pair that looks fine, stores fine, and signs nothing a push service will accept.
                 insert.Parameters.AddWithValue("$public", generated.PublicKey);

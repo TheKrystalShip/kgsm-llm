@@ -59,7 +59,7 @@ internal static class Scorecard
             w.WriteLine();
             if (h.Degraded)
             {
-                w.WriteLine($"⚠  DEGRADED RUN — {h.TurnsErrored} of {h.TurnsRun} turns ({h.ErrorRate:P0}) failed outright.");
+                w.WriteLine($"DEGRADED RUN — {h.TurnsErrored} of {h.TurnsRun} turns ({h.ErrorRate:P0}) failed outright.");
                 w.WriteLine("   Those turns reached no model, so their checks failed for want of an answer");
                 w.WriteLine("   rather than a wrong one. Do NOT read this score as the assistant's behaviour,");
                 w.WriteLine("   and do not compare it against a clean run. Check the endpoint and run again.");

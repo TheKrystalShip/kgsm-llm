@@ -13,7 +13,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// to thread it through.
 /// </para>
 /// <para>
-/// ⚠ <b>The ledger is a holder written through, never an <see cref="AsyncLocal{T}"/> reassigned from
+/// <b>The ledger is a holder written through, never an <see cref="AsyncLocal{T}"/> reassigned from
 /// inside dispatch.</b> A value published from that depth does not propagate back out to the flow
 /// that reads it — the same trap <see cref="SearchIntent"/> documents. The instance is published once
 /// when the turn opens, and every note after that mutates it in place.

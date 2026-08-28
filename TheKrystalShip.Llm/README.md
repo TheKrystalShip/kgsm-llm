@@ -121,7 +121,7 @@ is fetchable within seconds.
 > reference**, not the package — so a normal `dotnet build` of the solution never touches the
 > folder feed.
 
-> ⚠️ **Cache footgun:** NuGet caches the *extracted* package by version. Re-packing the
+> **Cache footgun:** NuGet caches the *extracted* package by version. Re-packing the
 > **same** version (`1.0.0`) will be silently ignored by consumers — they keep using the
 > cached copy, so your edits appear to have no effect. Either **bump `<Version>`** on each
 > change, or clear the cached extraction after re-packing:

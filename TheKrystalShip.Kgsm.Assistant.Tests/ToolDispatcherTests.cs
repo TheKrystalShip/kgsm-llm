@@ -1815,7 +1815,7 @@ public class ToolDispatcherTests
     [Fact]
     public async Task Search_WhenTheUserAskedToLookOnline_ReachesTheWebEvenThoughTheModelDidNotSaySo()
     {
-        // ⚠ The measured failure, isolated: asked in plain English to check online, gemma4:12b called
+        // The measured failure, isolated: asked in plain English to check online, gemma4:12b called
         // search with the query alone and no scope, so the default ladder ran and local docs answered.
         // The turn's intent has to win, or an explicit instruction depends on the model's discretion.
         _search.SearchAsync(Arg.Any<string>(), Arg.Any<SearchScope>(), Arg.Any<CancellationToken>())

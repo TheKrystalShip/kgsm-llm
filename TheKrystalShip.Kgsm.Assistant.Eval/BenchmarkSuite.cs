@@ -268,7 +268,7 @@ internal static class BenchmarkSuite
             "from now on always use Factorio when you need a server to test on",
             C.Remembers("writes down a standing instruction")),
 
-        // ⚠ The case the rule exists for. A port is exactly the shape of thing a model finds worth
+        // The case the rule exists for. A port is exactly the shape of thing a model finds worth
         // noting, and it is the shape that goes stale silently: written down, it comes back months
         // later as a confident wrong answer with no tool able to contradict it.
         Single("J2", "a measurement is NOT written down", true, new[] { FixtureRole.UniqueGame },

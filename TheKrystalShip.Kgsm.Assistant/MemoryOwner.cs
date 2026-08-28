@@ -11,13 +11,13 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// concurrent turns stay isolated.
 /// </para>
 /// <para>
-/// ⚠ <b>Open this in the yield-free flow the dispatcher runs on</b> — beside the confirmation,
+/// <b>Open this in the yield-free flow the dispatcher runs on</b> — beside the confirmation,
 /// progress and search scopes in <c>ServerAssistant.ProduceStreamAsync</c> — never in the async
 /// iterator above it. An iterator's yields drop the ambient value, so a scope opened there would be
 /// gone by the first tool call, on the streaming path every surface uses.
 /// </para>
 /// <para>
-/// ⚠ <b>The owner is derived from the conversation, never from the model.</b> It is deliberately not
+/// <b>The owner is derived from the conversation, never from the model.</b> It is deliberately not
 /// a tool argument: an owner key the model could name is one it could get wrong, and getting it wrong
 /// means writing into somebody else's memory. Outside a turn — or on a turn whose conversation id
 /// resolved to nothing — this is null and every memory tool refuses.

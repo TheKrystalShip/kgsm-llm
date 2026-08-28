@@ -151,7 +151,7 @@ public sealed class PushStoreTests : IDisposable
     [Fact]
     public void TheVapidPairIsGeneratedOnceAndNeverChanges()
     {
-        // ⚠ The whole feature rests on this. A subscription is bound at creation to the key it was
+        // The whole feature rests on this. A subscription is bound at creation to the key it was
         // handed, so a second pair does not rotate anything — it orphans every device already
         // registered, silently and with no error at either end.
         var first = Subscriptions(Actions()).Keys();

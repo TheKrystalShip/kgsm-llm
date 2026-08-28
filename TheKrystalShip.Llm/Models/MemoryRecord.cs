@@ -3,7 +3,7 @@ namespace TheKrystalShip.Llm.Models;
 /// <summary>
 /// One thing the assistant wrote down about an owner, to be read back in later conversations.
 /// <para>
-/// ⚠ A memory carries what it was <b>told</b>, never what a tool <b>measured</b>. Preferences,
+/// A memory carries what it was <b>told</b>, never what a tool <b>measured</b>. Preferences,
 /// decisions, standing instructions, corrections and the words a person uses for things all keep their
 /// meaning months later; a port, a version, a player count or a run-state does not, and a remembered
 /// reading offered as current is a fabricated status. This is the same reason

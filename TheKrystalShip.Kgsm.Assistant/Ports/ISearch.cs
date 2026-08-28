@@ -23,7 +23,7 @@ public interface ISearch
 /// </summary>
 /// <remarks>
 /// <para>
-/// ⚠ <b>Local docs shadow the web, and that is right until somebody asks for the web.</b> The default
+/// <b>Local docs shadow the web, and that is right until somebody asks for the web.</b> The default
 /// ladder answers from the operator's own documentation whenever it matches, which is cheaper and more
 /// trustworthy — but a question about a game the docs cover retrieves those docs on topic alone,
 /// however little they say about what was actually asked. Measured: "next Valheim update date" scored

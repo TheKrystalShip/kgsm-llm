@@ -28,7 +28,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Push;
 /// and started, which is true, and the outcome says what happened when there is an outcome to state.
 /// </para>
 /// <para>
-/// ⚠ Everything here runs OUTSIDE the request: its own DI scope (the assistant and its provenance are
+/// Everything here runs OUTSIDE the request: its own DI scope (the assistant and its provenance are
 /// scoped, and the request's are disposed the moment the response is written) and the application's
 /// lifetime token rather than the request's, which is cancelled as soon as the response completes.
 /// </para>
@@ -77,7 +77,7 @@ internal sealed class PushConfirmationRunner(
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // The host is shutting down mid-action. ⚠ Say that rather than reporting a failure: the
+            // The host is shutting down mid-action. Say that rather than reporting a failure: the
             // command may well have completed, and we no longer have any way to find out.
             title = $"Couldn't confirm the {verb}";
             body = "The assistant restarted while this was running — check the server before retrying.";

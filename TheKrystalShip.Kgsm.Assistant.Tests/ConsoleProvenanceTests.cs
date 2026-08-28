@@ -61,7 +61,7 @@ public class ConsoleProvenanceTests
 
         var text = Describe(runs);
 
-        text.Should().NotContain("⚠").And.NotContain("run=1");
+        text.Should().NotContain("so this run holds only what it has").And.NotContain("run=1");
         // The boundary is still stated: these lines start somewhere, and where is a fact.
         text.Should().Contain("picks up where the previous run left off").And.Contain("3 days ago");
     }
@@ -127,7 +127,7 @@ public class ConsoleProvenanceTests
         var text = Describe(runs, index: 1);
 
         text.Should().Contain("run 1, which ended in a crash");
-        text.Should().NotContain("⚠").And.NotContain("run=1");
+        text.Should().NotContain("so this run holds only what it has").And.NotContain("run=1");
     }
 
     [Fact]

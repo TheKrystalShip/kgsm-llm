@@ -131,7 +131,7 @@ builder.Services.AddHostedService<BlueprintProbeSweepService>();
 // which is a different thing: that one answers questions about the fleet, this one records what this
 // leaf has to say about itself.
 //
-// ⚠ Registered HERE and not in AddKgsmAdapters, which the CLI, the Eval harness and several test
+// Registered HERE and not in AddKgsmAdapters, which the CLI, the Eval harness and several test
 // fixtures also compose. A writer there would put a ready/stopping pair in the live journal on every
 // `kgsm-assistant-cli` invocation and hundreds of turn-quality lines in it on every eval run.
 //
@@ -991,7 +991,7 @@ secured.MapPost("/commands/{name}", async (
             // all.
             if (room is not null)
             {
-                // ⚠ Gated above where the same command is free in a private chat. Clearing a room is
+                // Gated above where the same command is free in a private chat. Clearing a room is
                 // one person acting on a conversation everybody there is holding, and the people it
                 // takes the memory from are not the person who asked.
                 if (tier < KgsmTier.Operator)
@@ -1097,7 +1097,7 @@ secured.MapPost("/commands/{name}", async (
 
 // What the assistant remembers about the caller: reading it, writing one by hand, and dropping one.
 //
-// ⚠ The owner is resolved through ConversationSurfaces.Key + MemoryScope, never composed inline as
+// The owner is resolved through ConversationSurfaces.Key + MemoryScope, never composed inline as
 // web:{userId}. In a room these must address the ROOM's memory — composing it per-endpoint is exactly
 // how compacting a room quietly folded the caller's own chat and reported success.
 //
@@ -1159,12 +1159,12 @@ secured.MapPut("/memories/{key}", (
                   + "Keep what matters and drop the rest.",
         });
 
-    // ⚠ Origin null, which is what the record reserves for a memory a person entered themselves. It
+    // Origin null, which is what the record reserves for a memory a person entered themselves. It
     // applies to a correction too: once somebody has rewritten the sentence, it is theirs and no
     // longer an account of what some conversation concluded.
     var record = new MemoryRecord(sanitized, summary, body, DateTimeOffset.UtcNow, Origin: null);
 
-    // ⚠ A refusal here is only ever "this would be a NEW memory past the cap" — the store allows a
+    // A refusal here is only ever "this would be a NEW memory past the cap" — the store allows a
     // rewrite at the cap on purpose, so a full owner can still correct one that is wrong.
     if (!memories.Write(owner, record))
         return Results.Json(new
@@ -1890,7 +1890,7 @@ secured.MapPost("/push/subscribe", (
 
 // Forget this browser, at its owner's request. Scoped to them: an endpoint is not a handle on
 // somebody else's device.
-// ⚠ [FromBody] is required, not decorative: a DELETE never infers one, and without it the route fails
+// [FromBody] is required, not decorative: a DELETE never infers one, and without it the route fails
 // to build — which takes the whole endpoint graph with it rather than just this route.
 secured.MapDelete("/push/subscribe", (
     [FromBody] PushUnsubscribeRequest request, HttpContext http, IPushSubscriptionStore subscriptions) =>
@@ -1915,7 +1915,7 @@ secured.MapGet("/push/devices", (HttpContext http, IPushSubscriptionStore subscr
 
 // Redeem a notification's button.
 //
-// ⚠ ANONYMOUS, and deliberately so: a service worker wakes on an OS push with no page, no bearer and
+// ANONYMOUS, and deliberately so: a service worker wakes on an OS push with no page, no bearer and
 // nothing it could sign with. The handle is the whole credential — unguessable, single-use, and dead
 // with the confirmation it points at. What it is NOT is a way to act without authority: the account
 // comes off the handle and that person's tier is resolved HERE, at the tap, exactly as /confirm does.
@@ -1952,7 +1952,7 @@ app.MapPost("/push/actions/{handle}", async (
     if (!canPerform)
         return Results.Ok(new PushActionResponse(false, "You are no longer allowed to run that action."));
 
-    // ⚠ Started, NOT awaited. A confirmed action runs to completion — a backup is minutes and the
+    // Started, NOT awaited. A confirmed action runs to completion — a backup is minutes and the
     // executor allows fifteen — and the caller is a service worker the browser will terminate long
     // before that. Holding the request open means the tap appears to do nothing at all while the work
     // runs. The verdict comes back as a second push, to the device that approved it.

@@ -33,11 +33,11 @@ internal static class Compare
         w.WriteLine();
 
         if (a.CorpusVersion != b.CorpusVersion)
-            w.WriteLine($"⚠ corpus version differs ({a.CorpusVersion} vs {b.CorpusVersion}) — checks may not line up; treat deltas with care.");
+            w.WriteLine($"warning: corpus version differs ({a.CorpusVersion} vs {b.CorpusVersion}) — checks may not line up; treat deltas with care.");
         if (a.Model != b.Model)
-            w.WriteLine($"ℹ different models ({a.Model} vs {b.Model}) — this is a model comparison, not a tuning delta.");
+            w.WriteLine($"note: different models ({a.Model} vs {b.Model}) — this is a model comparison, not a tuning delta.");
         if (a.Reps != b.Reps)
-            w.WriteLine($"ℹ rep counts differ ({a.Reps} vs {b.Reps}) — small-N rates are noisier.");
+            w.WriteLine($"note: rep counts differ ({a.Reps} vs {b.Reps}) — small-N rates are noisier.");
 
         // Dimension roll-up shift.
         w.WriteLine();

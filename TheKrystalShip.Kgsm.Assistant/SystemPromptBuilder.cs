@@ -139,7 +139,7 @@ public class SystemPromptBuilder : ISystemPromptBuilder
     /// pays for, so it carries the fact and the date and nothing else.
     /// </para>
     /// <para>
-    /// ⚠ <b>Below the hashed template, deliberately</b>, exactly like the instance lists above. Hashed
+    /// <b>Below the hashed template, deliberately</b>, exactly like the instance lists above. Hashed
     /// in, every person would produce a different prompt id — the recorded hash would move with who is
     /// asking rather than with what the operator edited, and every roll-up that buckets turns by
     /// prompt version would break into one bucket per user.

@@ -52,7 +52,7 @@ internal interface IPushActionStore
     /// <paramref name="stager"/>, from <paramref name="endpoint"/>, until <paramref name="expiry"/>.
     /// </summary>
     /// <remarks>
-    /// ⚠ <paramref name="expiry"/> is the <em>confirmation's</em> own expiry and never a longer one of
+    /// <paramref name="expiry"/> is the <em>confirmation's</em> own expiry and never a longer one of
     /// this handle's. A push handle outliving what it approves is a second lifetime nobody declared,
     /// and it would be one granted by the act of announcing rather than by the act of staging.
     /// </remarks>

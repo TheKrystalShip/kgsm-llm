@@ -345,7 +345,7 @@ public sealed class BlueprintAuthoringAggregatorTests
     }
 
     /// <summary>
-    /// ⚠ A run that produced nothing still closes its bracket.
+    /// A run that produced nothing still closes its bracket.
     /// </summary>
     /// <remarks>
     /// This is the case the engine cannot report at all: on failure no blueprint is created, so its

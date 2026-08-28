@@ -57,7 +57,7 @@ public sealed class AssistantJournal(
     /// Null, because every event here is driven by a person.
     /// </summary>
     /// <remarks>
-    /// ⚠ The base defaults to <c>system:kgsm-assistant</c>, which would be a fabricated author: these
+    /// The base defaults to <c>system:kgsm-assistant</c>, which would be a fabricated author: these
     /// record what happened on somebody's turn, and attributing one to the daemon that carried it out
     /// states an actor it does not know. The real one comes off the ambient invocation, which is the
     /// same value the engine stamps on the actions this leaf performs — so a refusal and the action it
@@ -67,7 +67,7 @@ public sealed class AssistantJournal(
 
     /// <summary>The surface the person was using, or null when this leaf cannot tell.</summary>
     /// <remarks>
-    /// ⚠ Never <c>system</c>. A turn always came from somewhere; a line written outside any invocation
+    /// Never <c>system</c>. A turn always came from somewhere; a line written outside any invocation
     /// scope reports an honest null rather than claiming the daemon drove it.
     /// </remarks>
     protected override string? DefaultOrigin => _invocation.Current?.Origin;
@@ -86,7 +86,7 @@ public sealed class AssistantJournal(
         Write(AssistantEvents.ActionDeclined, w =>
         {
             w.WriteString(AssistantEventFields.Tool, tool);
-            // ⚠ Decided here rather than at the gate, which sees one boolean covering both. A host with
+            // Decided here rather than at the gate, which sees one boolean covering both. A host with
             // actions switched off refuses everybody, which is a configuration state; a host with them on
             // refuses the person, which is somebody reaching past their tier. Filing the first as the
             // second would put a permanent config fact in the record as a stream of attempted overreach.

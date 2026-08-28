@@ -122,12 +122,12 @@ The shared rules above (MEL only, structured templates, no secrets) still apply.
 
 | Project | Host | Logging |
 |---|---|---|
-| kgsm-api | `Host.CreateDefaultBuilder` (JIT) | SystemdConsole, appsettings+env ✅ |
-| kgsm-firewall (daemon) | bare console (AOT) | SystemdConsole, appsettings+env ✅ |
-| kgsm-llm Service | `WebApplication.CreateBuilder` (JIT) | SystemdConsole, appsettings+env ✅ |
-| kgsm-llm CLI / Eval | console host (JIT) | SimpleConsole→stderr, Warning/`--verbose` (CLI variant) ✅ |
-| kgsm-monitor | `CreateSlimBuilder` (AOT) | SystemdConsole, appsettings+env ✅ |
-| kgsm-watchdog | `CreateSlimBuilder` (AOT) | SystemdConsole, appsettings+env ✅ |
+| kgsm-api | `Host.CreateDefaultBuilder` (JIT) | SystemdConsole, appsettings+env |
+| kgsm-firewall (daemon) | bare console (AOT) | SystemdConsole, appsettings+env |
+| kgsm-llm Service | `WebApplication.CreateBuilder` (JIT) | SystemdConsole, appsettings+env |
+| kgsm-llm CLI / Eval | console host (JIT) | SimpleConsole→stderr, Warning/`--verbose` (CLI variant) |
+| kgsm-monitor | `CreateSlimBuilder` (AOT) | SystemdConsole, appsettings+env |
+| kgsm-watchdog | `CreateSlimBuilder` (AOT) | SystemdConsole, appsettings+env |
 
 > **kgsm** (bash) is out of scope here — it has its own `core/logging.sh` (levels + rotation;
 > file logging off by default). To be revisited separately.

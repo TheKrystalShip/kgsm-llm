@@ -131,7 +131,7 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
         // A proposal is otherwise invisible: nothing has run, so the engine has no record of it, and one
         // that expires unapproved leaves no trace anywhere on the host.
         //
-        // ⚠ The handle is deliberately not passed. It IS the capability that redeems the action, and the
+        // The handle is deliberately not passed. It IS the capability that redeems the action, and the
         // journal is readable by anything that can open the directory.
         _journal.ActionProposed(
             confirmation.Kind.ToString(),

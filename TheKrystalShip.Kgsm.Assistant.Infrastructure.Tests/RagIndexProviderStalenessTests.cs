@@ -16,7 +16,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 /// Answering from a previously loaded index is a state a success cannot express.
 /// </summary>
 /// <remarks>
-/// ⚠ <b>Measured on the live host, not imagined.</b> The index was moved aside and the provider went on
+/// <b>Measured on the live host, not imagined.</b> The index was moved aside and the provider went on
 /// returning success — <c>"Reload of the changed retrieval index failed; continuing with the previously
 /// loaded index"</c> — so a health reading that only checked <c>IsSuccess</c> saw nothing wrong. That is
 /// the case the whole component exists for: retrieval works, and answers from a corpus that is no longer
@@ -70,7 +70,7 @@ public sealed class RagIndexProviderStalenessTests : IDisposable
     }
 
     /// <summary>
-    /// ⚠ The index is gone, retrieval still succeeds, and that is exactly the point.
+    /// The index is gone, retrieval still succeeds, and that is exactly the point.
     /// </summary>
     [Fact]
     public void AnIndexThatVanished_StillSucceeds_ButSaysWhyItIsStale()

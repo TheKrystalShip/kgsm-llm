@@ -417,7 +417,7 @@ internal sealed class TurnRegistry : ITurnRegistry
                 if (spoken is not null && frame.Name == TurnStream.TextDelta)
                     spoken.Take(((TokenEvent)frame.Payload).Text);
 
-                // ⚠ A spoken turn is not over when its last word is written — the last sentence is
+                // A spoken turn is not over when its last word is written — the last sentence is
                 // still being synthesised. The terminal frame is held until the audio has caught up,
                 // because `done` is what a client tears its turn down on: emitted first, the sentences
                 // still in flight would arrive for a turn that had already been closed.

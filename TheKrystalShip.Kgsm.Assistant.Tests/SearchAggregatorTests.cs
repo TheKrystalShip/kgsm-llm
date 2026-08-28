@@ -188,7 +188,7 @@ public class SearchAggregatorTests
     [Fact]
     public async Task Asking_for_the_web_skips_the_local_docs_entirely()
     {
-        // ⚠ The measured failure this exists for: "next Valheim update date" matched fifty-four
+        // The measured failure this exists for: "next Valheim update date" matched fifty-four
         // Valheim guide chunks on topic alone and never reached the web, so somebody who asked to
         // check online was answered out of a local guide that says nothing about release dates.
         LocalReturns(("KGSM manages game servers.", 0.95));

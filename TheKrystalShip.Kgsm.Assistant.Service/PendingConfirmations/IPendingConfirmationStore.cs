@@ -50,7 +50,7 @@ public interface IPendingConfirmationStore
     /// <param name="conversationId">
     /// The conversation it was proposed in, so it can be restated to a surface that comes back to it.
     /// <para>
-    /// ⚠ Without this a proposal exists only as a live stream frame, and any fresh load — a reload, a
+    /// Without this a proposal exists only as a live stream frame, and any fresh load — a reload, a
     /// second device, or following the notification that announced it — shows the assistant saying it
     /// staged something with no way to approve it. The endpoints own the state; the stream is an
     /// optimisation over them.

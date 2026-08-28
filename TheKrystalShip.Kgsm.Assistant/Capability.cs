@@ -18,7 +18,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// still code, because a file cannot supply behaviour.
 /// </para>
 /// <para>
-/// ⚠ An id here is permanent once shipped. It appears in no prompt and no UI, so there is never a
+/// An id here is permanent once shipped. It appears in no prompt and no UI, so there is never a
 /// reason to improve one — and changing it silently unbinds the tool whose entry still names the old
 /// id, which the catalog then reports as a missing capability at startup.
 /// </para>

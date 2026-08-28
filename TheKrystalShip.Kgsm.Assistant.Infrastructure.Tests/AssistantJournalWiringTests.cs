@@ -14,7 +14,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// ⚠ <b>The failure this prevents has happened elsewhere in the ecosystem.</b> kgsm-api's test suite
+/// <b>The failure this prevents has happened elsewhere in the ecosystem.</b> kgsm-api's test suite
 /// used a deliberately fake-free host, inherited the real machine's paths, and wrote 25 ready/stop
 /// pairs into the <em>live</em> journal — harmless right up until something started writing at startup.
 /// </para>
@@ -53,7 +53,7 @@ public class AssistantJournalWiringTests
     /// The shared graph resolves the journal that writes nowhere.
     /// </summary>
     /// <remarks>
-    /// ⚠ The composed graph, not <c>AddKgsmAssistant</c> alone. <c>AddKgsmAdapters</c> runs after it and
+    /// The composed graph, not <c>AddKgsmAssistant</c> alone. <c>AddKgsmAdapters</c> runs after it and
     /// is where the concrete adapters win over the library's fail-closed defaults — a real journal
     /// registered there would win in exactly the same way, and asserting either call on its own would
     /// pass while the composition was wrong.

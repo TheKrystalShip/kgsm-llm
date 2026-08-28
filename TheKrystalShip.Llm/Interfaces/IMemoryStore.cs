@@ -15,7 +15,7 @@ namespace TheKrystalShip.Llm.Interfaces;
 /// used to say.
 /// </para>
 /// <para>
-/// ⚠ Every method takes the owner key as its first argument and none of them derives one. The caller
+/// Every method takes the owner key as its first argument and none of them derives one. The caller
 /// resolves it from the conversation the turn is running in, which is server-derived — a key that
 /// arrived from a client or from a model's tool arguments would let one person write into another's
 /// memory.

@@ -57,25 +57,25 @@ any committed settings file — which declares each of them blank so the Control
 
 | Section | CLI | Service | Indexer | Purpose |
 |---------|:---:|:-------:|:-------:|---------|
-| `Llm` | ✅ | ✅ | — | Chat model client and which server serves it |
-| `Conversation` | ✅ | ✅ | — | Per-turn short-term memory |
-| `Memory` | ✅ | ✅ | — | What outlasts a conversation, per owner |
-| `LlmAgent` | ✅ | ✅ | — | Agent-loop safety caps |
-| `Recording` | ✅ (on) | ✅ (off) | — | Transcript corpus (opt-in) |
-| `KGSM` | ✅ | ✅ | — | Path to `kgsm.sh` |
-| `InventoryCache` | ✅ | ✅ | — | Instance/blueprint cache TTLs |
-| `Monitor` | ✅ | ✅ | — | kgsm-monitor metrics socket (`get_performance`) |
-| `WebSearch` | ✅ | ✅ | — | Tavily fallback |
-| `WebFetch` | ✅ | ✅ | — | Direct URL fetch (`fetch_url`) |
-| `BlueprintAuthoring` | ✅ | ✅ | — | Autonomous catalog authoring (`create_blueprint`) |
-| `Rag` (retrieval) | ✅ | ✅ | — | Local doc retrieval (consumer) |
-| `Rag` (embedder + build) | ✅ (`index` verb) | reads only | ✅ | Embedding model + chunking |
-| `Prompts` | ✅ | ✅ | — | The persona + tool definitions, on disk. **Required** |
-| `Assistant` | — | ✅ | — | Action policy, confirm/webhook/relay |
-| `KgsmAuth` | — | ✅ | — | The host's Discord application (shared) |
-| `DiscordOAuth` | — | ✅ | — | This surface's sign-in callback |
-| `Auth` | — | ✅ | — | Sessions + CORS |
-| `Urls` / `Logging` | (Logging) | ✅ | (Logging) | Bind address / log levels |
+| `Llm` | ✓ | ✓ | — | Chat model client and which server serves it |
+| `Conversation` | ✓ | ✓ | — | Per-turn short-term memory |
+| `Memory` | ✓ | ✓ | — | What outlasts a conversation, per owner |
+| `LlmAgent` | ✓ | ✓ | — | Agent-loop safety caps |
+| `Recording` | ✓ (on) | ✓ (off) | — | Transcript corpus (opt-in) |
+| `KGSM` | ✓ | ✓ | — | Path to `kgsm.sh` |
+| `InventoryCache` | ✓ | ✓ | — | Instance/blueprint cache TTLs |
+| `Monitor` | ✓ | ✓ | — | kgsm-monitor metrics socket (`get_performance`) |
+| `WebSearch` | ✓ | ✓ | — | Tavily fallback |
+| `WebFetch` | ✓ | ✓ | — | Direct URL fetch (`fetch_url`) |
+| `BlueprintAuthoring` | ✓ | ✓ | — | Autonomous catalog authoring (`create_blueprint`) |
+| `Rag` (retrieval) | ✓ | ✓ | — | Local doc retrieval (consumer) |
+| `Rag` (embedder + build) | ✓ (`index` verb) | reads only | ✓ | Embedding model + chunking |
+| `Prompts` | ✓ | ✓ | — | The persona + tool definitions, on disk. **Required** |
+| `Assistant` | — | ✓ | — | Action policy, confirm/webhook/relay |
+| `KgsmAuth` | — | ✓ | — | The host's Discord application (shared) |
+| `DiscordOAuth` | — | ✓ | — | This surface's sign-in callback |
+| `Auth` | — | ✓ | — | Sessions + CORS |
+| `Urls` / `Logging` | (Logging) | ✓ | (Logging) | Bind address / log levels |
 
 The **indexer takes CLI flags, not a config file** — its row maps to `--model`, `--endpoint`,
 `--source`, `--index`, `--chunk-size`, etc. (see [its README](../TheKrystalShip.Rag.Indexer/README.md)).
@@ -307,7 +307,7 @@ Startup refuses a catalog that disagrees with the code: a tool the dispatcher ca
 omits (the model silently loses a capability), a tool the file invents and nothing implements (the
 model calls it and the turn fails), a blank description, or an unknown parameter type.
 
-⚠ **A deploy overwrites this directory** (`rsync --delete`). That is the intended loop — tune the file
+**A deploy overwrites this directory** (`rsync --delete`). That is the intended loop — tune the file
 on the running host, confirm the wording, then paste it back into `deploy/prompts/` so it ships. The
 deploy is the commit. Anything not copied back is lost on the next one.
 
@@ -316,7 +316,7 @@ and blueprint lists only for a turn whose caller asked for `style: "voice"`. It 
 final instruction the model reads before answering. Every other segment resolves the same way it
 always does — file > inline `Llm:*` > the lib constant.
 
-⚠ **A prompt directory is a prototyping tool.** Production runs the compiled-in text, and a file left
+**A prompt directory is a prototyping tool.** Production runs the compiled-in text, and a file left
 in this directory silently shadows it for every turn — including one that has drifted behind a
 release. Point `Prompts__Directory` at an empty directory on a real host, and tune with
 `kgsm-assistant-eval --shipped-prompts`, which measures the constants rather than local edits.
@@ -348,12 +348,12 @@ is waiting on has no surface open. It is inert until a browser registers itself 
 assistant's Settings → Notifications, and it never carries fleet events — a crash or a finished update
 is the Control Panel's, on its own origin with its own key.
 
-⚠ **The VAPID pair is generated once, into the state database, and must never be regenerated.** Its
+**The VAPID pair is generated once, into the state database, and must never be regenerated.** Its
 public half is baked into every subscription a browser has already created, so a new pair silently
 orphans every registered device with no error at either end. There is no config key for it precisely
 so that no deploy can lose or replace it.
 
-⚠ **`Push:PresenceGraceSeconds` spends a fixed budget.** A staged action lives `Confirmation:TtlSeconds`
+**`Push:PresenceGraceSeconds` spends a fixed budget.** A staged action lives `Confirmation:TtlSeconds`
 (five minutes by default), so raising this trades fewer unnecessary notifications for less of the
 approval window left to act in. It is deliberately shorter than the grace that keeps a turn running:
 that one protects work in progress from a screen lock, this one is spending somebody's deadline.

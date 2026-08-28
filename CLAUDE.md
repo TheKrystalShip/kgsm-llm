@@ -105,9 +105,9 @@ Things that bite if you don't know them:
   naming the file. The `.md` segments are re-read **every turn** (edit one, ask again — no restart);
   `tools.json` is read **once at startup**, because it is the contract between the model and the
   dispatcher and must not change under a turn in flight.
-  ⚠ **A deploy overwrites that directory.** Tuning on a live host is the intended loop, but paste the
+  **A deploy overwrites that directory.** Tuning on a live host is the intended loop, but paste the
   wording back into `deploy/prompts/` or the next deploy discards it — the deploy is the commit.
-  ⚠ **Tier membership stays in code** (`LlmTools.*Tier`). `tools.json` carries descriptions, parameter
+  **Tier membership stays in code** (`LlmTools.*Tier`). `tools.json` carries descriptions, parameter
   prose, types, `required` and `enum`; it does NOT carry which tier a tool is in, because that decides
   who is offered it and whether it is staged. A file that could move a staged command into the
   read-only tier would be a privilege escalation. `DiskToolCatalog` refuses a catalog that disagrees
@@ -126,7 +126,7 @@ Things that bite if you don't know them:
   **always returns the id**; two servers sharing a label is a question for the user, since labels are
   decoration and are not unique. `install_instance`'s `instance_name` is the display name — the engine
   mints the id.
-  ⚠ **An explicitly-chosen id is validated** (`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), which is why a
+  **An explicitly-chosen id is validated** (`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), which is why a
   blueprint's test-install probe is `bpprobe__<slug>__`: the probe's name is an id this code minted
   and then addresses the log read, the file walk and the teardown by, and one the engine refuses is a
   blueprint that can never be verified.
@@ -147,7 +147,7 @@ Things that bite if you don't know them:
   the turn** (`MemoryOwner`), never a tool argument, and the scope is opened in
   `ServerAssistant.ProduceStreamAsync` beside the confirmation/progress/search scopes — the yield-free
   flow the dispatcher runs on. Storage is append-only, latest-wins per key, in the conversation
-  database. ⚠ **A memory carries what it was TOLD, never what a tool MEASURED** — a remembered port
+  database. **A memory carries what it was TOLD, never what a tool MEASURED** — a remembered port
   repeated months later is a confident wrong answer. The rule is prompt-enforced and **holds only when
   the model is thinking**: with `Llm:Think` on it writes no reading down, and with it off — which is
   what the Service ships — it writes one every time, against four measured wordings (`Eval/CLAUDE.md`,
@@ -206,7 +206,7 @@ Things that bite if you don't know them:
   result by call id rather than tool name (assigned per request in `LlamaCppRequestBuilder`), and
   fixes the context window at launch so `Llm:ContextWindow` is never sent to it — only used to
   stamp token accounting, and it must match the server's `-c`.
-  ⚠ **llama-server needs `--jinja`.** Without it the `tools` array is accepted and no tool call is
+  **llama-server needs `--jinja`.** Without it the `tools` array is accepted and no tool call is
   ever emitted: the assistant answers and silently never acts. With it, Gemma 4's own template and
   llama.cpp's native `PEG_GEMMA4` format handle tool calls under a constrained grammar — not the
   generic fallback. Ollama does *not* use that path at all (it runs llama-server with `--no-jinja
@@ -214,13 +214,13 @@ Things that bite if you don't know them:
   tool calls differently and a switch is a measurable change to routing. Units and the
   one-command switch: `deploy/llama-server/`.
 
-- ⚠ **A GGUF lifted from Ollama's blob store is not a portable GGUF.** Ollama's embeddinggemma blob
+- **A GGUF lifted from Ollama's blob store is not a portable GGUF.** Ollama's embeddinggemma blob
   fails to load in mainline llama.cpp (`wrong number of tensors; expected 316, got 314`) while
   Ollama's own bundled server accepts it. Take embedding models from their published GGUF repo.
-- ⚠ **The indexer is told its backend, never infers it.** It is a separate unit taking CLI flags
+- **The indexer is told its backend, never infers it.** It is a separate unit taking CLI flags
   (`--provider`, `--endpoint`), because Ollama and llama-server expose different embedding routes
   and guessing would trade a failed build for a wrong index.
-- ⚠ **Changing the embedding backend does not rebuild the RAG index.** The indexer is incremental by
+- **Changing the embedding backend does not rebuild the RAG index.** The indexer is incremental by
   content hash and the index header records the model *name*, which does not change when the server
   behind it does — so a switch reports "0 embedded, N reused" and keeps vectors from the previous
   embedder. Nothing detects it and retrieval degrades quietly. Delete the `.krag` and re-run the

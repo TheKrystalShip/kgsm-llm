@@ -48,7 +48,7 @@ public class MemoryEndpointTests : IClassFixture<WebApplicationFactory<Program>>
             builder.UseSetting("KGSM:Path", "/opt/kgsm/kgsm.sh");
             builder.UseSetting("KGSM:SocketPath", "/opt/kgsm/kgsm.sock");
             builder.UseSetting("Auth:SigningKey", "memory-endpoint-signing-key");
-            // ⚠ Never the default — that is the host's real shared account store, and opening it
+            // Never the default — that is the host's real shared account store, and opening it
             // creates it.
             builder.UseSetting("Auth:UsersDbPath",
                 Path.Combine(Path.GetTempPath(), $"kgsm-assistant-tests-users-{Guid.NewGuid():N}.db"));

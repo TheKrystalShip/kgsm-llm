@@ -47,7 +47,7 @@ public sealed class LifecycleOptions
     /// The port the model server itself binds once loaded — <b>not</b> the activating socket.
     /// </summary>
     /// <remarks>
-    /// ⚠ Set this only when the two are genuinely different ports. Bound to the model's own port, a
+    /// Set this only when the two are genuinely different ports. Bound to the model's own port, a
     /// connect attempt answers "is it loaded?" for free: it starts nothing, and it does not reset the
     /// idle timer that unloads it, because that timer counts traffic through the activating socket.
     /// Pointed at the activating socket it would do the exact opposite. 0 asks nothing, which is why it

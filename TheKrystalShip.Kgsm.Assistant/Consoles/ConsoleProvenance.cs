@@ -87,7 +87,7 @@ public static class ConsoleProvenance
         if (now - boundary > RecentRestartWindow)
             return null;
 
-        return $"⚠ {instance} restarted {Ago(now - boundary)} ago, so this run holds only what it has "
+        return $"{instance} restarted {Ago(now - boundary)} ago, so this run holds only what it has "
              + $"printed since. The run before it {EndingClause(previous)}. If you are looking into why "
              + $"{instance} went down, what it printed on the way out is in run 1 — read it by asking "
              + "for this instance's console again with run=1.";

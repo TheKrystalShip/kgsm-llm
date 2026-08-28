@@ -17,7 +17,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// </summary>
 /// <remarks>
 /// <para>
-/// ⚠ <b>The half a probe cannot see.</b> <c>/health</c> answers that the pipeline is listening, which
+/// <b>The half a probe cannot see.</b> <c>/health</c> answers that the pipeline is listening, which
 /// is true of an assistant with a dead model backend, an unreadable retrieval index and a web-search
 /// budget it has already spent — none of which stops it serving a perfectly cheerful <c>{"status":
 /// "ok"}</c> while being unable to answer anything.
@@ -36,7 +36,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service;
 /// connect, starts nothing, and extends nothing.
 /// </para>
 /// <para>
-/// ⚠ <b>It reports on itself only.</b> This leaf reads every producer's journal for its incident tools,
+/// <b>It reports on itself only.</b> This leaf reads every producer's journal for its incident tools,
 /// and none of that belongs here — a leaf stating something about another leaf in its own journal is
 /// exactly the second answer able to disagree that producer-from-location exists to prevent.
 /// </para>
@@ -61,7 +61,7 @@ public sealed class AssistantLifecycleReporter(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // ⚠ Readiness is this leaf's own, not the host's. ApplicationStarted fires once every hosted
+        // Readiness is this leaf's own, not the host's. ApplicationStarted fires once every hosted
         // service has started, which for this one really is the moment it can do its job: the pipeline
         // is listening, the conversation store is open and the tool graph is composed. The leaves whose
         // real work begins later — a supervisor joining its slice, a gateway connecting — hang it off
@@ -113,7 +113,7 @@ public sealed class AssistantLifecycleReporter(
     /// is probed here that it has not already measured.
     /// </para>
     /// <para>
-    /// ⚠ <b>One RAG fault stays unreported, and must.</b> Changing the embedding backend does not change
+    /// <b>One RAG fault stays unreported, and must.</b> Changing the embedding backend does not change
     /// the model <em>name</em>, so an index built by a different embedder still passes the mismatch
     /// check and is served with vectors from the wrong vector space. Nothing on this host detects it.
     /// Reporting the index healthy is honest — it loaded and its header matched; claiming the vectors
@@ -130,7 +130,7 @@ public sealed class AssistantLifecycleReporter(
 
         Result<RagIndex> index = provider.Get();
 
-        // ⚠ Success is not enough, and this is the case the whole component is here for: a failed
+        // Success is not enough, and this is the case the whole component is here for: a failed
         // reload keeps serving the LAST GOOD index rather than going dark, so retrieval answers
         // perfectly while answering from a corpus that is no longer the one on disk. Nothing outside
         // this process can see that — the searches keep working and keep returning the old documents.
@@ -156,7 +156,7 @@ public sealed class AssistantLifecycleReporter(
     /// Whether the store this leaf keeps conversations, sessions and staged actions in can be reached.
     /// </summary>
     /// <remarks>
-    /// ⚠ Its loss is not visible from outside. The pipeline still listens and <c>/health</c> still
+    /// Its loss is not visible from outside. The pipeline still listens and <c>/health</c> still
     /// answers, while no conversation can be read or written, no session can be checked, and no action
     /// can be staged or confirmed — an assistant that looks healthy and can do nothing.
     /// </remarks>
@@ -230,7 +230,7 @@ public sealed class AssistantLifecycleReporter(
     /// Whether the model is loaded, without loading it.
     /// </summary>
     /// <remarks>
-    /// ⚠ <b>This must be the model's own port, never the activating socket.</b> The two are different
+    /// <b>This must be the model's own port, never the activating socket.</b> The two are different
     /// ports on purpose: systemd listens on one and starts the model on the first connection, and the
     /// model binds the other only once it is running. Pointed at the first, this probe would load ~8.7GB
     /// on every tick's worth of idleness and keep it there — so a host that collapses the two onto one
@@ -264,7 +264,7 @@ public sealed class AssistantLifecycleReporter(
 /// The parts of this leaf's job that can stop working while it keeps serving.
 /// </summary>
 /// <remarks>
-/// ⚠ Deliberately a bounded set naming classes of thing. A component id built from a conversation, a
+/// Deliberately a bounded set naming classes of thing. A component id built from a conversation, a
 /// model name or an instance would make the emitter's dedup dictionary grow without limit; the
 /// particulars belong in the detail.
 /// </remarks>

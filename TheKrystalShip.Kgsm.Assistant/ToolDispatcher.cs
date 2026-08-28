@@ -407,7 +407,7 @@ public class ToolDispatcher : IToolDispatcher
             _ => SearchScope.Auto,
         };
 
-        // ⚠ What the person said beats what the model passed. The scope on the call is the model's
+        // What the person said beats what the model passed. The scope on the call is the model's
         // reading of the request; the turn's intent IS the request, taken from their own words. They
         // disagree in exactly the measured case: asked plainly to check online, the model called
         // search with no scope at all and the local docs answered instead.

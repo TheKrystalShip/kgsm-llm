@@ -110,7 +110,7 @@ public static class LlmTools
     // capabilities rather than one verb-enum tool, because they are three different acts on the store
     // and a mistaken verb on a single tool would forget what it was asked to record.
     //
-    // ⚠ None of them takes an owner: it is ambient for the turn (MemoryOwner), derived from the
+    // None of them takes an owner: it is ambient for the turn (MemoryOwner), derived from the
     // conversation id. An owner the model could name is one it could get wrong, and getting it wrong
     // writes into somebody else's memory.
     public static readonly Capability Remember = new("memory.write");

@@ -5,7 +5,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// </summary>
 /// <remarks>
 /// <para>
-/// ⚠ <b>This exists because telling the model was not enough.</b> The <c>search</c> tool takes a
+/// <b>This exists because telling the model was not enough.</b> The <c>search</c> tool takes a
 /// scope, and its description says to pass <c>web</c> when the user asks to check online. Measured on
 /// this host with <c>gemma4:12b</c>: asked in plain English to check online, the model called
 /// <c>search</c> with the query alone and no scope at all, every time — so the default ladder ran,

@@ -12,7 +12,7 @@ namespace TheKrystalShip.Llm.Conversation;
 /// inside a shared transcript would put everybody alone in a place they thought they were sharing.
 /// </para>
 /// <para>
-/// ⚠ The same rule is computed in SQL by <see cref="SqliteConversationStore"/> to derive a
+/// The same rule is computed in SQL by <see cref="SqliteConversationStore"/> to derive a
 /// <see cref="Models.ConversationActor"/> — a query cannot call this method, so the rule necessarily
 /// lives in two languages. <c>MemoryScopeTests</c> pins them to each other; change one and that test
 /// is what says the other must move too.

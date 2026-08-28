@@ -141,7 +141,7 @@ internal sealed class ConfirmationPushWorker(
             {
                 case PushOutcome.Accepted:
                     delivered = true;
-                    // ⚠ Accepted by the push service is NOT shown on a phone, and this says only the
+                    // Accepted by the push service is NOT shown on a phone, and this says only the
                     // first. What happens after the handoff is the OS's and is not observable here.
                     logger.LogDebug(
                         "Handed a waiting {Kind} for {User} to the push service.",

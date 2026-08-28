@@ -23,7 +23,7 @@ stdout carries **only** the assistant's reply, so it pipes cleanly:
 kgsm-assistant-cli "list the servers" | grep minecraft
 ```
 
-Tool progress (`⚙ get_status(...)`), the REPL prompt, confirmations, the context line, and
+Tool progress (`get_status(...)`), the REPL prompt, confirmations, the context line, and
 logs all go to **stderr**, and only when stdout is a TTY — a redirected/piped reply stays
 plain text.
 
@@ -35,7 +35,7 @@ subset of Markdown — **bold**, `inline code`, `#` headers, `-`/`*`/`+` bullets
 identifiers like `instance_name`. A braille spinner (`⠙ thinking…` / `⠹ working…`) fills the
 gaps where there is nothing to show yet — the model's first-token latency and the round-trip
 after each tool — and erases itself the instant output starts. The REPL prompt is a colored
-`❯`, tool lines colorize the `⚙`/`✓`, and all of it is gated exactly like the status lines:
+`❯`, tool lines colorize the ``/`✓`, and all of it is gated exactly like the status lines:
 
 * it's all on a **TTY only** — a redirected/piped reply is the model's **raw Markdown text**,
   byte-for-byte (so `kgsm-assistant-cli "…" | cat` still pipes cleanly), and

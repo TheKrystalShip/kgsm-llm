@@ -304,7 +304,7 @@ public sealed class ConfirmationPushTests : IDisposable
         json.Should().Contain("\"cancel\":\"cancel-handle\"");
         // A second notification about the same action replaces the first rather than stacking.
         json.Should().Contain("\"tag\":\"kgsm-confirmation:conf-1\"");
-        // ⚠ Never the payload: a config value or a file body would travel through a push service and
+        // Never the payload: a config value or a file body would travel through a push service and
         // an OS notification shade, neither of which is somewhere a server's contents belong.
         json.Should().NotContain("config");
     }

@@ -56,7 +56,7 @@ public class ChatCommandTests : IClassFixture<WebApplicationFactory<Program>>
             builder.UseSetting("KGSM:Path", "/opt/kgsm/kgsm.sh");
             builder.UseSetting("KGSM:SocketPath", "/opt/kgsm/kgsm.sock");
             builder.UseSetting("Auth:SigningKey", "chat-command-signing-key");
-            // ⚠ Never the default. /var/lib/kgsm/auth/users.db is the HOST's real account store,
+            // Never the default. /var/lib/kgsm/auth/users.db is the HOST's real account store,
             // shared with every KGSM service on the box, and opening it CREATES it — so an unpinned
             // test run would hand the operator a live accounts file that nobody made.
             builder.UseSetting("Auth:UsersDbPath",

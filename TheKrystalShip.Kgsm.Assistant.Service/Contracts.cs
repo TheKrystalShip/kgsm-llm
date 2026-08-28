@@ -140,7 +140,7 @@ public sealed record CommandResultDto(
 /// for one the assistant drew out of a chat. It answers "why does it think that" for somebody reading
 /// their own memory back.
 /// <para>
-/// ⚠ Derived from <see cref="TheKrystalShip.Llm.Models.MemoryRecord.Origin"/> rather than carrying it:
+/// Derived from <see cref="TheKrystalShip.Llm.Models.MemoryRecord.Origin"/> rather than carrying it:
 /// the origin holds an owner key, which is a user id, and a surface has no reason to print one.
 /// </para>
 /// </param>
@@ -417,7 +417,7 @@ public sealed record ConversationSummaryDto(
 /// <param name="Pending">
 /// Actions still awaiting this caller's approval in this conversation, oldest deadline first.
 /// <para>
-/// ⚠ Load-bearing, not a convenience. A proposal is otherwise only ever a <c>command.proposed</c>
+/// Load-bearing, not a convenience. A proposal is otherwise only ever a <c>command.proposed</c>
 /// stream frame, which reaches the surfaces attached when it was staged and nobody else — so a
 /// reload, a second device, or following the push notification that announced it all land on the
 /// assistant saying it staged something with no way to approve it. The stream is an optimisation
@@ -849,7 +849,7 @@ public sealed record PushDevicesResponse(IReadOnlyList<string> Endpoints);
 /// What a notification's button did.
 /// </summary>
 /// <remarks>
-/// ⚠ Always <c>200</c>, including when the handle was refused. The caller is a service worker with no
+/// Always <c>200</c>, including when the handle was refused. The caller is a service worker with no
 /// user in front of it and no retry that could help: every outcome here is final and is something to
 /// say, so it is said in the body rather than as a status a worker would have to translate. It never
 /// distinguishes an unknown handle from an expired or already-used one, for the same reason

@@ -156,12 +156,12 @@ speech engine emits no `audio.delta` however the turn asked, because synthesis i
 (`kgsm-speech`) and its absence is an ordinary configuration. A client therefore treats audio as
 something that may never arrive, exactly as it treats `thinking.delta`.
 
-⚠ **What is spoken is the reply with its markup dropped, never a rewrite.** Emphasis, headings and
+**What is spoken is the reply with its markup dropped, never a rewrite.** Emphasis, headings and
 list bullets are silent; a link is read as its text and not its address; a fenced code block is
 skipped entirely rather than recited line by line. Nothing is summarised and nothing is cut short —
 the audio says what the text says, minus the characters that only mean something on a screen.
 
-⚠ **Frames are produced once and broadcast**, so every surface attached to a spoken turn receives its
+**Frames are produced once and broadcast**, so every surface attached to a spoken turn receives its
 audio. Two surfaces both playing it will talk over each other; whether to play is the client's
 decision, and a client that is not in the foreground should generally not.
 

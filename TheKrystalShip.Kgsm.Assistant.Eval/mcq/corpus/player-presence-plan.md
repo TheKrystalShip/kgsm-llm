@@ -43,7 +43,7 @@ kgsm-containers images** (we add the shim). Arbitrary BYO third-party images →
 - `player_id` = opaque, **game-scoped** stable id when available (SteamID64 / MC UUID). No `id_type`.
   `player_name` = display label. JSON `null` when a source gives only one. NEVER fabricate the missing one.
 - Provenance on container-originated events: **`actor = "system"`, `origin = "system"`** (system/system,
-  mirroring the watchdog's existing autonomous emits). ⚠ Do NOT pass `actor:null` — kgsm-lib omits the
+  mirroring the watchdog's existing autonomous emits). Do NOT pass `actor:null` — kgsm-lib omits the
   actor env when null and kgsm's `_build_event_payload` then falls back to the daemon's OS user
   (`${SUDO_USER:-${USER:-}}`→`id -un`), i.e. a fabricated HUMAN identity on an autonomous event. The
   literal `"system"` is what suppresses that fallback (watchdog caught this during impl).

@@ -41,7 +41,7 @@ public class TerminalRendererTests
         renderer.Handle(AssistantStreamEvent.ToolStart(
             new Tool("get_status"), new Dictionary<string, string?> { ["instance"] = "terraria" }));
 
-        err.ToString().Should().Contain("⚙ get_status(instance=terraria)");
+        err.ToString().Should().Contain("→ get_status(instance=terraria)");
         @out.ToString().Should().BeEmpty();   // status is never on stdout
     }
 
@@ -183,10 +183,10 @@ public class TerminalRendererTests
         renderer.Handle(AssistantStreamEvent.Thinking(" wants"));
 
         var stderr = err.ToString();
-        stderr.Should().Contain("💭 thinking…");                              // one-time header
+        stderr.Should().Contain("thinking…");                              // one-time header
         stderr.Should().Contain("The user wants");                            // deltas flow together…
         stderr.Should().NotContain("The" + Environment.NewLine + " user");    // …not newline-per-delta
-        stderr.Split("💭 thinking").Length.Should().Be(2);                    // header printed exactly once
+        stderr.Split("thinking").Length.Should().Be(2);                    // header printed exactly once
         @out.ToString().Should().BeEmpty();                                   // reasoning never on stdout
     }
 

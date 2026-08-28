@@ -311,7 +311,7 @@ public sealed class SqlitePendingConfirmationStoreTests : IDisposable
     }
 
     /// <summary>
-    /// ⚠ The record carries no handle.
+    /// The record carries no handle.
     /// </summary>
     /// <remarks>
     /// The handle IS the capability that redeems the action, and the journal is readable by anything on
@@ -330,7 +330,7 @@ public sealed class SqlitePendingConfirmationStoreTests : IDisposable
     }
 
     /// <summary>
-    /// ⚠ The kind is recorded by NAME, never by ordinal.
+    /// The kind is recorded by NAME, never by ordinal.
     /// </summary>
     /// <remarks>
     /// Members of that enum have been retired, leaving gaps. An ordinal written today reads as a

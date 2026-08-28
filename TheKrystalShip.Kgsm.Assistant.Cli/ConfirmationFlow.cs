@@ -48,7 +48,7 @@ internal static class ConfirmationFlow
 
             var description = Describe(confirmation);
             var destructive = ConfirmationKinds.IsDestructive(confirmation.Kind);
-            var marker = Ansi.Paint("⚠ Proposed action:", destructive ? Ansi.Red : Ansi.Yellow, color);
+            var marker = Ansi.Paint("Proposed action:", destructive ? Ansi.Red : Ansi.Yellow, color);
 
             // A drafted blueprint isn't a one-line y/N — it opens the draft in $EDITOR for the mandatory
             // review, then test-installs the saved YAML (the CLI parity of the in-chat Monaco card, incl.
@@ -168,7 +168,7 @@ internal static class ConfirmationFlow
             if (ct.IsCancellationRequested)
                 return true;
 
-            err.WriteLine(Ansi.Paint($"⚠ Review the drafted blueprint for '{game}'.", Ansi.Yellow, color));
+            err.WriteLine(Ansi.Paint($"Review the drafted blueprint for '{game}'.", Ansi.Yellow, color));
             if (evidence is not null)
             {
                 err.WriteLine(Ansi.Paint("  The last attempt didn’t boot — its log:", Ansi.Red, color));

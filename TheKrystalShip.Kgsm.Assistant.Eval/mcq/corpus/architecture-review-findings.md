@@ -109,13 +109,13 @@ validation logic:
 
 | Event | Before | Fix shipped |
 |---|---|---|
-| `instance-started` | registered, but emit aborted (missing `lifecycle_manager`) | ✅ command resolves the **real** lifecycle_manager and passes it |
-| `instance-stopped` | emitted a **fabricated** `standalone` | ✅ now passes the real value (no fabrication) |
-| `instance-restarted` | unregistered → never fired | ✅ registered (`instance lifecycle_manager`) + `InstanceRestartedData` |
-| `instance-download-failed` | unregistered → never fired | ✅ registered (`instance`) + `InstanceDownloadFailedData` |
-| `instance-deploy-failed` | unregistered → never fired | ✅ registered (`instance`) + `InstanceDeployFailedData` |
-| `instance-uninstall-failed` | unregistered → never fired | ✅ registered (`instance`) + `InstanceUninstallFailedData` |
-| `system-restart` / `system-shutdown` | dispatcher TODO-stubbed, never emitted | ⏸ deferred (global-event infra not ready) |
+| `instance-started` | registered, but emit aborted (missing `lifecycle_manager`) | ✓ command resolves the **real** lifecycle_manager and passes it |
+| `instance-stopped` | emitted a **fabricated** `standalone` | ✓ now passes the real value (no fabrication) |
+| `instance-restarted` | unregistered → never fired | ✓ registered (`instance lifecycle_manager`) + `InstanceRestartedData` |
+| `instance-download-failed` | unregistered → never fired | ✓ registered (`instance`) + `InstanceDownloadFailedData` |
+| `instance-deploy-failed` | unregistered → never fired | ✓ registered (`instance`) + `InstanceDeployFailedData` |
+| `instance-uninstall-failed` | unregistered → never fired | ✓ registered (`instance`) + `InstanceUninstallFailedData` |
+| `system-restart` / `system-shutdown` | dispatcher TODO-stubbed, never emitted | deferred (global-event infra not ready) |
 
 Blast radius (now closed): restart, start, and every failure event were invisible to all
 consumers — the bot couldn't announce "your install failed"; the future web API couldn't

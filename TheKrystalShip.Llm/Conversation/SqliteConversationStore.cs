@@ -912,7 +912,7 @@ public sealed class SqliteConversationStore : IConversationStore
     /// The checkpoint itself is included, because its summary is the first thing replayed. A
     /// conversation with no checkpoint reads whole either way, which is the same answer.
     /// <para>
-    /// ⚠ A narrowed read is for the projection ONLY. Anything describing the conversation to a person —
+    /// A narrowed read is for the projection ONLY. Anything describing the conversation to a person —
     /// a transcript, a listing, a verdict — has to see every entry, and a tombstone or a preference
     /// resolved from a truncated log would answer from the newest fragment as though nothing preceded it.
     /// </para>

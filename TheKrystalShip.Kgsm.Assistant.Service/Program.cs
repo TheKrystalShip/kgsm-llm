@@ -87,6 +87,26 @@ builder.Logging.AddSystemdConsole();
 // AddKgsmAdapters below. These three stay here — they are web-host concerns (auth + webhook).
 builder.Services.Configure<AssistantServiceOptions>(
     builder.Configuration.GetSection(AssistantServiceOptions.Section));
+// The relay secret is host-local: the Control Panel API and the Discord bot present it, this service
+// checks it, and all three run as the same account on the same machine. Nothing outside the host can
+// supply it, so a blank one is resolved rather than owed — the first surface to look mints the file
+// and the rest read it, which is why the panel's chat works on a host nobody configured. Resolved
+// once at startup rather than per request: minting is a filesystem write, and the answer never
+// changes while the process lives.
+builder.Services.PostConfigure<AssistantServiceOptions>(o =>
+{
+    o.Relay.Secret = KgsmRelaySecret.Resolve(o.Relay.Secret, o.Relay.SecretPath);
+
+    // Empty here means the file could be neither read nor created. The relay path then stays off,
+    // which is the right refusal — but it is one the Control Panel only discovers a turn later, as a
+    // 401 it renders as a failed question. Say it once, naming the file, because the usual cause is
+    // that its directory is not owned by the account this service runs as.
+    if (o.Relay.Secret.Length == 0)
+        Console.Error.WriteLine(
+            $"<4>kgsm-assistant: no relay secret — every turn forwarded by the Control Panel API or the "
+            + $"Discord bot will be refused. The host's own secret is {o.Relay.SecretPath}, which could not "
+            + $"be read or created; check that directory is owned by the account this service runs as.");
+});
 builder.Services.Configure<DiscordOAuthOptions>(
     builder.Configuration.GetSection(DiscordOAuthOptions.Section));
 builder.Services.Configure<AuthOptions>(

@@ -1,3 +1,4 @@
+using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
 using TheKrystalShip.KGSM.LeafConfig;
@@ -133,7 +134,8 @@ public sealed class PushOptions
 /// API) that calls the assistant on a verified end-user's behalf. Mirrors <see cref="WebhookOptions"/>:
 /// when set, a request bearing a matching <c>X-Relay-Secret</c> is authenticated as the forwarded
 /// Discord identity (<c>X-Relay-User</c>/<c>X-Relay-User-Name</c>) WITHOUT a session login; when
-/// empty the relay path is disabled and only session bearers are accepted. The relay forwards
+/// unset the host's own secret applies — see <see cref="SecretPath"/> — and the relay path is off
+/// only when that cannot be read or created either. The relay forwards
 /// IDENTITY only — authority (can-perform) is still derived server-side from the bot by user id,
 /// so the secret-holder cannot escalate a user beyond their real Discord role. The secret lives in
 /// the same co-located trust domain as the API and the bot.
@@ -146,6 +148,13 @@ public sealed class RelayOptions
     [LeafField("relaySecret", "Control Panel relay secret", Group = "actions", Type = LeafType.Secret,
         Risk = LeafRisk.Wiring, PairedApiKey = "Api__AssistantRelaySecret", NoDefault = true)]
     public string Secret { get; set; } = string.Empty;
+
+    /// <panel>Where this host keeps the secret above. Left to itself the first surface to look for it
+    /// creates it and the others read it, so the panel's chat works on a host nobody configured; point
+    /// this elsewhere on a host that keeps its state somewhere other than /var/lib.</panel>
+    [LeafField("relaySecretPath", "Relay secret file", Group = "actions", Type = LeafType.Path,
+        Risk = LeafRisk.Wiring)]
+    public string SecretPath { get; set; } = KgsmRelaySecret.DefaultPath;
 }
 
 /// <summary>HMAC key + lifetime for stateless confirmation tokens.</summary>

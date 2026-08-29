@@ -68,7 +68,7 @@
     "CompactAtPercent": 70
   },
   "KGSM": {
-    "Path": "/usr/local/bin/kgsm",
+    "Path": "/usr/bin/kgsm",
     // Blank is the OFF switch, not a missing value: the engine event listener is opt-in and does
     // not start without a directory here. The unit sets one on a resident host; a one-shot surface
     // has no use for a journal reader.
@@ -117,8 +117,12 @@
     "Webhook": {
       "Secret": ""
     },
+    // The co-located Control Panel API asks on a signed-in person's behalf with this secret. Blank
+    // takes the host's own, in SecretPath — the first surface to look for it creates the file and the
+    // API reads the same one, so a host nobody configured still has a working panel chat.
     "Relay": {
-      "Secret": ""
+      "Secret": "",
+      "SecretPath": "/var/lib/kgsm/auth/relay-secret"
     },
     "Push": {
       "Enabled": true,

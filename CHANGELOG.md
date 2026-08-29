@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the relay secret is the host's, and this service mints it (1.50.0)
+
+`Assistant:Relay:Secret` left blank takes the secret from `Assistant:Relay:SecretPath`
+(`/var/lib/kgsm/auth/relay-secret`), creating it if no surface on the host has yet. The Control Panel API and
+the Discord bot resolve the same file, so all three agree with nothing asked of an operator — where
+before every side shipped blank and the relay path was off on every host nobody hand-configured.
+
+It sits beside the account store because `/var/lib/kgsm` itself is root-owned on a host provisioned
+from a checkout, so minting at the top of the tree fails there — on exactly the hosts this is meant to
+fix. The service also says so when it cannot resolve one, naming the file, rather than leaving the
+Control Panel to discover it a turn later as a failed question.
+
+Creation is exclusive and owner-only from the instant the file exists, so the three units starting
+together cannot mint two different secrets. A secret that can be neither read nor created stays empty,
+which is the existing "the relay path is off" state rather than an open door.
+
+### Fixed — the packaged engine path (1.50.0)
+
+`KGSM:Path` is `/usr/bin/kgsm`, which is what the package installs. The settings file declared
+`/usr/local/bin/kgsm`, a path no node has; the shipped env file already set the right one over it.
+
+### Fixed — the descriptor names this leaf's unit, not a path to it (1.50.0)
+
+The `systemd-unit` floor source names `kgsm-assistant-service.service`. Where that file sits is a
+property of how the host was provisioned, and this leaf cannot know which.
+
 ### Changed — no emoji in prose or output
 
 Docs, comments and command output carry no emoji. The information lives in the words, and a status

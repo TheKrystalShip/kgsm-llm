@@ -18,7 +18,7 @@
     },
     {
       "kind": "systemd-unit",
-      "path": "/etc/kgsm-assistant/systemd/kgsm-assistant-service.service"
+      "path": "kgsm-assistant-service.service"
     },
     {
       "kind": "env-file",
@@ -395,7 +395,7 @@
       "description": "Path to the KGSM executable. Everything the assistant knows about this host's servers is read through it.",
       "group": "kgsm",
       "type": "path",
-      "default": "/usr/local/bin/kgsm",
+      "default": "/usr/bin/kgsm",
       "risk": "wiring"
     },
     {
@@ -501,6 +501,16 @@
       "type": "secret",
       "risk": "wiring",
       "pairedApiKey": "Api__AssistantRelaySecret"
+    },
+    {
+      "key": "relaySecretPath",
+      "env": "Assistant__Relay__SecretPath",
+      "label": "Relay secret file",
+      "description": "Where this host keeps the secret above. Left to itself the first surface to look for it creates it and the others read it, so the panel's chat works on a host nobody configured; point this elsewhere on a host that keeps its state somewhere other than /var/lib.",
+      "group": "actions",
+      "type": "path",
+      "default": "/var/lib/kgsm/auth/relay-secret",
+      "risk": "wiring"
     },
     {
       "key": "discordRedirectUri",

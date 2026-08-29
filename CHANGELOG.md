@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the packaged binary is executable again (1.50.1)
+
+The release workflow hands the build job's publish output to the packaging job as a GitHub artifact,
+and an artifact is a zip. A zip records no unix mode, so every file arrived at 0644 and the package
+shipped a binary nothing could execute: a node installed cleanly and the unit died with 203/EXEC
+before it logged a line. The stage crosses inside a tar now, which carries the modes with it.
+
 ### Changed — the relay secret is the host's, and this service mints it (1.50.0)
 
 `Assistant:Relay:Secret` left blank takes the secret from `Assistant:Relay:SecretPath`

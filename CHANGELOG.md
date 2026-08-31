@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a conversation belongs to the person, not to the door they came through (1.53.0)
+
+Conversations, memories, staged actions and notification devices were keyed by the provider's id for
+whoever signed in. One person therefore had a separate set per door: signing in with Discord and
+signing in with a password produced two histories that never met, and the split was silent because
+each door found exactly what it had written. Both were already in this host's corpus.
+
+They key on the **account** now — the person themselves, which does not change with how they proved
+it. The subject stays what it always was: what proves them, and what an authority question is asked
+about. `AuthPrincipal` carries both, so no handler has to remember the difference, and a caller the
+account store does not know keeps their subject as the key rather than becoming homeless.
+
+A one-time migration moves what is already stored, before anything is served, taking a copy of the
+database first. An owner the account store cannot resolve stays exactly where it is — a probe, a
+test, somebody who never signed in here — and rooms are keyed by the place they happen in and have no
+owner to move. Two histories for one person merge in time order, which is the intent rather than a
+side effect.
+
+The push-action stager is the one identity that stays a subject: redeeming from a notification has no
+session, so the tier is re-derived from what proved that person, and the owner is resolved from it.
+
 ### Changed — in a cluster, the accounts are somebody else's (1.52.0)
 
 A member of a cluster does not answer for the accounts. Signing in, the provider bounce and its

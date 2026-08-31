@@ -865,7 +865,12 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", next.Token);
         var me = await client.GetFromJsonAsync<MeResponse>("/auth/me");
-        me!.UserId.Should().Be("u1");
+
+        // The ACCOUNT, not the Discord id that proved it. A person is one account however they signed
+        // in, and it is what their conversations and memories are keyed by — so this is the value a
+        // client holds onto, and returning the subject would hand back a different one per door.
+        me!.UserId.Should().StartWith("usr_");
+        me.UserId.Should().NotBe("u1");
     }
 
     [Fact]

@@ -10,10 +10,10 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// A resolved, authenticated caller.
 /// </summary>
 /// <param name="Provider">Which identity provider verified this caller.</param>
-/// <param name="UserId">
-/// The provider's own id for them, unqualified — the identity every memory key is scoped by. It stays
-/// unqualified because it keys conversation history that is already written; the provider travels
-/// beside it rather than being folded in.
+/// <param name="Subject">
+/// The provider's own id for them, unqualified. It is what proves them and what an authority question
+/// is asked about; it is deliberately not what anything is stored under, because one person has as
+/// many subjects as they have ways of signing in.
 /// </param>
 /// <param name="DisplayName">For display only. Never authority.</param>
 /// <param name="SessionId">
@@ -26,22 +26,37 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// check — <see cref="AuthService.ResolveTierAsync"/> re-derives that, so a role
 /// taken away stops working within the cache TTL instead of surviving until the token expires.
 /// </param>
+/// <param name="Owner">
+/// The KGSM account this person is — what everything of theirs is stored under: their conversations,
+/// their memories, the devices they take notifications on, the actions they staged. An account is the
+/// person; a subject is one of the ways they prove it, and keying storage on the second gives somebody
+/// two histories the day they sign in through a different door.
+/// <para>
+/// It falls back to <see cref="Subject"/> for a caller the account store does not know, which is the
+/// same key that caller has always had. That keeps an unknown caller working rather than homeless, and
+/// it is why the fallback is the subject rather than something new.
+/// </para>
+/// </param>
 internal sealed record AuthPrincipal(
     string Provider,
-    string UserId,
+    string Subject,
     string DisplayName,
     string SessionId,
-    KgsmTier TokenTier = KgsmTier.None)
+    KgsmTier TokenTier = KgsmTier.None,
+    string? Owner = null)
 {
+    /// <summary>What this person's things are stored under.</summary>
+    public string OwnerKey => string.IsNullOrEmpty(Owner) ? Subject : Owner;
+
     /// <summary>
     /// This caller as an identity, for asking the authority what they may do. The profile fields are
     /// what the principal carries and no more — an authority resolves on who someone is, never on how
     /// prettily they are labelled.
     /// </summary>
-    public KgsmIdentity AsIdentity() => new(Provider, UserId, UserId, DisplayName, null, []);
+    public KgsmIdentity AsIdentity() => new(Provider, Subject, Subject, DisplayName, null, []);
 
     /// <summary>The provider-qualified handle — what a per-user cache is keyed by.</summary>
-    public string Handle => KgsmActor.Format(Provider, UserId);
+    public string Handle => KgsmActor.Format(Provider, Subject);
 }
 
 /// <summary>
@@ -267,7 +282,7 @@ internal sealed class AuthService(
         {
             logger.LogWarning(
                 ex, "Could not resolve authority for {UserId} — reporting it as unavailable, not as a denial.",
-                principal.UserId);
+                principal.Subject);
             return TierResolution.Unknown;
         }
 

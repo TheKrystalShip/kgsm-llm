@@ -40,7 +40,7 @@ internal static class SseConversationWriter
         http.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
 
         var ct = http.RequestAborted;
-        using var subscription = bus.Subscribe(principal.UserId);
+        using var subscription = bus.Subscribe(principal.OwnerKey);
 
         try
         {

@@ -185,7 +185,9 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             // change to the relay contract on both ends, not a default to be guessed at here.
             context.HttpContext.Items[PrincipalKey] = new AuthPrincipal(
                 KgsmActorProvider.Discord,
-                userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, string.Empty);
+                userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, string.Empty,
+                Owner: await OwnerKeys.ResolveAsync(
+                    _users, KgsmActorProvider.Discord, userId, context.HttpContext.RequestAborted));
             // The caller's tier as the api verified it — one value answering every authority question
             // this service asks of a relayed caller. Parsed fail-closed: an unrecognised, empty or absent
             // spelling is None, so a relay that does not speak this header grants nothing by omission.
@@ -305,8 +307,11 @@ internal sealed class BearerAuthFilter : IEndpointFilter
             }
         }
 
+        // What proves them is the subject; what their things are stored under is the account it
+        // belongs to. Resolved here, once, so no handler has to remember the difference.
         return new AuthPrincipal(
-            identity.Provider, identity.Subject, identity.Display, sessionId, SessionClaims.ReadTier(ci));
+            identity.Provider, identity.Subject, identity.Display, sessionId, SessionClaims.ReadTier(ci),
+            Owner: await OwnerKeys.ResolveAsync(_users, identity.Provider, identity.Subject, ct));
     }
 
     private static bool FixedTimeEquals(string a, string b) =>

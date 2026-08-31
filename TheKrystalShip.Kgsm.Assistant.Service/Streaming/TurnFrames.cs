@@ -84,10 +84,13 @@ internal static class TurnFrames
             // staged from. Recorded against the conversation so a surface arriving afterwards — a
             // reload, a second device, the notification's own tap-through — can be told it is waiting.
             pending.Put(
-                c, principal.UserId,
+                c, principal.OwnerKey,
                 DateTimeOffset.UtcNow.AddSeconds(Math.Max(confirmationTtlSeconds, 1)),
+                // The stager is an IDENTITY, not an owner: redeeming from a notification has no
+                // session, so the tier is re-derived from what proved this person. The staged action
+                // itself is keyed by the owner above, and the redemption resolves that from here.
                 announceTo: new ConfirmationStager(
-                    principal.Provider, principal.UserId, principal.DisplayName),
+                    principal.Provider, principal.Subject, principal.DisplayName),
                 conversationId: conversationId),
             $"cmd_{proposalSeq++}");
 

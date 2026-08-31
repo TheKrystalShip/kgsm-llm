@@ -22,6 +22,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Service;
 using TheKrystalShip.Kgsm.Assistant.Service.Cluster;
+using TheKrystalShip.Kgsm.Assistant.Service.Conversation;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Push;
@@ -892,7 +893,7 @@ secured.MapGet("/events", async (
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     await SseConversationWriter.WriteAsync(
-        http, bus, sessions, turns, principal, $"{WebSurface}:{principal.UserId}");
+        http, bus, sessions, turns, principal, $"{WebSurface}:{principal.OwnerKey}");
     return Results.Empty;
 });
 
@@ -921,7 +922,7 @@ secured.MapGet("/auth/me", async (
         catch (KgsmAuthProviderException) { /* unknown, as above */ }
     }
     return Results.Ok(new MeResponse(
-        principal.UserId, principal.DisplayName, KgsmTiers.ToWire(tier), canPerform, status));
+        principal.OwnerKey, principal.DisplayName, KgsmTiers.ToWire(tier), canPerform, status));
 });
 
 // The tools the caller is authorized to use, with names/descriptions/parameters. Fully server-derived
@@ -1070,14 +1071,14 @@ secured.MapPost("/commands/{name}", async (
     // will continue. Composed per-endpoint, this is where a room asking to be compacted quietly folded
     // the caller's own chat instead and reported success.
     var room = ConversationSurfaces.RoomOf(http);
-    var conversationId = ConversationSurfaces.Key(http, principal.UserId, chatScope);
+    var conversationId = ConversationSurfaces.Key(http, principal.OwnerKey, chatScope);
 
     // Tell the caller's OTHER surfaces where the switches now stand, re-read rather than assembled
     // from what was just written — the frame and a later listing must not be able to disagree.
     void PublishSwitches()
     {
         var standing = conversations.GetPreferences(conversationId);
-        bus.Publish(principal.UserId, new ConversationEvent(
+        bus.Publish(principal.OwnerKey, new ConversationEvent(
             ConversationStream.Switches,
             new SwitchesChanged(
                 chatScope ?? string.Empty, origin,
@@ -1149,8 +1150,8 @@ secured.MapPost("/commands/{name}", async (
                 ? chatScope
                 : Guid.NewGuid().ToString("N");
 
-            conversations.CreateConversation($"{WebSurface}:{principal.UserId}:{started}");
-            bus.Publish(principal.UserId, new ConversationEvent(
+            conversations.CreateConversation($"{WebSurface}:{principal.OwnerKey}:{started}");
+            bus.Publish(principal.OwnerKey, new ConversationEvent(
                 ConversationStream.Started, new ConversationChanged(started, origin)));
 
             // Hand back the conversation itself, not only its id. A fresh chat has a name, and it is
@@ -1159,13 +1160,13 @@ secured.MapPost("/commands/{name}", async (
             // Read back rather than assembled from what was just written, for the same reason the
             // switches are: the row the asking surface adopts is then the identical row the listing
             // will hand everybody else.
-            var row = conversations.ListConversations($"{WebSurface}:{principal.UserId}")
-                .FirstOrDefault(c => ConversationHistoryMapper.ChatIdOf(c.ConversationId, principal.UserId) == started);
+            var row = conversations.ListConversations($"{WebSurface}:{principal.OwnerKey}")
+                .FirstOrDefault(c => ConversationHistoryMapper.ChatIdOf(c.ConversationId, principal.OwnerKey) == started);
             return Results.Ok(new CommandResultDto(
                 command.Name, "Started a fresh conversation.", ConversationId: started,
                 Conversation: row is null
                     ? null
-                    : ConversationHistoryMapper.ToSummaryDto(row, principal.UserId, llmOptions.Value.Think)));
+                    : ConversationHistoryMapper.ToSummaryDto(row, principal.OwnerKey, llmOptions.Value.Think)));
         }
 
         case "compact":
@@ -1178,7 +1179,7 @@ secured.MapPost("/commands/{name}", async (
             var n = outcome.MessagesCompacted;
             // A checkpoint is a transcript change, so the caller's other surfaces re-read it.
             if (outcome.Compacted)
-                bus.Publish(principal.UserId, new ConversationEvent(
+                bus.Publish(principal.OwnerKey, new ConversationEvent(
                     ConversationStream.Activity, new ConversationChanged(chatScope ?? string.Empty, origin)));
             return Results.Ok(new CommandResultDto(
                 command.Name,
@@ -1237,7 +1238,7 @@ secured.MapPost("/commands/{name}", async (
 secured.MapGet("/memories", (HttpContext http, IMemoryStore memories) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.UserId, chatScope: null));
+    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.OwnerKey, chatScope: null));
     return Results.Ok(memories.List(owner).Select(MemoryDto.From).ToArray());
 });
 
@@ -1258,7 +1259,7 @@ secured.MapPut("/memories/{key}", (
     IMemoryStore memories, IOptions<MemoryOptions> options) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.UserId, chatScope: null));
+    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.OwnerKey, chatScope: null));
 
     // Sanitised exactly as the tool sanitises what the model writes, and idempotently, so a key read
     // out of the listing rewrites the row it was shown rather than filing a near-duplicate beside it.
@@ -1310,7 +1311,7 @@ secured.MapPut("/memories/{key}", (
 secured.MapDelete("/memories/{key}", (string key, HttpContext http, IMemoryStore memories) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.UserId, chatScope: null));
+    var owner = MemoryScope.OwnerOf(ConversationSurfaces.Key(http, principal.OwnerKey, chatScope: null));
 
     // Sanitised the same way the tool sanitises what the model writes, so a key shown in a listing
     // addresses the same row when it comes back. Idempotent: forgetting what is already forgotten is
@@ -1332,8 +1333,8 @@ secured.MapGet("/conversations", (
     HttpContext http, IConversationStore store, IOptions<LlmBackendOptions> llmOptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    var conversations = store.ListConversations($"{WebSurface}:{principal.UserId}")
-        .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.UserId, llmOptions.Value.Think))
+    var conversations = store.ListConversations($"{WebSurface}:{principal.OwnerKey}")
+        .Select(s => ConversationHistoryMapper.ToSummaryDto(s, principal.OwnerKey, llmOptions.Value.Think))
         .ToArray();
     return Results.Ok(conversations);
 });
@@ -1349,8 +1350,8 @@ secured.MapGet("/conversations/{id}", (
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
     var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"{WebSurface}:{principal.UserId}"
-        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+        ? $"{WebSurface}:{principal.OwnerKey}"
+        : $"{WebSurface}:{principal.OwnerKey}:{chatScope}";
     var entries = store.GetHistory(conversationId)
         .Select(ConversationHistoryMapper.ToEntryDto)
         .ToArray();
@@ -1364,7 +1365,7 @@ secured.MapGet("/conversations/{id}", (
     // it a proposal exists only for the surfaces that were attached when it was staged — so a reload,
     // a second device, or a tap on the notification announcing it all arrive at the assistant saying
     // it staged something, with nothing to approve.
-    var waiting = pending.PendingFor(principal.UserId, conversationId)
+    var waiting = pending.PendingFor(principal.OwnerKey, conversationId)
         .Select((p, i) => TurnFrames.Describe(p.Confirmation, p.Handle, $"cmd_pending_{i}"))
         .ToArray();
 
@@ -1386,10 +1387,10 @@ secured.MapDelete("/conversations/{id}", (
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
     var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"{WebSurface}:{principal.UserId}"
-        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+        ? $"{WebSurface}:{principal.OwnerKey}"
+        : $"{WebSurface}:{principal.OwnerKey}:{chatScope}";
     store.SoftDelete(conversationId);
-    bus.Publish(principal.UserId, new ConversationEvent(
+    bus.Publish(principal.OwnerKey, new ConversationEvent(
         ConversationStream.Deleted,
         new ConversationChanged(
             chatScope ?? string.Empty,
@@ -1410,8 +1411,8 @@ secured.MapPost("/conversations/{id}/turns/{turnId:long}/feedback", (
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
     var conversationId = string.IsNullOrEmpty(chatScope)
-        ? $"{WebSurface}:{principal.UserId}"
-        : $"{WebSurface}:{principal.UserId}:{chatScope}";
+        ? $"{WebSurface}:{principal.OwnerKey}"
+        : $"{WebSurface}:{principal.OwnerKey}:{chatScope}";
 
     // A null rating withdraws a verdict already left; anything else must name one of the two.
     TurnFeedbackRating? rating = request.Rating?.ToLowerInvariant() switch
@@ -1435,7 +1436,7 @@ secured.MapPost("/conversations/{id}/turns/{turnId:long}/feedback", (
     // rather than left showing the thumb that stood a moment ago. Sent to every one of their streams
     // and not only the attached ones: a turn id addresses one bubble wherever it is rendered, and a
     // surface reading a different conversation still holds this one in its list.
-    bus.Publish(principal.UserId, new ConversationEvent(
+    bus.Publish(principal.OwnerKey, new ConversationEvent(
         ConversationStream.Feedback,
         new FeedbackChanged(
             chatScope ?? string.Empty,
@@ -1459,7 +1460,7 @@ secured.MapPost("/conversations/{id}/compact", async (
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     var chatScope = ConversationScope.Sanitize(id);
-    var conversationId = ConversationSurfaces.Key(http, principal.UserId, chatScope);
+    var conversationId = ConversationSurfaces.Key(http, principal.OwnerKey, chatScope);
 
     var result = await compactor.CompactAsync(conversationId, ct);
     if (result.IsFailure)
@@ -1468,7 +1469,7 @@ secured.MapPost("/conversations/{id}/compact", async (
     var outcome = result.Value!;
     // A checkpoint is a transcript change, so the caller's other surfaces re-read it.
     if (outcome.Compacted)
-        bus.Publish(principal.UserId, new ConversationEvent(
+        bus.Publish(principal.OwnerKey, new ConversationEvent(
             ConversationStream.Activity,
             new ConversationChanged(
                 chatScope ?? string.Empty,
@@ -1647,7 +1648,7 @@ secured.MapPost("/turn", async (
     // path and that the leaf may open rooms — the check cannot be repeated here, because the header
     // itself never reaches this handler.
     var room = ConversationSurfaces.RoomOf(http);
-    var conversationId = ConversationSurfaces.Key(http, principal.UserId, chatScope);
+    var conversationId = ConversationSurfaces.Key(http, principal.OwnerKey, chatScope);
 
     // The leaf this turn arrives through, when one named itself. It picks the prompt overrides the turn
     // is built from and the origin its actions are recorded under; absent, both are the assistant's own.
@@ -1704,7 +1705,7 @@ secured.MapPost("/turn", async (
         if (room is not null)
             return;
 
-        bus.Publish(principal.UserId, new ConversationEvent(
+        bus.Publish(principal.OwnerKey, new ConversationEvent(
             ConversationStream.Activity,
             new ConversationChanged(
                 chatScope ?? string.Empty,
@@ -1792,7 +1793,7 @@ secured.MapPost("/turn", async (
     var stagedUntil = DateTimeOffset.UtcNow.AddSeconds(
         Math.Max(assistantOptions.Value.Confirmation.TtlSeconds, 1));
     var confirmations = result.Confirmations
-        .Select(c => ConfirmationDto.From(c, pending.Put(c, principal.UserId, stagedUntil)))
+        .Select(c => ConfirmationDto.From(c, pending.Put(c, principal.OwnerKey, stagedUntil)))
         .ToArray();
 
     return Results.Ok(new TurnResponse(result.Text, confirmations, UsageDto.From(result.Usage)));
@@ -1810,7 +1811,7 @@ secured.MapDelete("/turns/{turnId}", (string turnId, HttpContext http, ITurnRegi
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
     // A turn id is not a handle on somebody else's conversation: an id belonging to another person
     // answers exactly as an unknown one does.
-    return turns.Cancel(turnId, principal.UserId)
+    return turns.Cancel(turnId, principal.OwnerKey)
         ? Results.NoContent()
         : Results.NotFound(new { error = "There is no such turn." });
 });
@@ -1834,19 +1835,19 @@ secured.MapPost("/events/attach", (
 
     var streamId = named[0]!;
     var chatId = ConversationScope.Sanitize(request?.ConversationId);
-    if (!bus.Attach(streamId, principal.UserId, chatId))
+    if (!bus.Attach(streamId, principal.OwnerKey, chatId))
         return Results.NotFound(new { error = "There is no such stream." });
 
     var conversationId = string.IsNullOrEmpty(chatId)
-        ? $"{WebSurface}:{principal.UserId}"
-        : $"{WebSurface}:{principal.UserId}:{chatId}";
+        ? $"{WebSurface}:{principal.OwnerKey}"
+        : $"{WebSurface}:{principal.OwnerKey}:{chatId}";
     var running = turns.Running(conversationId);
     var queued = turns.Queued(conversationId);
 
     // Either a turn to render, or the fact that there is none — both matter. A surface told nothing
     // cannot tell "nothing is happening" from "the frame has not arrived yet", and would sit on a
     // spinner for a turn that ended before it got here.
-    bus.PublishTo(streamId, principal.UserId, running is null
+    bus.PublishTo(streamId, principal.OwnerKey, running is null
         ? new ConversationEvent(
             ConversationStream.TurnQueue, new TurnQueueEvent(chatId ?? string.Empty, null, queued))
         : new ConversationEvent(ConversationStream.TurnAttach, running.Snapshot(queued)));
@@ -1870,7 +1871,7 @@ secured.MapPost("/confirm", async (
     // Redeem the handle for THIS caller. Unknown, already redeemed, expired, and staged by a
     // different user all answer the same way — a caller learns that there is nothing to confirm,
     // never which of those it was, so the endpoint is no oracle for handles it was not given.
-    if (!pending.TryTake(request.Token, principal.UserId, out var confirmation))
+    if (!pending.TryTake(request.Token, principal.OwnerKey, out var confirmation))
         return Results.BadRequest(new { error = "Invalid or expired confirmation." });
 
     // Settled here, so the notification's buttons stop being live. They would already fail — the
@@ -1913,7 +1914,7 @@ secured.MapPost("/confirm", async (
                 ConfirmationKind.Blueprint, data.BlueprintName ?? game,
                 InstanceName: game, ConfigValue: data.DraftYaml);
             var handle = pending.Put(
-                restaged, principal.UserId,
+                restaged, principal.OwnerKey,
                 DateTimeOffset.UtcNow.AddSeconds(Math.Max(assistantOptions.Value.Confirmation.TtlSeconds, 1)));
             reEdit = [ConfirmationDto.From(restaged, handle)];
         }
@@ -2012,7 +2013,7 @@ secured.MapPost("/push/subscribe", (
     // The page origin is recorded, never trusted and never branched on: it is here so that a second
     // surface registering against this same leaf needs no schema change, not as a check.
     subscriptions.Register(
-        principal.UserId,
+        principal.OwnerKey,
         new PushSubscription(request.Endpoint, request.P256dh, request.Auth),
         http.Request.Headers.Origin.FirstOrDefault());
 
@@ -2027,7 +2028,7 @@ secured.MapDelete("/push/subscribe", (
     [FromBody] PushUnsubscribeRequest request, HttpContext http, IPushSubscriptionStore subscriptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    subscriptions.Unregister(principal.UserId, request.Endpoint ?? string.Empty);
+    subscriptions.Unregister(principal.OwnerKey, request.Endpoint ?? string.Empty);
     // Idempotent: a browser that unsubscribed locally and then told us is the ordinary sequence, and
     // there being no row to delete is that sequence completing rather than an error.
     return Results.NoContent();
@@ -2038,7 +2039,7 @@ secured.MapDelete("/push/subscribe", (
 secured.MapGet("/push/devices", (HttpContext http, IPushSubscriptionStore subscriptions) =>
 {
     var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
-    var endpoints = subscriptions.For(principal.UserId)
+    var endpoints = subscriptions.For(principal.OwnerKey)
         .Select(d => d.Subscription.Endpoint)
         .ToArray();
     return Results.Ok(new PushDevicesResponse(endpoints));
@@ -2057,27 +2058,32 @@ app.MapPost("/push/actions/{handle}", async (
     IPendingConfirmationStore pending,
     PushConfirmationRunner runner,
     AuthService auth,
+    UserDirectory users,
     CancellationToken ct) =>
 {
     if (!pushActions.TryTake(handle, out var action))
         return Results.Ok(new PushActionResponse(false, "That notification is no longer valid."));
 
+    // The identity was recorded when the action was staged; what is derived HERE is the authority, off
+    // the live account store. So the session this tap does not have is the only thing missing, and the
+    // check is otherwise the one /confirm makes: somebody demoted since staging is refused now.
+    //
+    // The action was staged under the person's ACCOUNT, and what is recorded here is what proved them,
+    // so the owner is resolved from it rather than assumed to be the same string.
+    var principal = new AuthPrincipal(
+        action.Stager.Provider, action.Stager.UserId, action.Stager.DisplayName, SessionId: string.Empty,
+        Owner: await OwnerKeys.ResolveAsync(users, action.Stager.Provider, action.Stager.UserId, ct));
+
     if (action.Verb == PushActionVerb.Cancel)
     {
         // Cancelling is taking the handle and doing nothing with it: the staged operation is consumed
         // and can never run. It needs no authority — declining to act is not an action.
-        pending.TryTake(action.ConfirmationHandle, action.Stager.UserId, out _);
+        pending.TryTake(action.ConfirmationHandle, principal.OwnerKey, out _);
         return Results.Ok(new PushActionResponse(true, "Cancelled."));
     }
 
-    if (!pending.TryTake(action.ConfirmationHandle, action.Stager.UserId, out var confirmation))
+    if (!pending.TryTake(action.ConfirmationHandle, principal.OwnerKey, out var confirmation))
         return Results.Ok(new PushActionResponse(false, "That action has already been handled or has expired."));
-
-    // The identity was recorded when the action was staged; what is derived HERE is the authority, off
-    // the live account store. So the session this tap does not have is the only thing missing, and the
-    // check is otherwise the one /confirm makes: somebody demoted since staging is refused now.
-    var principal = new AuthPrincipal(
-        action.Stager.Provider, action.Stager.UserId, action.Stager.DisplayName, SessionId: string.Empty);
 
     var canPerform = await auth.CanPerformActionsAsync(principal, ct);
     if (!canPerform)
@@ -2094,6 +2100,17 @@ app.MapPost("/push/actions/{handle}", async (
     return Results.Ok(new PushActionResponse(
         true, $"Confirmed — running the {verb} now. I'll let you know how it goes."));
 });
+
+// What somebody owns moves onto the account they are, once, before anything is served. A rewrite of
+// the key every read and write uses cannot run underneath live requests: some would find the old key
+// and some the new, and a conversation would appear to lose its history mid-sentence.
+using (IServiceScope scope = app.Services.CreateScope())
+{
+    await OwnerRekeyMigration.RunAsync(
+        scope.ServiceProvider.GetRequiredService<IOptions<ConversationOptions>>().Value.DatabasePath,
+        scope.ServiceProvider.GetRequiredService<UserDirectory>(),
+        app.Logger);
+}
 
 app.Run();
 

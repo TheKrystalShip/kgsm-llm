@@ -166,7 +166,7 @@ internal sealed class TurnRegistry : ITurnRegistry
             return false;
         // A turn id names one person's turn. Anyone else asking is told there is no such turn rather
         // than that there is one they may not touch.
-        if (!string.Equals(session.Principal.UserId, userId, StringComparison.Ordinal))
+        if (!string.Equals(session.Principal.OwnerKey, userId, StringComparison.Ordinal))
             return false;
 
         // Stopping a running turn cancels its generation; a queued one is marked and skipped when its
@@ -186,7 +186,7 @@ internal sealed class TurnRegistry : ITurnRegistry
                 continue;
             // Attached right now counts, and so does a person whose surfaces have only just gone —
             // a screen locking or a network changing hands is not somebody leaving.
-            if (session.ConsumerCount > 0 || _bus.PresentWithin(session.Principal.UserId, grace))
+            if (session.ConsumerCount > 0 || _bus.PresentWithin(session.Principal.OwnerKey, grace))
                 continue;
 
             _log.LogInformation(
@@ -457,7 +457,7 @@ internal sealed class TurnRegistry : ITurnRegistry
     /// event stream of every surface attached to this conversation.</summary>
     private void Publish(TurnSession session, TurnFrame frame) =>
         session.Broadcast(frame, f => _bus.PublishToAttached(
-            session.Principal.UserId, session.ChatId, new ConversationEvent(f.Name, f.Payload)));
+            session.Principal.OwnerKey, session.ChatId, new ConversationEvent(f.Name, f.Payload)));
 
     /// <summary>
     /// Restate what is waiting on a conversation. The queue is state rather than an event — a surface
@@ -469,7 +469,7 @@ internal sealed class TurnRegistry : ITurnRegistry
         var queued = Queued(session.ConversationId);
         var running = Running(session.ConversationId);
         _bus.PublishToAttached(
-            session.Principal.UserId, session.ChatId,
+            session.Principal.OwnerKey, session.ChatId,
             new ConversationEvent(
                 ConversationStream.TurnQueue,
                 new TurnQueueEvent(session.ChatId, running?.TurnId, queued)));

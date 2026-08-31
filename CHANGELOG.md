@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — which engine each standing reaches, pinned (1.59.1)
+
+A machine with no cluster secret resolves every port to its kgsm-lib adapter, and a member of a
+cluster resolves every one of them to the node-backed adapter. Both directions are asserted, because
+the mechanism — registered after the adapters, conditionally — is invisible at a glance and silent
+when it goes wrong. The failure it catches is bad either way: a standalone install reaching for a
+Control Panel API that is not installed, or a member shelling out to an engine that answers for one
+machine out of several.
+
+The invalidation seam is asserted to be the same instance as the inventory actually read, so the
+engine's own events drop what the fleet said rather than a cache nothing reads.
+
 ### Added — a fleet answer says which machines it is missing (1.59.0)
 
 Every whole-fleet read — status, players, autostart, backups — carries what could not be reached, in

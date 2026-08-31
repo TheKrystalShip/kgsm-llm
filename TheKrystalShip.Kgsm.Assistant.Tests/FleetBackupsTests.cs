@@ -244,4 +244,36 @@ public class FleetBackupsTests
             string i, int lines, int run, CancellationToken ct = default) =>
             Task.FromResult(new ConsoleTail(FactsState.Unavailable, []));
     }
+    /// <summary>
+    /// A fleet answer short by a machine looks exactly like a smaller fleet, and no row in it says
+    /// which. What could not be read rides on the same result the rows do, so the model reads it while
+    /// still holding them.
+    /// </summary>
+    [Fact]
+    public async Task A_fleet_read_says_which_machines_it_could_not_reach()
+    {
+        _inventory.GetUnreachedAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>(["hotbox (could not be reached)"]));
+
+        string output = await RunFleet(Fleet());
+
+        output.Should().Contain("part of the fleet only");
+        output.Should().Contain("hotbox (could not be reached)");
+    }
+
+    /// <summary>
+    /// Nothing missing says nothing. A caveat on every fleet read is one the model learns to discount,
+    /// and it would be false on the ordinary read where every machine answered.
+    /// </summary>
+    [Fact]
+    public async Task A_whole_fleet_read_carries_no_caveat()
+    {
+        _inventory.GetUnreachedAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>([]));
+
+        string output = await RunFleet(Fleet());
+
+        output.Should().NotContain("part of the fleet only");
+    }
+
 }

@@ -657,7 +657,7 @@ public class ToolDispatcher : IToolDispatcher
         // per-instance resolution — asking them per instance would be N round-trips for one map.
         if (string.IsNullOrWhiteSpace(name))
         {
-            return aspect switch
+            ToolOutput fleet = aspect switch
             {
                 "status" => await GetFleetStatusAsync(cancellationToken),
                 "players" => await PresenceAsync(null, cancellationToken),
@@ -667,6 +667,8 @@ public class ToolDispatcher : IToolDispatcher
                 // and say which tool they are rather than naming an aspect nobody passed.
                 _ => await NeedsOneInstanceAsync(call.Name, cancellationToken),
             };
+
+            return await WholeFleetAsync(fleet, cancellationToken);
         }
 
         var (resolved, error) = await ResolveInstanceAsync(name, cancellationToken);
@@ -1208,6 +1210,39 @@ public class ToolDispatcher : IToolDispatcher
               + "already holding it. That process isn't a KGSM server.");
 
         return $"{usage.Conflicts.Count} port conflict(s):\n" + string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// Say what a fleet answer is missing, when it is missing something.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A list of every server, short by one machine, looks exactly like a smaller fleet — and nothing
+    /// in the rows says which it is. So a fleet-shaped answer carries what could not be read, in the
+    /// same result the model reads the rows from, rather than leaving the model to notice an absence
+    /// it has no way to see.
+    /// </para>
+    /// <para>
+    /// Appended rather than prefixed on purpose: unlike the injected list, which frames a whole turn,
+    /// this sits at the end of one tool's output where the model reads it while still holding the
+    /// rows. Nothing is added when everything answered — a caveat on every fleet read is one the model
+    /// learns to discount, and it would be false on the ordinary read.
+    /// </para>
+    /// </remarks>
+    private async Task<ToolOutput> WholeFleetAsync(ToolOutput answer, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> unreached = await _inventory.GetUnreachedAsync(cancellationToken);
+        if (unreached.Count == 0)
+            return answer;
+
+        // The summary and not the card: a card is a rendered shape a surface lays out, and a sentence
+        // about what is missing from the whole answer does not belong inside one row of it.
+        return answer with
+        {
+            Summary = answer.Summary
+                + $"\n\nThis covers part of the fleet only: {string.Join("; ", unreached)}. "
+                + "Say so when you answer — whatever those machines hold is not above.",
+        };
     }
 
     /// <summary>The host machine's own vitals — never any one server's.</summary>

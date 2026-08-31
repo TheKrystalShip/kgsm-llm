@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a fleet answer says which machines it is missing (1.59.0)
+
+Every whole-fleet read — status, players, autostart, backups — carries what could not be reached, in
+the same tool result the rows are in. A list short by a machine looks exactly like a smaller fleet and
+no row in it says which, so the model would otherwise have to notice an absence it has no way to see.
+
+Appended rather than prefixed, unlike the injected lists: this sits at the end of one tool's output
+where the model reads it while still holding the rows. Nothing is added when everything answered — a
+caveat on every fleet read is one the model learns to discount, and it would be false on the ordinary
+read.
+
 ### Added — the read ports answer from the cluster's nodes (1.58.0)
 
 `IServerFacts`, `IServerMetrics`, `INetworkInfo`, `IUpnpInfo`, `IEventHistory` and `IHostFacts` are

@@ -127,6 +127,16 @@ builder.Logging.AddSystemdConsole();
     });
 
     builder.Services.AddHostedService<AssistantCapabilityWorker>();
+
+    // Reaching the other machines in the cluster. The directory is which nodes there are, the client
+    // is how one is called — as a member, naming the person whose turn it is — and ClusterServers is
+    // what they hold and where, which is what an action has to know before it can be sent anywhere.
+    builder.Services.AddSingleton<NodeDirectory>();
+    builder.Services.AddSingleton<NodeApiClient>();
+    builder.Services.AddSingleton<ClusterServers>();
+    // Its own client, so a node read is bounded by a node's latency rather than sharing a ceiling with
+    // the model's long turns.
+    builder.Services.AddHttpClient(NodeApiClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(20));
 }
 
 // --- Options (web-only) ------------------------------------------------------
@@ -1771,7 +1781,7 @@ secured.MapPost("/turn", async (
     // Attribute any server mutation this turn runs to the asking user, under the surface they were
     // actually using; flows down the awaited turn → tool dispatch → kgsm chokepoint.
     using var provenance = invocation.Begin(
-        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(relayLeaf)));
+        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(relayLeaf), principal.Handle));
 
     var result = await assistant.RunAsync(
         conversationId, request.Prompt, canPerform, think, autoExecute, request.Tools, ct,
@@ -1894,7 +1904,7 @@ secured.MapPost("/confirm", async (
     var confirmLeaf = http.Items.TryGetValue(BearerAuthFilter.RelayLeafKey, out var confirmLeafObj)
         && confirmLeafObj is string cl ? cl : null;
     using var provenance = invocation.Begin(
-        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(confirmLeaf)));
+        Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(confirmLeaf), principal.Handle));
 
     // A blueprint finalize produces a rich card and, when its repair loop exhausts, a fresh token for the
     // re-edit loop; every other kind produces the outcome verdict. Both shapes are built ONCE here and

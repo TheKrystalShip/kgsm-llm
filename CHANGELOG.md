@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — reaching the other machines in the cluster (1.54.0)
+
+`NodeDirectory` is which nodes there are, read from this member's own roster — anchors skipped, since
+one serves a capability and runs no game servers. `NodeApiClient` is how one is called: as a member,
+with the person whose turn it is named by handle, so the node resolves what they may do from its own
+replica. No session belonging to anybody crosses the wire, which is what keeps a credential on the
+machine it was presented to and stops a minutes-long action failing the moment a browser's token
+expires.
+
+Who is acted for comes from the ambient invocation the host sets from the authenticated principal —
+the same place the audit actor comes from — so a tool cannot name somebody else by passing a different
+argument.
+
+`ClusterServers` is what the cluster holds and where. A node that cannot be reached is **named rather
+than dropped**, because a fleet answer missing a machine looks exactly like a fleet with fewer
+machines. Two nodes holding the same server id is reported as ambiguous rather than resolved by
+picking one, since picking would send an action to a machine nobody named. One retry, then an honest
+failure: links flap, and a node that is down stays down.
+
 ### Changed — a conversation belongs to the person, not to the door they came through (1.53.0)
 
 Conversations, memories, staged actions and notification devices were keyed by the provider's id for

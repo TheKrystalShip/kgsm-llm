@@ -378,7 +378,7 @@ internal sealed class TurnRegistry : ITurnRegistry
         // queued turn executes, and an ambient value captured from it would attribute this turn to
         // whatever came before.
         using var provenance = _invocation.Begin(
-            Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(run.RelayLeaf)));
+            Invocation.ForAssistant(principal.DisplayName, RelayLeaves.OriginFor(run.RelayLeaf), principal.Handle));
 
         var proposalSeq = 0;
         var ttl = Math.Max(_assistantOptions.Value.Confirmation.TtlSeconds, 1);

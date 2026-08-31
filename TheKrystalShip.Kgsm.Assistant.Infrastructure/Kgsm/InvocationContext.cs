@@ -8,7 +8,18 @@ namespace TheKrystalShip.Kgsm.Assistant.Infrastructure;
 /// Host-neutral: the HTTP service stamps it from the OAuth principal, the CLI from the OS user — both
 /// share this one provenance shape, each host picking the factory for its surface.
 /// </summary>
-public sealed record Invocation(string? Actor, string Origin)
+/// <param name="Handle">
+/// Who this is, precisely: the <c>provider:subject</c> handle that proved them. <see cref="Actor"/> is
+/// what an audit line reads and is a display name; this is what another machine resolves against its
+/// own accounts, and the two are different values for the same person on purpose — one is legible, the
+/// other is exact.
+/// <para>
+/// Null for a surface with nobody behind it, and for the engine on this machine, which has never
+/// needed it: a local call is already running as somebody and stamps provenance rather than proving
+/// identity.
+/// </para>
+/// </param>
+public sealed record Invocation(string? Actor, string Origin, string? Handle = null)
 {
     /// <summary>The assistant (Discord/web) surface tag (architecture.html §3·d origin set).</summary>
     public const string AssistantOrigin = "assistant";
@@ -26,9 +37,10 @@ public sealed record Invocation(string? Actor, string Origin)
     /// or blank keeps <see cref="AssistantOrigin"/>, which is what a caller that names no surface is.
     /// The actor shape does not vary with it: every one of these surfaces authenticates a Discord user.
     /// </para></summary>
-    public static Invocation ForAssistant(string? displayName, string? origin = null) =>
+    public static Invocation ForAssistant(string? displayName, string? origin = null, string? handle = null) =>
         new(string.IsNullOrWhiteSpace(displayName) ? null : $"discord:{displayName}",
-            string.IsNullOrWhiteSpace(origin) ? AssistantOrigin : origin);
+            string.IsNullOrWhiteSpace(origin) ? AssistantOrigin : origin,
+            string.IsNullOrWhiteSpace(handle) ? null : handle);
 
     /// <summary>Build an invocation for the terminal user — <c>actor = cli:&lt;osUser&gt;</c>,
     /// <c>origin = cli</c>. A blank name yields a null actor (KGSM keeps its OS-user fallback, never a

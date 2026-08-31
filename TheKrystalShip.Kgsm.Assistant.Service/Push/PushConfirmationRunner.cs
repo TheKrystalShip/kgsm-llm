@@ -4,6 +4,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Security;
+using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.WebPush;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Push;
@@ -66,7 +67,8 @@ internal sealed class PushConfirmationRunner(
             // Attribute it to the person who approved it, established INSIDE the run: the request that
             // carried the tap is gone by now, and provenance is ambient per-scope.
             using var provenance = invocation.Begin(
-                Invocation.ForAssistant(action.Stager.DisplayName, RelayLeaves.OriginFor(null)));
+                Invocation.ForAssistant(action.Stager.DisplayName, RelayLeaves.OriginFor(null),
+                    KgsmActor.Format(action.Stager.Provider, action.Stager.UserId)));
 
             var outcome = await assistant.ConfirmAsync(confirmation, canPerform, ct).ConfigureAwait(false);
 

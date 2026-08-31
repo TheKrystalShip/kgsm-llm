@@ -27,9 +27,6 @@ public sealed record ClusterNode(string MemberId, string Url);
 /// </remarks>
 public sealed class NodeDirectory(MembersStore members, ClusterOptions cluster)
 {
-    /// <summary>Whether this member is in a cluster at all.</summary>
-    public bool Clustered => cluster.Enabled;
-
     /// <summary>Every node this member knows of, in a stable order so two reads agree.</summary>
     public async Task<IReadOnlyList<ClusterNode>> NodesAsync(CancellationToken ct = default)
     {

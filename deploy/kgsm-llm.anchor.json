@@ -1086,6 +1086,18 @@
       "type": "string",
       "default": "",
       "risk": "safe"
+    },
+    {
+      "key": "clusterFleetWindowSec",
+      "env": "Cluster__FleetWindowSeconds",
+      "label": "Fleet answer window",
+      "description": "How long the assistant reuses what the cluster's other machines told it before asking again. Only read when this assistant is part of a cluster.",
+      "group": "cluster",
+      "type": "int",
+      "default": "15",
+      "min": 0,
+      "unit": "s",
+      "risk": "safe"
     }
   ]
 }

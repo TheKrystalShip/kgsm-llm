@@ -98,12 +98,18 @@ builder.Logging.AddSystemdConsole();
 // The store is named from this member's own database inside its own StateDirectory=. Two members
 // sharing one would share a roster and an outbox, which nothing notices until one of them acts on the
 // other's behalf.
+//
+// Whether there is a secret is the one thing outside the block: it decides which engine this service
+// reaches, and that is settled below, after the adapters that answer for a machine standing alone.
+bool clustered = ClusterConfiguration.Secret(builder.Configuration).Length > 0;
 {
     var clusterSettings = builder.Configuration.GetSection(AssistantClusterOptions.Section)
         .Get<AssistantClusterOptions>() ?? new AssistantClusterOptions();
 
     var resolved = new AssistantClusterSettings(
-        clusterSettings.ResolveMemberId(), clusterSettings.PublicBaseUrl.Trim());
+        clusterSettings.ResolveMemberId(),
+        clusterSettings.PublicBaseUrl.Trim(),
+        TimeSpan.FromSeconds(Math.Max(0, clusterSettings.FleetWindowSeconds)));
     builder.Services.AddSingleton(resolved);
 
     builder.Services.AddKgsmCluster(new TheKrystalShip.KGSM.Cluster.ClusterOptions
@@ -134,6 +140,7 @@ builder.Logging.AddSystemdConsole();
     builder.Services.AddSingleton<NodeDirectory>();
     builder.Services.AddSingleton<NodeApiClient>();
     builder.Services.AddSingleton<ClusterServers>();
+    builder.Services.AddSingleton<ClusterCatalog>();
     // Its own client, so a node read is bounded by a node's latency rather than sharing a ceiling with
     // the model's long turns.
     builder.Services.AddHttpClient(NodeApiClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(20));
@@ -202,6 +209,23 @@ builder.Services.AddKgsmEventListener(builder.Configuration);
 // The startup orphan sweep for create_blueprint test-install probes (plan step 10's backstop) — the
 // first IHostedService in this repo. Runs once at startup and exits; see its own doc comment.
 builder.Services.AddHostedService<BlueprintProbeSweepService>();
+
+// --- Which engine this service reaches ---------------------------------------
+// A machine standing alone has an engine beside it and reaches it through kgsm-lib, which is what
+// AddKgsmAdapters registered above. A member of a cluster serves every machine in it and has no
+// standing to reach any of their engines directly, so it asks each node's own Control Panel API —
+// including the node on this machine, so one answer about one host is not composed two ways.
+//
+// Registered after the adapters and only when there is a cluster: last registration wins, so a
+// standalone install resolves exactly what it always did and this line is never reached.
+if (clustered)
+{
+    builder.Services.AddSingleton<ClusterServerInventory>();
+    builder.Services.AddSingleton<IServerInventory>(sp => sp.GetRequiredService<ClusterServerInventory>());
+    // The same instance under the invalidation seam, so the engine's own events on this machine drop
+    // what the fleet said rather than a cache nothing reads.
+    builder.Services.AddSingleton<IInventoryInvalidation>(sp => sp.GetRequiredService<ClusterServerInventory>());
+}
 
 // --- This leaf's own journal -------------------------------------------------
 // The WRITE half. AddKgsmAdapters above registers the federated READ of every producer's journal,
@@ -986,8 +1010,17 @@ secured.MapGet("/speech", (ISpokenAudio audio, ISpokenWords words) =>
 // The transcript is returned, never sent. What somebody says into a microphone is a draft until they
 // look at it — recognition is wrong often enough that a surface which turned a voice note straight
 // into a turn would ask the assistant things nobody said.
-secured.MapPost("/transcribe", async (HttpContext http, ISpokenWords words, CancellationToken ct) =>
+secured.MapPost("/transcribe", async (
+    HttpContext http, ISpokenWords words, IInvocationContext invocation, CancellationToken ct) =>
 {
+    // Recognition is primed with the names of the servers this person can be talking about, which on a
+    // member of a cluster means asking the nodes as them. Named here rather than left ambient: the
+    // person is known on this request, and a read with nobody behind it is refused by every node —
+    // which would cost the priming silently, one misheard server name at a time.
+    var listener = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;
+    using var asking = invocation.Begin(
+        Invocation.ForAssistant(listener.DisplayName, null, listener.Handle));
+
     if (!words.Available)
         return Results.Json(
             new { error = "This host has no speech engine, so it cannot transcribe anything." },

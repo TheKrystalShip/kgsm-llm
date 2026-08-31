@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a clustered assistant asks the nodes, not the engine beside it (1.55.0)
+
+With a cluster secret present, `IServerInventory` is backed by every node's Control Panel API instead
+of by kgsm-lib — including the node on this machine, so one answer about one host is not composed two
+ways. A machine standing alone resolves exactly what it always did: the swap is registered after the
+adapters and only when there is a cluster, so the line is never reached otherwise.
+
+What the nodes said is held per person for `Cluster:FleetWindowSeconds` (15s). Per person because a
+node that refuses somebody is reported to them as unreached and handing that answer to the next person
+would show them a machine they can in fact reach. Seconds rather than the minutes a local read is
+cached for, because nothing tells this member that another machine changed — the window is the whole
+of what bounds how stale an answer gets.
+
+**A node that did not answer is named in the lists it is missing from.** Both injected list headings
+say they are incomplete and why, rather than a caveat underneath: a caveat below a list of seven
+servers is read after the answer is already formed, and what follows is a confident "here are all of
+them". A node reached and refusing is told apart from one that could not be reached at all, and the
+refusal is reported as the refusal — which of its reasons applies is the node's to know and is not on
+the wire.
+
+The blueprint detail a game is described from now comes off the node's catalog row, which carries the
+moderation a blueprint declares. Ports read as `26900:26903/tcp` from either source.
+
+**A member of a cluster does not sweep for orphaned authoring probes.** Reading a node means acting
+for somebody and a startup sweep has nobody behind it, so it says it did not look instead of reporting
+that it found nothing. `/transcribe` names the person it is for, so recognition is still primed with
+the servers they can be talking about.
+
 ### Added — reaching the other machines in the cluster (1.54.0)
 
 `NodeDirectory` is which nodes there are, read from this member's own roster — anchors skipped, since

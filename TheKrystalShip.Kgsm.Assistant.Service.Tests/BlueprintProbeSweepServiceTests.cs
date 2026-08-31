@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 using TheKrystalShip.Kgsm.Assistant.Ports;
+using TheKrystalShip.KGSM.Cluster;
 using TheKrystalShip.Llm.Models;
 
 using Xunit;
@@ -23,8 +24,9 @@ public sealed class BlueprintProbeSweepServiceTests
     private readonly IServerInventory _inventory = Substitute.For<IServerInventory>();
     private readonly IServerOperations _operations = Substitute.For<IServerOperations>();
 
-    private BlueprintProbeSweepService Create() =>
-        new(_inventory, _operations, NullLogger<BlueprintProbeSweepService>.Instance);
+    private BlueprintProbeSweepService Create(string secret = "") =>
+        new(_inventory, _operations, new ClusterOptions { MemberId = "test-assistant", StorePath = ":memory:", Secret = secret },
+            NullLogger<BlueprintProbeSweepService>.Instance);
 
     private Task RunAsync() => Create().SweepOnceAsync(CancellationToken.None);
 
@@ -80,5 +82,18 @@ public sealed class BlueprintProbeSweepServiceTests
         var act = RunAsync;
 
         await act.Should().NotThrowAsync();
+    }
+
+    /// <summary>
+    /// A member of a cluster has nobody to act for at startup, so every node would refuse the read and
+    /// an empty roster would read as an empty result. It does not look, and does not touch anything.
+    /// </summary>
+    [Fact]
+    public async Task AMemberOfAClusterDoesNotSweep()
+    {
+        await Create(secret: "a-cluster-secret").SweepOnceAsync(CancellationToken.None);
+
+        await _inventory.DidNotReceive().GetInstancesAsync(Arg.Any<CancellationToken>());
+        await _operations.DidNotReceive().UninstallAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 }

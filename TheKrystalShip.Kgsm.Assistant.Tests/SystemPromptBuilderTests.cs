@@ -86,6 +86,48 @@ public sealed class SystemPromptBuilderTests : IDisposable
                 instances.ToDictionary(i => i.id, i => i.label)));
     }
 
+    /// <summary>What the inventory could not read, so a test can assert the lists are framed as short.</summary>
+    private void CouldNotRead(params string[] sources) =>
+        _inventory.GetUnreachedAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>(sources));
+
+    /// <summary>
+    /// A list short by a machine looks exactly like a smaller fleet. The model has nothing else to
+    /// tell it otherwise, so what could not be read is named and the lists are stated to be missing
+    /// whatever it holds — the alternative is a confident answer about everything that exists, built
+    /// on a list that is not everything.
+    /// </summary>
+    [Fact]
+    public async Task What_could_not_be_read_is_named_beside_the_lists()
+    {
+        Installed(("factorio-1", "factorio", "factorio-1"));
+        Catalog(("factorio", "Factorio"));
+        CouldNotRead("hotbox (could not be reached)");
+
+        var prompt = (await Build().BuildAsync(canPerformActions: false)).Text;
+
+        prompt.Should().Contain("Currently installed instances — INCOMPLETE, because hotbox (could not be reached)");
+        prompt.Should().Contain("Installable game types (blueprints) — INCOMPLETE, because hotbox (could not be reached)");
+        prompt.Should().Contain("so nobody reads the lists above as everything there is");
+    }
+
+    /// <summary>
+    /// Nothing missing says nothing. A standing caveat on every turn is one the model learns to
+    /// discount, and it would be false on the ordinary turn where every source answered.
+    /// </summary>
+    [Fact]
+    public async Task Nothing_is_said_when_everything_answered()
+    {
+        Installed(("factorio-1", "factorio", "factorio-1"));
+        Catalog(("factorio", "Factorio"));
+        CouldNotRead();
+
+        var prompt = (await Build().BuildAsync(canPerformActions: false)).Text;
+
+        prompt.Should().NotContain("INCOMPLETE");
+        prompt.Should().Contain("Currently installed instances:");
+    }
+
     /// <summary>
     /// <b>Both names of every server are listed, and the model is told which one a tool takes.</b>
     /// A list of ids alone leaves "restart My Factorio" with nothing to match; a list of labels alone

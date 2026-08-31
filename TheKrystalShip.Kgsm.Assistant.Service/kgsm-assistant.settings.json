@@ -155,7 +155,11 @@
     // The address a browser reaches this assistant's chat at. Blank is the ordinary case; it is not
     // blank behind a reverse proxy, where what a browser uses and what other members connect to are
     // different names.
-    "PublicBaseUrl": ""
+    "PublicBaseUrl": "",
+    // How long what the cluster's nodes said is reused before they are asked again. Seconds, because
+    // nothing tells this member that another machine changed — the window is the whole of what bounds
+    // how stale an answer gets. Only read when this assistant is in a cluster.
+    "FleetWindowSeconds": 15
   },
   "KgsmAuth": {
     "Providers": {

@@ -66,4 +66,6 @@ public sealed class AssistantCapabilityWorker(
 /// <summary>The resolved cluster-facing values, so nothing downstream re-reads a raw setting.</summary>
 /// <param name="MemberId">This member's identity, derived from the machine name when unset.</param>
 /// <param name="PublicBaseUrl">The address a browser uses, or empty when there is nothing to state.</param>
-public sealed record AssistantClusterSettings(string MemberId, string PublicBaseUrl);
+/// <param name="FleetWindow">How long an answer from the nodes is reused before they are asked again.</param>
+public sealed record AssistantClusterSettings(
+    string MemberId, string PublicBaseUrl, TimeSpan FleetWindow);

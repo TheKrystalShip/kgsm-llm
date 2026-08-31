@@ -85,7 +85,18 @@ public class SystemPromptBuilder : ISystemPromptBuilder
             // one carrying only labels leaves the model handing a tool a string it cannot resolve.
             var instances = await _inventory.GetInstancesAsync(cancellationToken);
             var instanceLabels = await _inventory.GetInstanceLabelsAsync(cancellationToken);
-            builder.Append("\n\nCurrently installed instances:\n");
+
+            // A list short by a machine looks exactly like a smaller fleet, and nothing in it says
+            // which. So what could not be read is written into the heading of each list rather than
+            // stated once underneath: a caveat below a list of seven servers is read after the answer
+            // has already been formed, and the measured behaviour then is a confident "here are all
+            // of them".
+            var unreached = await _inventory.GetUnreachedAsync(cancellationToken);
+            var missing = unreached.Count > 0
+                ? $" — INCOMPLETE, because {string.Join("; ", unreached)}. Whatever it holds is not below"
+                : string.Empty;
+
+            builder.Append("\n\nCurrently installed instances").Append(missing).Append(":\n");
             if (instances.Count > 0)
             {
                 foreach (var (name, game) in instances.OrderBy(kv => kv.Key))
@@ -110,10 +121,18 @@ public class SystemPromptBuilder : ISystemPromptBuilder
                 builder.Append("(none)\n");
             }
 
-            builder.Append("\nInstallable game types (blueprints): ");
+            builder.Append("\nInstallable game types (blueprints)").Append(missing).Append(": ");
             builder.Append(catalog.Count > 0
                 ? string.Join(", ", catalog.Select(b => b.Label).OrderBy(l => l, StringComparer.OrdinalIgnoreCase))
                 : "(none)");
+
+            if (unreached.Count > 0)
+            {
+                builder.Append("\n\nAnswering about what exists — what is installed, what can be " +
+                               "installed, how many there are — say in that same answer that ")
+                       .Append(string.Join("; ", unreached))
+                       .Append(", so nobody reads the lists above as everything there is.");
+            }
         }
         catch (Exception ex)
         {

@@ -67,10 +67,14 @@ public sealed class NodeApiClient(
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    // This node holds no account for the person being acted for. Everything else about
-                    // it is healthy, so saying "unreachable" would send somebody looking at a network.
+                    // The node was reached and would not let this member act for this person. Which of
+                    // the reasons it is — no account there under that handle, a disabled one, a node
+                    // too old to know the scheme — is the node's to know and is not on the wire, so
+                    // what is reported is the refusal itself. Told apart from unreachable, because
+                    // everything else about the node is healthy and saying otherwise would send
+                    // somebody looking at a network.
                     return new NodeResult<T>(
-                        node.MemberId, default, "this node has no account for you");
+                        node.MemberId, default, "would not let this assistant act for you");
                 }
 
                 if (!response.IsSuccessStatusCode)

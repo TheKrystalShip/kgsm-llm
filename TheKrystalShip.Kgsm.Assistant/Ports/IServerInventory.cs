@@ -42,6 +42,18 @@ public interface IServerInventory
     /// </summary>
     Task<BlueprintDetail?> GetBlueprintDetailAsync(
         string blueprintName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// What these lists could not be read from, each named with why, so an answer built on them can
+    /// say what is missing from it.
+    /// </summary>
+    /// <remarks>
+    /// Empty is the ordinary answer and the only one an inventory with a single source can give: it
+    /// either read that source or it did not, and a list that came back empty is visibly empty. An
+    /// inventory assembled from several is the case this exists for — a list short by one machine
+    /// looks exactly like a smaller fleet, and nothing in it says which.
+    /// </remarks>
+    Task<IReadOnlyList<string>> GetUnreachedAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>

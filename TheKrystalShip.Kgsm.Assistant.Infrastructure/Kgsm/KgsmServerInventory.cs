@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration;
 using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 
@@ -193,7 +194,9 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
                 Name: bp.Name,
                 DisplayName: NullIfBlank(bp.Metadata?.DisplayName),
                 Description: NullIfBlank(bp.Metadata?.Description),
-                Ports: bp.Ports.Select(p => p.ToString()).ToArray(),
+                // Written the way the ecosystem writes a port range, because this string is read by a
+                // person through the model and nothing downstream parses it back.
+                Ports: bp.Ports.Select(PortText).ToArray(),
                 Kind: bp.BlueprintType.ToString().ToLowerInvariant(),
                 SteamAccountRequired: bp.IsSteamAccountRequired,
                 MaxPlayers: bp.Metadata?.MaxPlayers,
@@ -208,6 +211,23 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
             return null;
         }
     }
+
+    /// <summary>
+    /// Nothing, always: there is one engine here and a read of it either answered or did not.
+    /// </summary>
+    /// <remarks>
+    /// A refresh that fails serves the last good snapshot and logs it, so what a caller holds is
+    /// either current or the whole of what was last true — never a list quietly short by part of
+    /// itself, which is the case this reports.
+    /// </remarks>
+    public Task<IReadOnlyList<string>> GetUnreachedAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
+
+    /// <summary>A port range as <c>26900:26903/tcp</c>, a single port without its range.</summary>
+    private static string PortText(PortMapping port) =>
+        port.Start == port.End
+            ? $"{port.Start}/{port.Protocol}"
+            : $"{port.Start}:{port.End}/{port.Protocol}";
 
     private static string? NullIfBlank(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;

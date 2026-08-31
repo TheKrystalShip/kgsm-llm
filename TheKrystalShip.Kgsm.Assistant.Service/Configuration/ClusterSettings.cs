@@ -50,6 +50,21 @@ public sealed class AssistantClusterOptions
     [ConfigField("clusterPublicBaseUrl", "Public address", Group = "cluster", Type = ConfigType.String)]
     public string PublicBaseUrl { get; set; } = "";
 
+    /// <summary>
+    /// How long an answer from the cluster's nodes is reused before they are asked again, in seconds.
+    /// </summary>
+    /// <remarks>
+    /// Seconds rather than the minutes the engine on this machine is cached for, because the two are
+    /// bounded by different things. A local read is told when it goes stale — the engine says a server
+    /// was installed — so it can be held until then. Nothing tells this member that another machine
+    /// changed, so the window is the whole of what bounds it. Zero asks every node on every read,
+    /// which is correct and turns one turn into a burst of them.
+    /// </remarks>
+    /// <panel>How long the assistant reuses what the cluster's other machines told it before asking
+    /// again. Only read when this assistant is part of a cluster.</panel>
+    [ConfigField("clusterFleetWindowSec", "Fleet answer window", Group = "cluster", Min = 0, Unit = "s")]
+    public int FleetWindowSeconds { get; set; } = 15;
+
     /// <summary>This member's id, derived from the machine name when nothing is configured.</summary>
     public string ResolveMemberId() =>
         string.IsNullOrWhiteSpace(MemberId)

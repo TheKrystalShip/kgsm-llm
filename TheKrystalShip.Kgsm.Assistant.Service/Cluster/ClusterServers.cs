@@ -7,6 +7,11 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Cluster;
 /// <summary>One server and the machine it is on.</summary>
 public sealed record PlacedServer(string Node, Server Server);
 
+/// <summary>Where an action on one server goes, or why it goes nowhere.</summary>
+/// <param name="Node">The node holding it, when exactly one does.</param>
+/// <param name="Failure">Why it could not be routed, worded for the person who asked.</param>
+public sealed record NodeRoute(ClusterNode? Node, string? Failure);
+
 /// <summary>What the fleet answered: the servers found, and the nodes that did not answer.</summary>
 /// <param name="Found">Every server that was reported, each carrying the node reporting it.</param>
 /// <param name="Unreached">The nodes that could not be read, each with why — never an empty
@@ -39,6 +44,7 @@ public sealed record FleetServers(IReadOnlyList<PlacedServer> Found, IReadOnlyLi
 public sealed class ClusterServers(
     NodeDirectory nodes,
     NodeApiClient api,
+    ClusterCatalog catalog,
     IInvocationContext invocation,
     AssistantClusterSettings settings,
     ILogger<ClusterServers> logger)
@@ -83,6 +89,94 @@ public sealed class ClusterServers(
 
     /// <summary>Forget what the fleet last said, so the next read asks every node again.</summary>
     public void Forget() => _snapshot.Clear();
+
+    /// <summary>
+    /// The node an action on this server has to be sent to, or why it cannot be sent anywhere.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Unknown is told apart from unreachable.</b> A server nobody reported might not exist, or might
+    /// be on the machine that did not answer — and those are fixed by different things, so a node that
+    /// could not be read is named in the refusal rather than left to make the server look absent.
+    /// </para>
+    /// <para>
+    /// <b>Two nodes holding one id refuses.</b> Ids are minted per install and are usually distinct
+    /// across a cluster, but nothing enforces it; picking one would send somebody's action to a machine
+    /// they did not name, and no wording afterwards recovers that.
+    /// </para>
+    /// </remarks>
+    public async Task<NodeRoute> RouteAsync(string instanceId, CancellationToken ct = default)
+    {
+        FleetServers fleet = await ReadAsync(ct).ConfigureAwait(false);
+
+        List<PlacedServer> holders =
+            [.. fleet.Found.Where(p => string.Equals(p.Server.Id, instanceId, StringComparison.OrdinalIgnoreCase))];
+
+        if (holders.Count > 1)
+        {
+            return new NodeRoute(null,
+                $"'{instanceId}' exists on more than one machine ({string.Join(", ", holders.Select(h => h.Node))}), "
+                + "so it is not clear which one this is about. Nothing was done.");
+        }
+
+        if (holders.Count == 0)
+        {
+            return new NodeRoute(null, fleet.Unreached.Count > 0
+                ? $"there is no server called '{instanceId}' on any machine that answered, and "
+                  + $"{string.Join("; ", fleet.Unreached)} — so it may be there."
+                : $"there is no server called '{instanceId}' on any machine in this cluster.");
+        }
+
+        IReadOnlyList<ClusterNode> known = await nodes.NodesAsync(ct).ConfigureAwait(false);
+        ClusterNode? node = known.FirstOrDefault(n => string.Equals(n.MemberId, holders[0].Node, StringComparison.Ordinal));
+
+        return node is null
+            ? new NodeRoute(null, $"'{holders[0].Node}' is no longer a node this assistant can reach.")
+            : new NodeRoute(node, null);
+    }
+
+    /// <summary>
+    /// Which node a new server of this game should be installed on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// There is nothing to route to: the server does not exist yet, so its id looks up nothing. What
+    /// decides the machine is which of them offers the game — and when more than one does, nothing
+    /// here decides, because the cluster holds no placement policy and choosing would put somebody's
+    /// server on a machine they never named.
+    /// </para>
+    /// <para>
+    /// The refusal names the candidates, which is what turns it into a question a person can answer.
+    /// </para>
+    /// </remarks>
+    public async Task<NodeRoute> RouteForInstallAsync(string blueprint, CancellationToken ct = default)
+    {
+        FleetCatalog fleet = await catalog.ReadAsync(ct).ConfigureAwait(false);
+
+        List<string> offering =
+            [.. fleet.OfferedBy(blueprint).OrderBy(n => n, StringComparer.Ordinal)];
+
+        if (offering.Count > 1)
+        {
+            return new NodeRoute(null,
+                $"{string.Join(" and ", offering)} can both install {blueprint}, and nothing here picks "
+                + "between machines. Ask which one it should go on.");
+        }
+
+        if (offering.Count == 0)
+        {
+            return new NodeRoute(null, fleet.Unreached.Count > 0
+                ? $"no machine that answered can install '{blueprint}', and {string.Join("; ", fleet.Unreached)}."
+                : $"no machine in this cluster can install '{blueprint}'.");
+        }
+
+        IReadOnlyList<ClusterNode> known = await nodes.NodesAsync(ct).ConfigureAwait(false);
+        ClusterNode? node = known.FirstOrDefault(n => string.Equals(n.MemberId, offering[0], StringComparison.Ordinal));
+
+        return node is null
+            ? new NodeRoute(null, $"'{offering[0]}' is no longer a node this assistant can reach.")
+            : new NodeRoute(node, null);
+    }
 
     /// <summary>
     /// Every server in the cluster, with the node it is on, and the routing table refreshed from what

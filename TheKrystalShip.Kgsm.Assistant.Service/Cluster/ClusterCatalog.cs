@@ -8,7 +8,15 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Cluster;
 /// <summary>The cluster's catalog: every game installable anywhere in it, and what each one needs.</summary>
 /// <param name="Games">One entry per game, whichever nodes offer it.</param>
 /// <param name="Unreached">The nodes that could not be read, each with why.</param>
-public sealed record FleetCatalog(IReadOnlyList<LibraryEntry> Games, IReadOnlyList<string> Unreached);
+public sealed record FleetCatalog(
+    IReadOnlyList<LibraryEntry> Games,
+    IReadOnlyList<string> Unreached,
+    IReadOnlyDictionary<string, IReadOnlyList<string>> Offers)
+{
+    /// <summary>Which nodes can install this game. Empty when none reported it.</summary>
+    public IReadOnlyList<string> OfferedBy(string blueprint) =>
+        Offers.TryGetValue(blueprint, out IReadOnlyList<string>? nodes) ? nodes : [];
+}
 
 /// <summary>
 /// What the cluster can install, read from every node's own catalog.
@@ -47,6 +55,9 @@ public sealed class ClusterCatalog(
         IReadOnlyList<ClusterNode> known = await nodes.NodesAsync(ct).ConfigureAwait(false);
 
         var games = new Dictionary<string, LibraryEntry>(StringComparer.OrdinalIgnoreCase);
+        // Which machines can install each game. A game the whole cluster ships is on every node, so
+        // this is what makes "install factorio" a question when two nodes could take it.
+        var offers = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         var unreached = new List<string>();
 
         IEnumerable<Task<NodeResult<List<LibraryEntry>>>> reads = known.Select(node =>
@@ -61,15 +72,26 @@ public sealed class ClusterCatalog(
             }
 
             foreach (LibraryEntry game in result.Body ?? [])
-                if (game.Id.Length > 0)
-                    games.TryAdd(game.Id, game);
+            {
+                if (game.Id.Length == 0)
+                    continue;
+
+                games.TryAdd(game.Id, game);
+
+                if (!offers.TryGetValue(game.Id, out List<string>? on))
+                    offers[game.Id] = on = [];
+                on.Add(result.Node);
+            }
         }
 
         if (unreached.Count > 0)
             logger.LogInformation("cluster catalog: could not read {Nodes}", string.Join(", ", unreached));
 
         return new FleetCatalog(
-            [.. games.Values.OrderBy(g => g.Id, StringComparer.OrdinalIgnoreCase)], unreached);
+            [.. games.Values.OrderBy(g => g.Id, StringComparer.OrdinalIgnoreCase)],
+            unreached,
+            offers.ToDictionary(
+                kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value, StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>

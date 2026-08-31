@@ -225,6 +225,9 @@ if (clustered)
     // The same instance under the invalidation seam, so the engine's own events on this machine drop
     // what the fleet said rather than a cache nothing reads.
     builder.Services.AddSingleton<IInventoryInvalidation>(sp => sp.GetRequiredService<ClusterServerInventory>());
+    // And acting on them, routed by the server's own id: which machine holds one is settled here and
+    // appears nowhere above, so a tool argument still means what it always meant.
+    builder.Services.AddSingleton<IServerOperations, ClusterServerOperations>();
 }
 
 // --- This leaf's own journal -------------------------------------------------

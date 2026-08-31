@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — acting on a server that is on another machine (1.57.0)
+
+`IServerOperations` is backed by the cluster's nodes in the clustered standing. Every call is routed by
+the server's own id — which machine holds it is settled inside the adapter and appears nowhere above,
+so a tool argument still means exactly what it always meant. A server no node reported, or one two
+nodes reported, is refused with the reason rather than sent somewhere on a guess.
+
+**A lifecycle command is accepted and then watched.** The node answers `202` with a job and settles it
+later, so the outcome is read off `GET /jobs/{id}` rather than inferred from the server's run-state: a
+start the engine refused leaves the server stopped, indistinguishable from a start nobody issued, and
+the reason lives only on the job. A job that stops being readable is reported as unknown, never as
+failed — the node has it and this member does not.
+
+**A write is sent once.** Reads retry because asking twice costs nothing; a request that may already
+have started a server or banned somebody is not the same request twice, and a connection that dropped
+after the node received it looks exactly like one that dropped before.
+
+**Moderation resolves its target against the node's roster.** The node takes a roster key and reads
+every identity field off its own record, so neither this service nor the model decides who gets
+banned. The consequence is real and is the right one: somebody the server has never seen cannot be
+acted on, where the alternative is a chat turn that can ban an arbitrary string.
+
+**Installing chooses a machine rather than routing to one.** A new server has no id to look up, so it
+goes to the node that offers the game when exactly one does and refuses when several do — the cluster
+holds no placement policy, and picking would put somebody's server on a machine they never named.
+
+Two health inputs are absent over the API and say so instead of being invented: the previous run's
+ending, which a node's console surface does not serve, and port reachability, which is measured on the
+machine running the server. Both checks skip with a stated reason rather than reporting a reading
+nobody took.
+
+`GetConfiguredPortsAsync` is gone from the port. Nothing called it.
+
 ### Changed — a node's answers are types, not hand-copied field names (1.56.0)
 
 The clustered adapters read `TheKrystalShip.KGSM.Api.Contracts`. A node's server row, its catalog row

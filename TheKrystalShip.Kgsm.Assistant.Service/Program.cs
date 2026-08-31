@@ -228,6 +228,19 @@ if (clustered)
     // And acting on them, routed by the server's own id: which machine holds one is settled here and
     // appears nowhere above, so a tool argument still means what it always meant.
     builder.Services.AddSingleton<IServerOperations, ClusterServerOperations>();
+
+    // The read ports, each answered by the node the server is on. Where a node publishes less than an
+    // engine beside the assistant would — a run history, a router's forwards, the mechanism behind a
+    // firewall's enforcement — the reading is absent and says so, rather than being reconstructed from
+    // something adjacent.
+    builder.Services.AddSingleton<IServerFacts, ClusterServerFacts>();
+    builder.Services.AddSingleton<IServerMetrics, ClusterServerMetrics>();
+    builder.Services.AddSingleton<INetworkInfo, ClusterNetworkInfo>();
+    builder.Services.AddSingleton<IUpnpInfo, ClusterUpnpInfo>();
+    builder.Services.AddSingleton<IEventHistory, ClusterEventHistory>();
+    // A cluster has no single host, so this answers only while there is exactly one node and reports
+    // itself unavailable otherwise — a machine's uptime is not a fact about a fleet.
+    builder.Services.AddSingleton<IHostFacts, ClusterHostFacts>();
 }
 
 // --- This leaf's own journal -------------------------------------------------

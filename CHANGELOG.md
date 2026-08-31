@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the read ports answer from the cluster's nodes (1.58.0)
+
+`IServerFacts`, `IServerMetrics`, `INetworkInfo`, `IUpnpInfo`, `IEventHistory` and `IHostFacts` are
+backed by the nodes in the clustered standing. A standalone install resolves exactly what it always
+did.
+
+**What a node does not publish is absent and says so.** Its console surface holds the run in progress,
+so there is no run history and the stability check has nothing to judge; a router's forwards are read
+by the supervisor on the machine that asked for them, so no forward is reported rather than an empty
+set — an empty set is a measurement meaning the router forwards nothing. A process id and an install
+path are that machine's internals. Each is null or unavailable, which is what the callers already do
+with a figure nobody took.
+
+**A fleet has no host.** `IHostFacts` answers while there is exactly one node and otherwise reports
+itself unavailable **naming the machines**, because the question is answerable once somebody says
+which one. `HostFacts` and `HostPortUsage` gained a `Reason` for this: a machine that would not answer
+and a question with no single machine to answer it are both unavailable and are fixed by completely
+different things, so telling somebody the first when it is the second sends them to look at a working
+host. The engine-backed adapter fills it in too.
+
+**A history short by a node is not a quieter cluster.** Each node keeps its own log with its own
+cursor, so a fleet read takes a bounded window from each and merges newest-first; a read that lost a
+node reports the journal unavailable rather than serving what it got as though it were everything.
+
+The presence mechanism a node reports is carried rather than guessed, so an empty roster under RCON is
+not read as an empty server.
+
 ### Added — acting on a server that is on another machine (1.57.0)
 
 `IServerOperations` is backed by the cluster's nodes in the clustered standing. Every call is routed by

@@ -12,6 +12,12 @@ public sealed record HostMemory(string Total, string Used, string Free, string A
 /// <summary>
 /// The host's own vitals. Any member may be null when the host reported nothing for it — a null is
 /// "not reported", never a zero.
+/// <para>
+/// <see cref="Reason"/> says why an unavailable reading is unavailable, when the surface knows. A
+/// machine that would not answer and a question with no single machine to answer it are both
+/// unavailable and are fixed by completely different things, so the one that can be stated is —
+/// otherwise every absence reads as an outage.
+/// </para>
 /// </summary>
 public sealed record HostFacts(
     FactsState State,
@@ -20,7 +26,8 @@ public sealed record HostFacts(
     HostMemory? Memory,
     HostDisk? Disk,
     string? ExternalIp,
-    bool? RebootRequired);
+    bool? RebootRequired,
+    string? Reason = null);
 
 /// <summary>One port the host is listening on.</summary>
 /// <param name="Port">The port number.</param>
@@ -64,7 +71,8 @@ public sealed record HostPortUsage(
     FactsState State,
     IReadOnlyList<HostPortEntry> UsedPorts,
     FactsState ConflictState,
-    IReadOnlyList<PortConflictEntry> Conflicts);
+    IReadOnlyList<PortConflictEntry> Conflicts,
+    string? Reason = null);
 
 /// <summary>
 /// Facts about the host machine itself rather than any one instance — what backs the model-facing
@@ -94,9 +102,12 @@ public interface IHostFacts
 public sealed class UnavailableHostFacts : IHostFacts
 {
     public Task<HostFacts> GetAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(new HostFacts(FactsState.Unavailable, null, null, null, null, null, null));
+        Task.FromResult(new HostFacts(
+            FactsState.Unavailable, null, null, null, null, null, null,
+            "this host has no engine configured"));
 
     public Task<HostPortUsage> GetPortUsageAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new HostPortUsage(
-            FactsState.Unavailable, [], FactsState.Unavailable, []));
+            FactsState.Unavailable, [], FactsState.Unavailable, [],
+            "this host has no engine configured"));
 }

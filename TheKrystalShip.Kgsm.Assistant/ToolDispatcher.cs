@@ -1140,8 +1140,13 @@ public class ToolDispatcher : IToolDispatcher
     {
         var usage = await _hostFacts.GetPortUsageAsync(cancellationToken);
         if (usage.State == FactsState.Unavailable)
-            return "Couldn't read which ports the host is listening on — the scan didn't run. "
-                 + "That isn't the same as nothing being bound.";
+        {
+            return usage.Reason is { Length: > 0 } why
+                ? $"Couldn't read which ports the host is listening on — {why}. That isn't the same "
+                  + "as nothing being bound."
+                : "Couldn't read which ports the host is listening on — the scan didn't run. "
+                  + "That isn't the same as nothing being bound.";
+        }
 
         if (usage.UsedPorts.Count == 0)
             return "The host is listening on no ports at all.";
@@ -1185,8 +1190,12 @@ public class ToolDispatcher : IToolDispatcher
     {
         var usage = await _hostFacts.GetPortUsageAsync(cancellationToken);
         if (usage.ConflictState == FactsState.Unavailable)
-            return "Couldn't check for port conflicts — the scan didn't run. That isn't the same "
-                 + "as there being none.";
+        {
+            return usage.Reason is { Length: > 0 } why
+                ? $"Couldn't check for port conflicts — {why}. That isn't the same as there being none."
+                : "Couldn't check for port conflicts — the scan didn't run. That isn't the same "
+                  + "as there being none.";
+        }
 
         if (usage.Conflicts.Count == 0)
             return "No port conflicts. No two servers are configured for the same port, and "
@@ -1206,7 +1215,14 @@ public class ToolDispatcher : IToolDispatcher
     {
         var facts = await _hostFacts.GetAsync(cancellationToken);
         if (facts.State == FactsState.Unavailable)
-            return "Couldn't read the host's vitals — the engine didn't answer.";
+        {
+            // The reason when the surface has one. "The engine didn't answer" is true of a machine
+            // that is down and false of a question that names no machine, and telling somebody the
+            // first when it is the second sends them to look at a working host.
+            return facts.Reason is { Length: > 0 } why
+                ? $"Couldn't read the host's vitals — {why}."
+                : "Couldn't read the host's vitals — the engine didn't answer.";
+        }
 
         var parts = new List<string>();
         if (facts.Uptime is not null) parts.Add($"Uptime: {facts.Uptime}");

@@ -50,7 +50,9 @@ internal sealed class KgsmHostFacts : IHostFacts
             if (info is null)
             {
                 _logger.LogWarning("Host system info was unavailable.");
-                return new HostFacts(FactsState.Unavailable, null, null, null, null, null, null);
+                return new HostFacts(
+                    FactsState.Unavailable, null, null, null, null, null, null,
+                    "the engine reported nothing about this machine");
             }
 
             return new HostFacts(
@@ -65,7 +67,9 @@ internal sealed class KgsmHostFacts : IHostFacts
         catch (Exception ex)
         {
             _logger.LogError(ex, "Host facts read failed.");
-            return new HostFacts(FactsState.Unavailable, null, null, null, null, null, null);
+            return new HostFacts(
+                FactsState.Unavailable, null, null, null, null, null, null,
+                "the engine could not be read");
         }
     }
 
@@ -123,7 +127,8 @@ internal sealed class KgsmHostFacts : IHostFacts
         catch (Exception ex)
         {
             _logger.LogError(ex, "Host port usage read failed.");
-            return new HostPortUsage(FactsState.Unavailable, [], FactsState.Unavailable, []);
+            return new HostPortUsage(
+                FactsState.Unavailable, [], FactsState.Unavailable, [], "the scan could not be run");
         }
     }
 

@@ -140,14 +140,20 @@ SHARED_AUTH
     $SUDO chown "${DEPLOY_USER}:${DEPLOY_GROUP}" "$SHARED_AUTH_FILE"
 fi
 
-# ── 2b. The shared leaf-descriptor directory ──────────────────────────────────
-# Where this leaf declares its configurable surface for the Control Panel. Shared by every leaf
-# and scanned by kgsm-api, so it is created once by whichever project's setup.sh runs first and
-# owned by the deploying user — deploy.sh then writes the descriptor with no privilege. Skipped
-# entirely for a project that ships no descriptor.
-if [[ -n "${LEAF_DESCRIPTOR:-}" && -f "$LEAF_DESCRIPTOR" && ! -d "$LEAF_DESCRIPTOR_DIR" ]]; then
-    log "creating ${LEAF_DESCRIPTOR_DIR} (owned by ${DEPLOY_USER}) — the leaf config descriptors"
-    $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" "$LEAF_DESCRIPTOR_DIR"
+# ── 2b. The shared descriptor directory ───────────────────────────────────────
+# Where this component declares its configurable surface for the Control Panel. Two directories,
+# because a leaf and an anchor are different things: a leaf is one this node runs and kgsm-api scans
+# for, an anchor serves the whole cluster and merely happens to be here. Only the one this host's
+# standing calls for is created, and it is created once by whichever project's setup.sh runs first and
+# owned by the deploying user — deploy.sh then writes the descriptor with no privilege.
+#
+# A host that later joins a cluster needs the other directory, which is why re-running setup.sh is
+# part of the ecosystem's contract rather than a thing that happens once and never again.
+if [[ -n "${LEAF_DESCRIPTOR:-}" && -f "$LEAF_DESCRIPTOR" ]]; then
+    if descriptor_dir="$(descriptor_dir_for "$LEAF_DESCRIPTOR")" && [[ ! -d "$descriptor_dir" ]]; then
+        log "creating ${descriptor_dir} (owned by ${DEPLOY_USER}) — the config descriptors"
+        $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" "$descriptor_dir"
+    fi
 fi
 
 # The shared account store's directory. Where this host's KGSM accounts live, created by whichever

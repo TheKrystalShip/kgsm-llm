@@ -21,6 +21,7 @@ using TheKrystalShip.Kgsm.Assistant.Infrastructure.Extensions;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Service;
+using TheKrystalShip.Kgsm.Assistant.Service.Cluster;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.Push;
@@ -31,6 +32,8 @@ using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
+using TheKrystalShip.KGSM.Cluster;
+using TheKrystalShip.KGSM.Cluster.Membership;
 using TheKrystalShip.KGSM.WebPush;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Conversation;
@@ -81,6 +84,40 @@ foreach (string file in new[]
 // keep a SimpleConsole→stderr setup instead — see the convention's "CLI variant".)
 builder.Logging.ClearProviders();
 builder.Logging.AddSystemdConsole();
+
+// --- Cluster membership ------------------------------------------------------
+// Registered unconditionally and inert without a secret: a machine that is not part of a cluster
+// starts no worker and answers its inbox to nobody, which is the state a standalone install is in and
+// not a misconfiguration. The secret is read through ClusterConfiguration so every member on the
+// machine spells the key identically — one that spelled it differently would read a blank from a file
+// that is not empty and quietly report itself standalone.
+//
+// The store is named from this member's own database inside its own StateDirectory=. Two members
+// sharing one would share a roster and an outbox, which nothing notices until one of them acts on the
+// other's behalf.
+{
+    var clusterSettings = builder.Configuration.GetSection(AssistantClusterOptions.Section)
+        .Get<AssistantClusterOptions>() ?? new AssistantClusterOptions();
+
+    var resolved = new AssistantClusterSettings(
+        clusterSettings.ResolveMemberId(), clusterSettings.PublicBaseUrl.Trim());
+    builder.Services.AddSingleton(resolved);
+
+    builder.Services.AddKgsmCluster(new TheKrystalShip.KGSM.Cluster.ClusterOptions
+    {
+        MemberId = resolved.MemberId,
+        // An anchor in a cluster and a leaf on a machine standing alone are the same code with a
+        // different scope. What it says here is what it is when it is in a cluster at all, which is
+        // the only case this value is read in.
+        Kind = MemberKind.Anchor,
+        Secret = ClusterConfiguration.Secret(builder.Configuration),
+        SecretPrevious = ClusterConfiguration.SecretPrevious(builder.Configuration),
+        StorePath = Path.Combine(StatePaths.Directory, "cluster.db"),
+        PublicBaseUrl = resolved.PublicBaseUrl,
+    });
+
+    builder.Services.AddHostedService<AssistantCapabilityWorker>();
+}
 
 // --- Options (web-only) ------------------------------------------------------
 // The kgsm/inventory/web-search options moved to the Infrastructure library and are bound by
@@ -362,6 +399,12 @@ catch (AssistantTextUnavailableException ex)
 }
 
 app.UseCors();
+
+// The member-to-member wire, served by the cluster package. One implementation of the status codes,
+// the size cap, the token check and the spoof guard, so two members cannot disagree about what the
+// protocol is. Inert on a machine that is not clustered: the routes exist and refuse every caller,
+// because there is no secret to authenticate one with.
+app.MapClusterEndpoints();
 
 // The assistant's own web client, when one is installed: wwwroot/ under the content root
 // (/opt/kgsm-assistant/service/wwwroot on a deployed host), published by kgsm-web's

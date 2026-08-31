@@ -43,12 +43,36 @@ ENV_EXAMPLE="${REPO_DIR}/deploy/assistant.env.example"
 
 HEALTH_TRIES="${HEALTH_TRIES:-30}"
 
-# This project's leaf config descriptor — the JSON declaring its full configurable surface, which
-# kgsm-api reads to render the Control Panel's config page for this leaf. setup.sh creates the
-# discovery directory; deploy.sh installs the file there unprivileged on every deploy, so the
-# descriptor can never be older than the binary it describes. Format: tks/leaf-config-descriptor.md.
-# Leave empty for a project that is not a leaf (nothing is installed and nothing is asserted).
-LEAF_DESCRIPTOR="${REPO_DIR}/deploy/${PROJECT}.leaf.json"
+# This project's config descriptor — the JSON declaring its full configurable surface, which kgsm-api
+# reads to render the Control Panel's config page. setup.sh creates the discovery directory; deploy.sh
+# installs the file there unprivileged on every deploy, so the descriptor can never be older than the
+# binary it describes. Format: tks/leaf-config-descriptor.md.
+#
+# The build writes BOTH, because what this component is depends on where it is deployed: on a machine
+# standing alone it is a leaf that node administers, and in a cluster it is an anchor answering for
+# every node and reached at an address rather than through a neighbour. The suffix is what routes the
+# file, so which one is installed is the whole of the difference.
+LEAF_DESCRIPTOR_LEAF="${REPO_DIR}/deploy/${PROJECT}.leaf.json"
+LEAF_DESCRIPTOR_ANCHOR="${REPO_DIR}/deploy/${PROJECT}.anchor.json"
+
+# The host-level file every member of a cluster reads its shared secret from. Its presence with a
+# secret in it is what makes this machine part of a cluster, and it is the same switch the service
+# itself uses to decide where it stands — so the descriptor and the running process can never disagree
+# about what this component is.
+CLUSTER_ENV_FILE="${KGSM_CLUSTER_ENV_FILE:-/etc/kgsm/kgsm-cluster.env}"
+
+# Whether this machine is in a cluster. Read rather than configured, for the same reason the service
+# reads it: a deploy that had to be told would be a second place to say it, and the two would drift.
+host_is_clustered() {
+    [[ -r "$CLUSTER_ENV_FILE" ]] || return 1
+    grep -qE '^[[:space:]]*Cluster__Secret[[:space:]]*=[[:space:]]*[^[:space:]]' "$CLUSTER_ENV_FILE"
+}
+
+# The descriptor this host's standing calls for.
+LEAF_DESCRIPTOR="$LEAF_DESCRIPTOR_LEAF"
+if host_is_clustered; then
+    LEAF_DESCRIPTOR="$LEAF_DESCRIPTOR_ANCHOR"
+fi
 
 # This project's own nginx server block, installed into /etc/nginx/conf.d/ by setup.sh when the
 # host runs nginx. Each leaf ships its own vhost; the :80 ACME block and the certificate
@@ -154,6 +178,10 @@ PUBLISH_DIR="${REPO_DIR}/artifacts/publish"
 # Where every leaf drops its config descriptor. Shared across projects and scanned by kgsm-api —
 # the API holds no list of leaves, so a new leaf becomes configurable by landing a file here.
 LEAF_DESCRIPTOR_DIR="${KGSM_LEAF_DESCRIPTOR_DIR:-/var/lib/kgsm/leaves}"
+# Where an ANCHOR is described instead. A separate directory because they are separate things: a node's
+# API scans the leaves directory to render the services it runs, and reads nothing here — an anchor
+# serves the whole cluster and sharing a machine with a node says nothing about either.
+ANCHOR_DESCRIPTOR_DIR="${KGSM_ANCHOR_DESCRIPTOR_DIR:-/var/lib/kgsm/anchors}"
 # Where this host declares who may do what — the Discord app, guild, role-lookup token and role map
 # every KGSM surface authorizes against. One file, so a person cannot hold different authority on
 # different surfaces. Each unit loads it before its own env file; setup.sh seeds it blank.
@@ -262,10 +290,26 @@ install_units_unprivileged() {
 # When the file IS present the descriptor is validated before it lands, because kgsm-api skips a
 # malformed one silently: catching it here is the difference between "the panel has no page for
 # this leaf" and knowing why.
+descriptor_dir_for() {
+    case "$1" in
+        *.anchor.json) printf '%s' "$ANCHOR_DESCRIPTOR_DIR" ;;
+        *.leaf.json)   printf '%s' "$LEAF_DESCRIPTOR_DIR" ;;
+        *)             return 1 ;;
+    esac
+}
+
 install_leaf_descriptor() {
     [[ -n "${LEAF_DESCRIPTOR:-}" && -f "$LEAF_DESCRIPTOR" ]] || return 0
 
-    local dst="${LEAF_DESCRIPTOR_DIR}/${LEAF_ID}.json"
+    local dir
+    if ! dir="$(descriptor_dir_for "$LEAF_DESCRIPTOR")"; then
+        err "${LEAF_DESCRIPTOR} ends in neither .leaf.json nor .anchor.json, so there is no"
+        err "directory it belongs in. The suffix is what says whether this component is one of"
+        err "this node's leaves or an anchor serving the whole cluster."
+        return 1
+    fi
+
+    local dst="${dir}/${LEAF_ID}.json"
 
     # Validate what we can before it lands: it must parse, and its "id" must be the id this
     # project deploys under — a mismatch would install the file under a name kgsm-api then reads
@@ -288,14 +332,24 @@ PY
         fi
     fi
 
-    if [[ ! -d "$LEAF_DESCRIPTOR_DIR" ]]; then
-        err "leaf descriptor directory ${LEAF_DESCRIPTOR_DIR} is missing."
+    if [[ ! -d "$dir" ]]; then
+        err "descriptor directory ${dir} is missing."
         err "run ONCE (it will ask for your sudo password):   ${REPO_DIR}/deploy/setup.sh"
         return 1
     fi
 
     if ! cmp -s "$LEAF_DESCRIPTOR" "$dst"; then
-        log "leaf descriptor changed → ${dst}"
+        log "config descriptor changed → ${dst}"
         install -m 0644 "$LEAF_DESCRIPTOR" "$dst"
+    fi
+
+    # A component that has changed kind leaves its old file behind, and a stale descriptor in the
+    # leaves directory is read as a leaf however the component now describes itself.
+    local other
+    [[ "$dir" == "$ANCHOR_DESCRIPTOR_DIR" ]] && other="${LEAF_DESCRIPTOR_DIR}/${LEAF_ID}.json" \
+                                             || other="${ANCHOR_DESCRIPTOR_DIR}/${LEAF_ID}.json"
+    if [[ -f "$other" ]]; then
+        log "removing ${other} — this component is described in ${dir}"
+        rm -f "$other"
     fi
 }

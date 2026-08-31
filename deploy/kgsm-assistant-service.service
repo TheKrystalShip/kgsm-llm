@@ -43,6 +43,11 @@ Environment=Prompts__Directory=/usr/share/kgsm-assistant/prompts
 # granting the same person different authority on different surfaces, so prefer the shared file.
 # Seeded by deploy/setup.sh; optional, so a host that never provisioned it still starts.
 EnvironmentFile=-/etc/kgsm/kgsm-auth.env
+# The cluster's shared secret, host-level like the file above and read by every member on this machine.
+# Its presence with a secret in it is what makes this service a member; absent or blank, it serves this
+# host alone exactly as a standalone install always has. Optional, so a machine in no cluster starts
+# with nothing to configure.
+EnvironmentFile=-/etc/kgsm/kgsm-cluster.env
 EnvironmentFile=/etc/kgsm-assistant/service.env
 
 # systemd creates this owned by the service user; the event socket above is bound inside it.

@@ -10,7 +10,7 @@
          ships under. The three published libraries (TheKrystalShip.Llm, .Kgsm.Assistant and
          .Kgsm.Assistant.Relay) each version independently of it and of each other. Read by
          deploy/version.sh, which is the single source for packaging. -->
-    <Version>1.50.1</Version>
+    <Version>1.51.0</Version>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>
@@ -31,13 +31,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TheKrystalShip.KGSM.ComponentConfig" Version="3.0.0" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.ComponentConfig" Version="3.1.0-dev.1" PrivateAssets="all" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="3.2.0" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Discord" Version="4.0.0" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Sessions" Version="2.0.0" />
     <!-- The host's KGSM accounts, read straight off the shared store. Not via kgsm-api: a file is
          not something a sibling service can be down for, which is what keeps this leaf standalone. -->
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Users" Version="1.3.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Cluster" Version="1.0.0-dev.17" />
     <!-- RFC 8291/8292 only: the encryption and the VAPID token, with no opinion about what is being
          announced or to whom. The subscriptions, the preferences and the staged actions are this
          leaf's own — sharing those with kgsm-api would be sharing an audience, not a protocol. -->

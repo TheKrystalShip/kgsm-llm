@@ -1,15 +1,22 @@
 using TheKrystalShip.KGSM.ComponentConfig;
 
 // What the Control Panel shows about this service, declared beside the configuration it describes.
-// TheKrystalShip.KGSM.ComponentConfig reads this out of the built assemblies and writes
-// deploy/kgsm-llm.leaf.json; deploy.sh installs that into /var/lib/kgsm/leaves/assistant.json, where
-// kgsm-api scans for it. The service itself never reads any of this.
+// TheKrystalShip.KGSM.ComponentConfig reads this out of the built assemblies and writes both
+// deploy/kgsm-llm.leaf.json and deploy/kgsm-llm.anchor.json; deploy.sh installs whichever this host's
+// standing calls for and clears the other. The service itself never reads any of this.
+//
+// Which one it is depends on the deployment, not on the build. On a machine standing alone this is a
+// leaf: it serves the host it runs on, and that node's Control Panel administers it as one of its
+// services. In a cluster it is an anchor: it answers for every node, is reached at an address rather
+// than through a neighbour, and sharing a machine with a node says nothing about either.
 
-[assembly: Leaf(
+[assembly: LeafOrAnchor(
     id: "assistant",
     displayName: "Assistant",
     unit: "kgsm-assistant-service.service",
-    role: "The KGSM assistant — answers questions about this host and performs authorized actions on it.")]
+    role: "The KGSM assistant — answers questions about this host and performs authorized actions on it.",
+    AnchorRole = "The KGSM assistant — answers questions about the cluster and performs authorized "
+        + "actions across it.")]
 
 // The GPU this leaf's work costs is spent by the model backends it drives over HTTP; the service
 // itself holds no GPU context of its own, so nothing in its cgroup shows where the work goes. The
@@ -43,6 +50,7 @@ using TheKrystalShip.KGSM.ComponentConfig;
 [assembly: ConfigGroup("authoring", "Blueprint authoring", 12)]
 [assembly: ConfigGroup("rag", "Knowledge base", 13)]
 [assembly: ConfigGroup("notifications", "Notifications", 14)]
+[assembly: ConfigGroup("cluster", "Cluster", 15)]
 
 // Lowest precedence first — the same order Program.cs registers them in.
 [assembly: ConfigFloorSource("appsettings", "/opt/kgsm-assistant/service/kgsm-assistant.settings.json")]

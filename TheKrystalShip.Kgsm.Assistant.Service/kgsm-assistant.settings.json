@@ -144,6 +144,19 @@
       "ResidentBackendPort": 0
     }
   },
+  // What this service states about itself as a member of a cluster. Whether it IS one is the shared
+  // secret in /etc/kgsm/kgsm-cluster.env, which is host-level and deliberately not declared here: one
+  // value shared by every member on the machine, and a second place to set it is where one blank and
+  // one filled look identical from the outside.
+  "Cluster": {
+    // Blank names this member after the machine it runs on. Per member, never per host — a machine
+    // running a node as well holds two members with two names.
+    "MemberId": "",
+    // The address a browser reaches this assistant's chat at. Blank is the ordinary case; it is not
+    // blank behind a reverse proxy, where what a browser uses and what other members connect to are
+    // different names.
+    "PublicBaseUrl": ""
+  },
   "KgsmAuth": {
     "Providers": {
       "discord": {

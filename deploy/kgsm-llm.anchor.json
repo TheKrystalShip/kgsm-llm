@@ -3,7 +3,7 @@
   "id": "assistant",
   "displayName": "Assistant",
   "unit": "kgsm-assistant-service.service",
-  "role": "The KGSM assistant — answers questions about this host and performs authorized actions on it.",
+  "role": "The KGSM assistant — answers questions about the cluster and performs authorized actions across it.",
   "onDemand": false,
   "applyMode": "restart",
   "gpuBackendUnits": [

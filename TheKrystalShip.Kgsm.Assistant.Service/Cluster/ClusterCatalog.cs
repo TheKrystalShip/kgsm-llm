@@ -1,48 +1,14 @@
-using System.Text.Json.Serialization;
+using TheKrystalShip.Api.Contracts;
 
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Cluster;
 
-/// <summary>One installable game as a node's catalog reports it.</summary>
-/// <remarks>
-/// Only what an answer about a game is made of. A node's row also carries cover art, genres and the
-/// Steam ids a browser renders, none of which reaches a model.
-/// </remarks>
-public sealed record NodeLibraryEntry(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("name")] string? Name,
-    [property: JsonPropertyName("type")] string? Type,
-    [property: JsonPropertyName("isSteamAccountRequired")] bool IsSteamAccountRequired,
-    [property: JsonPropertyName("ports")] List<NodeLibraryPort>? Ports,
-    [property: JsonPropertyName("specs")] NodeLibrarySpecs? Specs,
-    [property: JsonPropertyName("description")] string? Description,
-    [property: JsonPropertyName("moderation")] NodeModeration? Moderation);
-
-/// <summary>One contiguous default port range a game declares.</summary>
-public sealed record NodeLibraryPort(
-    [property: JsonPropertyName("start")] int Start,
-    [property: JsonPropertyName("end")] int End,
-    [property: JsonPropertyName("proto")] string? Proto);
-
-/// <summary>What a game says it needs. Every figure is nullable: absent is unknown, never zero.</summary>
-public sealed record NodeLibrarySpecs(
-    [property: JsonPropertyName("maxPlayers")] int? MaxPlayers,
-    [property: JsonPropertyName("minRamMb")] int? MinRamMb,
-    [property: JsonPropertyName("recommendedRamMb")] int? RecommendedRamMb,
-    [property: JsonPropertyName("baseDiskMb")] int? BaseDiskMb);
-
-/// <summary>What a game's server can do to a player.</summary>
-public sealed record NodeModeration(
-    [property: JsonPropertyName("kick")] bool Kick,
-    [property: JsonPropertyName("ban")] bool Ban,
-    [property: JsonPropertyName("unban")] bool Unban);
-
 /// <summary>The cluster's catalog: every game installable anywhere in it, and what each one needs.</summary>
 /// <param name="Games">One entry per game, whichever nodes offer it.</param>
 /// <param name="Unreached">The nodes that could not be read, each with why.</param>
-public sealed record FleetCatalog(IReadOnlyList<NodeLibraryEntry> Games, IReadOnlyList<string> Unreached);
+public sealed record FleetCatalog(IReadOnlyList<LibraryEntry> Games, IReadOnlyList<string> Unreached);
 
 /// <summary>
 /// What the cluster can install, read from every node's own catalog.
@@ -80,13 +46,13 @@ public sealed class ClusterCatalog(
     {
         IReadOnlyList<ClusterNode> known = await nodes.NodesAsync(ct).ConfigureAwait(false);
 
-        var games = new Dictionary<string, NodeLibraryEntry>(StringComparer.OrdinalIgnoreCase);
+        var games = new Dictionary<string, LibraryEntry>(StringComparer.OrdinalIgnoreCase);
         var unreached = new List<string>();
 
-        IEnumerable<Task<NodeResult<List<NodeLibraryEntry>>>> reads = known.Select(node =>
-            api.GetAsync(node, "/api/v1/library", NodeApiJson.Default.ListNodeLibraryEntry, ct));
+        IEnumerable<Task<NodeResult<List<LibraryEntry>>>> reads = known.Select(node =>
+            api.GetAsync(node, "/api/v1/library", ApiContractsJson.Default.ListLibraryEntry, ct));
 
-        foreach (NodeResult<List<NodeLibraryEntry>> result in await Task.WhenAll(reads).ConfigureAwait(false))
+        foreach (NodeResult<List<LibraryEntry>> result in await Task.WhenAll(reads).ConfigureAwait(false))
         {
             if (!result.Answered)
             {
@@ -94,7 +60,7 @@ public sealed class ClusterCatalog(
                 continue;
             }
 
-            foreach (NodeLibraryEntry game in result.Body ?? [])
+            foreach (LibraryEntry game in result.Body ?? [])
                 if (game.Id.Length > 0)
                     games.TryAdd(game.Id, game);
         }
@@ -115,7 +81,7 @@ public sealed class ClusterCatalog(
     /// catalog is short by that node's games, which is why an unreachable node is carried on the read
     /// rather than being swallowed into an answer that reads as "no such game".
     /// </remarks>
-    public static BlueprintDetail? Describe(NodeLibraryEntry? game)
+    public static BlueprintDetail? Describe(LibraryEntry? game)
     {
         if (game is null)
             return null;
@@ -125,27 +91,27 @@ public sealed class ClusterCatalog(
         string? display = string.Equals(game.Name, game.Id, StringComparison.Ordinal) ? null : game.Name;
 
         var verbs = new List<string>(3);
-        if (game.Moderation?.Kick == true) verbs.Add("kick");
-        if (game.Moderation?.Ban == true) verbs.Add("ban");
-        if (game.Moderation?.Unban == true) verbs.Add("unban");
+        if (game.Moderation.Kick) verbs.Add("kick");
+        if (game.Moderation.Ban) verbs.Add("ban");
+        if (game.Moderation.Unban) verbs.Add("unban");
 
         return new BlueprintDetail(
             Name: game.Id,
             DisplayName: string.IsNullOrWhiteSpace(display) ? null : display,
             Description: string.IsNullOrWhiteSpace(game.Description) ? null : game.Description,
-            Ports: [.. (game.Ports ?? []).Select(PortText)],
-            Kind: game.Type ?? "",
+            Ports: [.. game.Ports.Select(PortText)],
+            Kind: game.Type,
             SteamAccountRequired: game.IsSteamAccountRequired,
-            MaxPlayers: game.Specs?.MaxPlayers,
-            MinRamMb: game.Specs?.MinRamMb,
-            RecommendedRamMb: game.Specs?.RecommendedRamMb,
-            BaseDiskMb: game.Specs?.BaseDiskMb,
+            MaxPlayers: game.Specs.MaxPlayers,
+            MinRamMb: game.Specs.MinRamMb,
+            RecommendedRamMb: game.Specs.RecommendedRamMb,
+            BaseDiskMb: game.Specs.BaseDiskMb,
             ModerationVerbs: verbs);
     }
 
     /// <summary>A port range as the ecosystem writes one: <c>26900:26903/tcp</c>, a single port
     /// without its range.</summary>
-    private static string PortText(NodeLibraryPort port) =>
+    private static string PortText(LibraryPort port) =>
         port.Start == port.End
             ? $"{port.Start}/{port.Proto}"
             : $"{port.Start}:{port.End}/{port.Proto}";

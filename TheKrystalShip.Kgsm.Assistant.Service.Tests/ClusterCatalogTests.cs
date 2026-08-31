@@ -1,5 +1,7 @@
 using FluentAssertions;
 
+using TheKrystalShip.Api.Contracts;
+
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Kgsm.Assistant.Service.Cluster;
 
@@ -19,14 +21,17 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Tests;
 /// </remarks>
 public sealed class ClusterCatalogTests
 {
-    private static NodeLibraryEntry Row(
+    private static LibraryEntry Row(
         string id,
         string? name = null,
-        NodeModeration? moderation = null,
-        List<NodeLibraryPort>? ports = null,
-        NodeLibrarySpecs? specs = null,
+        ModerationCapability? moderation = null,
+        IReadOnlyList<LibraryPort>? ports = null,
+        LibrarySpecs? specs = null,
         string? description = null) =>
-        new(id, name ?? id, "native", false, ports, specs, description, moderation);
+        new(id, name ?? id, "native", null, null, false,
+            ports ?? [], specs ?? new LibrarySpecs(null, null, null, null),
+            null, null, description, [], [], null,
+            moderation ?? new ModerationCapability(false, false, false, null));
 
     /// <summary>
     /// A node answers the id when a game declares no display name, and this shape carries the absence
@@ -58,7 +63,7 @@ public sealed class ClusterCatalogTests
     public void Only_the_declared_moderation_actions_become_verbs()
     {
         BlueprintDetail detail =
-            ClusterCatalog.Describe(Row("minecraft", moderation: new NodeModeration(true, true, false)))!;
+            ClusterCatalog.Describe(Row("minecraft", moderation: new ModerationCapability(true, true, false, "name")))!;
 
         detail.ModerationVerbs.Should().Equal("kick", "ban");
     }
@@ -67,7 +72,7 @@ public sealed class ClusterCatalogTests
     public void A_game_that_declares_no_moderation_supports_none()
     {
         ClusterCatalog.Describe(Row("factorio"))!.ModerationVerbs.Should().BeEmpty();
-        ClusterCatalog.Describe(Row("factorio", moderation: new NodeModeration(false, false, false)))!
+        ClusterCatalog.Describe(Row("factorio", moderation: new ModerationCapability(false, false, false, null)))!
             .ModerationVerbs.Should().BeEmpty();
     }
 
@@ -76,8 +81,8 @@ public sealed class ClusterCatalogTests
     {
         BlueprintDetail detail = ClusterCatalog.Describe(Row("7dtd", ports:
         [
-            new NodeLibraryPort(26900, 26903, "tcp"),
-            new NodeLibraryPort(27015, 27015, "udp"),
+            new LibraryPort(26900, 26903, "tcp"),
+            new LibraryPort(27015, 27015, "udp"),
         ]))!;
 
         detail.Ports.Should().Equal("26900:26903/tcp", "27015/udp");
@@ -97,7 +102,7 @@ public sealed class ClusterCatalogTests
         sparse.BaseDiskMb.Should().BeNull();
 
         BlueprintDetail curated =
-            ClusterCatalog.Describe(Row("factorio", specs: new NodeLibrarySpecs(64, 2048, 4096, null)))!;
+            ClusterCatalog.Describe(Row("factorio", specs: new LibrarySpecs(64, 2048, 4096, null)))!;
         curated.MaxPlayers.Should().Be(64);
         curated.MinRamMb.Should().Be(2048);
         curated.RecommendedRamMb.Should().Be(4096);

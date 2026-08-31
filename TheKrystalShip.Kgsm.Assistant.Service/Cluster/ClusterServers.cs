@@ -1,21 +1,11 @@
-using System.Text.Json.Serialization;
+using TheKrystalShip.Api.Contracts;
 
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Cluster;
 
-/// <summary>One server as a node reports it.</summary>
-/// <remarks>
-/// Only what this assistant reads. A node's row carries live metrics, update state and more; taking
-/// the whole shape would make every field a node adds a compile break here.
-/// </remarks>
-public sealed record NodeServer(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("name")] string? Name,
-    [property: JsonPropertyName("blueprint")] string? Blueprint);
-
 /// <summary>One server and the machine it is on.</summary>
-public sealed record PlacedServer(string Node, NodeServer Server);
+public sealed record PlacedServer(string Node, Server Server);
 
 /// <summary>What the fleet answered: the servers found, and the nodes that did not answer.</summary>
 /// <param name="Found">Every server that was reported, each carrying the node reporting it.</param>
@@ -76,7 +66,7 @@ public sealed class ClusterServers(
         FleetServers fleet = await ReadAsync(ct).ConfigureAwait(false);
         var byId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (PlacedServer placed in fleet.Found)
-            byId[placed.Server.Id] = placed.Server.Blueprint ?? "";
+            byId[placed.Server.Id] = placed.Server.Blueprint;
         return byId;
     }
 
@@ -87,7 +77,7 @@ public sealed class ClusterServers(
         var byId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (PlacedServer placed in fleet.Found)
             byId[placed.Server.Id] =
-                string.IsNullOrWhiteSpace(placed.Server.Name) ? placed.Server.Id : placed.Server.Name!;
+                string.IsNullOrWhiteSpace(placed.Server.Name) ? placed.Server.Id : placed.Server.Name;
         return byId;
     }
 
@@ -108,10 +98,10 @@ public sealed class ClusterServers(
         var found = new List<PlacedServer>();
         var unreached = new List<string>();
 
-        IEnumerable<Task<NodeResult<List<NodeServer>>>> reads = known.Select(node =>
-            api.GetAsync(node, "/api/v1/servers", NodeApiJson.Default.ListNodeServer, ct));
+        IEnumerable<Task<NodeResult<List<Server>>>> reads = known.Select(node =>
+            api.GetAsync(node, "/api/v1/servers", ApiContractsJson.Default.ListServer, ct));
 
-        foreach (NodeResult<List<NodeServer>> result in await Task.WhenAll(reads).ConfigureAwait(false))
+        foreach (NodeResult<List<Server>> result in await Task.WhenAll(reads).ConfigureAwait(false))
         {
             if (!result.Answered)
             {
@@ -119,7 +109,7 @@ public sealed class ClusterServers(
                 continue;
             }
 
-            foreach (NodeServer server in result.Body ?? [])
+            foreach (Server server in result.Body ?? [])
                 found.Add(new PlacedServer(result.Node, server));
         }
 

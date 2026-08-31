@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a node's answers are types, not hand-copied field names (1.56.0)
+
+The clustered adapters read `TheKrystalShip.KGSM.Api.Contracts`. A node's server row, its catalog row
+and its refusals are the API's own records, deserialized with the API's own serialization, so a field
+renamed there is a compile break here rather than a value that silently arrives null.
+
+The alternative was mirroring them by hand, and the reason not to is measurable: ninety of kgsm-api's
+records sit in the files these ports touch, and almost none of them pins a `JsonPropertyName` — the
+wire names come from a naming policy. Every hand-written mirror was a name re-derived from a
+convention living in another repo, with nothing to check the derivation.
+
 ### Changed — a clustered assistant asks the nodes, not the engine beside it (1.55.0)
 
 With a cluster secret present, `IServerInventory` is backed by every node's Control Panel API instead

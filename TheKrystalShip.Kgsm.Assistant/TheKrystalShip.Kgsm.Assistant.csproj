@@ -22,11 +22,11 @@
     <!-- This project declares bound settings sections, so it compiles the descriptor attributes and
          emits the documentation file their <panel> tags travel in. It generates nothing itself — the
          Service owns that step and names this assembly. -->
-    <GenerateLeafDescriptor>false</GenerateLeafDescriptor>
+    <GenerateComponentDescriptor>false</GenerateComponentDescriptor>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.3.0-dev.1" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.ComponentConfig" Version="3.0.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

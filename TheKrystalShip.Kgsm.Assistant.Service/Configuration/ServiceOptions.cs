@@ -1,7 +1,7 @@
 using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
-using TheKrystalShip.KGSM.LeafConfig;
+using TheKrystalShip.KGSM.ComponentConfig;
 
 // NOTE: KgsmConnectionOptions, InventoryCacheOptions, and WebSearchOptions moved to
 // TheKrystalShip.Kgsm.Assistant.Infrastructure.Configuration when the kgsm-lib adapters were
@@ -11,7 +11,7 @@ using TheKrystalShip.KGSM.LeafConfig;
 namespace TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 
 /// <summary>Assistant-service policy and secrets. Bound from the "Assistant" section.</summary>
-[LeafSection(Section)]
+[ConfigSection(Section)]
 public sealed class AssistantServiceOptions
 {
     public const string Section = "Assistant";
@@ -23,7 +23,7 @@ public sealed class AssistantServiceOptions
     /// </summary>
     /// <panel>Whether the assistant may do anything, rather than only answer questions. With this off it
     /// can still read and explain, but every start, stop, install or edit is refused.</panel>
-    [LeafField("actionsEnabled", "Allow actions", Group = "actions")]
+    [ConfigField("actionsEnabled", "Allow actions", Group = "actions")]
     public bool ActionsEnabled { get; set; }
 
     public ConfirmationOptions Confirmation { get; set; } = new();
@@ -57,7 +57,7 @@ public sealed class LifecycleOptions
     /// <panel>The model server's own port, used to tell an unloaded model from a broken one without
     /// loading it. Leave at 0 unless the model listens on a different port from the one the assistant
     /// connects to.</panel>
-    [LeafField("lifecycleResidentBackendPort", "Model residency port", Group = "model")]
+    [ConfigField("lifecycleResidentBackendPort", "Model residency port", Group = "model")]
     public int ResidentBackendPort { get; set; }
 }
 
@@ -91,7 +91,7 @@ public sealed class PushOptions
     /// <panel>Whether the assistant may notify a phone about an action it is waiting on you to approve.
     /// Nothing is sent until you register a browser under Settings → Notifications in the assistant
     /// app; this turns the whole path off for everyone on this host.</panel>
-    [LeafField("pushEnabled", "Notify about waiting actions", Group = "notifications")]
+    [ConfigField("pushEnabled", "Notify about waiting actions", Group = "notifications")]
     public bool Enabled { get; set; } = true;
 
     /// <summary>
@@ -102,7 +102,7 @@ public sealed class PushOptions
     /// </summary>
     /// <panel>Who a push service should contact about notifications from this host — an email address
     /// as <c>mailto:you@example.com</c>, or a web address. The default names the KGSM project.</panel>
-    [LeafField("pushSubject", "Push contact", Group = "notifications", Risk = LeafRisk.Wiring)]
+    [ConfigField("pushSubject", "Push contact", Group = "notifications", Risk = ConfigRisk.Wiring)]
     public string Subject { get; set; } = "https://github.com/TheKrystalShip/KGSM";
 
     /// <summary>
@@ -118,14 +118,14 @@ public sealed class PushOptions
     /// <panel>How long after you close the assistant it still counts you as here, and stays quiet.
     /// Longer means fewer notifications you did not need, and less of the approval window left to act
     /// in when you did.</panel>
-    [LeafField("pushPresenceGraceSec", "Count me as here for", Group = "notifications", Min = 0, Unit = "s")]
+    [ConfigField("pushPresenceGraceSec", "Count me as here for", Group = "notifications", Min = 0, Unit = "s")]
     public int PresenceGraceSeconds { get; set; } = 20;
 
     /// <summary>How often waiting confirmations are re-examined. Small: the budget being spent is the
     /// confirmation's own lifetime, and a tick is a handful of indexed reads against a local file.</summary>
     /// <panel>How often the assistant checks whether an action it is waiting on should be sent to your
     /// phone.</panel>
-    [LeafField("pushPollSec", "Check for waiting actions every", Group = "notifications", Min = 1, Unit = "s")]
+    [ConfigField("pushPollSec", "Check for waiting actions every", Group = "notifications", Min = 1, Unit = "s")]
     public int PollSeconds { get; set; } = 5;
 }
 
@@ -145,15 +145,15 @@ public sealed class RelayOptions
     /// <panel>Shared secret letting the co-located Control Panel API ask on a signed-in user's behalf
     /// without a second login. It has to match the API's own relay secret, or the panel's chat
     /// stops working. The relay forwards who is asking, never what they are allowed to do.</panel>
-    [LeafField("relaySecret", "Control Panel relay secret", Group = "actions", Type = LeafType.Secret,
-        Risk = LeafRisk.Wiring, PairedApiKey = "Api__AssistantRelaySecret", NoDefault = true)]
+    [ConfigField("relaySecret", "Control Panel relay secret", Group = "actions", Type = ConfigType.Secret,
+        Risk = ConfigRisk.Wiring, PairedApiKey = "Api__AssistantRelaySecret", NoDefault = true)]
     public string Secret { get; set; } = string.Empty;
 
     /// <panel>Where this host keeps the secret above. Left to itself the first surface to look for it
     /// creates it and the others read it, so the panel's chat works on a host nobody configured; point
     /// this elsewhere on a host that keeps its state somewhere other than /var/lib.</panel>
-    [LeafField("relaySecretPath", "Relay secret file", Group = "actions", Type = LeafType.Path,
-        Risk = LeafRisk.Wiring)]
+    [ConfigField("relaySecretPath", "Relay secret file", Group = "actions", Type = ConfigType.Path,
+        Risk = ConfigRisk.Wiring)]
     public string SecretPath { get; set; } = KgsmRelaySecret.DefaultPath;
 }
 
@@ -163,7 +163,7 @@ public sealed class ConfirmationOptions
     /// <summary>How long a staged action stays confirmable. Keep short — re-validation backstops replay.</summary>
     /// <panel>How long a proposed action stays confirmable. Keep it short: it is how long a stale
     /// confirmation could still be used.</panel>
-    [LeafField("confirmationTtlSec", "Confirmation lifetime", Group = "actions", Min = 1, Unit = "s")]
+    [ConfigField("confirmationTtlSec", "Confirmation lifetime", Group = "actions", Min = 1, Unit = "s")]
     public int TtlSeconds { get; set; } = 300;
 }
 
@@ -176,8 +176,8 @@ public sealed class WebhookOptions
     /// </summary>
     /// <panel>Shared secret proving an inbound engine event really came from KGSM. It has to match the
     /// engine's own webhook secret. Unset, event signatures are not checked at all.</panel>
-    [LeafField("webhookSecret", "Engine webhook secret", Group = "actions", Type = LeafType.Secret,
-        Risk = LeafRisk.Wiring, NoDefault = true)]
+    [ConfigField("webhookSecret", "Engine webhook secret", Group = "actions", Type = ConfigType.Secret,
+        Risk = ConfigRisk.Wiring, NoDefault = true)]
     public string Secret { get; set; } = string.Empty;
 }
 
@@ -191,7 +191,7 @@ public sealed class WebhookOptions
 /// token, so a user's grant never has to carry them.
 /// </para>
 /// </summary>
-[LeafSection(Section)]
+[ConfigSection(Section)]
 public sealed class DiscordOAuthOptions
 {
     public const string Section = "DiscordOAuth";
@@ -202,7 +202,7 @@ public sealed class DiscordOAuthOptions
     /// </summary>
     /// <panel>Where Discord sends someone back to after they approve — this service's own sign-in
     /// callback. It has to match the redirect registered on the Discord application exactly.</panel>
-    [LeafField("discordRedirectUri", "Sign-in redirect", Group = "discord", Risk = LeafRisk.Wiring,
+    [ConfigField("discordRedirectUri", "Sign-in redirect", Group = "discord", Risk = ConfigRisk.Wiring,
         NoDefault = true)]
     public string RedirectUri { get; set; } = string.Empty;
 
@@ -212,7 +212,7 @@ public sealed class DiscordOAuthOptions
     /// </summary>
     /// <panel>What sign-in asks Discord for. Identity alone is enough, because roles are read with the bot
     /// token instead.</panel>
-    [LeafField("discordScopes", "Sign-in scopes", Group = "discord", Risk = LeafRisk.Wiring)]
+    [ConfigField("discordScopes", "Sign-in scopes", Group = "discord", Risk = ConfigRisk.Wiring)]
     public string Scopes { get; set; } = "identify";
 }
 
@@ -225,7 +225,7 @@ public sealed class DiscordOAuthOptions
 /// into a session — it is a role lookup cached for <see cref="RoleCacheTtlSeconds"/> and re-read at
 /// confirm time, so a revoked role takes effect within that TTL rather than at the next sign-in.
 /// </remarks>
-[LeafSection(Section)]
+[ConfigSection(Section)]
 public sealed class AuthOptions
 {
     public const string Section = "Auth";
@@ -236,8 +236,8 @@ public sealed class AuthOptions
     /// </summary>
     /// <panel>Secret this service signs sign-in tokens with. Leave it blank and this host generates one
     /// for itself on first start and reuses it forever after. Changing it signs everyone out at once.</panel>
-    [LeafField("authSigningKey", "Session signing key", Group = "session", Type = LeafType.Secret,
-        Risk = LeafRisk.Wiring, NoDefault = true)]
+    [ConfigField("authSigningKey", "Session signing key", Group = "session", Type = ConfigType.Secret,
+        Risk = ConfigRisk.Wiring, NoDefault = true)]
     public string SigningKey { get; set; } = string.Empty;
 
     /// <summary>
@@ -247,7 +247,7 @@ public sealed class AuthOptions
     /// </summary>
     /// <panel>The name this host's sign-in tokens are issued for. A token minted here will not be
     /// accepted anywhere else. Leave it empty to use the machine's own name.</panel>
-    [LeafField("authHostId", "Host identity", Group = "session")]
+    [ConfigField("authHostId", "Host identity", Group = "session")]
     public string HostId { get; set; } = string.Empty;
 
     /// <summary>
@@ -262,8 +262,8 @@ public sealed class AuthOptions
     /// <panel>The file this host keeps its KGSM accounts and passwords in. Every KGSM service on the
     /// host reads the same one, so pointing this somewhere else gives the assistant a different set of
     /// users from the Control Panel.</panel>
-    [LeafField("authUsersDbPath", "Account store", Group = "session", Type = LeafType.Path,
-        Risk = LeafRisk.Wiring)]
+    [ConfigField("authUsersDbPath", "Account store", Group = "session", Type = ConfigType.Path,
+        Risk = ConfigRisk.Wiring)]
     public string UsersDbPath { get; set; } = UserStoreOptions.DefaultPath;
 
     /// <summary>
@@ -283,7 +283,7 @@ public sealed class AuthOptions
     /// </summary>
     /// <panel>How long a sign-in token is good for before the client silently swaps it for a fresh one.
     /// Shorter is safer; the user notices nothing either way.</panel>
-    [LeafField("accessTtlSec", "Access token lifetime", Group = "session", Min = 60, Unit = "s")]
+    [ConfigField("accessTtlSec", "Access token lifetime", Group = "session", Min = 60, Unit = "s")]
     public int AccessTtlSeconds { get; set; } = 900;
 
     /// <summary>
@@ -292,7 +292,7 @@ public sealed class AuthOptions
     /// </summary>
     /// <panel>How long a sign-in lasts before the user has to sign in through Discord again. Every
     /// refresh slides the window forward, so someone who keeps using it stays signed in.</panel>
-    [LeafField("sessionTtlSec", "Session lifetime", Group = "session", Min = 60, Unit = "s")]
+    [ConfigField("sessionTtlSec", "Session lifetime", Group = "session", Min = 60, Unit = "s")]
     public int SessionTtlSeconds { get; set; } = 30 * 24 * 60 * 60;
 
     /// <summary>
@@ -302,7 +302,7 @@ public sealed class AuthOptions
     /// <panel>How long a user's authority is reused before it is looked up again. This is how long
     /// after an admin changes what a person may do that the assistant can still let them do the old
     /// thing.</panel>
-    [LeafField("roleCacheTtlSec", "Authority cache lifetime", Group = "session", Min = 0, Unit = "s")]
+    [ConfigField("roleCacheTtlSec", "Authority cache lifetime", Group = "session", Min = 0, Unit = "s")]
     public int RoleCacheTtlSeconds { get; set; } = 5;
 
     /// <summary>The most accounts awaiting approval this host will hold at once. Floor 1.</summary>
@@ -313,7 +313,7 @@ public sealed class AuthOptions
     /// </remarks>
     /// <panel>How many people can be waiting for approval at the same time. Anyone who signs in through
     /// Discord and has no account here yet becomes one of them.</panel>
-    [LeafField("pendingUserCap", "Accounts awaiting approval", Group = "session", Min = 1)]
+    [ConfigField("pendingUserCap", "Accounts awaiting approval", Group = "session", Min = 1)]
     public int PendingUserCap { get; set; } = 32;
 
     /// <summary>How long an unapproved, self-provisioned account survives unattended, in days.</summary>
@@ -323,12 +323,12 @@ public sealed class AuthOptions
     /// way, is still unapproved, and has no password.
     /// </remarks>
     /// <panel>How long someone waiting for approval stays on the list before being forgotten.</panel>
-    [LeafField("pendingUserTtlDays", "Approval request lifetime", Group = "session", Min = 1, Unit = "days")]
+    [ConfigField("pendingUserTtlDays", "Approval request lifetime", Group = "session", Min = 1, Unit = "days")]
     public int PendingUserTtlDays { get; set; } = 14;
 
     /// <summary>How long an in-flight authorize→callback handshake cookie stays valid.</summary>
     /// <panel>How long someone has to finish a sign-in once it starts before they have to begin again.</panel>
-    [LeafField("stateTtlSec", "Sign-in window", Group = "session", Min = 30, Unit = "s")]
+    [ConfigField("stateTtlSec", "Sign-in window", Group = "session", Min = 30, Unit = "s")]
     public int StateTtlSeconds { get; set; } = 300;
 
     /// <summary>

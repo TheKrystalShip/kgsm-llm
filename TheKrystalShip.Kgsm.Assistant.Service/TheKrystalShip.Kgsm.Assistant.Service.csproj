@@ -22,8 +22,8 @@
 
     <!-- The leaf config descriptor is generated from the settings types in this project and in the
          assemblies it names in LeafDescriptor.cs. -->
-    <LeafSettingsFile>kgsm-assistant.settings.json</LeafSettingsFile>
-    <LeafDescriptorFile>$(MSBuildProjectDirectory)/../deploy/kgsm-llm.leaf.json</LeafDescriptorFile>
+    <ComponentSettingsFile>kgsm-assistant.settings.json</ComponentSettingsFile>
+    <ComponentDescriptorFile>$(MSBuildProjectDirectory)/../deploy/kgsm-llm.leaf.json</ComponentDescriptorFile>
 
     <!-- The command manifest the Control Panel lists this leaf's commands from. Named for the repo
          beside the leaf descriptor; deploy.sh installs it under the leaf id the file declares. -->
@@ -31,7 +31,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.3.0-dev.1" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.ComponentConfig" Version="3.0.0" PrivateAssets="all" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="3.2.0" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Discord" Version="4.0.0" />
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Sessions" Version="2.0.0" />

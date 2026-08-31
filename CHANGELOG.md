@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the injected list says which machine each server is on (1.60.0)
+
+`IServerInventory` gained `GetInstanceHostsAsync`, empty on a machine standing alone and populated
+from the routing table in a cluster, and the injected list carries it per line and in its heading.
+
+**Measured, not anticipated.** Asked which machine each of eight servers was on, the model answered
+"all of these are running on this host" — false twice over, since most were stopped and one was on
+another machine entirely. The list gave it nothing about placement and it filled the gap in. With the
+machine on each line it stopped claiming otherwise, and a direct question now answers correctly.
+
+The heading carries it as well as the line, for the reason measured on the incompleteness caveat: a
+qualification read as part of the data reaches the answer, and one read after the data arrives after
+the answer is formed. Stated per line alone, the model quoted its own line back correctly when asked
+and still summarised it wrong.
+
+A server two machines both report is left unattributed rather than assigned to one. The routing table
+already refuses to act on an ambiguous id, and naming a machine here would state as fact the thing
+that refusal exists because nobody knows.
+
+Nothing about addressing changes: an id means the same everywhere and every tool still takes exactly
+that.
+
 ### Added — which engine each standing reaches, pinned (1.59.1)
 
 A machine with no cluster secret resolves every port to its kgsm-lib adapter, and a member of a

@@ -86,6 +86,12 @@ public class SystemPromptBuilder : ISystemPromptBuilder
             var instances = await _inventory.GetInstancesAsync(cancellationToken);
             var instanceLabels = await _inventory.GetInstanceLabelsAsync(cancellationToken);
 
+            // Which machine holds each server, on a fleet assembled from several. Empty on a machine
+            // standing alone, where naming the only host there is would be noise on every line.
+            // Carried because withholding it is what makes the model invent one: asked which machine
+            // each server was on, it answered "this host" for all of them, one of which was not.
+            var instanceHosts = await _inventory.GetInstanceHostsAsync(cancellationToken);
+
             // A list short by a machine looks exactly like a smaller fleet, and nothing in it says
             // which. So what could not be read is written into the heading of each list rather than
             // stated once underneath: a caveat below a list of seven servers is read after the answer
@@ -96,7 +102,14 @@ public class SystemPromptBuilder : ISystemPromptBuilder
                 ? $" — INCOMPLETE, because {string.Join("; ", unreached)}. Whatever it holds is not below"
                 : string.Empty;
 
-            builder.Append("\n\nCurrently installed instances").Append(missing).Append(":\n");
+            // The heading carries the machine, for the reason measured on the incompleteness caveat: a
+            // qualification the model reads as part of the data reaches the answer, and one it reads
+            // after the data arrives after the answer is formed. With it stated only per line, a
+            // summary of eight servers spanning two machines came back as "all of these are on this
+            // host" — the line said otherwise and was quoted back correctly when asked directly.
+            var spread = instanceHosts.Count > 0 ? " (these are spread across machines)" : string.Empty;
+
+            builder.Append("\n\nCurrently installed instances").Append(spread).Append(missing).Append(":\n");
             if (instances.Count > 0)
             {
                 foreach (var (name, game) in instances.OrderBy(kv => kv.Key))
@@ -105,9 +118,21 @@ public class SystemPromptBuilder : ISystemPromptBuilder
                         ? shown
                         : name;
 
+                    var on = instanceHosts.TryGetValue(name, out var machine) && machine.Length > 0
+                        ? $", on {machine}"
+                        : string.Empty;
+
                     builder.Append(string.Equals(label, name, StringComparison.Ordinal)
-                        ? $"- {name} (game: {GameLabel(game, labels)})\n"
-                        : $"- {name} — called {PromptLabel.Quoted(label)} (game: {GameLabel(game, labels)})\n");
+                        ? $"- {name} (game: {GameLabel(game, labels)}{on})\n"
+                        : $"- {name} — called {PromptLabel.Quoted(label)} (game: {GameLabel(game, labels)}{on})\n");
+                }
+
+                if (instanceHosts.Count > 0)
+                {
+                    builder.Append("Each line ends with the machine that server is on, and they are not " +
+                                   "all the same machine. Say the one on the line and never \"this host\". " +
+                                   "A tool still takes the id and nothing else — where a server is, is " +
+                                   "not part of its name.\n");
                 }
 
                 builder.Append("Pass the id — the first word of each line — to a tool. " +

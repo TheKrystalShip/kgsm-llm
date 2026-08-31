@@ -86,6 +86,52 @@ public sealed class SystemPromptBuilderTests : IDisposable
                 instances.ToDictionary(i => i.id, i => i.label)));
     }
 
+    /// <summary>Which machine each server is on, so a test can assert the list says.</summary>
+    private void On(params (string id, string machine)[] placements) =>
+        _inventory.GetInstanceHostsAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyDictionary<string, string>>(
+                placements.ToDictionary(p => p.id, p => p.machine)));
+
+    /// <summary>
+    /// A fleet spanning machines says which one each server is on.
+    /// </summary>
+    /// <remarks>
+    /// Measured, not anticipated: asked which machine each server was on, the model answered "this
+    /// host" for every one of them — including one that was on another machine — because the list it
+    /// reads gave it nothing and it filled the gap in.
+    /// </remarks>
+    [Fact]
+    public async Task A_fleet_says_which_machine_holds_each_server()
+    {
+        Installed(("factorio-1", "factorio", "factorio-1"), ("terraria", "terraria", "terraria"));
+        Catalog(("factorio", "Factorio"), ("terraria", "Terraria"));
+        On(("factorio-1", "hotrod"), ("terraria", "hotbox"));
+
+        var prompt = (await Build().BuildAsync(canPerformActions: false)).Text;
+
+        prompt.Should().Contain("- factorio-1 (game: Factorio, on hotrod)");
+        prompt.Should().Contain("- terraria (game: Terraria, on hotbox)");
+        prompt.Should().Contain("Currently installed instances (these are spread across machines)");
+        prompt.Should().Contain("never \"this host\"");
+    }
+
+    /// <summary>
+    /// One machine has nothing to attribute, so the lines carry no machine at all. Naming the only
+    /// host there is would be noise on every line of every standalone install.
+    /// </summary>
+    [Fact]
+    public async Task A_machine_standing_alone_names_no_machine()
+    {
+        Installed(("factorio-1", "factorio", "factorio-1"));
+        Catalog(("factorio", "Factorio"));
+        On();
+
+        var prompt = (await Build().BuildAsync(canPerformActions: false)).Text;
+
+        prompt.Should().Contain("- factorio-1 (game: Factorio)");
+        prompt.Should().NotContain("spread across machines");
+    }
+
     /// <summary>What the inventory could not read, so a test can assert the lists are framed as short.</summary>
     private void CouldNotRead(params string[] sources) =>
         _inventory.GetUnreachedAsync(Arg.Any<CancellationToken>())

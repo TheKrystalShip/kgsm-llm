@@ -56,6 +56,40 @@ internal sealed class ClusterServerInventory(
     }
 
     /// <summary>
+    /// Which machine each server is on, from the read the list itself came from.
+    /// </summary>
+    /// <remarks>
+    /// A server two machines both reported is left unattributed rather than assigned to one of them:
+    /// the routing table already refuses to act on an ambiguous id, and naming one machine here would
+    /// state as a fact the thing that refusal exists because nobody knows.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<string, string>> GetInstanceHostsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        FleetServers fleet = await servers.ReadAsync(cancellationToken).ConfigureAwait(false);
+
+        var byId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (PlacedServer placed in fleet.Found)
+        {
+            if (byId.TryGetValue(placed.Server.Id, out string? already)
+                && !string.Equals(already, placed.Node, StringComparison.Ordinal))
+            {
+                ambiguous.Add(placed.Server.Id);
+                continue;
+            }
+
+            byId[placed.Server.Id] = placed.Node;
+        }
+
+        foreach (string id in ambiguous)
+            byId.Remove(id);
+
+        return byId;
+    }
+
+    /// <summary>
     /// Which nodes did not answer, from the reads the lists themselves came from.
     /// </summary>
     /// <remarks>

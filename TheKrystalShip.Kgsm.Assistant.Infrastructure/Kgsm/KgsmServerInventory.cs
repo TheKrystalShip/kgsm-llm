@@ -213,6 +213,14 @@ internal sealed class KgsmServerInventory : IServerInventory, IInventoryInvalida
     }
 
     /// <summary>
+    /// Nothing, always: every server here is on this machine, so there is nothing to tell apart.
+    /// </summary>
+    public Task<IReadOnlyDictionary<string, string>> GetInstanceHostsAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyDictionary<string, string>>(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Nothing, always: there is one engine here and a read of it either answered or did not.
     /// </summary>
     /// <remarks>

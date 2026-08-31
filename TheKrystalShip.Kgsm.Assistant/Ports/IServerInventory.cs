@@ -44,6 +44,26 @@ public interface IServerInventory
         string blueprintName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Which machine each server is on, when that is a thing worth saying.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Empty when there is one machine and nothing to attribute — an inventory with a single source
+    /// answers for the only host there is, and naming it on every line would be noise. A fleet
+    /// assembled from several says which, because the alternative is a reader with no way to tell and
+    /// a model that fills the gap in: asked which machine a server was on, it answered "this host"
+    /// for every one of them, including the one on another machine.
+    /// </para>
+    /// <para>
+    /// It does not change how a server is addressed. An id means the same thing everywhere and every
+    /// tool still takes exactly that; this is a fact about where the server is, not a second way to
+    /// name it.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyDictionary<string, string>> GetInstanceHostsAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// What these lists could not be read from, each named with why, so an answer built on them can
     /// say what is missing from it.
     /// </summary>

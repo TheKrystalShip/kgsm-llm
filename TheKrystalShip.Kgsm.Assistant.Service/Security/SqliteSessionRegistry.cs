@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.KGSM.Auth.Cluster;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.Llm.Conversation;
 
@@ -30,7 +31,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// and still mean what they say.
 /// </para>
 /// </remarks>
-internal sealed class SqliteSessionRegistry : ISessionRegistry
+internal sealed class SqliteSessionRegistry : ISessionRegistry, IClusterSessionAuthority
 {
     private readonly string _connectionString;
     private readonly Lock _writeGate = new();
@@ -168,6 +169,103 @@ internal sealed class SqliteSessionRegistry : ISessionRegistry
             cmd.Parameters.AddWithValue("$sid", sessionId);
 
             return Task.FromResult(cmd.ExecuteNonQuery() == 1);
+        }
+    }
+
+    // ── The cluster half ────────────────────────────────────────────────────
+    // A session this surface minted has a row, so the row is the session and absence is a refusal. One
+    // the cluster's auth anchor minted has none — the sign-in happened on another machine and the
+    // signature is what admits it — so the only thing worth storing about one is that somebody ended
+    // it. Opposite questions, one table, and the row a revocation writes is the answer to the second.
+
+    /// <inheritdoc />
+    public Task<bool> IsRevokedAsync(string sessionId, CancellationToken ct = default)
+    {
+        using SqliteConnection connection = Open();
+        using SqliteCommand cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM sessions WHERE session_id = $sid AND revoked = 1;";
+        cmd.Parameters.AddWithValue("$sid", sessionId);
+
+        return Task.FromResult(cmd.ExecuteScalar() is not null);
+    }
+
+    /// <summary>
+    /// Record that a session minted elsewhere in the cluster is over.
+    /// </summary>
+    /// <remarks>
+    /// A row is written for a session that never signed in here, which is what makes the deny-list
+    /// answerable at all. It carries no user and no host because neither is known — what arrived is
+    /// that this session id is finished — and it is already revoked when written, so a row that exists
+    /// and a session that is over are one fact rather than two.
+    /// <para>
+    /// <paramref name="until"/> is when the row may be swept, not when the session dies: the session
+    /// is already dead. It bounds the marker by the longest a bearer for it could still be presented,
+    /// so the sweep that already runs clears it with nothing new to schedule.
+    /// </para>
+    /// </remarks>
+    public Task RecordRevocationAsync(string sessionId, DateTimeOffset until, CancellationToken ct = default)
+    {
+        lock (_writeGate)
+        {
+            using SqliteConnection connection = Open();
+            using SqliteCommand cmd = connection.CreateCommand();
+            // Insert-or-ignore then revoke, so a session this surface DID mint is revoked rather than
+            // left alone by a conflicting insert. Both halves are no-ops when they have already run,
+            // which is what lets the bus redeliver this without a second effect.
+            cmd.CommandText =
+                """
+                INSERT OR IGNORE INTO sessions
+                    (session_id, user_id, host_id, created, expires, user_agent, current_jti, revoked)
+                VALUES ($sid, '', '', $now, $until, NULL, NULL, 1);
+                UPDATE sessions SET revoked = 1, current_jti = NULL WHERE session_id = $sid;
+                """;
+            cmd.Parameters.AddWithValue("$sid", sessionId);
+            cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            cmd.Parameters.AddWithValue("$until", until.ToString("O"));
+            cmd.ExecuteNonQuery();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    Task IClusterSessionAuthority.RevokeAsync(string sessionId, CancellationToken ct) =>
+        RevokeAsync(sessionId, ct);
+
+    /// <summary>
+    /// End every session this surface holds for one person.
+    /// </summary>
+    /// <remarks>
+    /// A row here is keyed by the provider's own id for somebody rather than by their qualified
+    /// handle, so both spellings are matched: the handle for a row written as one, and the subject for
+    /// a row written before. Matching a bare subject is only safe because of which direction this
+    /// fails in — two providers that handed out the same id would end a session belonging to the wrong
+    /// person, which signs somebody out and grants nothing. It is never how anybody is let in.
+    /// </remarks>
+    public Task<IReadOnlyList<string>> RevokeAllForHandleAsync(string handle, CancellationToken ct = default)
+    {
+        string subject = handle.Contains(':') ? handle[(handle.IndexOf(':') + 1)..] : handle;
+
+        lock (_writeGate)
+        {
+            using SqliteConnection connection = Open();
+            using SqliteCommand cmd = connection.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE sessions
+                   SET revoked = 1, current_jti = NULL
+                 WHERE (user_id = $handle OR user_id = $subject)
+                   AND revoked = 0
+                RETURNING session_id;
+                """;
+            cmd.Parameters.AddWithValue("$handle", handle);
+            cmd.Parameters.AddWithValue("$subject", subject);
+
+            var revoked = new List<string>();
+            using SqliteDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+                revoked.Add(reader.GetString(0));
+
+            return Task.FromResult<IReadOnlyList<string>>(revoked);
         }
     }
 

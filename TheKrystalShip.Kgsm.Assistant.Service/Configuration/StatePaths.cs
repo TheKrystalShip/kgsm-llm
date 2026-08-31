@@ -53,6 +53,21 @@ internal static class StatePaths
     /// <c>$STATE_DIRECTORY</c> is colon-separated when a unit declares several directories; these
     /// units declare a single directory, and the first entry is the assistant's either way.
     /// </remarks>
+    /// <summary>
+    /// The directory a store belongs in, given the conversation database's configured path.
+    /// </summary>
+    /// <remarks>
+    /// Every persistent store this service owns lives beside that file, so one setting decides where
+    /// this service's state is and there is no second path to keep in step. Blank falls back to
+    /// <see cref="Directory"/>, which is what an unconfigured host uses.
+    /// </remarks>
+    public static string DirectoryFor(string? conversationDatabasePath) =>
+        string.IsNullOrWhiteSpace(conversationDatabasePath)
+            ? Directory
+            : Path.GetDirectoryName(Path.GetFullPath(conversationDatabasePath)) is { Length: > 0 } directory
+                ? directory
+                : Directory;
+
     public static string Directory
     {
         get

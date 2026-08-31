@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Auth.Cluster;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
@@ -123,18 +124,40 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     private readonly ISessionValidator _sessions;
     private readonly UserDirectory _users;
     private readonly AssistantServiceOptions _options;
+    private readonly IClusterSessionKeys _clusterKeys;
+    private readonly ClusterSessionRevocations _clusterSessions;
+    private readonly string _hostId;
 
     public BearerAuthFilter(
         ISessionTokenService tokens,
         ISessionValidator sessions,
         UserDirectory users,
-        IOptions<AssistantServiceOptions> options)
+        IOptions<AssistantServiceOptions> options,
+        IOptions<AuthOptions> authOptions,
+        IClusterSessionKeys clusterKeys,
+        ClusterSessionRevocations clusterSessions)
     {
         _tokens = tokens;
         _sessions = sessions;
         _users = users;
         _options = options.Value;
+        _clusterKeys = clusterKeys;
+        _clusterSessions = clusterSessions;
+        _hostId = authOptions.Value.ResolveHostId();
     }
+
+    /// <summary>
+    /// The rules a presented bearer is held to: this surface's own sessions, and the ones its
+    /// cluster's auth anchor minted for every member.
+    /// </summary>
+    /// <remarks>
+    /// Rebuilt per request rather than cached, because the anchor's published keys move — a rotation
+    /// or a reassignment is meant to take effect without a restart anywhere, and a set captured once
+    /// at startup would go on verifying against a key nobody signs with. The cost is assembling a
+    /// parameters object; the keys behind it are already a snapshot the reader holds in memory.
+    /// </remarks>
+    private TokenValidationParameters Validation =>
+        ClusterSessionValidation.Accepting(_tokens.ValidationParameters, _clusterKeys);
 
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
@@ -228,7 +251,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     /// </remarks>
     private async Task<AuthPrincipal?> ResolveAsync(string token, CancellationToken ct)
     {
-        TokenValidationResult result = await Handler.ValidateTokenAsync(token, _tokens.ValidationParameters);
+        TokenValidationResult result = await Handler.ValidateTokenAsync(token, Validation);
         if (!result.IsValid || result.ClaimsIdentity is null)
             return null;
 
@@ -242,8 +265,24 @@ internal sealed class BearerAuthFilter : IEndpointFilter
         if (identity is null || sessionId is null)
             return null;
 
-        if (!await _sessions.IsValidAsync(sessionId, ct))
+        // Two kinds of session, held to opposite questions about the same table.
+        //
+        // One this member minted has a row, so the row IS the session: no live row means no session,
+        // and the check is an allow-list. One the cluster's auth anchor minted has no row here — the
+        // sign-in happened on another machine — and is accepted because its signature verifies against
+        // the key that member publishes. There is nothing to look up, so the only thing worth storing
+        // is that somebody ended it, and the check is a deny-list. Running the allow-list against a
+        // cluster session would refuse every one of them, which is "sign in once" failing everywhere
+        // but the anchor.
+        if (ClusterSessionValidation.IsClusterSession(ci, _hostId))
+        {
+            if (await _clusterSessions.IsRevokedAsync(sessionId, ct))
+                return null;
+        }
+        else if (!await _sessions.IsValidAsync(sessionId, ct))
+        {
             return null;
+        }
 
         // A switched-off account is a door closing, not a demotion. Left merely tierless it would keep
         // reading its own conversations and holding an event stream open, so the session ends here —

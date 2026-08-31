@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 
 using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Auth.Cluster;
 using TheKrystalShip.KGSM.Auth.Users;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
@@ -24,11 +25,12 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// decide whether the assistant exists.
 /// </para>
 /// </remarks>
-internal sealed class UserDirectory
+internal sealed class UserDirectory : IReplicatedAccounts
 {
     private readonly SqliteUserStore? _store;
     private readonly LocalSignInService? _signIn;
     private readonly IdentityLinkService? _linking;
+    private readonly AccountReplica? _replica;
 
     public UserDirectory(IOptions<AuthOptions> options, ILogger<UserDirectory> logger)
     {
@@ -45,6 +47,11 @@ internal sealed class UserDirectory
             Authority = new UserStoreAuthority(_store);
             _linking = new IdentityLinkService(_store);
             _signIn = new LocalSignInService(_store, new IdentityPasswordHasher(), Authority);
+            // This member's copy of the cluster's accounts, and the counter that orders what arrives.
+            // Built here rather than registered separately so it inherits this type's whole answer to
+            // an unreadable store: a member that cannot read accounts reports it once, as a capability,
+            // instead of failing a replication message with an exception the sender would retry.
+            _replica = new AccountReplica(_store, new SqliteAccountVersions(new UserStoreOptions { Path = path }));
             logger.LogInformation("KGSM account store opened at {Path}.", path);
         }
         catch (UserStoreSchemaException e)
@@ -77,6 +84,16 @@ internal sealed class UserDirectory
     /// <see langword="null"/> while <see cref="Available"/> is false.
     /// </summary>
     public UserStoreAuthority? Authority { get; }
+
+    /// <summary>
+    /// The replica the cluster's account changes are applied to, or <see langword="null"/> when the
+    /// store could not be opened.
+    /// </summary>
+    /// <remarks>
+    /// It is the same file <see cref="Authority"/> reads, which is the point: what arrives over the bus
+    /// is what the next authority question is answered from, with nothing between them to go stale.
+    /// </remarks>
+    public AccountReplica? Replica => _replica;
 
     /// <summary>
     /// Turning a verified external identity into the account it proves. Only valid while

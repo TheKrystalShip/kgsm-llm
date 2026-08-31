@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — in a cluster, the accounts are somebody else's (1.52.0)
+
+A member of a cluster does not answer for the accounts. Signing in, the provider bounce and its
+callback, and extending a session all belong to whichever member holds them, so on a machine where
+that is somebody else they answer `503 auth_held_by_anchor` naming the holder on
+`X-Kgsm-Auth-Holder` — a session minted here is scoped to this member and refused by every other,
+which is the state one sign-in for a cluster exists to end.
+
+**Signing out is deliberately still served.** Ending a session takes authority away rather than
+granting it, and this member holds the rows for the sessions it minted; closing that door would leave
+somebody unable to end a session only this machine can end.
+
+**A machine that is not in a cluster is untouched in every particular.** The decision is read from
+cluster state, not configured, so a standalone install — and a clustered one whose cluster has no
+anchor — finds no holder and every door answers exactly as it always has.
+
+In exchange it accepts the sessions the anchor mints for everybody: the ES256 signature is verified
+against the key that member publishes, and who the holder is comes from this member's own replica of
+the accounts. The two kinds are held to opposite questions — one this service minted has a row and no
+row means no session, one the anchor minted has none and the only thing worth storing is that
+somebody ended it — and `session.revoke` off the bus records exactly that, so signing out anywhere
+ends it here. `account.changed` and `account.removed` keep the replica current, and a member joining
+takes one full copy before following the stream.
+
+All of it comes from `TheKrystalShip.KGSM.Auth.Cluster`, shared with the Control Panel, so the two
+cannot answer "who is this" differently.
+
+### Fixed — a test run no longer opens this machine's cluster store (1.52.0)
+
+The cluster store now sits beside the conversation database, which is the rule every other store here
+follows: whichever file that store picked decides the directory. A deployed host is unaffected — both
+are in `StateDirectory=` — but a test host pointed its own database at a temp directory while the
+cluster store kept a hard path, and the store's schema is ensured whether or not the member is
+clustered, so every test host that started opened the real one.
+
 ### Added — the assistant is a member of its cluster (1.51.0)
 
 On a machine standing alone this service is what it has always been: a leaf, serving that host,

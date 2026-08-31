@@ -32,7 +32,9 @@ using TheKrystalShip.KGSM.Auth;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
+using TheKrystalShip.KGSM.Auth.Cluster;
 using TheKrystalShip.KGSM.Cluster;
+using TheKrystalShip.KGSM.Cluster.Messaging;
 using TheKrystalShip.KGSM.Cluster.Membership;
 using TheKrystalShip.KGSM.WebPush;
 using TheKrystalShip.Llm.Agent;
@@ -112,7 +114,14 @@ builder.Logging.AddSystemdConsole();
         Kind = MemberKind.Anchor,
         Secret = ClusterConfiguration.Secret(builder.Configuration),
         SecretPrevious = ClusterConfiguration.SecretPrevious(builder.Configuration),
-        StorePath = Path.Combine(StatePaths.Directory, "cluster.db"),
+        // Beside the conversation database rather than at a path of its own, which is the rule every
+        // other store in this service follows: whichever file that store picked decides the directory.
+        // On a deployed host both land in StateDirectory=; under a test they land wherever that run
+        // pointed its own database, which is what keeps a suite off this machine's real roster — the
+        // store's schema is ensured whether or not the member is clustered, so a hard path would be
+        // opened by every test host that ever starts.
+        StorePath = Path.Combine(StatePaths.DirectoryFor(
+            builder.Configuration["Conversation:DatabasePath"]), "cluster.db"),
         PublicBaseUrl = resolved.PublicBaseUrl,
     });
 
@@ -303,7 +312,12 @@ builder.Services.AddSingleton<ISessionTokenService>(sp => new SessionTokenServic
     sp.GetRequiredService<IOptions<AuthOptions>>().Value.ToSessionTokenOptions()
         with { SigningKey = sp.GetRequiredService<HostSigningKey>().Value },
     sp.GetRequiredService<ILogger<SessionTokenService>>()));
-builder.Services.AddSingleton<ISessionRegistry, SqliteSessionRegistry>();
+builder.Services.AddSingleton<SqliteSessionRegistry>();
+builder.Services.AddSingleton<ISessionRegistry>(sp => sp.GetRequiredService<SqliteSessionRegistry>());
+// The same store under the cluster's contract: ending a session another member says is over, and
+// recording that one this member never minted is finished. One instance, so a revoke and the check
+// that follows it read the same file.
+builder.Services.AddSingleton<IClusterSessionAuthority>(sp => sp.GetRequiredService<SqliteSessionRegistry>());
 builder.Services.AddMemoryCache();
 // The cache TTL is the revocation lag for anything that cannot evict — a logout evicts, so in
 // practice a kill is immediate and this is only the backstop.
@@ -315,6 +329,47 @@ builder.Services.AddHostedService(sp => new SessionCleanupWorker(
     sp.GetRequiredService<ISessionRegistry>(),
     TimeSpan.FromHours(1),
     sp.GetRequiredService<ILogger<SessionCleanupWorker>>()));
+// What this member does about identity that is not the anchor's job, all of it from the shared
+// package so this surface, the Control Panel and the bot cannot answer "who is this" differently.
+//
+// Every piece is inert on a machine that is not in a cluster: the gate finds no holder and closes no
+// door, the key reader learns nothing and accepts no session it did not mint, and the handlers are
+// registered against a bus that receives nothing. That is the standalone install, and it is the
+// absence of a special case rather than one.
+builder.Services.AddSingleton<AnchorHeldGate>();
+builder.Services.AddSingleton<ClusterSessionKeys>();
+builder.Services.AddSingleton<IClusterSessionKeys>(sp => sp.GetRequiredService<ClusterSessionKeys>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ClusterSessionKeys>());
+
+// A session the anchor minted has no row here, so the only thing worth storing about one is that it
+// has been ended. Same cache bound as the validator above, for the same reason.
+builder.Services.AddSingleton(sp => new ClusterSessionRevocations(
+    sp.GetRequiredService<IClusterSessionAuthority>(),
+    sp.GetRequiredService<IMemoryCache>(),
+    TimeSpan.FromSeconds(5)));
+
+// Signing out somewhere else ends it here. The retention bounds how long the record of an ended
+// session is kept — the longest a bearer for it could still be presented, which is this surface's
+// own refresh lifetime.
+builder.Services.AddSingleton<IClusterMessageHandler>(sp => new SessionRevokeHandler(
+    sp.GetRequiredService<IClusterSessionAuthority>(),
+    sp.GetRequiredService<ISessionValidator>(),
+    sp.GetRequiredService<ClusterSessionRevocations>(),
+    TimeSpan.FromSeconds(sp.GetRequiredService<IOptions<AuthOptions>>().Value.SessionTtlSeconds),
+    sp.GetRequiredService<ILogger<SessionRevokeHandler>>()));
+
+// This member's own copy of the cluster's accounts. It is what lets authority be resolved here rather
+// than by asking the member that holds them, so a demotion lands on the next request and an outage
+// over there costs this surface nothing it serves. The replica lives on UserDirectory, which already
+// owns this host's answer to a store it cannot read.
+builder.Services.AddSingleton<IReplicatedAccounts>(sp => sp.GetRequiredService<UserDirectory>());
+builder.Services.AddSingleton<IClusterMessageHandler, AccountReplicationHandler>();
+builder.Services.AddSingleton<IClusterMessageHandler, AccountRemovalHandler>();
+
+// The first full copy. The stream alone would leave this member holding only what changed after it
+// joined, resolving everybody who existed before that as a stranger.
+builder.Services.AddHostedService<AccountSnapshotWorker>();
+
 builder.Services.AddSingleton(new KgsmTierCache(
     TimeSpan.FromSeconds(authOptions.RoleCacheTtlSeconds > 0 ? authOptions.RoleCacheTtlSeconds : 60)));
 
@@ -487,6 +542,19 @@ CookieOptions StateCookieOptions() => new()
     MaxAge = TimeSpan.FromSeconds(authOptions.StateTtlSeconds > 0 ? authOptions.StateTtlSeconds : 300),
 };
 
+// The doors somebody signs in through, and the one that extends a sign-in. They belong to whichever
+// member holds the cluster's accounts, so on a member that is not the holder they answer 503 naming
+// it — a session minted here is scoped to this member and refused by every other, which is the state
+// one sign-in for a cluster exists to end.
+//
+// Signing OUT is deliberately not in this group. Ending a session takes authority away rather than
+// granting it, and this member holds the rows for the sessions it minted; closing it would leave
+// somebody unable to end a session only this machine can end.
+//
+// On a machine that is not in a cluster the filter finds no holder and every one of these answers
+// exactly as it always has.
+var doors = app.MapGroup("").AddEndpointFilter<AnchorHeldFilter>();
+
 // Begin the OAuth bounce — 302 to Discord (this service owns the client id, redirect and scopes).
 // `prompt=none` is silent SSO; a client retries with `consent` when Discord answers login_required.
 //
@@ -494,7 +562,7 @@ CookieOptions StateCookieOptions() => new()
 // receiving the JSON a programmatic caller gets. It is checked HERE against Auth:AllowedOrigins and
 // refused outright — bouncing to Discord for a login that cannot be completed wastes the user's
 // consent and turns a config mistake into a confusing dead end at the callback.
-app.MapGet("/auth/discord/start", (
+doors.MapGet("/auth/discord/start", (
     HttpContext http, AuthService auth, [FromQuery] string? prompt, [FromQuery(Name = "return_to")] string? returnTo) =>
 {
     if (!string.IsNullOrWhiteSpace(returnTo))
@@ -519,7 +587,7 @@ app.MapGet("/auth/discord/start", (
 //   200 { verdict:"ok", tier, token, refresh, … }   authorized
 //   403 { verdict:"denied", … }                     identity verified, no role on this host (terminal)
 //   400 forged/stale state or a missing code · 401 bad or expired code · 502 Discord unreachable
-app.MapGet("/auth/discord/callback", async (
+doors.MapGet("/auth/discord/callback", async (
     HttpContext http,
     AuthService auth,
     UserDirectory users,
@@ -668,7 +736,7 @@ app.MapGet("/auth/discord/callback", async (
 //
 // An unknown username and a wrong password give one answer at one cost. Two answers is a username
 // oracle, and so is a faster one; the store spends a hash verification either way.
-app.MapPost("/auth/login", async (
+doors.MapPost("/auth/login", async (
     LoginRequest request, UserDirectory users, AuthService auth, HttpContext http,
     ILoggerFactory loggerFactory, CancellationToken ct) =>
 {
@@ -736,7 +804,7 @@ app.MapPost("/auth/login", async (
 // Trade a refresh token for a fresh pair. Unauthenticated by bearer on purpose — the whole point is
 // to be callable once the access token has lapsed; the refresh token is the credential. A rotated-away
 // or revoked token is refused rather than renewed.
-app.MapPost("/auth/session/refresh", async (RefreshRequest request, AuthService auth, CancellationToken ct) =>
+doors.MapPost("/auth/session/refresh", async (RefreshRequest request, AuthService auth, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.Refresh))
         return Results.BadRequest(new { error = "bad_request", message = "a refresh token is required." });

@@ -10,7 +10,7 @@
   // test fails the build if the two ever disagree, in either direction, or if the leaf descriptor
   // (deploy/kgsm-llm.leaf.json — what the Control Panel renders) drifts from either.
   //
-  // SECRETS ARE DECLARED HERE, NEVER SET HERE. The confirmation key, the webhook and relay secrets,
+  // SECRETS ARE DECLARED HERE, NEVER SET HERE. The confirmation key, the webhook secret,
   // the Discord credentials and the web-search key are declared blank so the Control Panel can see
   // they exist; their real values belong in the root-owned /etc/kgsm-assistant/service.env, which is
   // not in version control.
@@ -116,13 +116,6 @@
     },
     "Webhook": {
       "Secret": ""
-    },
-    // The co-located Control Panel API asks on a signed-in person's behalf with this secret. Blank
-    // takes the host's own, in SecretPath — the first surface to look for it creates the file and the
-    // API reads the same one, so a host nobody configured still has a working panel chat.
-    "Relay": {
-      "Secret": "",
-      "SecretPath": "/var/lib/kgsm/auth/relay-secret"
     },
     "Push": {
       "Enabled": true,

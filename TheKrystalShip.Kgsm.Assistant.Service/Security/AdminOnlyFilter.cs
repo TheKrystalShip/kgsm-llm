@@ -7,8 +7,8 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// Runs after <see cref="BearerAuthFilter"/> (which has already established WHO the caller is) and
 /// answers only WHETHER they may review, from whichever path authenticated them:
 /// <list type="bullet">
-/// <item><b>Trusted relay:</b> the caller's verified tier, forwarded as <c>X-Relay-Tier</c> and stashed
-/// as <see cref="BearerAuthFilter.RelayTierKey"/>. Trusted because the relay secret already matched.</item>
+/// <item><b>Member acting:</b> the tier this member resolved for the person being acted for, stashed
+/// as <see cref="BearerAuthFilter.ActingTierKey"/>, read from this member's own replica.</item>
 /// <item><b>Session bearer:</b> the caller's own Discord review role
 /// (<see cref="AuthService.IsAdminAsync"/>), so the leaf's review surface works standalone,
 /// with no api in front of it. No configured review role ⇒ nobody.</item>
@@ -60,7 +60,7 @@ internal sealed class AdminOnlyFilter : IEndpointFilter
         // a relayed request never falls through to a Discord lookup for an identity it forwarded, since
         // a relay host may have no Discord configuration of its own. It is always a verdict, never an
         // outage: the api already resolved it, and an api that could not would not have forwarded.
-        if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relay))
+        if (http.Items.TryGetValue(BearerAuthFilter.ActingTierKey, out var relay))
             return relay is KgsmTier tier && tier >= KgsmTier.Admin ? await next(context) : Forbidden;
 
         var principal = (AuthPrincipal)http.Items[BearerAuthFilter.PrincipalKey]!;

@@ -134,6 +134,17 @@ bool clustered = ClusterConfiguration.Secret(builder.Configuration).Length > 0;
 
     builder.Services.AddHostedService<AssistantCapabilityWorker>();
 
+    // Deciding a call another member makes for somebody who is not signed in here. Registered
+    // unconditionally and inert without a secret, like everything else in this block: the token check
+    // refuses every caller on a machine that is in no cluster, which is the right answer for a
+    // member-to-member call there rather than a missing registration nobody sees until one arrives.
+    // The decision is the shared package's so that every member reaches the same answer about who
+    // somebody is; the accounts it reads are this member's own.
+    builder.Services.AddSingleton(sp => new MemberActingResolver(
+        sp.GetRequiredService<TheKrystalShip.KGSM.Cluster.Identity.IClusterTokenService>(),
+        sp.GetRequiredService<TheKrystalShip.KGSM.Cluster.Identity.IClusterMemberGate>(),
+        sp.GetRequiredService<UserDirectory>()));
+
     // Reaching the other machines in the cluster. The directory is which nodes there are, the client
     // is how one is called — as a member, naming the person whose turn it is — and ClusterServers is
     // what they hold and where, which is what an action has to know before it can be sent anywhere.
@@ -151,26 +162,6 @@ bool clustered = ClusterConfiguration.Secret(builder.Configuration).Length > 0;
 // AddKgsmAdapters below. These three stay here — they are web-host concerns (auth + webhook).
 builder.Services.Configure<AssistantServiceOptions>(
     builder.Configuration.GetSection(AssistantServiceOptions.Section));
-// The relay secret is host-local: the Control Panel API and the Discord bot present it, this service
-// checks it, and all three run as the same account on the same machine. Nothing outside the host can
-// supply it, so a blank one is resolved rather than owed — the first surface to look mints the file
-// and the rest read it, which is why the panel's chat works on a host nobody configured. Resolved
-// once at startup rather than per request: minting is a filesystem write, and the answer never
-// changes while the process lives.
-builder.Services.PostConfigure<AssistantServiceOptions>(o =>
-{
-    o.Relay.Secret = KgsmRelaySecret.Resolve(o.Relay.Secret, o.Relay.SecretPath);
-
-    // Empty here means the file could be neither read nor created. The relay path then stays off,
-    // which is the right refusal — but it is one the Control Panel only discovers a turn later, as a
-    // 401 it renders as a failed question. Say it once, naming the file, because the usual cause is
-    // that its directory is not owned by the account this service runs as.
-    if (o.Relay.Secret.Length == 0)
-        Console.Error.WriteLine(
-            $"<4>kgsm-assistant: no relay secret — every turn forwarded by the Control Panel API or the "
-            + $"Discord bot will be refused. The host's own secret is {o.Relay.SecretPath}, which could not "
-            + $"be read or created; check that directory is owned by the account this service runs as.");
-});
 builder.Services.Configure<DiscordOAuthOptions>(
     builder.Configuration.GetSection(DiscordOAuthOptions.Section));
 builder.Services.Configure<AuthOptions>(
@@ -1694,7 +1685,7 @@ secured.MapPost("/turn", async (
     // The conversation (memory) key. ALWAYS namespaced under the server-derived user id, so one user can
     // never read or poison another's history. An optional per-CHAT sub-id partitions THIS user's own
     // memory into separate conversations — each "new chat" in the SPA becomes a fresh context window. It
-    // arrives on the trusted-relay path as X-Relay-Conversation-Id (stashed by BearerAuthFilter) and on
+    // arrives on the member-acting path as X-Relay-Conversation-Id (stashed by BearerAuthFilter) and on
     // the direct session path in the request body. Sanitised here (the authority that builds the key);
     // absent/blank ⇒ the bare per-user key, unchanged for clients that don't send a chat id.
     var chatScope = ConversationScope.Sanitize(
@@ -1728,21 +1719,21 @@ secured.MapPost("/turn", async (
     var speak = request.Speak ?? false;
 
     // How this turn's authority will be established WHEN IT RUNS, which for a queued turn is not now.
-    // The relay reads the caller's verified tier off X-Relay-Tier and their auto-accept intent off
-    // X-Relay-Auto-Act — a relay host may have no Discord config of its own, so the forwarded tier is
-    // the only correct source. A direct session bearer re-derives its own tier from Discord at
-    // execution. Either way a caller's capability follows their authority, never the transport.
+    // On the member-acting path the tier was resolved from this member's own replica of the cluster's
+    // accounts when the call authenticated; a direct session bearer re-derives its own at execution.
+    // Either way a caller's capability follows their authority, never the transport, and nothing the
+    // caller sent contributes to it.
     //
-    // X-Relay-Auto-Act is a FLOOR, not an override: the session ANDs it with the conversation's stored
-    // preference, never substitutes it. kgsm-bot pins it false, so a conversation held in Discord can
-    // never auto-run whatever is stored against it.
-    var authority = http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier
+    // The auto-accept intent is a FLOOR, not an override: the session ANDs it with the conversation's
+    // stored preference and with the acting tier, never substitutes for either. kgsm-bot pins it false,
+    // so a conversation held in Discord can never auto-run whatever is stored against it.
+    var authority = http.Items.TryGetValue(BearerAuthFilter.ActingTierKey, out var actingObj) && actingObj is KgsmTier actingTier
         ? new KgsmTierSource(
-            FromRelay: true,
-            RelayTier: relayTier,
-            RelayAutoAct: http.Items.TryGetValue(BearerAuthFilter.RelayAutoActKey, out var autoObj)
+            FromMember: true,
+            ActingTier: actingTier,
+            AutoActIntent: http.Items.TryGetValue(BearerAuthFilter.ActingAutoActKey, out var autoObj)
                 && autoObj is bool b && b)
-        : new KgsmTierSource(FromRelay: false, RelayTier: KgsmTier.None, RelayAutoAct: false);
+        : new KgsmTierSource(FromMember: false, ActingTier: KgsmTier.None, AutoActIntent: false);
 
     // Opt into frames with `Accept: text/event-stream`; everyone else gets the buffered JSON contract
     // unchanged. (SSE here is POST, so the SPA reads it via fetch()+ReadableStream — the browser
@@ -1816,10 +1807,14 @@ secured.MapPost("/turn", async (
 
     bool canPerform;
     bool autoExecute;
-    if (authority.FromRelay)
+    if (authority.FromMember)
     {
-        canPerform = authority.RelayTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled;
-        autoExecute = canPerform && wantsAutoRun && authority.RelayAutoAct;
+        canPerform = authority.ActingTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled;
+        // Auto-running is the admin's, exactly as it is on the session path below. The intent the
+        // caller forwarded is the person's preference and is ANDed with the tier this member resolved,
+        // so asserting one can never raise what they may do.
+        autoExecute = canPerform && wantsAutoRun && authority.AutoActIntent
+            && authority.ActingTier >= KgsmTier.Admin;
     }
     else
     {
@@ -1940,12 +1935,11 @@ secured.MapPost("/confirm", async (
 
     // Re-derive authority FRESH at confirm time — never trust it from the token. Mirror the /turn path
     // exactly (the confirm EXECUTES a mutation, so it must read authority the SAME way the propose did):
-    // on the trusted-relay path the caller's verified tier arrives as X-Relay-Tier, which is the only
-    // correct source for a relay host with no Discord config of its own; a direct session bearer falls
-    // back to its own Discord lookup.
+    // on the member-acting path the tier was resolved from this member's own accounts when the call
+    // authenticated; a direct session bearer falls back to its own lookup.
     bool canPerform;
-    if (http.Items.TryGetValue(BearerAuthFilter.RelayTierKey, out var relayObj) && relayObj is KgsmTier relayTier)
-        canPerform = relayTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled;
+    if (http.Items.TryGetValue(BearerAuthFilter.ActingTierKey, out var actingObj) && actingObj is KgsmTier actingTier)
+        canPerform = actingTier >= KgsmTier.Operator && assistantOptions.Value.ActionsEnabled;
     else
         canPerform = await auth.CanPerformActionsAsync(principal, ct);
     // The confirming user is the authority for the action they just approved, recorded under the surface

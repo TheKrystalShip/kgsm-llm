@@ -28,7 +28,6 @@ public sealed class AssistantServiceOptions
 
     public ConfirmationOptions Confirmation { get; set; } = new();
     public WebhookOptions Webhook { get; set; } = new();
-    public RelayOptions Relay { get; set; } = new();
     public PushOptions Push { get; set; } = new();
     public LifecycleOptions Lifecycle { get; set; } = new();
 }
@@ -127,34 +126,6 @@ public sealed class PushOptions
     /// phone.</panel>
     [ConfigField("pushPollSec", "Check for waiting actions every", Group = "notifications", Min = 1, Unit = "s")]
     public int PollSeconds { get; set; } = 5;
-}
-
-/// <summary>
-/// Shared secret for a trusted, co-located <em>relay</em> (the per-host kgsm-api Control Panel
-/// API) that calls the assistant on a verified end-user's behalf. Mirrors <see cref="WebhookOptions"/>:
-/// when set, a request bearing a matching <c>X-Relay-Secret</c> is authenticated as the forwarded
-/// Discord identity (<c>X-Relay-User</c>/<c>X-Relay-User-Name</c>) WITHOUT a session login; when
-/// unset the host's own secret applies — see <see cref="SecretPath"/> — and the relay path is off
-/// only when that cannot be read or created either. The relay forwards
-/// IDENTITY only — authority (can-perform) is still derived server-side from the bot by user id,
-/// so the secret-holder cannot escalate a user beyond their real Discord role. The secret lives in
-/// the same co-located trust domain as the API and the bot.
-/// </summary>
-public sealed class RelayOptions
-{
-    /// <panel>Shared secret letting the co-located Control Panel API ask on a signed-in user's behalf
-    /// without a second login. It has to match the API's own relay secret, or the panel's chat
-    /// stops working. The relay forwards who is asking, never what they are allowed to do.</panel>
-    [ConfigField("relaySecret", "Control Panel relay secret", Group = "actions", Type = ConfigType.Secret,
-        Risk = ConfigRisk.Wiring, PairedApiKey = "Api__AssistantRelaySecret", NoDefault = true)]
-    public string Secret { get; set; } = string.Empty;
-
-    /// <panel>Where this host keeps the secret above. Left to itself the first surface to look for it
-    /// creates it and the others read it, so the panel's chat works on a host nobody configured; point
-    /// this elsewhere on a host that keeps its state somewhere other than /var/lib.</panel>
-    [ConfigField("relaySecretPath", "Relay secret file", Group = "actions", Type = ConfigType.Path,
-        Risk = ConfigRisk.Wiring)]
-    public string SecretPath { get; set; } = KgsmRelaySecret.DefaultPath;
 }
 
 /// <summary>HMAC key + lifetime for stateless confirmation tokens.</summary>

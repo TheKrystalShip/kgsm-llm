@@ -12,6 +12,7 @@ using TheKrystalShip.KGSM.Auth.Cluster;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
 using TheKrystalShip.KGSM.Auth.Users;
+using TheKrystalShip.KGSM.Cluster;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 
@@ -20,11 +21,11 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// <list type="number">
 /// <item><b>Session bearer</b> — <c>Authorization: Bearer &lt;token&gt;</c>, a session JWT this service
 /// minted, resolved to an <see cref="AuthPrincipal"/> (the browser/SPA-direct path).</item>
-/// <item><b>Trusted relay</b> — a co-located kgsm-api forwarding a verified end-user. A request
-/// carrying a matching <c>X-Relay-Secret</c> is authenticated as the forwarded identity
-/// (<c>X-Relay-User</c> + optional <c>X-Relay-User-Name</c>) with NO session login, carrying that
-/// caller's already-verified tier in <c>X-Relay-Tier</c>. Enabled only when
-/// <see cref="RelayOptions.Secret"/> is configured.</item>
+/// <item><b>Member acting</b> — another member of this cluster calling for somebody who is not signed
+/// in here, authenticated by its own member service token and naming the person on
+/// <c>X-Kgsm-Acting</c>. There is no session login: the person is resolved from this member's own
+/// replica of the cluster's accounts, and so is what they may do. The caller states who and never
+/// what.</item>
 /// </list>
 /// Either way the resolved principal is stashed on <see cref="HttpContext.Items"/> for the handler;
 /// a missing/unresolvable credential short-circuits with a clean 401 (never calling the handler).
@@ -41,33 +42,35 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     public const string PrincipalKey = "principal";
 
     /// <summary>
-    /// Key under which the trusted relay's forwarded authority is stored (a <see cref="KgsmTier"/>), set
-    /// ONLY on the authenticated relay path from <c>X-Relay-Tier</c>. It is the caller's tier as the api
-    /// verified it, and it is the whole authority on this path — the assistant does no Discord lookup for
-    /// a relayed caller, because a relay host may have no Discord configuration of its own. Trusted only
-    /// because the relay secret already matched.
-    /// <para>
-    /// Absent from <see cref="HttpContext.Items"/> ⇒ the session-bearer path, where authority comes from
-    /// Discord instead. Present but unparseable, or an empty header, ⇒ <see cref="KgsmTier.None"/>: a
-    /// relay that does not speak this header can never grant anything by omission.
-    /// </para>
+    /// Key under which the tier this member holds for the person being acted for is stored (a
+    /// <see cref="KgsmTier"/>), set ONLY on the member-acting path.
     /// </summary>
-    public const string RelayTierKey = "relayTier";
+    /// <remarks>
+    /// Read from this member's own replica of the cluster's accounts by the resolver, never from
+    /// anything the caller sent. A caller states who it is acting for and nothing about what they may
+    /// do, so a compromised member can act as somebody it names and never above what that person
+    /// actually holds.
+    /// <para>
+    /// Absent on the session path, where the principal is a person who signed in and authority is
+    /// re-derived from the same store at execution.
+    /// </para>
+    /// </remarks>
+    public const string ActingTierKey = "actingTier";
 
     /// <summary>
-    /// Key under which the trusted relay's AUTO-ACCEPT decision is stored (a <c>bool</c>), set ONLY on
-    /// the authenticated relay path. The api forwards its verified <em>admin</em>-tier ∧ per-turn
-    /// toggle decision as <c>X-Relay-Auto-Act</c>; when true the /turn handler lets the dispatcher run
-    /// lifecycle commands immediately instead of staging them. Strictly stronger than the tier alone,
-    /// and its own header because it is a preference riding a permission rather than a permission.
-    /// Absent/non-"true" ⇒ false (propose-only), so a relay that doesn't speak this header can never
-    /// silently auto-execute.
+    /// Key under which the acting person's per-turn AUTO-ACCEPT intent is stored (a <c>bool</c>), set
+    /// ONLY on the member-acting path.
     /// </summary>
-    public const string RelayAutoActKey = "relayAutoAct";
+    /// <remarks>
+    /// A preference and never a permission: it is ANDed with the tier this member resolved, so a caller
+    /// cannot raise what it may do by asserting one. Absent or anything but <c>"true"</c> is
+    /// propose-only, so a caller that does not speak this header can never grant anything by omission.
+    /// </remarks>
+    public const string ActingAutoActKey = "actingAutoAct";
 
     /// <summary>
     /// Key under which the trusted relay's per-CHAT conversation id is stored (a <c>string</c>), set
-    /// ONLY on the authenticated relay path from <c>X-Relay-Conversation-Id</c>. It is a SUB-scope of
+    /// ONLY on the member-acting path, from <c>X-Relay-Conversation-Id</c>. It is a SUB-scope of
     /// the forwarded user's memory namespace — the /turn handler keys memory as
     /// <c>web:{userId}[:{thisValue}]</c>, so it partitions one caller's own history into separate chats
     /// (each "new chat" in the SPA → a fresh context window) and can NEVER reach another user (the user
@@ -77,7 +80,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
 
     /// <summary>
     /// Key under which the trusted relay's LEAF NAME is stored (a <c>string</c>), set ONLY on the
-    /// authenticated relay path from <c>X-Relay-Leaf</c>. It names the deployed leaf making the call
+    /// member-acting path, from <c>X-Relay-Leaf</c>. It names the deployed leaf making the call
     /// (<c>kgsm-bot</c>, <c>kgsm-api</c>), and two things are derived from it: the prompt overrides
     /// that leaf's surface reads, and the audit origin its actions record under
     /// (<see cref="RelayLeaves"/>).
@@ -93,7 +96,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
 
     /// <summary>
     /// Key under which the trusted relay's ROOM is stored (a <c>string</c>), set ONLY on the
-    /// authenticated relay path, ONLY from <c>X-Relay-Room</c>, and ONLY for a leaf
+    /// member-acting path, ONLY from <c>X-Relay-Room</c>, and ONLY for a leaf
     /// <see cref="RelayLeaves.OpensRooms"/> permits. It names a conversation keyed to a PLACE — a
     /// Discord thread — which everyone speaking there shares, so the /turn handler keys memory as
     /// <c>room:{thisValue}</c> with no user segment at all.
@@ -109,10 +112,6 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     public const string RelayRoomKey = "relayRoom";
 
     private const string BearerPrefix = "Bearer ";
-    private const string RelaySecretHeader = "X-Relay-Secret";
-    private const string RelayUserHeader = "X-Relay-User";
-    private const string RelayUserNameHeader = "X-Relay-User-Name";
-    private const string RelayTierHeader = "X-Relay-Tier";
     private const string RelayAutoActHeader = "X-Relay-Auto-Act";
     private const string RelayConversationIdHeader = "X-Relay-Conversation-Id";
     private const string RelayLeafHeader = "X-Relay-Leaf";
@@ -126,6 +125,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     private readonly AssistantServiceOptions _options;
     private readonly IClusterSessionKeys _clusterKeys;
     private readonly ClusterSessionRevocations _clusterSessions;
+    private readonly MemberActingResolver _acting;
     private readonly string _hostId;
 
     public BearerAuthFilter(
@@ -135,7 +135,8 @@ internal sealed class BearerAuthFilter : IEndpointFilter
         IOptions<AssistantServiceOptions> options,
         IOptions<AuthOptions> authOptions,
         IClusterSessionKeys clusterKeys,
-        ClusterSessionRevocations clusterSessions)
+        ClusterSessionRevocations clusterSessions,
+        MemberActingResolver acting)
     {
         _tokens = tokens;
         _sessions = sessions;
@@ -143,6 +144,7 @@ internal sealed class BearerAuthFilter : IEndpointFilter
         _options = options.Value;
         _clusterKeys = clusterKeys;
         _clusterSessions = clusterSessions;
+        _acting = acting;
         _hostId = authOptions.Value.ResolveHostId();
     }
 
@@ -163,61 +165,64 @@ internal sealed class BearerAuthFilter : IEndpointFilter
     {
         var request = context.HttpContext.Request;
 
-        // Trusted-relay path first: only when a relay secret is configured AND the caller presents
-        // one. A present-but-wrong secret is a hard 401 (a misconfigured/forged relay), never a
-        // silent fall-through to the session path.
-        var relaySecret = _options.Relay.Secret;
-        var presentedSecret = request.Headers[RelaySecretHeader].ToString();
-        if (!string.IsNullOrEmpty(relaySecret) && !string.IsNullOrEmpty(presentedSecret))
+        // Member-acting path first, chosen by the acting header rather than by trying one scheme and
+        // falling back: this and a session establish trust in completely different ways, and a fallback
+        // would mean a failed member call quietly re-examined as somebody's session.
+        string actingHandle = request.Headers[MemberActing.ActingHandleHeader].ToString();
+        if (!string.IsNullOrWhiteSpace(actingHandle))
         {
-            if (!FixedTimeEquals(presentedSecret, relaySecret))
+            MemberActingResult acting = await _acting.ResolveAsync(
+                actingHandle, ClusterRequest.ExtractBearerToken(request),
+                context.HttpContext.RequestAborted);
+
+            if (!acting.Succeeded)
                 return Results.Unauthorized();
 
-            var userId = request.Headers[RelayUserHeader].ToString();
-            if (string.IsNullOrWhiteSpace(userId))
-                return Results.Unauthorized(); // the relay MUST forward an identity to act as
+            KgsmUser person = acting.Person!;
+            KgsmActor.TryParse(acting.Handle!, out string provider, out string subject);
 
-            var displayName = request.Headers[RelayUserNameHeader].ToString();
-            // The relay path holds no session of its own — the api authenticated the user upstream —
-            // so the session id is empty and a logout on this path has nothing to revoke.
-            // The relay header carries a bare subject, not a qualified handle, so the provider is the
-            // one the relay speaks for rather than something this request states. Widening that is a
-            // change to the relay contract on both ends, not a default to be guessed at here.
+            // No session of its own: the caller is a member, not a person signing in, so there is no
+            // session id and a sign-out on this path has nothing to revoke. The provider comes from the
+            // handle rather than being assumed — a member may act for somebody who signed in with a
+            // password, and stamping them as a provider's would file them under an identity they do not
+            // have.
             context.HttpContext.Items[PrincipalKey] = new AuthPrincipal(
-                KgsmActorProvider.Discord,
-                userId, string.IsNullOrWhiteSpace(displayName) ? userId : displayName, string.Empty,
+                provider, subject, person.DisplayName, string.Empty,
                 Owner: await OwnerKeys.ResolveAsync(
-                    _users, KgsmActorProvider.Discord, userId, context.HttpContext.RequestAborted));
-            // The caller's tier as the api verified it — one value answering every authority question
-            // this service asks of a relayed caller. Parsed fail-closed: an unrecognised, empty or absent
-            // spelling is None, so a relay that does not speak this header grants nothing by omission.
-            context.HttpContext.Items[RelayTierKey] =
-                KgsmTiers.Parse(request.Headers[RelayTierHeader].ToString());
-            // The api's auto-accept decision (its verified admin-tier ∧ toggle). Same trust basis (the
-            // secret already matched) and same fail-closed default — anything but "true" ⇒ propose-only.
-            context.HttpContext.Items[RelayAutoActKey] =
+                    _users, provider, subject, context.HttpContext.RequestAborted));
+
+            // The tier this member holds for them, read from its own replica by the resolver. It is
+            // carried rather than re-read so that one call asks the question once, and it is the ONLY
+            // source of authority on this path — nothing the caller sent contributes to it.
+            context.HttpContext.Items[ActingTierKey] = person.Tier;
+
+            // The person's own per-turn intent, and nothing more. It is ANDed with the tier this member
+            // resolved, so a caller cannot raise what it may do by asserting a preference.
+            context.HttpContext.Items[ActingAutoActKey] =
                 string.Equals(request.Headers[RelayAutoActHeader].ToString(), "true", StringComparison.OrdinalIgnoreCase);
-            // The per-chat conversation id — a SUB-scope of THIS user's memory (the handler keys
-            // web:{userId}[:{id}]). Stored raw; the handler sanitises + caps it. Never cross-user: the
-            // user id is the authoritative prefix. Absent ⇒ unset ⇒ the handler uses the bare per-user
-            // key, so an older api/relay that doesn't send it stays single-context (unchanged behaviour).
+
+            // The per-chat conversation id — a SUB-scope of THIS person's memory. Stored raw; the
+            // handler sanitises and caps it. Never cross-person: the resolved owner is the authoritative
+            // prefix, so a caller naming somebody else's chat still gets their own.
             var relayConversationId = request.Headers[RelayConversationIdHeader].ToString();
             if (!string.IsNullOrWhiteSpace(relayConversationId))
                 context.HttpContext.Items[RelayConversationIdKey] = relayConversationId;
+
             // The calling leaf, which selects its prompt overrides and its audit origin. Validated
             // rather than repaired: it is used as a path segment, and a name that has to be cleaned up
             // to be usable is a name this service should not act on.
             string? leaf = LeafName.Validate(request.Headers[RelayLeafHeader].ToString());
             if (leaf is not null)
                 context.HttpContext.Items[RelayLeafKey] = leaf;
-            // The room, read LAST because it is the one header whose meaning depends on another: only
-            // a leaf on the room allow-list may name a conversation that is not prefixed with the
-            // caller's own id. An unlisted leaf is not an error — its request is simply the per-user
-            // one it would have been without the header, which is the same answer a leaf that never
-            // heard of rooms gets.
+
+            // The room, read LAST because it is the one header whose meaning depends on another: only a
+            // leaf on the room allow-list may name a conversation that is not prefixed with the acting
+            // person's own id. An unlisted leaf is not an error — its request is simply the per-person
+            // one it would have been without the header.
             var relayRoom = request.Headers[RelayRoomHeader].ToString();
             if (!string.IsNullOrWhiteSpace(relayRoom) && RelayLeaves.OpensRooms(leaf))
                 context.HttpContext.Items[RelayRoomKey] = relayRoom;
+
             return await next(context);
         }
 

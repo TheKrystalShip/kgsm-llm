@@ -498,26 +498,6 @@
       "risk": "wiring"
     },
     {
-      "key": "relaySecret",
-      "env": "Assistant__Relay__Secret",
-      "label": "Control Panel relay secret",
-      "description": "Shared secret letting the co-located Control Panel API ask on a signed-in user's behalf without a second login. It has to match the API's own relay secret, or the panel's chat stops working. The relay forwards who is asking, never what they are allowed to do.",
-      "group": "actions",
-      "type": "secret",
-      "risk": "wiring",
-      "pairedApiKey": "Api__AssistantRelaySecret"
-    },
-    {
-      "key": "relaySecretPath",
-      "env": "Assistant__Relay__SecretPath",
-      "label": "Relay secret file",
-      "description": "Where this host keeps the secret above. Left to itself the first surface to look for it creates it and the others read it, so the panel's chat works on a host nobody configured; point this elsewhere on a host that keeps its state somewhere other than /var/lib.",
-      "group": "actions",
-      "type": "path",
-      "default": "/var/lib/kgsm/auth/relay-secret",
-      "risk": "wiring"
-    },
-    {
       "key": "discordRedirectUri",
       "env": "DiscordOAuth__RedirectUri",
       "label": "Sign-in redirect",

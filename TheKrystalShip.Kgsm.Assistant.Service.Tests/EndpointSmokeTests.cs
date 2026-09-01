@@ -20,6 +20,8 @@ using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure.Kgsm;
 using TheKrystalShip.KGSM.Auth;
+using TheKrystalShip.KGSM.Cluster;
+using TheKrystalShip.KGSM.Cluster.Identity;
 using TheKrystalShip.KGSM.Auth.Users;
 using TheKrystalShip.KGSM.Auth.Discord;
 using TheKrystalShip.KGSM.Auth.Sessions;
@@ -343,7 +345,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Confirm_Relay_BlueprintFinalize_CanActHeaderGrantsAuthority()
+    public async Task Confirm_Acting_BlueprintFinalize_UsesTheTierThisMemberHolds()
     {
         // The blueprint-review Save arrives on the trusted-relay path (kgsm-api). Authority MUST come from
         // X-Relay-Tier exactly as the propose side does — a relay host with no Discord config has no bot
@@ -358,28 +360,29 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         var factory = Factory(assistant, configure: b =>
         {
-            b.UseSetting("Assistant:Relay:Secret", "relay-secret");
+            AsMember(b);
             b.UseSetting("Assistant:ActionsEnabled", "true");
         });
         var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
         var token = pending.Put(
             new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"),
-            "relayuser", DateTimeOffset.UtcNow.AddMinutes(5));
+            "usr_relayuser", DateTimeOffset.UtcNow.AddMinutes(5));
 
-        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", "operator");
+        var response = await ActingConfirmAsync(factory, factory.CreateClient(), token, "edited-yaml",
+            await SeedAccountAsync(factory, "relayuser", KgsmTier.Operator));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         await assistant.Received(1).FinalizeBlueprintAsync("Satisfactory", "edited-yaml", true, Arg.Any<CancellationToken>());
     }
 
     [Theory]
-    [InlineData("viewer")]   // authenticated, but below operator
-    [InlineData(null)]       // a relay that does not speak the header at all
-    public async Task Confirm_Relay_BelowOperator_IsDenied(string? tier)
+    [InlineData(KgsmTier.Viewer)]   // an account below operator
+    [InlineData(KgsmTier.None)]     // an account holding nothing at all
+    public async Task Confirm_Acting_BelowOperator_IsDenied(KgsmTier tier)
     {
-        // Fail-closed, both ways round: a tier under operator and an ABSENT tier must both reach the
-        // finalize with canPerform=false. Omission is the one that matters — a relay that says nothing
-        // must never be read as saying yes.
+        // The tier is this member's own answer about that person, so a caller cannot reach the finalize
+        // with canPerform=true by sending anything: there is nothing to send. Both of these reach it
+        // with false.
         var assistant = Substitute.For<IServerAssistant>();
         assistant.FinalizeBlueprintAsync("Satisfactory", "edited-yaml", false, Arg.Any<CancellationToken>())
             .Returns(new ToolResult<BlueprintAuthoringData>(
@@ -389,49 +392,50 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
         var factory = Factory(assistant, configure: b =>
         {
-            b.UseSetting("Assistant:Relay:Secret", "relay-secret");
+            AsMember(b);
             b.UseSetting("Assistant:ActionsEnabled", "true");
         });
         var pending = factory.Services.GetRequiredService<IPendingConfirmationStore>();
         var token = pending.Put(
             new PendingConfirmation(ConfirmationKind.Blueprint, "satisfactory", InstanceName: "Satisfactory"),
-            "relayuser", DateTimeOffset.UtcNow.AddMinutes(5));
+            "usr_relayuser", DateTimeOffset.UtcNow.AddMinutes(5));
 
-        var response = await RelayConfirmAsync(factory.CreateClient(), token, "edited-yaml", "relay-secret", "relayuser", tier);
+        var response = await ActingConfirmAsync(factory, factory.CreateClient(), token, "edited-yaml",
+            await SeedAccountAsync(factory, "relayuser", tier));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         await assistant.Received(1).FinalizeBlueprintAsync("Satisfactory", "edited-yaml", false, Arg.Any<CancellationToken>());
     }
 
     [Theory]
-    [InlineData("operator")]      // authenticated, but review is admin's
-    [InlineData("not-a-tier")]    // a spelling this service does not know
-    [InlineData("")]              // present and empty
-    public async Task Review_Relay_WithoutAdminTier_IsForbidden(string tier)
+    [InlineData(KgsmTier.Operator)]   // authenticated, but review is admin's
+    [InlineData(KgsmTier.Viewer)]
+    [InlineData(KgsmTier.None)]
+    public async Task Review_Acting_WithoutAdmin_IsForbidden(KgsmTier tier)
     {
-        // The parse is fail-closed, so an unrecognised or empty spelling denies exactly as a real
-        // lower tier does. A relay cannot open the review surface by sending something unexpected.
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        // The caller IS authenticated here — 401 would be wrong. It is the authority that is absent, and
+        // it is absent because this member's own accounts say so. There is no header a caller could send
+        // to open this surface, which is the whole point of resolving the tier locally.
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", tier);
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/users",
+            await SeedAccountAsync(factory, "relayuser", tier));
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
-    /// <summary>POSTs /confirm over the trusted-relay path with the relay secret + forwarded identity and,
-    /// optionally, the <c>X-Relay-Tier</c> authority header. <paramref name="tier"/> null omits it.</summary>
-    private static async Task<HttpResponseMessage> RelayConfirmAsync(
-        HttpClient client, string token, string editedContent, string secret, string userId, string? tier)
+    /// <summary>POSTs /confirm as another member, acting for a person.</summary>
+    /// <remarks>
+    /// The confirm EXECUTES what the turn proposed, so it reads authority the same way the propose did:
+    /// from the tier this member holds for that person, never from anything the caller sent.
+    /// </remarks>
+    private static async Task<HttpResponseMessage> ActingConfirmAsync(
+        WebApplicationFactory<Program> factory, HttpClient client, string token, string editedContent,
+        string handle)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/confirm")
-        {
-            Content = JsonContent.Create(new { token, editedContent }),
-        };
-        request.Headers.Add("X-Relay-Secret", secret);
-        request.Headers.Add("X-Relay-User", userId);
-        if (tier is not null) request.Headers.Add("X-Relay-Tier", tier);
+        var request = Acting(factory, HttpMethod.Post, "/confirm", handle);
+        request.Content = JsonContent.Create(new { token, editedContent });
         return await client.SendAsync(request);
     }
 
@@ -1210,42 +1214,41 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Turn_Relay_ValidSecret_AuthsAsForwardedUser()
+    public async Task Turn_Acting_AuthsAsThePersonNamed()
     {
-        // The trusted-relay path (kgsm-api): a matching X-Relay-Secret + forwarded Discord identity
-        // authenticates with NO session bearer, and the forwarded user drives the principal-scoped
-        // conversation key (web:<userId>) — per-user isolation is preserved through the relay.
+        // A member calling for somebody who is not signed in here: its own service token authenticates
+        // it, the acting handle names the person, and that person's ACCOUNT drives the conversation key
+        // — so their history is theirs whichever surface they were reached through.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        var response = await StreamTurnRelayAsync(factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User");
+        var factory = Factory(assistant, configure: AsMember);
+        var response = await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
         (await response.Content.ReadAsStringAsync()).Should().Contain("event: done");
         assistant.Received().RunStreamAsync(
-            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
+            "web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
     [Fact]
-    public async Task Turn_Relay_ConversationId_SubScopesUserMemory()
+    public async Task Turn_Acting_ConversationId_SubScopesTheirMemory()
     {
         // A per-chat X-Relay-Conversation-Id partitions the SAME user's memory into a fresh context
         // window — keyed web:<userId>:<chatId> — so a "new chat" no longer leaks the previous chat's
         // history, while staying strictly inside that user's namespace (the user id is the prefix).
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:usr_relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        var response = await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", "chat-abc123");
+        var factory = Factory(assistant, configure: AsMember);
+        var response = await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"), "chat-abc123");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         assistant.Received().RunStreamAsync(
-            "web:relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
+            "web:usr_relayuser:chat-abc123", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
     // --- Rooms: a conversation keyed to a PLACE, shared by everyone in it -------------------------
@@ -1256,15 +1259,14 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// own. The turn is also marked shared, which is what makes the history replay with speakers.
     /// </summary>
     [Fact]
-    public async Task Turn_Relay_Room_KeysTheConversationToThePlace_NotThePerson()
+    public async Task Turn_Acting_Room_KeysTheConversationToThePlace_NotThePerson()
     {
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true)
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        var response = await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "kgsm-bot", room: "g1-t9");
+        var factory = Factory(assistant, configure: AsMember);
+        var response = await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"), leaf: "kgsm-bot", room: "g1-t9");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         assistant.Received().RunStreamAsync(
@@ -1276,16 +1278,20 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// whole feature is for, and the one a per-user key cannot express.
     /// </summary>
     [Fact]
-    public async Task Turn_Relay_Room_IsTheSameConversationForEveryone()
+    public async Task Turn_Acting_Room_IsTheSameConversationForEveryone()
     {
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<bool>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
+        var factory = Factory(assistant, configure: AsMember);
         var client = factory.CreateClient();
-        await StreamTurnRelayAsync(client, "hi", "relay-secret", "alice", "Alice", leaf: "kgsm-bot", room: "g1-t9");
-        await StreamTurnRelayAsync(client, "me too", "relay-secret", "bob", "Bob", leaf: "kgsm-bot", room: "g1-t9");
+        // The name shown for each of them is their ACCOUNT's, not something the caller sent: a member
+        // states who it is acting for and this member says everything else about them.
+        await StreamTurnActingAsync(factory, client, "hi",
+            await SeedAccountAsync(factory, "alice", displayName: "Alice"), leaf: "kgsm-bot", room: "g1-t9");
+        await StreamTurnActingAsync(factory, client, "me too",
+            await SeedAccountAsync(factory, "bob", displayName: "Bob"), leaf: "kgsm-bot", room: "g1-t9");
 
         assistant.Received().RunStreamAsync(
             "room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), "Alice", Arg.Any<string?>(), true);
@@ -1299,35 +1305,33 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// this caller may ask for.
     /// </summary>
     [Fact]
-    public async Task Turn_Relay_Room_FromAnUnlistedLeaf_IsIgnored()
+    public async Task Turn_Acting_Room_FromAnUnlistedLeaf_IsIgnored()
     {
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false)
+        assistant.RunStreamAsync("web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false)
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        var response = await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "kgsm-api", room: "g1-t9");
+        var factory = Factory(assistant, configure: AsMember);
+        var response = await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"), leaf: "kgsm-api", room: "g1-t9");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         assistant.Received().RunStreamAsync(
-            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false);
+            "web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false);
     }
 
     /// <summary>A relay naming no leaf at all is likewise not permitted to open a room.</summary>
     [Fact]
-    public async Task Turn_Relay_Room_WithNoLeafNamed_IsIgnored()
+    public async Task Turn_Acting_Room_WithNoLeafNamed_IsIgnored()
     {
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false)
+        assistant.RunStreamAsync("web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false)
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", room: "g1-t9");
+        var factory = Factory(assistant, configure: AsMember);
+        await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"), room: "g1-t9");
 
         assistant.Received().RunStreamAsync(
-            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false);
+            "web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), false);
     }
 
     /// <summary>
@@ -1365,15 +1369,14 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// believed they were sharing.
     /// </summary>
     [Fact]
-    public async Task Turn_Relay_Room_SupersedesThePerChatScope()
+    public async Task Turn_Acting_Room_SupersedesThePerChatScope()
     {
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("room:g1-t9", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true)
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User",
+        var factory = Factory(assistant, configure: AsMember);
+        await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"),
             conversationId: "chat-abc123", leaf: "kgsm-bot", room: "g1-t9");
 
         assistant.Received().RunStreamAsync(
@@ -1386,15 +1389,14 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     /// this service composes.
     /// </summary>
     [Fact]
-    public async Task Turn_Relay_Room_IsSanitisedIntoASingleSegment()
+    public async Task Turn_Acting_Room_IsSanitisedIntoASingleSegment()
     {
         var assistant = Substitute.For<IServerAssistant>();
         assistant.RunStreamAsync("room:webu1", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), true)
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User",
+        var factory = Factory(assistant, configure: AsMember);
+        await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"),
             leaf: "kgsm-bot", room: "web:u1");
 
         assistant.Received().RunStreamAsync(
@@ -1402,20 +1404,67 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Turn_Relay_WrongSecret_Returns401()
+    public async Task Turn_Acting_ForSomebodyThisMemberDoesNotHave_Returns401()
     {
-        // A present-but-wrong relay secret is a hard 401 — never a fall-through to the session path.
-        var factory = Factory(Substitute.For<IServerAssistant>(), configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        var response = await StreamTurnRelayAsync(factory.CreateClient(), "hi", "WRONG-SECRET", "relayuser");
+        // Naming a person no account here matches is refused rather than provisioned — this is what a
+        // username collision looks like from the far end, and inventing an account from an assertion
+        // would let any member create people here.
+        var factory = Factory(Substitute.For<IServerAssistant>(), configure: AsMember);
+
+        var response = await StreamTurnActingAsync(
+            factory, factory.CreateClient(), "hi", "discord:nobody-here");
+
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
-    public async Task Turn_Relay_MissingUser_Returns401()
+    public async Task Turn_Acting_WithAnUnqualifiedHandle_Returns401()
     {
-        // A valid secret with no forwarded identity is refused — the relay must say who it acts as.
-        var factory = Factory(Substitute.For<IServerAssistant>(), configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        var response = await StreamTurnRelayAsync(factory.CreateClient(), "hi", "relay-secret", userId: null);
+        // A bare subject names nobody: reading one as some provider's would file a person under an
+        // identity they do not have, so it is refused rather than guessed at.
+        var factory = Factory(Substitute.For<IServerAssistant>(), configure: AsMember);
+        await SeedAccountAsync(factory, "relayuser");
+
+        var response = await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", "relayuser");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Turn_Acting_WithoutAMemberToken_Returns401()
+    {
+        // The acting header alone is not a member. It names who, and the token is what says the caller
+        // is entitled to name anybody at all.
+        var factory = Factory(Substitute.For<IServerAssistant>(), configure: AsMember);
+        string handle = await SeedAccountAsync(factory, "relayuser");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt = "hi" }),
+        };
+        request.Headers.Add(MemberActing.ActingHandleHeader, handle);
+
+        var response = await factory.CreateClient().SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Turn_Acting_OnAHostInNoCluster_Returns401()
+    {
+        // A machine standing alone is a member of nothing, so it can validate no member's token. Its own
+        // sign-in path is untouched; this one simply has nobody it could believe.
+        var factory = Factory(Substitute.For<IServerAssistant>());
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
+        {
+            Content = JsonContent.Create(new { prompt = "hi" }),
+        };
+        request.Headers.Add(MemberActing.ActingHandleHeader, "discord:relayuser");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "not-a-member-token");
+
+        var response = await factory.CreateClient().SendAsync(request);
+
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
@@ -1665,56 +1714,54 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Turn_Relay_LeafHeader_SelectsThatLeafsPrompts()
+    public async Task Turn_Acting_LeafHeader_SelectsThatLeafsPrompts()
     {
         // The calling leaf reaches the turn, which is what makes a surface's own prompt and
         // tool-description overrides apply to it.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        var response = await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "kgsm-bot");
+        var factory = Factory(assistant, configure: AsMember);
+        var response = await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"), leaf: "kgsm-bot");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         assistant.Received().RunStreamAsync(
-            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
+            "web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
             Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), "kgsm-bot");
     }
 
     [Fact]
-    public async Task Turn_Relay_NoLeafHeader_RunsAsTheAssistantsOwn()
+    public async Task Turn_Acting_NoLeafHeader_RunsAsTheAssistantsOwn()
     {
         // A relay that does not speak the header is unchanged by its existence — this is what keeps
         // the header additive rather than a coordinated deploy.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        await StreamTurnRelayAsync(factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User");
+        var factory = Factory(assistant, configure: AsMember);
+        await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"));
 
         assistant.Received().RunStreamAsync(
-            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
+            "web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
             Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), null);
     }
 
     [Fact]
-    public async Task Turn_Relay_MalformedLeafHeader_IsDropped_NotPassedOn()
+    public async Task Turn_Acting_MalformedLeafHeader_IsDropped_NotPassedOn()
     {
         // The leaf name becomes a path segment when prompts are resolved, so a name that would have
         // to be cleaned up to be usable is refused outright and the turn runs as the assistant's own.
         var assistant = Substitute.For<IServerAssistant>();
-        assistant.RunStreamAsync("web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
+        assistant.RunStreamAsync("web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns(_ => AsyncSeq(AssistantStreamEvent.Token("Hi"), AssistantStreamEvent.Final("Hi")));
 
-        var factory = Factory(assistant, configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"));
-        await StreamTurnRelayAsync(
-            factory.CreateClient(), "hi", "relay-secret", "relayuser", "Relay User", leaf: "../../etc");
+        var factory = Factory(assistant, configure: AsMember);
+        await StreamTurnActingAsync(factory, factory.CreateClient(), "hi", await SeedAccountAsync(factory, "relayuser"), leaf: "../../etc");
 
         assistant.Received().RunStreamAsync(
-            "web:relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
+            "web:usr_relayuser", "hi", Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), null,
             Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<string?>(), null);
     }
 
@@ -1744,18 +1791,20 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 
     /// <summary>POSTs /turn over the trusted-relay path: an SSE Accept + the relay secret and
     /// forwarded identity headers, no session bearer. A null header value is omitted.</summary>
-    private static async Task<HttpResponseMessage> StreamTurnRelayAsync(
-        HttpClient client, string prompt, string? secret, string? userId, string? userName = null,
+    /// <summary>
+    /// POSTs a streamed turn as another member, acting for the person <paramref name="handle"/> names.
+    /// </summary>
+    /// <remarks>
+    /// A null <paramref name="handle"/> sends the member's own token and names nobody, which is the case
+    /// worth covering: a member has no business asking a question as itself, and the turn is refused.
+    /// </remarks>
+    private static async Task<HttpResponseMessage> StreamTurnActingAsync(
+        WebApplicationFactory<Program> factory, HttpClient client, string prompt, string? handle,
         string? conversationId = null, string? leaf = null, string? room = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/turn")
-        {
-            Content = JsonContent.Create(new { prompt }),
-        };
+        var request = Acting(factory, HttpMethod.Post, "/turn", handle);
+        request.Content = JsonContent.Create(new { prompt });
         request.Headers.Accept.ParseAdd("text/event-stream");
-        if (secret is not null) request.Headers.Add("X-Relay-Secret", secret);
-        if (userId is not null) request.Headers.Add("X-Relay-User", userId);
-        if (userName is not null) request.Headers.Add("X-Relay-User-Name", userName);
         if (conversationId is not null) request.Headers.Add("X-Relay-Conversation-Id", conversationId);
         if (leaf is not null) request.Headers.Add("X-Relay-Leaf", leaf);
         if (room is not null) request.Headers.Add("X-Relay-Room", room);
@@ -1804,7 +1853,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     // --- Conversation history read-back (the reverse path) ------------------------------------
 
     [Fact]
-    public async Task Conversations_Relay_ListsCallersOwnScope_AndStripsChatIdPrefix()
+    public async Task Conversations_Acting_ListsThatPersonsOwnScope_AndStripsChatIdPrefix()
     {
         // The list endpoint must scope to the FORWARDED user (web:<userId>), never client-supplied — a
         // caller can only ever enumerate its OWN chats. The DTO id is the per-chat sub-scope (the prefix
@@ -1815,18 +1864,18 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 new Llm.Models.ConversationSummary
                 {
-                    ConversationId = "web:relayuser:chatA", Title = "about factorio",
+                    ConversationId = "web:usr_relayuser:chatA", Title = "about factorio",
                     CreatedAt = DateTimeOffset.UnixEpoch, LastActivityAt = DateTimeOffset.UnixEpoch, TurnCount = 2,
                 },
             },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(factory.CreateClient(), "/conversations", "relay-secret", "relayuser");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/conversations", await SeedAccountAsync(factory, "relayuser"));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        store.ListScope.Should().Be("web:relayuser");   // scoped to the forwarded id, not the client
+        store.ListScope.Should().Be("web:usr_relayuser");   // scoped to the forwarded id, not the client
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"id\":\"chatA\"");        // the web:relayuser: prefix stripped to the chat id
         body.Should().Contain("\"title\":\"about factorio\"");
@@ -1834,7 +1883,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Conversation_Relay_FetchesUserScopedKey_AndMapsTurnTo5aShape()
+    public async Task Conversation_Acting_FetchesTheirScopedKey_AndMapsTurnShape()
     {
         // The transcript endpoint composes the key exactly as /turn does (web:<userId>:<chatId>), so {id}
         // can only address the caller's OWN conversation. The turn maps to the §5·a vocabulary so a client
@@ -1845,7 +1894,7 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 Llm.Models.ConversationEntry.ForTurn(new Llm.Models.ConversationTurnRecord
                 {
-                    ConversationId = "web:relayuser:chatA",
+                    ConversationId = "web:usr_relayuser:chatA",
                     StartedAt = DateTimeOffset.UnixEpoch, CompletedAt = DateTimeOffset.UnixEpoch,
                     UserPrompt = "is factorio up?", SystemPromptHash = "h",
                     Tools = new[]
@@ -1860,13 +1909,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 }),
             },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(factory.CreateClient(), "/conversations/chatA", "relay-secret", "relayuser");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/conversations/chatA", await SeedAccountAsync(factory, "relayuser"));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        store.HistoryKey.Should().Be("web:relayuser:chatA");
+        store.HistoryKey.Should().Be("web:usr_relayuser:chatA");
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"kind\":\"turn\"");
         body.Should().Contain("\"prompt\":\"is factorio up?\"");
@@ -1879,35 +1928,31 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Conversation_Relay_SoftDelete_ScopesToCallerAndReturns204()
+    public async Task Conversation_Acting_SoftDelete_ScopesToThemAndReturns204()
     {
         // DELETE composes the key exactly like the GETs (web:<userId>:<chatId>) — a caller can only ever
         // soft-delete its OWN conversation — and returns 204. The store keeps the transcript (the corpus);
         // only the listing hides it. Here we assert the endpoint forwarded the principal-scoped key.
         var store = new RecordingConversationStore();
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelaySendAsync(
-            factory.CreateClient(), HttpMethod.Delete, "/conversations/chatA", "relay-secret", "relayuser");
+        var response = await ActingSendAsync(factory, factory.CreateClient(), HttpMethod.Delete, "/conversations/chatA", await SeedAccountAsync(factory, "relayuser"));
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
-        store.DeletedKey.Should().Be("web:relayuser:chatA");
+        store.DeletedKey.Should().Be("web:usr_relayuser:chatA");
     }
 
     /// <summary>
     /// POSTs a chat command over the relay, optionally speaking into a room and claiming a tier.
     /// </summary>
-    private static async Task<HttpResponseMessage> RelayCommandAsync(
-        HttpClient client, string name, string secret, string userId,
-        string? room = null, string? conversationId = null)
+    /// <summary>POSTs a chat command as another member, acting for a person.</summary>
+    private static async Task<HttpResponseMessage> ActingCommandAsync(
+        WebApplicationFactory<Program> factory, HttpClient client, string command, string handle,
+        string? conversationId = null, string? room = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/commands/{name}")
-        {
-            Content = JsonContent.Create(new { conversationId }),
-        };
-        request.Headers.Add("X-Relay-Secret", secret);
-        request.Headers.Add("X-Relay-User", userId);
+        var request = Acting(factory, HttpMethod.Post, $"/commands/{command}", handle);
+        request.Content = JsonContent.Create(new { conversationId });
         // A room is granted to a listed leaf, never claimed — without this header the room one is
         // ignored, which is the guard rather than an inconvenience.
         request.Headers.Add("X-Relay-Leaf", "kgsm-bot");
@@ -1925,10 +1970,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         StubTier(discord, KgsmTier.Operator);
         var factory = Factory(discord: discord,
-            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"), withStore: store);
+            configure: AsMember, withStore: store);
 
-        var response = await RelayCommandAsync(
-            factory.CreateClient(), "new", "relay-secret", "relayuser", room: "g1-t9");
+        var response = await ActingCommandAsync(factory, factory.CreateClient(), "new", await SeedAccountAsync(factory, "relayuser", KgsmTier.Operator), room: "g1-t9");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.ResetKey.Should().Be("room:g1-t9");
@@ -1943,10 +1987,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         StubTier(discord, KgsmTier.Viewer);
         var factory = Factory(discord: discord,
-            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"), withStore: store);
+            configure: AsMember, withStore: store);
 
-        var response = await RelayCommandAsync(
-            factory.CreateClient(), "new", "relay-secret", "relayuser", room: "g1-t9");
+        var response = await ActingCommandAsync(factory, factory.CreateClient(), "new", await SeedAccountAsync(factory, "relayuser", KgsmTier.Operator), room: "g1-t9");
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         store.ResetKey.Should().BeNull();
@@ -1960,10 +2003,9 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         StubTier(discord, KgsmTier.Viewer);
         var factory = Factory(discord: discord,
-            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"), withStore: store);
+            configure: AsMember, withStore: store);
 
-        var response = await RelayCommandAsync(
-            factory.CreateClient(), "new", "relay-secret", "relayuser", conversationId: "chatA");
+        var response = await ActingCommandAsync(factory, factory.CreateClient(), "new", await SeedAccountAsync(factory, "relayuser", KgsmTier.Operator), conversationId: "chatA");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.ResetKey.Should().BeNull();
@@ -1979,47 +2021,44 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var discord = Substitute.For<ISignInService, IAuthorityProvider>();
         StubTier(discord, KgsmTier.Viewer);
         var factory = Factory(discord: discord,
-            configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+            configure: AsMember,
             withStore: store, withCompactor: compactor);
 
-        var response = await RelayCommandAsync(
-            factory.CreateClient(), "compact", "relay-secret", "relayuser", room: "g1-t9");
+        var response = await ActingCommandAsync(factory, factory.CreateClient(), "compact", await SeedAccountAsync(factory, "relayuser", KgsmTier.Operator), room: "g1-t9");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         compactor.CompactedKey.Should().Be("room:g1-t9");
     }
 
     [Fact]
-    public async Task Conversation_Relay_Feedback_ScopesToCallerAndRecordsTheVerdict()
+    public async Task Conversation_Acting_Feedback_ScopesToThemAndRecordsTheVerdict()
     {
         // The key is composed exactly like the reads/delete (web:<userId>:<chatId>), so a caller can only
         // ever rate a turn in its OWN conversation. The store's own ownership check is the second half of
         // that guard — entry ids are log-wide, so the route alone is not enough.
         var store = new RecordingConversationStore();
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayJsonAsync(
-            factory.CreateClient(), "/conversations/chatA/turns/42/feedback", "relay-secret", "relayuser",
+        var response = await ActingJsonAsync(factory, factory.CreateClient(), "/conversations/chatA/turns/42/feedback", await SeedAccountAsync(factory, "relayuser"),
             """{"rating":"down","note":"named a server that doesn't exist"}""");
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
         store.Feedback.Should().Be((
-            "web:relayuser:chatA", 42L, (Llm.Models.TurnFeedbackRating?)Llm.Models.TurnFeedbackRating.Down,
+            "web:usr_relayuser:chatA", 42L, (Llm.Models.TurnFeedbackRating?)Llm.Models.TurnFeedbackRating.Down,
             "named a server that doesn't exist"));
     }
 
     [Fact]
-    public async Task Conversation_Relay_Feedback_DropsANoteLeftOnAThumbsUp()
+    public async Task Conversation_Acting_Feedback_DropsANoteLeftOnAThumbsUp()
     {
         // A note is the "what went wrong" behind a thumbs-down. Keeping one on a thumbs-up would file a
         // complaint against an answer its reader said was fine.
         var store = new RecordingConversationStore();
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayJsonAsync(
-            factory.CreateClient(), "/conversations/chatA/turns/7/feedback", "relay-secret", "relayuser",
+        var response = await ActingJsonAsync(factory, factory.CreateClient(), "/conversations/chatA/turns/7/feedback", await SeedAccountAsync(factory, "relayuser"),
             """{"rating":"up","note":"ignore me"}""");
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
@@ -2028,14 +2067,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Conversation_Relay_Feedback_NullRatingWithdrawsTheVerdict()
+    public async Task Conversation_Acting_Feedback_NullRatingWithdrawsTheVerdict()
     {
         var store = new RecordingConversationStore();
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayJsonAsync(
-            factory.CreateClient(), "/conversations/chatA/turns/7/feedback", "relay-secret", "relayuser",
+        var response = await ActingJsonAsync(factory, factory.CreateClient(), "/conversations/chatA/turns/7/feedback", await SeedAccountAsync(factory, "relayuser"),
             """{"rating":null}""");
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
@@ -2043,14 +2081,13 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Conversation_Relay_Feedback_RejectsARatingThatIsNeitherThumb()
+    public async Task Conversation_Acting_Feedback_RejectsARatingThatIsNeitherThumb()
     {
         var store = new RecordingConversationStore();
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayJsonAsync(
-            factory.CreateClient(), "/conversations/chatA/turns/7/feedback", "relay-secret", "relayuser",
+        var response = await ActingJsonAsync(factory, factory.CreateClient(), "/conversations/chatA/turns/7/feedback", await SeedAccountAsync(factory, "relayuser"),
             """{"rating":"sideways"}""");
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -2058,37 +2095,35 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Conversation_Relay_Feedback_IsNotFoundWhenTheTurnIsNotTheCallers()
+    public async Task Conversation_Acting_Feedback_IsNotFoundWhenTheTurnIsNotTheirs()
     {
         // The store refuses a turn id that is not part of the named conversation; the endpoint reports it
         // as unknown rather than confirming a write that did not happen.
         var store = new RecordingConversationStore { FeedbackAccepted = false };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayJsonAsync(
-            factory.CreateClient(), "/conversations/chatA/turns/999/feedback", "relay-secret", "relayuser",
+        var response = await ActingJsonAsync(factory, factory.CreateClient(), "/conversations/chatA/turns/999/feedback", await SeedAccountAsync(factory, "relayuser"),
             """{"rating":"down"}""");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]
-    public async Task Conversation_Relay_Compact_ScopesToCallerAndReturnsOutcome()
+    public async Task Conversation_Acting_Compact_ScopesToThemAndReturnsOutcome()
     {
         // POST /conversations/{id}/compact composes the key exactly like the reads/delete
         // (web:<userId>:<chatId>) — a caller can only ever compact its OWN conversation — and relays the
         // CompactionOutcome JSON. The compactor is faked so the endpoint is proven hermetically (no model
         // round-trip): we assert the principal-scoped key + the outcome shape on the wire.
         var compactor = new RecordingCompactor(Llm.Models.CompactionOutcome.Done(7, "summary of earlier turns"));
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withCompactor: compactor);
 
-        var response = await RelaySendAsync(
-            factory.CreateClient(), HttpMethod.Post, "/conversations/chatA/compact", "relay-secret", "relayuser");
+        var response = await ActingSendAsync(factory, factory.CreateClient(), HttpMethod.Post, "/conversations/chatA/compact", await SeedAccountAsync(factory, "relayuser"));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        compactor.CompactedKey.Should().Be("web:relayuser:chatA");
+        compactor.CompactedKey.Should().Be("web:usr_relayuser:chatA");
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"compacted\":true");
         body.Should().Contain("\"messagesCompacted\":7");
@@ -2111,27 +2146,25 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         };
 
     [Fact]
-    public async Task Review_Relay_WithNoTierHeaderAtAll_IsForbidden()
+    public async Task Review_Acting_ForSomebodyWithNoTier_IsForbidden()
     {
         // A relay that doesn't speak X-Relay-Tier must never open the surface by omission. The caller IS
         // authenticated here (401 would be wrong) — it is the authority that is absent, not the identity.
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/users", await SeedAccountAsync(factory, "relayuser"));
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
-    public async Task Review_Relay_WithAdminFalse_IsForbidden()
+    public async Task Review_Acting_BelowAdmin_IsForbidden()
     {
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", "operator");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/users", await SeedAccountAsync(factory, "relayuser", KgsmTier.Operator));
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -2214,11 +2247,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 },
             },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/users", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.ActorSurface.Should().Be("web");
@@ -2246,11 +2278,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 },
             },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/users", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/users", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"displayName\":null");
@@ -2264,11 +2295,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         {
             Summaries = { Summary("web:u1:chatA"), Summary("web:u1:chatB", deleted: true, errors: 3) },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations?user=u1", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations?user=u1", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.ListScope.Should().Be("web:u1");             // the asked-for user, composed server-side
@@ -2299,11 +2329,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 }),
             },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.HistoryKey.Should().Be("web:u1:chatA");   // the handle decoded back to the stored key
@@ -2322,11 +2351,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         // "cli:abc" base64url'd — a well-formed handle naming a namespace this surface does not serve.
         var outside = Convert.ToBase64String(Encoding.UTF8.GetBytes("cli:abc")).TrimEnd('=')
             .Replace('+', '-').Replace('/', '_');
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), $"/admin/conversations/{outside}", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), $"/admin/conversations/{outside}", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -2336,11 +2364,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // A decodable handle is not authority to read: the conversation must actually exist under the
         // user it names, or the surface serves nothing.
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());   // no summaries → nothing to resolve
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), $"/admin/conversations/{ChatAHandle}", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -2348,11 +2375,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Review_Transcript_RefusesAMalformedHandle()
     {
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/!!!not-base64!!!", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/!!!not-base64!!!", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -2364,11 +2390,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // The roll-up describes other people's conversations in aggregate, so it sits behind the same
         // fail-closed admin gate as the transcripts themselves.
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/stats", await SeedAccountAsync(factory, "relayuser"));
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -2393,15 +2418,14 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var factory = Factory(
             configure: b =>
             {
-                b.UseSetting("Assistant:Relay:Secret", "relay-secret");
+                AsMember(b);
                 b.UseSetting("Llm:Model", "gemma4:12b");
                 b.UseSetting("Llm:ContextWindow", "32768");
                 b.UseSetting("LlmAgent:MaxIterations", "16");
             },
             withStore: store);
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/stats", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         store.StatsSurface.Should().Be("web");
@@ -2419,11 +2443,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // A corpus with nothing timed must say so. A zero median would render as "instant", which is a
         // fabricated measurement — the one thing this ecosystem never does.
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: new RecordingConversationStore());
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/stats", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"medianTurnMs\":null");
@@ -2449,11 +2472,10 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 },
             },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/stats", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"name\":\"get_instance_status\",\"known\":true");
@@ -2476,45 +2498,79 @@ public class EndpointSmokeTests : IClassFixture<WebApplicationFactory<Program>>
                 },
             },
         };
-        var factory = Factory(configure: b => b.UseSetting("Assistant:Relay:Secret", "relay-secret"),
+        var factory = Factory(configure: AsMember,
             withStore: store);
 
-        var response = await RelayGetAsync(
-            factory.CreateClient(), "/admin/conversations/stats", "relay-secret", "relayuser", "admin");
+        var response = await ActingGetAsync(factory, factory.CreateClient(), "/admin/conversations/stats", await SeedAccountAsync(factory, "relayuser", KgsmTier.Admin));
 
         (await response.Content.ReadAsStringAsync())
             .Should().Contain("\"name\":\"revise_blueprint\",\"known\":true");
     }
 
-    /// <summary>GETs a secured path over the trusted-relay path (secret + forwarded identity, no bearer).</summary>
-    private static Task<HttpResponseMessage> RelayGetAsync(
-        HttpClient client, string path, string secret, string userId, string? tier = null) =>
-        RelaySendAsync(client, HttpMethod.Get, path, secret, userId, tier);
+    /// <summary>
+    /// The secret that makes a test host a member of a cluster, so it can mint and validate the service
+    /// tokens a member-acting call is authenticated by.
+    /// </summary>
+    private const string ClusterSecret = "endpoint-smoke-cluster-secret";
 
-    /// <summary>Sends any method to a secured path over the trusted-relay path (secret + forwarded id).</summary>
-    private static async Task<HttpResponseMessage> RelayJsonAsync(
-        HttpClient client, string path, string secret, string userId, string json)
+    /// <summary>Configures a host as a member, which is what a member-acting call needs to be accepted.</summary>
+    private static void AsMember(IWebHostBuilder b) => b.UseSetting("Cluster:Secret", ClusterSecret);
+
+    /// <summary>
+    /// Gives this member an account for <paramref name="subject"/> at <paramref name="tier"/>, and
+    /// returns the handle a caller names them by.
+    /// </summary>
+    /// <remarks>
+    /// A member-acting call resolves the person against the accounts this member holds, so a test that
+    /// did not seed one is testing the refusal rather than the surface. That is exactly what a username
+    /// collision looks like from the far end, and it has its own test.
+    /// </remarks>
+    private static async Task<string> SeedAccountAsync(
+        WebApplicationFactory<Program> factory, string subject, KgsmTier tier = KgsmTier.Viewer,
+        string? displayName = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, path)
-        {
-            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
-        };
-        request.Headers.Add("X-Relay-Secret", secret);
-        request.Headers.Add("X-Relay-User", userId);
+        var users = factory.Services.GetRequiredService<UserDirectory>();
+        var user = new KgsmUser(
+            "usr_" + subject, subject, displayName ?? subject, tier, TierSource.Granted, UserStatus.Active,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        await users.Store.CreateAsync(user);
+        string handle = KgsmActor.Format(KgsmActorProvider.Discord, subject);
+        await users.Store.AddCredentialAsync(new UserCredential(
+            "cred_" + subject, user.UserId, CredentialKind.Identity, handle,
+            null, null, DateTimeOffset.UtcNow, null));
+        return handle;
+    }
+
+    /// <summary>GETs a secured path as another member, acting for the person <paramref name="handle"/> names.</summary>
+    private static Task<HttpResponseMessage> ActingGetAsync(
+        WebApplicationFactory<Program> factory, HttpClient client, string path, string handle) =>
+        ActingSendAsync(factory, client, HttpMethod.Get, path, handle);
+
+    /// <summary>POSTs JSON to a secured path as another member, acting for a person.</summary>
+    private static async Task<HttpResponseMessage> ActingJsonAsync(
+        WebApplicationFactory<Program> factory, HttpClient client, string path, string handle, string json)
+    {
+        var request = Acting(factory, HttpMethod.Post, path, handle);
+        request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
         return await client.SendAsync(request);
     }
 
-    private static async Task<HttpResponseMessage> RelaySendAsync(
-        HttpClient client, HttpMethod method, string path, string secret, string userId, string? tier = null)
+    private static async Task<HttpResponseMessage> ActingSendAsync(
+        WebApplicationFactory<Program> factory, HttpClient client, HttpMethod method, string path,
+        string handle) =>
+        await client.SendAsync(Acting(factory, method, path, handle));
+
+    /// <summary>
+    /// A request carrying this member's own service token and naming the person it acts for — what a
+    /// member-to-member call actually looks like, minted by the app's own token service rather than
+    /// hand-assembled, so it travels the same validation path a real member's would.
+    /// </summary>
+    private static HttpRequestMessage Acting(
+        WebApplicationFactory<Program> factory, HttpMethod method, string path, string? handle)
     {
         var request = new HttpRequestMessage(method, path);
-        request.Headers.Add("X-Relay-Secret", secret);
-        request.Headers.Add("X-Relay-User", userId);
-        // Omitted entirely when null — that IS the case a review test needs to cover (a relay that does
-        // not speak the header must not be granted the surface by omission).
-        if (tier is not null)
-            request.Headers.Add("X-Relay-Tier", tier);
-        return await client.SendAsync(request);
+        ClusterCall.ActFor(request, factory.Services.GetRequiredService<IClusterTokenService>().Mint(), handle);
+        return request;
     }
 }
 

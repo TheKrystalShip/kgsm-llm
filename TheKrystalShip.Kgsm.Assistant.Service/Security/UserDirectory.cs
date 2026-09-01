@@ -25,7 +25,7 @@ namespace TheKrystalShip.Kgsm.Assistant.Service.Security;
 /// decide whether the assistant exists.
 /// </para>
 /// </remarks>
-internal sealed class UserDirectory : IReplicatedAccounts
+internal sealed class UserDirectory : IReplicatedAccounts, IMemberAccounts
 {
     private readonly SqliteUserStore? _store;
     private readonly LocalSignInService? _signIn;
@@ -120,6 +120,17 @@ internal sealed class UserDirectory : IReplicatedAccounts
     /// </remarks>
     public IUserStore Store =>
         _store ?? throw new InvalidOperationException("The KGSM account store is unavailable.");
+
+    /// <summary>
+    /// The accounts a member-acting call is resolved against, absent rather than throwing.
+    /// </summary>
+    /// <remarks>
+    /// Explicit, because the two contracts differ where it matters: reaching for the store in ordinary
+    /// code is a bug when there is none, while a member-acting call has to tell an unreadable store apart
+    /// from a person this member does not have — one is an outage and the other is a refusal, and an
+    /// exception would collapse them.
+    /// </remarks>
+    IUserStore? IMemberAccounts.Store => _store;
 }
 
 /// <summary>

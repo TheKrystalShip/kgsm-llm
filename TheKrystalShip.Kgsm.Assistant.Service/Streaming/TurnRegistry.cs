@@ -357,10 +357,14 @@ internal sealed class TurnRegistry : ITurnRegistry
             var conversations = scope.ServiceProvider.GetRequiredService<IConversationStore>();
             wantsAutoRun = conversations.GetPreferences(session.ConversationId).Autorun ?? false;
 
-            if (run.Authority.FromRelay)
+            if (run.Authority.FromMember)
             {
-                canPerform = run.Authority.RelayTier >= KgsmTier.Operator && _assistantOptions.Value.ActionsEnabled;
-                autoExecute = canPerform && wantsAutoRun && run.Authority.RelayAutoAct;
+                canPerform = run.Authority.ActingTier >= KgsmTier.Operator && _assistantOptions.Value.ActionsEnabled;
+                // Auto-running is the admin's, exactly as it is on the session path below. The intent
+                // the caller forwarded is the person's preference, ANDed with the tier this member
+                // resolved rather than substituted for it.
+                autoExecute = canPerform && wantsAutoRun && run.Authority.AutoActIntent
+                    && run.Authority.ActingTier >= KgsmTier.Admin;
             }
             else
             {

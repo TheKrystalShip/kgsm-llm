@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a caller states who it acts for, and this member decides what they may do (1.61.0)
+
+A surface calling on somebody else's behalf authenticates as a **member of the cluster**, with its own
+service token, and names the person on `X-Kgsm-Acting` as a `provider:subject` handle. This member
+resolves that handle against its own replica of the cluster's accounts and reads the tier from there.
+
+Nothing a caller sends contributes to authority. What a compromised caller can do is act as somebody it
+names, bounded by what that person actually holds — strictly narrower than a shared secret that forwarded
+an authority along with an identity. The auto-accept header is the person's per-turn preference and is
+ANDed with the tier this member resolved, never substituted for it.
+
+The provider comes from the handle rather than being assumed, so a member may act for somebody who signed
+in with a password without their being filed under an identity they do not have. A person this member has
+no account for is refused rather than provisioned, which is what a username collision looks like from the
+far end.
+
+The decision is `MemberActingResolver`'s, in the shared auth package, so every member of the cluster
+reaches the same answer about who somebody is.
+
+
 ### Added — the injected list says which machine each server is on (1.60.0)
 
 `IServerInventory` gained `GetInstanceHostsAsync`, empty on a machine standing alone and populated

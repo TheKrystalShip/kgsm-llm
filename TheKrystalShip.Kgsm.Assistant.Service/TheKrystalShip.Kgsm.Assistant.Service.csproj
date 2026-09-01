@@ -10,7 +10,7 @@
          ships under. The three published libraries (TheKrystalShip.Llm, .Kgsm.Assistant and
          .Kgsm.Assistant.Relay) each version independently of it and of each other. Read by
          deploy/version.sh, which is the single source for packaging. -->
-    <Version>1.60.0</Version>
+    <Version>1.61.0</Version>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>
@@ -38,8 +38,8 @@
     <!-- The host's KGSM accounts, read straight off the shared store. Not via kgsm-api: a file is
          not something a sibling service can be down for, which is what keeps this leaf standalone. -->
     <PackageReference Include="TheKrystalShip.KGSM.Auth.Users" Version="1.4.0-dev.6" />
-    <PackageReference Include="TheKrystalShip.KGSM.Auth.Cluster" Version="1.0.0-dev.3" />
-    <PackageReference Include="TheKrystalShip.KGSM.Cluster" Version="1.0.0-dev.17" />
+    <PackageReference Include="TheKrystalShip.KGSM.Auth.Cluster" Version="1.0.0-dev.5" />
+    <PackageReference Include="TheKrystalShip.KGSM.Cluster" Version="1.0.0-dev.18" />
     <!-- The Control Panel API's wire contract, so a node's answers are types rather than hand-copied
          field names. It carries its own serialization: the wire names come from a naming policy on the
          producing side, not from attributes, so re-deriving them here is how the two quietly diverge. -->

@@ -9,6 +9,7 @@ using TheKrystalShip.Api.Contracts;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.KGSM.Auth.Cluster;
 using TheKrystalShip.KGSM.Cluster.Identity;
+using TheKrystalShip.KGSM.Cluster;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Cluster;
 
@@ -178,16 +179,14 @@ public sealed class NodeApiClient(
     private HttpRequestMessage Build(HttpMethod method, ClusterNode node, string path, string? json)
     {
         var request = new HttpRequestMessage(method, $"{node.Url}{path}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.Mint().Token);
 
         if (json is not null)
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        // Absent when nobody is behind the turn — a sweep, a warm-up. The node then refuses, which is
-        // correct: there is no person to act for, and acting as the member itself would be acting as
-        // nobody with a machine's credential.
-        if (invocation.Current?.Handle is { Length: > 0 } handle)
-            request.Headers.TryAddWithoutValidation(MemberActing.ActingHandleHeader, handle);
+        // The handle is absent when nobody is behind the turn — a sweep, a warm-up. The node then
+        // refuses, which is correct: there is no person to act for, and acting as the member itself
+        // would be acting as nobody with a machine's credential.
+        ClusterCall.ActFor(request, tokens.Mint(), invocation.Current?.Handle);
 
         return request;
     }

@@ -352,4 +352,4 @@ internal sealed record TurnRun(
 /// with it (a relay host may have no Discord config of its own); a direct session bearer re-derives its
 /// own from Discord. Either way the question is asked at execution, never at enqueue.
 /// </summary>
-internal sealed record KgsmTierSource(bool FromRelay, KGSM.Auth.KgsmTier RelayTier, bool RelayAutoAct);
+internal sealed record KgsmTierSource(bool FromMember, KGSM.Auth.KgsmTier ActingTier, bool AutoActIntent);

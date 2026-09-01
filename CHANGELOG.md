@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the review gate answers to this member's replica, and now says so (1.62.0)
+
+`AdminOnlyFilter` resolves a session bearer's tier from the account store, through
+`ResolveReviewAuthorityAsync` → `AccountAuthority` → this member's own copy of the cluster's accounts.
+Its documentation described a Discord role lookup that is in no path it takes, and its acting-path
+comment said the tier had been resolved upstream by a caller it trusts — the opposite of the rule every
+member holds to, which is that authority is read from what this member holds and never from what a
+caller carries. A reader following that comment would have built cross-member trust believing it was the
+design.
+
+`The_review_surface_answers_to_the_replica_not_to_the_token` pins it: a session the anchor minted,
+claiming `admin` in both cases, is refused where this member's replica says operator and admitted where
+it says admin. A gate reading the tier off the bearer passes a happy-path test and fails that one.
+
+The `authority_unavailable` 502 no longer names an upstream that is not in the path, and
+`AdminConversationUserDto.UserId` is documented as the KGSM account id it is — the id to join an account
+on, derived from the conversation id because the conversation store holds no user table.
+
 ### Changed — the relay contract carries the turn, not the caller (`Relay 2.0.0`)
 
 `AssistantRelay` writes which leaf is calling, which conversation the turn belongs to, and the person's

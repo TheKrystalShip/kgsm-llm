@@ -187,6 +187,51 @@ public sealed class ClusterDoorTests : IDisposable
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    /// <summary>
+    /// The review surface, reached with a session the anchor minted, decided by this member's replica.
+    /// </summary>
+    /// <remarks>
+    /// The token in both cases claims <c>admin</c>, and in the first the account this member holds is
+    /// an operator. A gate that read the tier off the bearer would admit that caller, and the whole
+    /// point of resolving per request is that it does not: a person's authority is what the member
+    /// holding the accounts says it is, and every other member reads its own copy of that rather than
+    /// a number a caller arrived carrying.
+    /// </remarks>
+    [Theory]
+    [InlineData(KgsmTier.Operator, HttpStatusCode.Forbidden)]
+    [InlineData(KgsmTier.Admin, HttpStatusCode.OK)]
+    public async Task The_review_surface_answers_to_the_replica_not_to_the_token(
+        KgsmTier replicated, HttpStatusCode expected)
+    {
+        using var signer = EcdsaSessionSigner.Generate();
+        using WebApplicationFactory<Program> service =
+            Service(secret: "a-shared-cluster-secret", published: Published.Of(signer));
+        using HttpClient client = service.CreateClient();
+        await HolderIsElsewhereAsync(service.Services);
+
+        var store = new SqliteUserStore(new UserStoreOptions { Path = Path.Combine(_directory, "users.db") });
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var account = new KgsmUser(
+            UserIds.NewUserId(), "reviewer-" + replicated, "Reviewer",
+            replicated, TierSource.Granted, UserStatus.Active, now, now);
+        await store.CreateAsync(account, default);
+
+        string subject = "700" + (int)replicated;
+        await store.AddCredentialAsync(new UserCredential(
+            UserIds.NewCredentialId(), account.UserId, CredentialKind.Identity,
+            KgsmActor.Format(KgsmActorProvider.Discord, subject), null, "Reviewer", now, null), default);
+
+        var person = new KgsmIdentity(KgsmActorProvider.Discord, subject, subject, "Reviewer", null, []);
+
+        // Claiming admin either way. The claim is what a caller says; the replica is what is true.
+        string token = Anchor(signer).MintAccess(person, KgsmTier.Admin, "sid_review_" + subject).Token;
+
+        HttpResponseMessage response =
+            await client.SendAsync(Get("/admin/conversations/stats", token));
+
+        response.StatusCode.Should().Be(expected);
+    }
+
     [Fact]
     public async Task A_session_the_cluster_has_ended_is_refused_here()
     {

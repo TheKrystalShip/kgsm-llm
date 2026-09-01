@@ -444,11 +444,18 @@ public sealed record ConversationHistoryDto(
 
 /// <summary>
 /// One row of <c>GET /admin/conversations/users</c>: everyone who has talked to this assistant on the
-/// web surface, with the size and span of their footprint. <see cref="UserId"/> is the opaque Discord
-/// id the conversations are keyed by; <see cref="DisplayName"/> is the newest name any of their turns
-/// recorded and is <c>null</c> for conversations that predate name capture — a client shows the id
-/// then, never a name guessed from it.
+/// web surface, with the size and span of their footprint.
 /// </summary>
+/// <remarks>
+/// <see cref="UserId"/> is the <b>KGSM account id</b> — conversations are keyed by it, and the actor is
+/// derived from the id itself because the conversation store holds no user table and inventing one
+/// would be a second source of truth for who exists. So this is the id to join an account on, and a
+/// client that treats it as a provider's subject joins on the wrong thing.
+/// <para>
+/// <see cref="DisplayName"/> is the newest name any of their turns recorded, and is <c>null</c> when
+/// none did. A client shows the id then, never a name derived from it.
+/// </para>
+/// </remarks>
 public sealed record AdminConversationUserDto(
     string UserId,
     string? DisplayName,
@@ -487,7 +494,10 @@ public sealed record AdminConversationHistoryDto(
     AdminConversationDto Conversation,
     IReadOnlyList<ConversationHistoryEntryDto> Entries);
 
-/// <summary>Who a reviewed conversation belongs to: the opaque id, and a recorded name if there is one.</summary>
+/// <summary>
+/// Who a reviewed conversation belongs to: the KGSM account id it is keyed by, and a recorded name if
+/// there is one.
+/// </summary>
 public sealed record AdminConversationUserRefDto(string UserId, string? DisplayName);
 
 /// <summary>

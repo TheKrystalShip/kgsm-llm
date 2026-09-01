@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the relay contract carries the turn, not the caller (`Relay 2.0.0`)
+
+`AssistantRelay` writes which leaf is calling, which conversation the turn belongs to, and the person's
+auto-accept preference. Who the turn is for and what they may do are named and resolved elsewhere: a
+caller states the person on `X-Kgsm-Acting` and authenticates as a member of the cluster, and the
+assistant reads their tier from its own accounts.
+
+So the package no longer holds an identity, an authority or a secret — and no longer depends on the auth
+package at all, since a per-turn header set has nothing to say about who anybody is.
+
 ### Changed — a caller states who it acts for, and this member decides what they may do (1.61.0)
 
 A surface calling on somebody else's behalf authenticates as a **member of the cluster**, with its own

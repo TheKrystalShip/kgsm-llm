@@ -8,11 +8,11 @@
     <RootNamespace>TheKrystalShip.Kgsm.Assistant.Relay</RootNamespace>
     <AssemblyName>TheKrystalShip.Kgsm.Assistant.Relay</AssemblyName>
 
-    <!-- The trusted-relay half of the assistant's wire contract: who is calling, on whose behalf,
-         with what authority. Built here (the assistant owns the contract it validates), packed to
-         the local feed, and consumed by every leaf that relays a turn — kgsm-api and kgsm-bot.
+    <!-- The per-turn half of the assistant's wire contract: which leaf is calling and which
+         conversation the turn belongs to. Built here (the assistant owns the contract it validates),
+         published to the org feed, and consumed by every leaf that relays a turn.
          A second hand-rolled implementation of these headers is how two surfaces come to disagree
-         about who someone is, which is the one disagreement an authority header cannot survive.
+         about which prompts a turn reads and where its answer lands.
 
          Deliberately NOT the endpoint surface: each consumer calls the paths it needs and shapes
          the responses its own way (the api relays them near-verbatim to the SPA, the bot renders
@@ -20,9 +20,9 @@
     <PackageId>TheKrystalShip.Kgsm.Assistant.Relay</PackageId>
     <!-- Bump on ANY change to the header set or their spellings. NuGet caches by id+version, so a
          same-version repack serves a stale dll to a consumer. -->
-    <Version>1.1.0</Version>
+    <Version>2.0.0</Version>
     <Authors>Heisenberg</Authors>
-    <Description>The trusted-relay client contract for kgsm-assistant-service: the forwarded principal, the relay headers (identity, verified tier, auto-accept, conversation sub-scope, calling leaf) and the liveness probe. Referenced by the leaves that relay a turn on a verified user's behalf.</Description>
+    <Description>The per-turn client contract for kgsm-assistant-service: which leaf is calling, which conversation a turn belongs to, the caller's auto-accept preference, and the liveness probe. Who a turn is for and what they may do are the cluster's, not this package's — a caller names the person on X-Kgsm-Acting and authenticates as a member.</Description>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
@@ -37,7 +37,6 @@
   <ItemGroup>
     <!-- KgsmTier + its canonical wire spelling. The auth model only — this package sends a tier
          someone else already verified and never resolves one, so it takes none of the transport. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Auth" Version="3.2.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
   </ItemGroup>
 

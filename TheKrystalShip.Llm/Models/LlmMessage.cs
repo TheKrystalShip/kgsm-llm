@@ -25,8 +25,22 @@ public record LlmMessage(LlmRole Role, string Content)
     /// <summary>The tool this message carries the result of (tool turns only).</summary>
     public Tool? ToolName { get; init; }
 
+    /// <summary>
+    /// Images shown to the model beside <see cref="Content"/>, on a turn that carries any.
+    /// </summary>
+    /// <remarks>
+    /// A message without them reaches the wire exactly as it did before they existed, so a
+    /// text-only conversation is unaffected by their presence in the model. They belong on a user
+    /// turn: it is what a person shows the model, and no backend here reads them anywhere else.
+    /// </remarks>
+    public IReadOnlyList<LlmImage>? Images { get; init; }
+
     public static LlmMessage System(string content) => new(LlmRole.System, content);
     public static LlmMessage User(string content) => new(LlmRole.User, content);
+
+    /// <summary>A question asked about the images it carries.</summary>
+    public static LlmMessage User(string content, IReadOnlyList<LlmImage> images) =>
+        new(LlmRole.User, content) { Images = images };
     public static LlmMessage Assistant(string content) => new(LlmRole.Assistant, content);
 
     /// <summary>An assistant turn that requests one or more tool calls.</summary>

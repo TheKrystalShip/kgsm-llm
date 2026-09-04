@@ -113,6 +113,66 @@ public class LlmWireFormatTests
             .Should().Contain("\"tool_choice\":\"required\"");
     }
 
+    /// <summary>A photograph and a screenshot, small enough that the recorded bodies stay readable.</summary>
+    private static readonly LlmImage Photo = new("image/jpeg", [0x01, 0x02, 0x03]);
+    private static readonly LlmImage Screenshot = new("image/png", [0x04, 0x05]);
+
+    /// <summary>
+    /// An image reaches llama-server inside <c>content</c>, which becomes an array of typed parts:
+    /// the text first, then one <c>image_url</c> per picture carrying it as a <c>data:</c> URL.
+    /// </summary>
+    [Fact]
+    public void LlamaCpp_CarriesImagesAsContentParts()
+    {
+        static string Body(params LlmImage[] images) =>
+            JsonSerializer.Serialize(
+                LlamaCppRequestBuilder.Build(Backend, new LlamaCppOptions(),
+                    [LlmMessage.System("you are a thing"), LlmMessage.User("what is this?", images)],
+                    null, stream: false, think: false),
+                LlmWireJsonContext.Default.LlamaCppChatRequest);
+
+        Body(Photo).Should().Be(Recorded("llamacpp-one-image.json"));
+        Body(Photo, Screenshot).Should().Be(Recorded("llamacpp-two-images.json"));
+    }
+
+    /// <summary>
+    /// Ollama takes the same pictures in a field of their own, base64 with no data-URL prefix, and
+    /// leaves the content a plain string.
+    /// </summary>
+    [Fact]
+    public void Ollama_CarriesImagesInTheirOwnField()
+    {
+        static string Body(params LlmImage[] images) =>
+            JsonSerializer.Serialize(
+                OllamaRequestBuilder.Build(Backend,
+                    [LlmMessage.System("you are a thing"), LlmMessage.User("what is this?", images)],
+                    null, stream: false, think: false),
+                LlmWireJsonContext.Default.OllamaChatRequest);
+
+        Body(Photo).Should().Be(Recorded("ollama-one-image.json"));
+        Body(Photo, Screenshot).Should().Be(Recorded("ollama-two-images.json"));
+    }
+
+    /// <summary>
+    /// A turn with no pictures is the string it always was, on both backends: no empty array, no
+    /// <c>images</c> field, nothing for a server to interpret. The recorded whole-conversation
+    /// bodies say the same thing; this says it about the one field that gained a second shape.
+    /// </summary>
+    [Fact]
+    public void AMessageWithNoImagesIsUnchangedOnTheWire()
+    {
+        JsonSerializer.Serialize(
+            LlamaCppRequestBuilder.Build(Backend, new LlamaCppOptions(), [LlmMessage.User("hi")], null,
+                stream: false, think: false),
+            LlmWireJsonContext.Default.LlamaCppChatRequest)
+            .Should().Contain("\"content\":\"hi\"").And.NotContain("image");
+
+        JsonSerializer.Serialize(
+            OllamaRequestBuilder.Build(Backend, [LlmMessage.User("hi")], null, stream: false, think: false),
+            LlmWireJsonContext.Default.OllamaChatRequest)
+            .Should().Contain("\"content\":\"hi\"").And.NotContain("images");
+    }
+
     /// <summary>
     /// The generated context and reflection have to produce the same body, because the request-shape
     /// tests beside this one read a request by serializing it the second way.

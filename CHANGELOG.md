@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — show the model a picture (`Llm 2.3.0`)
+
+`LlmMessage` carries an optional `Images`, a list of `LlmImage` { mime type, bytes }, and
+`LlmMessage.User(text, images)` builds a turn that has them. The bytes travel rather than a link,
+because neither backend fetches anything and a caller with a URL reads it under its own timeout,
+its own size cap and its own politeness to whoever serves the picture.
+
+The two backends spell the same thing differently and both are handled in their own builder.
+llama.cpp takes the OpenAI shape: a message with images serializes `content` as an array of typed
+parts, the text first and then one `image_url` per picture carrying it as a `data:` URL.
+`LlamaCppContent` and its converter are what choose between the two shapes at the moment the value
+is written, so a message with no images is the plain string it always was and every recorded wire
+body is unchanged, byte for byte. Ollama takes them in its own `images` field, base64 with no
+data-URL prefix, absent when there are none.
+
+`LlmWireFormatTests` records both backends with one image and with two, and states directly that a
+message carrying none puts no image field and no array on the wire.
+
+`magpie` reads a listing's photographs this way, against a gemma4-12b with its vision projector
+loaded: what the picture shows, whether it is only the box, whether the label is readable, whether
+there is visible damage.
+
 ### Added — make the model answer with a tool call, not prose (`Llm 2.2.0`)
 
 `LlamaCppOptions.ToolChoice` is passed through to the request as `tool_choice`, and only on a

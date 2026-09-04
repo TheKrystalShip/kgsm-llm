@@ -1,0 +1,1 @@
+{"model":"gemma4:12b","stream":false,"think":false,"messages":[{"role":"system","content":"you are a thing"},{"role":"user","content":"what is this?","images":["AQID","BAU="]}],"options":{"num_ctx":32768,"temperature":0.3,"seed":42}}

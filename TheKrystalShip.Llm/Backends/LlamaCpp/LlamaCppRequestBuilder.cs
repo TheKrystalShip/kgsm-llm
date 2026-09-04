@@ -5,11 +5,12 @@ using TheKrystalShip.Llm.Models;
 namespace TheKrystalShip.Llm.Backends.LlamaCpp;
 
 /// <summary>
-/// Builds the <c>/v1/chat/completions</c> request body. Two things differ from Ollama's native
-/// shape and both are handled here:
+/// Builds the <c>/v1/chat/completions</c> request body. Three things differ from Ollama's native
+/// shape and all of them are handled here:
 /// <list type="bullet">
 /// <item>a tool call's arguments travel as a JSON <b>string</b>, not an object;</item>
-/// <item>a tool result is addressed by <c>tool_call_id</c>, not by tool name.</item>
+/// <item>a tool result is addressed by <c>tool_call_id</c>, not by tool name;</item>
+/// <item>images travel inside <c>content</c> as typed parts, not in a field of their own.</item>
 /// </list>
 /// <para>
 /// <see cref="LlmMessage"/> carries no call id — it identifies a result by the tool it came from,
@@ -144,7 +145,10 @@ public static class LlamaCppRequestBuilder
                     payloads.Add(new LlamaCppMessage
                     {
                         Role = message.Role.ToString().ToLowerInvariant(),
-                        Content = message.Content ?? string.Empty,
+
+                        // Images ride on the content, which the OpenAI format spells as an array of
+                        // parts when there are any and as a plain string when there are none.
+                        Content = new LlamaCppContent(message.Content ?? string.Empty, message.Images),
                     });
                     break;
             }

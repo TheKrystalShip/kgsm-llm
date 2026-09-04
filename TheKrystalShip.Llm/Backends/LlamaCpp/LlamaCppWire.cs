@@ -1,4 +1,7 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
+
+using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Llm.Backends.LlamaCpp;
 
@@ -82,7 +85,7 @@ public sealed record LlamaCppStreamOptions
 public sealed record LlamaCppMessage
 {
     [JsonPropertyName("role")] public string Role { get; init; } = "";
-    [JsonPropertyName("content")] public string Content { get; init; } = "";
+    [JsonPropertyName("content")] public LlamaCppContent Content { get; init; } = "";
 
     [JsonPropertyName("tool_calls")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -108,4 +111,64 @@ public sealed record LlamaCppToolCallFunction
 {
     [JsonPropertyName("name")] public string Name { get; init; } = "";
     [JsonPropertyName("arguments")] public string Arguments { get; init; } = "{}";
+}
+
+/// <summary>
+/// A message's content: text on its own, or text beside the images it is asked about.
+/// </summary>
+/// <remarks>
+/// The OpenAI format spells one field two ways. A turn carrying only words is a plain string; a
+/// turn carrying pictures is an array of typed parts, the text first and each image after it as a
+/// <c>data:</c> URL. Both are the same <c>content</c> field, so the shape is chosen when the value
+/// is written rather than by which property was set, and a message with no images serializes to the
+/// string every request built before images existed already sent.
+/// </remarks>
+[JsonConverter(typeof(LlamaCppContentConverter))]
+public sealed record LlamaCppContent(string Text, IReadOnlyList<LlmImage>? Images = null)
+{
+    /// <summary>Text with no images, which is what every turn but a question about a picture is.</summary>
+    public static implicit operator LlamaCppContent(string text) => new(text);
+}
+
+/// <summary>
+/// Writes <see cref="LlamaCppContent"/> as the string or the array of parts the server expects.
+/// </summary>
+/// <remarks>
+/// Reading is not implemented, and nothing here asks for it: these shapes are what this library
+/// sends. A response is walked as a <see cref="JsonDocument"/> rather than bound to a record, so
+/// that a server adding fields between versions changes nothing on the inbound path.
+/// </remarks>
+public sealed class LlamaCppContentConverter : JsonConverter<LlamaCppContent>
+{
+    public override LlamaCppContent Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options) =>
+        throw new NotSupportedException(
+            "A llama.cpp request body is written, never read; responses are parsed as a JsonDocument.");
+
+    public override void Write(Utf8JsonWriter writer, LlamaCppContent value, JsonSerializerOptions options)
+    {
+        if (value.Images is not { Count: > 0 } images)
+        {
+            writer.WriteStringValue(value.Text);
+            return;
+        }
+
+        writer.WriteStartArray();
+
+        writer.WriteStartObject();
+        writer.WriteString("type", "text");
+        writer.WriteString("text", value.Text);
+        writer.WriteEndObject();
+
+        foreach (var image in images)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("type", "image_url");
+            writer.WriteStartObject("image_url");
+            writer.WriteString("url", image.DataUrl());
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+    }
 }

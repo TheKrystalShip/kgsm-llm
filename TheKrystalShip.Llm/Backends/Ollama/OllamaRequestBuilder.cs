@@ -10,7 +10,8 @@ namespace TheKrystalShip.Llm.Backends.Ollama;
 /// <remarks>
 /// Ollama takes the context window per request, in <c>options</c>, which is the one place its native
 /// shape asks for something llama.cpp fixes at launch. A tool call's arguments travel as an object
-/// here rather than as nested text, and a result names the tool it came from rather than a call id.
+/// here rather than as nested text, a result names the tool it came from rather than a call id, and
+/// images are a field of the message rather than parts of its content.
 /// </remarks>
 public sealed record OllamaChatRequest
 {
@@ -47,6 +48,11 @@ public sealed record OllamaMessage
     [JsonPropertyName("tool_name")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ToolName { get; init; }
+
+    /// <summary>The images this turn shows the model, each base64-encoded with no data-URL prefix.</summary>
+    [JsonPropertyName("images")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Images { get; init; }
 }
 
 public sealed record OllamaToolCall
@@ -101,5 +107,8 @@ public static class OllamaRequestBuilder
             }).ToList()
             : null,
         ToolName = message.ToolName?.Name,
+        Images = message.Images is { Count: > 0 } images
+            ? images.Select(image => image.Base64()).ToList()
+            : null,
     };
 }

@@ -28,6 +28,18 @@ public class LlamaCppOptions
     public bool ParallelToolCalls { get; set; }
 
     /// <summary>
+    /// How hard the model is pushed to answer with a tool call rather than prose. Blank leaves the
+    /// choice to the model, which is what a conversation wants; <c>required</c> makes every answer a
+    /// call, which is what an extraction wants — one tool with a fixed schema, and prose from it is
+    /// an answer nothing downstream can read.
+    /// <para>
+    /// It is sent only on a request that offers tools at all, because a server asked to require a
+    /// call from an empty set has nothing it can do but fail.
+    /// </para>
+    /// </summary>
+    public string? ToolChoice { get; set; }
+
+    /// <summary>
     /// The chat-template variable that turns reasoning on, passed through
     /// <c>chat_template_kwargs</c> when <see cref="LlmBackendOptions.Think"/> is set. Templates
     /// spell it differently (<c>enable_thinking</c> is the common one), and a template that

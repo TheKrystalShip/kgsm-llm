@@ -94,6 +94,26 @@ public class LlmWireFormatTests
     }
 
     /// <summary>
+    /// Forcing a call is opt-in and reaches the wire only beside a tool set. A conversation leaves it
+    /// unset and its body is unchanged; an extraction sets it and every answer is a call rather than
+    /// prose nothing downstream can read.
+    /// </summary>
+    [Fact]
+    public void ToolChoice_IsSentOnlyWhenAskedForAndOnlyBesideTools()
+    {
+        static string Body(LlamaCppOptions options, IReadOnlyList<LlmToolDefinition>? tools) =>
+            JsonSerializer.Serialize(
+                LlamaCppRequestBuilder.Build(Backend, options, [LlmMessage.User("hi")], tools,
+                    stream: false, think: false),
+                LlmWireJsonContext.Default.LlamaCppChatRequest);
+
+        Body(new LlamaCppOptions(), [Tool]).Should().NotContain("tool_choice");
+        Body(new LlamaCppOptions { ToolChoice = "required" }, null).Should().NotContain("tool_choice");
+        Body(new LlamaCppOptions { ToolChoice = "required" }, [Tool])
+            .Should().Contain("\"tool_choice\":\"required\"");
+    }
+
+    /// <summary>
     /// The generated context and reflection have to produce the same body, because the request-shape
     /// tests beside this one read a request by serializing it the second way.
     /// </summary>

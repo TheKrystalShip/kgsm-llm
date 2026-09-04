@@ -56,6 +56,10 @@ public static class LlamaCppRequestBuilder
             Tools = hasTools ? tools!.Select(ToolSchema.BuildFunction).ToList() : null,
             ParallelToolCalls = hasTools ? llamaCpp.ParallelToolCalls : null,
 
+            // Only meaningful alongside a tool set; a server told to require a call from none of them
+            // has nothing to do but fail.
+            ToolChoice = hasTools && !string.IsNullOrWhiteSpace(llamaCpp.ToolChoice) ? llamaCpp.ToolChoice : null,
+
             // Reasoning is a property of the chat template, reached through the variable it declares.
             // A template that declares none ignores this, which is the same outcome as not sending it.
             //

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — make the model answer with a tool call, not prose (`Llm 2.2.0`)
+
+`LlamaCppOptions.ToolChoice` is passed through to the request as `tool_choice`, and only on a
+request that offers tools at all. Blank, the default, leaves the choice to the model and the body is
+byte-identical to one built without the setting; `required` makes every answer a call.
+
+A conversation wants the model free to answer in words. An extraction does not: one tool, a fixed
+schema, and prose from it is an answer nothing downstream can read. `magpie` reads second-hand
+listings this way — a forced call to one tool whose every categorical argument carries its closed set
+of values.
+
 ### Changed — a request body a trimmed or ahead-of-time host can send (`Llm 2.1.0`)
 
 Both backend clients build their request as typed records and serialize them through

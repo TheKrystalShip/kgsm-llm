@@ -67,7 +67,8 @@ public class LlamaCppLlmClient : ILlmClient
         try
         {
             var json = JsonSerializer.Serialize(
-                LlamaCppRequestBuilder.Build(_options, _llamaCpp, messages, tools, stream: false, think));
+                LlamaCppRequestBuilder.Build(_options, _llamaCpp, messages, tools, stream: false, think),
+                LlmWireJsonContext.Default.LlamaCppChatRequest);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var response = await _httpClient.PostAsync(ChatPath, content, cancellationToken);
@@ -111,7 +112,8 @@ public class LlamaCppLlmClient : ILlmClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var json = JsonSerializer.Serialize(
-            LlamaCppRequestBuilder.Build(_options, _llamaCpp, messages, tools, stream: true, think));
+            LlamaCppRequestBuilder.Build(_options, _llamaCpp, messages, tools, stream: true, think),
+            LlmWireJsonContext.Default.LlamaCppChatRequest);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, ChatPath)
         {

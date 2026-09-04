@@ -189,10 +189,18 @@ Things that bite if you don't know them:
   index (format version + embedding model + dimension + chunk params); a mismatch is **rejected on
   load** (a different embedder = a different vector space). The read path **hot-reloads** on atomic
   swap and degrades to last-good on a bad read.
-- **Two client stacks by design.** Chat lives in `TheKrystalShip.Llm` (JIT); embeddings live in
+- **Two client stacks by design.** Chat lives in `TheKrystalShip.Llm`; embeddings live in
   `TheKrystalShip.Rag` (Native-AOT). The indexer is a resident daemon on a VRAM-budgeted box, so it
   must be AOT — which forces the RAG core AOT-clean (source-generated JSON, zero reflection).
   Embeddings deliberately do **not** live on `ILlmClient`. Justified duplication, not an accident.
+- **The chat request path is AOT-clean; the rest of the library is not.** Both backend clients build
+  a typed request and serialize it through `LlmWireJsonContext`, so a Native-AOT host that constructs
+  `LlamaCppLlmClient` or `OllamaLlmClient` directly compiles and runs. `IsAotCompatible` is
+  nonetheless off on the project, because the conversation store, the memory store and
+  `AddLocalLlm`'s configuration binding all serialize or bind reflectively — every one of them a
+  JIT-host concern an AOT consumer never reaches. Adding a field to a request body means adding it to
+  a record the context can see; the wire text itself is pinned by `LlmWireFormatTests` against
+  recorded files, so a rename or a reorder fails a test rather than a model.
 - **The inference server is one registration, and nothing above it knows which answered.**
   `Llm:Provider` picks Ollama or llama.cpp behind `ILlmClient`; `Rag:Provider` does the same behind
   `IEmbeddingClient`, independently. Both are read **once at startup** — a swap is a restart.

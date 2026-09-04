@@ -28,4 +28,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- The exact request bodies each backend is sent, recorded from a body its server accepts. A
+       field renamed, reordered, or turned from absent into null shows up as a failed comparison
+       against the file rather than as a model that quietly stops calling tools. -->
+  <ItemGroup>
+    <Content Include="wire/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

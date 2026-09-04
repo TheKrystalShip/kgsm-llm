@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a request body a trimmed or ahead-of-time host can send (`Llm 2.1.0`)
+
+Both backend clients build their request as typed records and serialize them through
+`LlmWireJsonContext`, a source-generated context. `LlamaCppChatRequest`, `OllamaChatRequest` and the
+shared `ToolFunctionPayload` replace the `Dictionary<string, object?>` and anonymous objects the
+bodies were assembled from, and `OllamaRequestBuilder` gives Ollama the same testable seam
+`LlamaCppRequestBuilder` already gave llama.cpp.
+
+The bodies are byte-identical, and `LlmWireFormatTests` is what says so: it holds each backend's
+serialized request against a recorded file under `TheKrystalShip.Llm.Tests/wire/`, down to field
+order, the escaping inside a tool call's nested argument string, and which optional fields are absent
+rather than null. Unsaid and said-to-be-nothing are different requests to llama-server — an absent
+seed leaves its own sampling alone, an absent `chat_template_kwargs` is a template that declares no
+reasoning variable — so every optional field is ignored when null rather than written.
+
+What this buys is a consumer that has no reflective serializer at all. An ahead-of-time-compiled host
+constructing `LlamaCppLlmClient` compiles and runs: ILC no longer rejects the assembly over the two
+reflective `JsonSerializer.Serialize` calls in the chat path, which it reported as IL2026/IL3050
+rolled up to IL2104 and IL3053 and an `ilc` exit of -1. `magpie`, a second-hand-hardware watcher
+outside this ecosystem, is the first such consumer.
+
+`IsAotCompatible` stays off on the project. The chat path is clean; the conversation store, the
+memory store and the DI configuration binding are not, and all three are JIT-host concerns that no
+ahead-of-time consumer reaches.
+
 ### Fixed — the review gate answers to this member's replica, and now says so (1.62.0)
 
 `AdminOnlyFilter` resolves a session bearer's tier from the account store, through

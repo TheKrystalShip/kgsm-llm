@@ -28,7 +28,7 @@ namespace TheKrystalShip.Llm.Backends.LlamaCpp;
 /// </summary>
 public static class LlamaCppRequestBuilder
 {
-    public static Dictionary<string, object?> Build(
+    public static LlamaCppChatRequest Build(
         LlmBackendOptions options,
         LlamaCppOptions llamaCpp,
         IReadOnlyList<LlmMessage> messages,
@@ -36,72 +36,61 @@ public static class LlamaCppRequestBuilder
         bool stream,
         bool think)
     {
-        var body = new Dictionary<string, object?>
+        bool hasTools = tools is { Count: > 0 };
+
+        return new LlamaCppChatRequest
         {
-            ["model"] = options.Model,
-            ["stream"] = stream,
-            ["temperature"] = options.Temperature,
-            ["messages"] = BuildMessages(messages)
-        };
+            Model = options.Model,
+            Stream = stream,
+            Temperature = options.Temperature,
+            Messages = BuildMessages(messages),
 
-        // The context window is fixed at launch (-c) and llama-server ignores a per-request value,
-        // so it is not sent. It is still read from configuration to stamp token accounting.
+            // Only sent when explicitly configured (the eval harness's reproducible-run mode); an
+            // absent seed leaves the backend's own unseeded sampling untouched.
+            Seed = options.Seed,
 
-        if (options.Seed is int seed)
-            body["seed"] = seed;
-
-        if (stream)
             // Without this the stream carries no token counts at all, and every turn would report
             // usage as unknown.
-            body["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true };
+            StreamOptions = stream ? new LlamaCppStreamOptions() : null,
 
-        if (tools is { Count: > 0 })
-        {
-            body["tools"] = tools.Select(ToolSchema.BuildFunction).ToArray();
-            body["parallel_tool_calls"] = llamaCpp.ParallelToolCalls;
-        }
+            Tools = hasTools ? tools!.Select(ToolSchema.BuildFunction).ToList() : null,
+            ParallelToolCalls = hasTools ? llamaCpp.ParallelToolCalls : null,
 
-        // Reasoning is a property of the chat template, reached through the variable it declares.
-        // A template that declares none ignores this, which is the same outcome as not sending it.
-        //
-        // The value is sent on EVERY request, including when reasoning is off. Omitting it does not
-        // mean "off": llama-server's --reasoning defaults to `auto`, which detects that the template
-        // supports reasoning and turns it on itself, so an absent variable reads as ENABLED. Measured
-        // on gemma4:12b answering "what blueprints do we have installed": absent, every reply carried
-        // a reasoning channel and cost 384 completion tokens for a 103-character answer; sent as
-        // false, the channel is empty and the same answer costs 29. Tool calls are unaffected either
-        // way (identical arguments, 152 tokens against 21).
-        if (!string.IsNullOrWhiteSpace(llamaCpp.ThinkingTemplateKwarg))
-            body["chat_template_kwargs"] = new Dictionary<string, object?>
-            {
-                [llamaCpp.ThinkingTemplateKwarg] = think
-            };
+            // Reasoning is a property of the chat template, reached through the variable it declares.
+            // A template that declares none ignores this, which is the same outcome as not sending it.
+            //
+            // The value is sent on EVERY request, including when reasoning is off. Omitting it does not
+            // mean "off": llama-server's --reasoning defaults to `auto`, which detects that the template
+            // supports reasoning and turns it on itself, so an absent variable reads as ENABLED. Measured
+            // on gemma4:12b answering "what blueprints do we have installed": absent, every reply carried
+            // a reasoning channel and cost 384 completion tokens for a 103-character answer; sent as
+            // false, the channel is empty and the same answer costs 29. Tool calls are unaffected either
+            // way (identical arguments, 152 tokens against 21).
+            ChatTemplateKwargs = string.IsNullOrWhiteSpace(llamaCpp.ThinkingTemplateKwarg)
+                ? null
+                : new Dictionary<string, bool> { [llamaCpp.ThinkingTemplateKwarg] = think },
 
-        // DRY penalises only VERBATIM repetition of a sequence already generated, which is what a
-        // degenerate loop is made of; llama-server disables it by default and leaves no other
-        // repetition control on either, so nothing bounds a loop but the context window. A run that
-        // fills the window produces an empty reply after minutes of generation, which reaches a
-        // person as silence.
-        //
-        // It is safe on the structured output tool arguments and file bodies are made of because the
-        // default sequence breakers ('\n', ':', '"', '*') reset matching at every line and key —
-        // measured on a 20-key .ini body, which came back byte-identical in shape with every key
-        // present. This is why DRY is the backstop rather than repeat_penalty, which cannot tell a
-        // loop from a config file's legitimately repeated punctuation.
-        if (llamaCpp.DryMultiplier > 0)
-        {
-            body["dry_multiplier"] = llamaCpp.DryMultiplier;
-            body["dry_base"] = llamaCpp.DryBase;
-            body["dry_allowed_length"] = llamaCpp.DryAllowedLength;
-            body["dry_penalty_last_n"] = llamaCpp.DryPenaltyLastN;
-        }
-
-        return body;
+            // DRY penalises only VERBATIM repetition of a sequence already generated, which is what a
+            // degenerate loop is made of; llama-server disables it by default and leaves no other
+            // repetition control on either, so nothing bounds a loop but the context window. A run that
+            // fills the window produces an empty reply after minutes of generation, which reaches a
+            // person as silence.
+            //
+            // It is safe on the structured output tool arguments and file bodies are made of because the
+            // default sequence breakers ('\n', ':', '"', '*') reset matching at every line and key —
+            // measured on a 20-key .ini body, which came back byte-identical in shape with every key
+            // present. This is why DRY is the backstop rather than repeat_penalty, which cannot tell a
+            // loop from a config file's legitimately repeated punctuation.
+            DryMultiplier = llamaCpp.DryMultiplier > 0 ? llamaCpp.DryMultiplier : null,
+            DryBase = llamaCpp.DryMultiplier > 0 ? llamaCpp.DryBase : null,
+            DryAllowedLength = llamaCpp.DryMultiplier > 0 ? llamaCpp.DryAllowedLength : null,
+            DryPenaltyLastN = llamaCpp.DryMultiplier > 0 ? llamaCpp.DryPenaltyLastN : null,
+        };
     }
 
-    private static object[] BuildMessages(IReadOnlyList<LlmMessage> messages)
+    private static List<LlamaCppMessage> BuildMessages(IReadOnlyList<LlmMessage> messages)
     {
-        var payloads = new List<object>(messages.Count);
+        var payloads = new List<LlamaCppMessage>(messages.Count);
 
         // Assistant tool calls awaiting their result, oldest first, as (tool name, assigned id).
         var outstanding = new List<(string Name, string Id)>();
@@ -113,59 +102,57 @@ public static class LlamaCppRequestBuilder
             {
                 case LlmRole.Assistant when message.ToolCalls is { Count: > 0 }:
                 {
-                    var calls = new List<object>(message.ToolCalls.Count);
+                    var calls = new List<LlamaCppToolCall>(message.ToolCalls.Count);
                     foreach (var call in message.ToolCalls)
                     {
                         var id = $"call_{nextId++}";
                         outstanding.Add((call.Name.Name, id));
-                        calls.Add(new
+                        calls.Add(new LlamaCppToolCall
                         {
-                            id,
-                            type = "function",
-                            function = new
+                            Id = id,
+                            Function = new LlamaCppToolCallFunction
                             {
-                                name = call.Name.Name,
-                                arguments = JsonSerializer.Serialize(call.Arguments)
-                            }
+                                Name = call.Name.Name,
+                                Arguments = SerializeArguments(call.Arguments),
+                            },
                         });
                     }
 
-                    payloads.Add(new Dictionary<string, object?>
+                    payloads.Add(new LlamaCppMessage
                     {
-                        ["role"] = "assistant",
-                        ["content"] = message.Content ?? string.Empty,
-                        ["tool_calls"] = calls.ToArray()
+                        Role = "assistant",
+                        Content = message.Content ?? string.Empty,
+                        ToolCalls = calls,
                     });
                     break;
                 }
 
                 case LlmRole.Tool:
-                {
-                    var payload = new Dictionary<string, object?>
+                    payloads.Add(new LlamaCppMessage
                     {
-                        ["role"] = "tool",
-                        ["content"] = message.Content ?? string.Empty
-                    };
-
-                    if (ClaimCallId(outstanding, message.ToolName?.Name) is { } id)
-                        payload["tool_call_id"] = id;
-
-                    payloads.Add(payload);
+                        Role = "tool",
+                        Content = message.Content ?? string.Empty,
+                        ToolCallId = ClaimCallId(outstanding, message.ToolName?.Name),
+                    });
                     break;
-                }
 
                 default:
-                    payloads.Add(new Dictionary<string, object?>
+                    payloads.Add(new LlamaCppMessage
                     {
-                        ["role"] = message.Role.ToString().ToLowerInvariant(),
-                        ["content"] = message.Content ?? string.Empty
+                        Role = message.Role.ToString().ToLowerInvariant(),
+                        Content = message.Content ?? string.Empty,
                     });
                     break;
             }
         }
 
-        return [.. payloads];
+        return payloads;
     }
+
+    private static string SerializeArguments(IReadOnlyDictionary<string, string?> arguments) =>
+        JsonSerializer.Serialize(
+            new Dictionary<string, string?>(arguments, StringComparer.Ordinal),
+            LlmWireJsonContext.Default.DictionaryStringString);
 
     /// <summary>
     /// Takes the oldest outstanding call of the given tool, or the oldest of any tool when the name

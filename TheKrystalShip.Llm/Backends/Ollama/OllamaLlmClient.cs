@@ -51,7 +51,9 @@ public class OllamaLlmClient : ILlmClient
     {
         try
         {
-            var json = JsonSerializer.Serialize(BuildBody(messages, tools, stream: false, think));
+            var json = JsonSerializer.Serialize(
+                OllamaRequestBuilder.Build(_options, messages, tools, stream: false, think),
+                LlmWireJsonContext.Default.OllamaChatRequest);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             using var response = await _httpClient.PostAsync("/api/chat", content, cancellationToken);
@@ -101,7 +103,9 @@ public class OllamaLlmClient : ILlmClient
         bool think = false,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var json = JsonSerializer.Serialize(BuildBody(messages, tools, stream: true, think));
+        var json = JsonSerializer.Serialize(
+            OllamaRequestBuilder.Build(_options, messages, tools, stream: true, think),
+            LlmWireJsonContext.Default.OllamaChatRequest);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat")
         {
@@ -158,55 +162,4 @@ public class OllamaLlmClient : ILlmClient
         response.Dispose();
         throw new OllamaBackendException($"LLM backend returned status {(int)response.StatusCode}.");
     }
-
-    private Dictionary<string, object?> BuildBody(
-        IReadOnlyList<LlmMessage> messages, IReadOnlyList<LlmToolDefinition>? tools, bool stream, bool think)
-    {
-        var options = new Dictionary<string, object?>
-        {
-            ["num_ctx"] = _options.ContextWindow,
-            ["temperature"] = _options.Temperature
-        };
-        // Only sent when explicitly configured (the eval harness's reproducible-run mode); an
-        // absent seed leaves Ollama's default unseeded sampling untouched.
-        if (_options.Seed is int seed)
-            options["seed"] = seed;
-
-        var body = new Dictionary<string, object?>
-        {
-            ["model"] = _options.Model,
-            ["stream"] = stream,
-            ["think"] = think,
-            ["messages"] = messages.Select(BuildMessagePayload).ToArray(),
-            ["options"] = options
-        };
-
-        if (tools is { Count: > 0 })
-            body["tools"] = tools.Select(ToolSchema.BuildFunction).ToArray();
-
-        return body;
-    }
-
-    private static object BuildMessagePayload(LlmMessage message)
-    {
-        var payload = new Dictionary<string, object?>
-        {
-            ["role"] = message.Role.ToString().ToLowerInvariant(),
-            ["content"] = message.Content ?? string.Empty
-        };
-
-        if (message.ToolCalls is { Count: > 0 })
-        {
-            payload["tool_calls"] = message.ToolCalls.Select(tc => new
-            {
-                function = new { name = tc.Name.Name, arguments = tc.Arguments }
-            }).ToArray();
-        }
-
-        if (message.ToolName is not null)
-            payload["tool_name"] = message.ToolName.Name;
-
-        return payload;
-    }
-
 }

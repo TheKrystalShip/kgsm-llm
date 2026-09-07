@@ -105,12 +105,12 @@ public sealed class SystemPromptBuilderTests : IDisposable
     {
         Installed(("factorio-1", "factorio", "factorio-1"), ("terraria", "terraria", "terraria"));
         Catalog(("factorio", "Factorio"), ("terraria", "Terraria"));
-        On(("factorio-1", "hotrod"), ("terraria", "hotbox"));
+        On(("factorio-1", "hotrod"), ("terraria", "node-b"));
 
         var prompt = (await Build().BuildAsync(canPerformActions: false)).Text;
 
         prompt.Should().Contain("- factorio-1 (game: Factorio, on hotrod)");
-        prompt.Should().Contain("- terraria (game: Terraria, on hotbox)");
+        prompt.Should().Contain("- terraria (game: Terraria, on node-b)");
         prompt.Should().Contain("Currently installed instances (these are spread across machines)");
         prompt.Should().Contain("never \"this host\"");
     }
@@ -148,12 +148,12 @@ public sealed class SystemPromptBuilderTests : IDisposable
     {
         Installed(("factorio-1", "factorio", "factorio-1"));
         Catalog(("factorio", "Factorio"));
-        CouldNotRead("hotbox (could not be reached)");
+        CouldNotRead("node-b (could not be reached)");
 
         var prompt = (await Build().BuildAsync(canPerformActions: false)).Text;
 
-        prompt.Should().Contain("Currently installed instances — INCOMPLETE, because hotbox (could not be reached)");
-        prompt.Should().Contain("Installable game types (blueprints) — INCOMPLETE, because hotbox (could not be reached)");
+        prompt.Should().Contain("Currently installed instances — INCOMPLETE, because node-b (could not be reached)");
+        prompt.Should().Contain("Installable game types (blueprints) — INCOMPLETE, because node-b (could not be reached)");
         prompt.Should().Contain("so nobody reads the lists above as everything there is");
     }
 

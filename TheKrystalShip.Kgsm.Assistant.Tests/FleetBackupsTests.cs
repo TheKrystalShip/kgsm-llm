@@ -253,12 +253,12 @@ public class FleetBackupsTests
     public async Task A_fleet_read_says_which_machines_it_could_not_reach()
     {
         _inventory.GetUnreachedAsync(Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>>(["hotbox (could not be reached)"]));
+            .Returns(Task.FromResult<IReadOnlyList<string>>(["node-b (could not be reached)"]));
 
         string output = await RunFleet(Fleet());
 
         output.Should().Contain("part of the fleet only");
-        output.Should().Contain("hotbox (could not be reached)");
+        output.Should().Contain("node-b (could not be reached)");
     }
 
     /// <summary>

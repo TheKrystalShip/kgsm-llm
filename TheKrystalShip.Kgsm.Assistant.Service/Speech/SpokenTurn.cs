@@ -1,4 +1,4 @@
-using TheKrystalShip.KGSM.Speech;
+using TheKrystalShip.Speech;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Speech;
 

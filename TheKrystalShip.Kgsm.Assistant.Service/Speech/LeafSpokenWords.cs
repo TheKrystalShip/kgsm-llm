@@ -1,5 +1,5 @@
 using TheKrystalShip.Kgsm.Assistant.Ports;
-using TheKrystalShip.KGSM.Speech;
+using TheKrystalShip.Speech;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Speech;
 
@@ -45,7 +45,7 @@ internal sealed class LeafSpokenWords : ISpokenWords, IDisposable
     private DateTimeOffset _vocabularyCheckedAt = DateTimeOffset.MinValue;
 
     public LeafSpokenWords(
-        string? socketPath, IServerInventory inventory, ILogger<LeafSpokenWords> logger)
+        string socketPath, IServerInventory inventory, ILogger<LeafSpokenWords> logger)
     {
         _inventory = inventory;
         _logger = logger;

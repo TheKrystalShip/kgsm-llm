@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the speech client is shared, so this leaf names its socket (1.63.0)
+
+`TheKrystalShip.Speech` serves whatever daemon is on the other end of the socket and cannot know
+which, so it carries no default path. `HostSpeechSocket` names `/run/kgsm-speech/speech.sock` once
+and both adapters resolve through it — two surfaces of the same leaf guessing the path differently
+is a bug that only appears on the host where somebody moved the socket.
+
+`LeafSpokenAudio` and `LeafSpokenWords` take a non-null path, and `Program.cs` resolves it once
+rather than reading the same configuration key at each registration.
+
 ### Added — show the model a picture (`Llm 2.3.0`)
 
 `LlmMessage` carries an optional `Images`, a list of `LlmImage` { mime type, bytes }, and

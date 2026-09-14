@@ -302,11 +302,12 @@ builder.Services.AddSingleton<ISpokenAudio, NoSpokenAudio>();
 builder.Services.AddSingleton<ISpokenWords, NoSpokenWords>();
 if (builder.Configuration.GetValue("Speech:Enabled", true))
 {
+    string speechSocket = HostSpeechSocket.OrDefault(builder.Configuration["Speech:SocketPath"]);
     builder.Services.AddSingleton<ISpokenAudio>(sp => new LeafSpokenAudio(
-        builder.Configuration["Speech:SocketPath"],
+        speechSocket,
         sp.GetRequiredService<ILogger<LeafSpokenAudio>>()));
     builder.Services.AddSingleton<ISpokenWords>(sp => new LeafSpokenWords(
-        builder.Configuration["Speech:SocketPath"],
+        speechSocket,
         sp.GetRequiredService<IServerInventory>(),
         sp.GetRequiredService<ILogger<LeafSpokenWords>>()));
 }

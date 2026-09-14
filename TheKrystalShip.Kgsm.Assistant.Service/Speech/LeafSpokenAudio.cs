@@ -1,4 +1,4 @@
-using TheKrystalShip.KGSM.Speech;
+using TheKrystalShip.Speech;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service.Speech;
 
@@ -27,7 +27,7 @@ internal sealed class LeafSpokenAudio : ISpokenAudio, IDisposable
     private readonly SpeechClient _client;
     private readonly ILogger<LeafSpokenAudio> _logger;
 
-    public LeafSpokenAudio(string? socketPath, ILogger<LeafSpokenAudio> logger)
+    public LeafSpokenAudio(string socketPath, ILogger<LeafSpokenAudio> logger)
     {
         _logger = logger;
         _client = new SpeechClient(socketPath, logger);

@@ -1,3 +1,5 @@
+using TheKrystalShip.Agent.Prompts;
+
 namespace TheKrystalShip.Kgsm.Assistant;
 
 /// <summary>
@@ -22,7 +24,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 public static class LeafName
 {
     /// <summary>Upper bound on a leaf name; the longest deployed one is 14 characters.</summary>
-    public const int MaxLength = 32;
+    public const int MaxLength = PromptDirectory.MaxVariantLength;
 
     /// <summary>
     /// Returns <paramref name="raw"/> when it is a well-formed leaf name — lowercase ASCII letters,
@@ -31,21 +33,10 @@ public static class LeafName
     /// <see langword="null"/> result means "no leaf": the caller falls back to the assistant's own
     /// prompts and its own origin.
     /// </summary>
-    public static string? Validate(string? raw)
-    {
-        if (string.IsNullOrEmpty(raw) || raw.Length > MaxLength)
-            return null;
-
-        for (int i = 0; i < raw.Length; i++)
-        {
-            var c = raw[i];
-            var ok = char.IsAsciiDigit(c)
-                || (c >= 'a' && c <= 'z')
-                || (c == '-' && i > 0);   // a leading hyphen is not a name, and "-" alone is not one either
-            if (!ok)
-                return null;
-        }
-
-        return raw;
-    }
+    /// <remarks>
+    /// A leaf is the variant its prompt text is read under, so the rule is the prompt directory's: one
+    /// rule, because a name accepted as an origin and refused as a variant would record one surface
+    /// while reading another's text.
+    /// </remarks>
+    public static string? Validate(string? raw) => PromptDirectory.ValidVariant(raw);
 }

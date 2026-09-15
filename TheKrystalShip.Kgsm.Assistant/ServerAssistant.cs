@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Agent.Replies;
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Network;
@@ -462,7 +463,7 @@ public class ServerAssistant : IServerAssistant
                     // the correction is streamed too — a client that renders the live tokens and
                     // never re-reads the final text still sees it.
                     await writer.WriteAsync(
-                        AssistantStreamEvent.Token(UnbackedActionClaim.Correction), cancellationToken);
+                        AssistantStreamEvent.Token(ServerActionClaim.Check.Correction), cancellationToken);
                     finalText = corrected;
                 }
 
@@ -472,7 +473,8 @@ public class ServerAssistant : IServerAssistant
                 if (!ReferenceEquals(noted, finalText))
                 {
                     await writer.WriteAsync(
-                        AssistantStreamEvent.Token(PendingConfirmationNote.For(scope.Staged.Count, style)),
+                        AssistantStreamEvent.Token(
+                            PendingConfirmationNote.For(scope.Staged.Count, spoken: style == ReplyStyle.Voice)),
                         cancellationToken);
                     finalText = noted;
                 }
@@ -507,10 +509,8 @@ public class ServerAssistant : IServerAssistant
     /// </summary>
     private string CorrectUnbackedClaim(string text, IConfirmationScope scope, string conversationId)
     {
-        if (scope.Staged.Count > 0 || scope.ActionPerformed)
-            return text;
-
-        if (!UnbackedActionClaim.IsPresentIn(text) || UnbackedActionClaim.CorrectionIsPresentIn(text))
+        var corrected = ServerActionClaim.Check.Corrected(text, TurnActed(scope));
+        if (ReferenceEquals(corrected, text))
             return text;
 
         _logger.LogWarning(
@@ -521,8 +521,11 @@ public class ServerAssistant : IServerAssistant
             ClaimCheck.UnbackedAction, ClaimResolution.Corrected,
             ClaimNet.Outer, conversationId);
 
-        return text + UnbackedActionClaim.Correction;
+        return corrected;
     }
+
+    /// <summary>Whether the turn has staged or run anything, read live off its scope.</summary>
+    private static bool TurnActed(IConfirmationScope scope) => scope.Staged.Count > 0 || scope.ActionPerformed;
 
     /// <summary>
     /// The same check as <see cref="CorrectUnbackedClaim"/>, put where the turn can still act on it:
@@ -537,101 +540,41 @@ public class ServerAssistant : IServerAssistant
     /// </para>
     /// </summary>
     private Func<string, ReplyReview> BuildReplyReview(
-        IConfirmationScope scope, string conversationId, string userPrompt)
+        IConfirmationScope scope, string conversationId, string userPrompt) =>
+        ReplyGuard.Review(
+            [
+                // Asked to look online, and nothing was looked up. First: this is about whether the work
+                // was DONE, where the checks after it are about how it was described, and a turn that
+                // never searched has nothing yet worth reviewing the wording of.
+                new ReplyCheck(UnsearchedWebCheck, _ =>
+                    SearchIntent.Required == SearchScope.Web && !SearchIntent.AnythingSearched
+                        ? new ReplyFault(
+                            UnsearchedWebRequest.NudgeFor(userPrompt),
+                            UnsearchedWebRequest.RetryNotice,
+                            UnsearchedWebRequest.Correction)
+                        : null),
+                ReplyChecks.FabricatedFigures(),
+                ReplyChecks.UnbackedAction(ServerActionClaim.Check, userPrompt, () => TurnActed(scope)),
+            ],
+            (check, fault, resolution) =>
+            {
+                _logger.LogWarning(
+                    "Reply failed the {Check} check ({Detail}); {Resolution}. Conversation {ConversationId}",
+                    check.Name, fault.Detail ?? "no detail", resolution, conversationId);
+                _journal.ClaimCorrected(
+                    ClaimCheckOf(check),
+                    resolution == ReplyResolution.RePrompted ? ClaimResolution.RePrompted : ClaimResolution.Corrected,
+                    ClaimNet.Review, conversationId);
+            });
+
+    private const string UnsearchedWebCheck = "unsearched-web";
+
+    private static ClaimCheck ClaimCheckOf(ReplyCheck check) => check.Name switch
     {
-        var rePrompted = false;
-        var rePromptedForSearch = false;
-        var rePromptedForFigures = false;
-        return text =>
-        {
-            // Asked to look online, and nothing was looked up. Checked before the action claim: this
-            // is about whether the work was DONE, where that one is about how it was described, and a
-            // turn that never searched has nothing yet worth reviewing the wording of.
-            if (SearchIntent.Required == SearchScope.Web && !SearchIntent.AnythingSearched)
-            {
-                if (!rePromptedForSearch)
-                {
-                    rePromptedForSearch = true;
-                    _logger.LogWarning(
-                        "The user asked for the web and the turn called no tool; re-prompting once. "
-                        + "Conversation {ConversationId}", conversationId);
-                    _journal.ClaimCorrected(
-                        ClaimCheck.UnsearchedWeb, ClaimResolution.RePrompted,
-                        ClaimNet.Review, conversationId);
-                    return ReplyReview.Retry(
-                        UnsearchedWebRequest.NudgeFor(userPrompt), UnsearchedWebRequest.RetryNotice);
-                }
-
-                _logger.LogWarning(
-                    "The user asked for the web and the turn still searched nothing; note appended. "
-                    + "Conversation {ConversationId}", conversationId);
-                _journal.ClaimCorrected(
-                    ClaimCheck.UnsearchedWeb, ClaimResolution.Corrected,
-                    ClaimNet.Review, conversationId);
-                return ReplyReview.Amend(UnsearchedWebRequest.Correction);
-            }
-
-            // A figure the tools did not report. Checked on any turn that called one, whether or not it
-            // also staged something: a reply can stage a real backup and still misquote the port beside
-            // it, and the misquote is what the reader has no way to catch.
-            if (MeasuredValues.AnyToolReported)
-            {
-                var unbacked = FabricatedFigureClaim.UnbackedIn(text, MeasuredValues.Given);
-                if (unbacked.Count > 0)
-                {
-                    if (!rePromptedForFigures)
-                    {
-                        rePromptedForFigures = true;
-                        _logger.LogWarning(
-                            "Reply reported figure(s) {Figures} that no tool returned this turn; re-prompting "
-                            + "once. Conversation {ConversationId}",
-                            string.Join(", ", unbacked), conversationId);
-                        _journal.ClaimCorrected(
-                            ClaimCheck.FabricatedFigure, ClaimResolution.RePrompted,
-                            ClaimNet.Review, conversationId);
-                        return ReplyReview.Retry(
-                            FabricatedFigureClaim.NudgeFor(unbacked), FabricatedFigureClaim.RetryNotice);
-                    }
-
-                    _logger.LogWarning(
-                        "Reply still reported figure(s) {Figures} that no tool returned; correction appended. "
-                        + "Conversation {ConversationId}",
-                        string.Join(", ", unbacked), conversationId);
-                    _journal.ClaimCorrected(
-                        ClaimCheck.FabricatedFigure, ClaimResolution.Corrected,
-                        ClaimNet.Review, conversationId);
-                    return ReplyReview.Amend(FabricatedFigureClaim.Correction);
-                }
-            }
-
-            if (scope.Staged.Count > 0 || scope.ActionPerformed)
-                return ReplyReview.Accept;
-
-            if (!UnbackedActionClaim.IsPresentIn(text))
-                return ReplyReview.Accept;
-
-            if (!rePrompted)
-            {
-                rePrompted = true;
-                _logger.LogWarning(
-                    "Reply claimed an action on a turn that has staged and run nothing; re-prompting once. "
-                    + "Conversation {ConversationId}", conversationId);
-                _journal.ClaimCorrected(
-                    ClaimCheck.UnbackedAction, ClaimResolution.RePrompted,
-                    ClaimNet.Review, conversationId);
-                return ReplyReview.Retry(
-                    UnbackedActionClaim.NudgeFor(userPrompt), UnbackedActionClaim.RetryNotice);
-            }
-
-            _logger.LogWarning(
-                "Reply claimed an action on a turn that staged and ran nothing; correction appended. "
-                + "Conversation {ConversationId}", conversationId);
-            _journal.ClaimCorrected(
-                ClaimCheck.UnbackedAction, ClaimResolution.Corrected,
-                ClaimNet.Review, conversationId);
-            return ReplyReview.Amend(UnbackedActionClaim.Correction);
-        };
-    }
+        UnsearchedWebCheck => ClaimCheck.UnsearchedWeb,
+        ReplyChecks.FabricatedFigureName => ClaimCheck.FabricatedFigure,
+        _ => ClaimCheck.UnbackedAction,
+    };
 
     /// <summary>
     /// The complement of <see cref="CorrectUnbackedClaim"/>: names a staged action the reply left
@@ -641,17 +584,18 @@ public class ServerAssistant : IServerAssistant
     private string NotePendingConfirmation(
         string text, IConfirmationScope scope, string conversationId, ReplyStyle style)
     {
-        if (scope.Staged.Count == 0 || scope.ActionPerformed)
+        if (scope.ActionPerformed)
             return text;
 
-        if (PendingConfirmationNote.IsPresentIn(text))
+        var noted = PendingConfirmationNote.Noted(text, scope.Staged.Count, spoken: style == ReplyStyle.Voice);
+        if (ReferenceEquals(noted, text))
             return text;
 
         _logger.LogWarning(
             "Reply left {Count} staged action(s) unmentioned; pending-confirmation note appended. "
             + "Conversation {ConversationId}", scope.Staged.Count, conversationId);
 
-        return text + PendingConfirmationNote.For(scope.Staged.Count, style);
+        return noted;
     }
 
     public async Task<ConfirmOutcome> ConfirmAsync(

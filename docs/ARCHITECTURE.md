@@ -52,6 +52,10 @@ an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, se
   belonging to no product, and MovieBot pins the same package this repo does. It owns the model round-trip, the iteration
   cap, tool-output truncation, and conversation memory — and is handed the tools, prompt, and
   per-call authorization *by the host, every turn*. It never learns what a tool means.
+  `TheKrystalShip.Agent`, from the same repository, holds the machinery around the loop that is no
+  more KGSM's than the loop is — reading the prompts and catalog off disk, the checks a reply is held
+  to, compaction, confirmation handles — while the brain keeps every decision about what a tool does
+  and who may call it.
 - **Ports/adapters keep the brain testable and the engine swappable.** The brain depends on
   interfaces (`IRetrieval`, `IWebSearch`, `IWebFetch`, the kgsm command/query ports); Infrastructure
   provides concrete adapters. Disabled capabilities get **fail-closed null adapters**
@@ -97,7 +101,7 @@ Being durable, a staged action survives a Service restart. The CLI needs none of
 of its own turn is not always right — it sometimes answers a mutating request conversationally and
 reports the action as staged anyway. Such a claim can move nothing, but it misinforms: the user waits
 on a confirmation prompt that was never posted. So on a turn that staged nothing and ran nothing, a
-first-person claim of a staged or completed action is false by construction (`UnbackedActionClaim`).
+first-person claim of a staged or completed action is false by construction (`ServerActionClaim`).
 The check runs only on that turn shape, so it can never contradict a real action; the auto-accept
 path, which runs a command without staging one, records that it acted. Offers and reports of world
 state are honest and pass through untouched.

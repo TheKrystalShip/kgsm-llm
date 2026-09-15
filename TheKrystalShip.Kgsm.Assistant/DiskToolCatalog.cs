@@ -1,41 +1,21 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
-
 using Microsoft.Extensions.Configuration;
 
+using TheKrystalShip.Agent;
+using TheKrystalShip.Agent.Tools;
 using TheKrystalShip.Llm.Models;
 
 namespace TheKrystalShip.Kgsm.Assistant;
 
-/// <summary>
-/// Thrown when the on-disk assistant text cannot be used. It is raised from the constructor of the
-/// thing that needs it, so a host resolving that service fails to start rather than answering with
-/// half a catalog — an assistant offering a tool the dispatcher cannot run, or missing the tool the
-/// prompt tells the model to use, is worse than one that does not come up.
-/// </summary>
-public sealed class AssistantTextUnavailableException(string message) : Exception(message);
-
 /// <inheritdoc />
 /// <remarks>
-/// Reads <c>tools.json</c> from <see cref="FilePromptOverrides.DirectoryKey"/> ONCE, at construction.
-/// Unlike the prompt segments — which are re-read every turn because a bad edit costs one turn — the
-/// catalog is the contract between the model and the dispatcher, and swapping it under a turn in
-/// flight would let a tool be offered and then not exist when it is called. Editing it takes a
-/// restart, and the restart is what validates it.
+/// Reads <c>tools.json</c> from <see cref="FilePromptOverrides.DirectoryKey"/> once, at construction,
+/// through <see cref="ToolCatalogFile"/>: the file's shape, its validation and the agreement check are
+/// that type's. What is this assistant's own is the binding. Every entry names the capability it
+/// implements, and the tiers in <see cref="LlmTools"/> decide who is offered it.
 /// </remarks>
 public sealed class DiskToolCatalog : IToolCatalog
 {
-    public const string FileName = "tools.json";
-
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-    };
-
-    private static readonly IReadOnlySet<string> KnownTypes =
-        new HashSet<string>(StringComparer.Ordinal) { "string", "integer", "number", "boolean" };
+    public const string FileName = ToolCatalogFile.FileName;
 
     public IReadOnlyList<LlmToolDefinition> ReadOnly { get; }
     public IReadOnlyList<LlmToolDefinition> All { get; }
@@ -46,64 +26,37 @@ public sealed class DiskToolCatalog : IToolCatalog
 
     public DiskToolCatalog(string? directory)
     {
-        if (string.IsNullOrWhiteSpace(directory))
-            throw new AssistantTextUnavailableException(
-                $"'{FilePromptOverrides.DirectoryKey}' is not set. The assistant's prompts and tool " +
-                "definitions live on disk; point it at the directory they were installed into.");
+        var entries = ToolCatalogFile.Read(directory);
+        var path = Path.Combine(directory!, FileName);
 
-        var path = Path.Combine(directory, FileName);
-        var byName = Parse(path);
-
-        // Names come from the file, capabilities from the code, and this is where they are bound. A
-        // tool declares which capability it implements; the pairing must be exactly one-to-one, and
-        // each way it can fail loses something different:
-        //   · a capability with no entry — the model silently loses a tool the assistant can run
-        //   · an entry naming no capability, or one nothing implements — the model is offered a tool
-        //     that fails the turn it is called on
-        //   · two entries claiming one capability — which name the tool has becomes file order
-        var byCapability = new Dictionary<Capability, string>();
-        foreach (var (name, doc) in byName)
+        // Names come from the file, capabilities from the code, and this is where they are bound. The
+        // pairing must be exactly one-to-one: an entry naming no capability binds to nothing, and two
+        // entries claiming one capability would leave which name the tool has to the order of the file.
+        var byCapability = new Dictionary<Capability, ToolEntry>();
+        foreach (var entry in entries)
         {
-            if (string.IsNullOrWhiteSpace(doc.Capability))
+            if (entry.Capability is null)
                 throw new AssistantTextUnavailableException(
-                    $"{path}: tool '{name}' declares no capability. Every entry names the capability it " +
+                    $"{path}: tool '{entry.Name}' declares no capability. Every entry names the capability it " +
                     "implements — that is what binds it to a handler, and a name alone binds to nothing.");
 
-            var capability = new Capability(doc.Capability.Trim());
+            var capability = new Capability(entry.Capability);
             if (byCapability.TryGetValue(capability, out var already))
                 throw new AssistantTextUnavailableException(
-                    $"{path}: '{name}' and '{already}' both declare the capability '{capability}'. One " +
-                    "capability is one tool; which name it takes cannot depend on the order of the file.");
+                    $"{path}: '{entry.Name}' and '{already.Name}' both declare the capability '{capability}'. " +
+                    "One capability is one tool; which name it takes cannot depend on the order of the file.");
 
-            byCapability[capability] = name;
+            byCapability[capability] = entry;
         }
 
-        var missing = LlmTools.EveryCapability.Except(byCapability.Keys)
-            .Select(c => c.Id).Order(StringComparer.Ordinal).ToList();
-        if (missing.Count > 0)
-            throw new AssistantTextUnavailableException(
-                $"{path} declares no tool for {missing.Count} capability(ies) the assistant can " +
-                $"dispatch: {string.Join(", ", missing)}. Each needs an entry naming it; restore them " +
-                "or reinstall the file from the deploy.");
+        ToolCatalogFile.RequireAgreement(
+            path, byCapability.Keys.Select(c => c.Id), LlmTools.EveryCapability.Select(c => c.Id), "capability");
 
-        var unknown = byCapability.Keys.Except(LlmTools.EveryCapability)
-            .Select(c => c.Id).Order(StringComparer.Ordinal).ToList();
-        if (unknown.Count > 0)
-            throw new AssistantTextUnavailableException(
-                $"{path} declares {unknown.Count} capability(ies) this assistant has no handler for: " +
-                $"{string.Join(", ", unknown)}. A tool the model is offered but nothing can run fails " +
-                "the turn it is called on; remove them or correct the capability id.");
+        _names = byCapability.ToDictionary(kv => kv.Key, kv => new Tool(kv.Value.Name));
+        _capabilities = byCapability.ToDictionary(kv => kv.Value.Name, kv => kv.Key, StringComparer.Ordinal);
+        _labels = byCapability.Values.ToDictionary(e => e.Name, e => e.Label, StringComparer.Ordinal);
 
-        _names = byCapability.ToDictionary(kv => kv.Key, kv => new Tool(kv.Value));
-        _capabilities = byCapability.ToDictionary(kv => kv.Value, kv => kv.Key, StringComparer.Ordinal);
-        _labels = byCapability.ToDictionary(
-            kv => kv.Value, kv => byName[kv.Value].Label?.Trim(), StringComparer.Ordinal);
-
-        LlmToolDefinition Define(Capability capability)
-        {
-            var name = _names[capability];
-            return byName[name.Name].ToDefinition(name, path);
-        }
+        LlmToolDefinition Define(Capability capability) => byCapability[capability].Definition;
 
         StagedCommandTools = LlmTools.StagedCommandsTier.Select(c => _names[c]).ToHashSet();
         AuthorizedReadTools = LlmTools.AuthorizedReadOnlyTier.Select(c => _names[c]).ToHashSet();
@@ -135,81 +88,11 @@ public sealed class DiskToolCatalog : IToolCatalog
         _capabilities.TryGetValue(tool.Name, out var c) ? c : null;
 
     /// <inheritdoc />
-    public string? LabelOf(Tool tool) =>
-        _labels.TryGetValue(tool.Name, out var l) && !string.IsNullOrWhiteSpace(l) ? l : null;
+    public string? LabelOf(Tool tool) => _labels.GetValueOrDefault(tool.Name);
 
     /// <inheritdoc />
     public IReadOnlySet<Tool> StagedCommandTools { get; }
 
     /// <inheritdoc />
     public IReadOnlySet<Tool> AuthorizedReadTools { get; }
-
-    private static IReadOnlyDictionary<string, ToolDoc> Parse(string path)
-    {
-        if (!File.Exists(path))
-            throw new AssistantTextUnavailableException(
-                $"{path} does not exist. The assistant's tool definitions live on disk — run " +
-                "deploy/deploy.sh to install them.");
-
-        Dictionary<string, ToolDoc>? parsed;
-        try
-        {
-            parsed = JsonSerializer.Deserialize<Dictionary<string, ToolDoc>>(File.ReadAllText(path), Json);
-        }
-        catch (JsonException ex)
-        {
-            throw new AssistantTextUnavailableException($"{path} is not valid JSON: {ex.Message}");
-        }
-
-        if (parsed is null || parsed.Count == 0)
-            throw new AssistantTextUnavailableException($"{path} describes no tools.");
-
-        return parsed;
-    }
-
-    private sealed record ParamDoc(
-        string? Name,
-        string? Description,
-        bool Required = true,
-        string Type = "string",
-        [property: JsonPropertyName("enum")] IReadOnlyList<string>? Enum = null)
-    {
-        public LlmToolParameter ToParameter(string tool, string path)
-        {
-            if (string.IsNullOrWhiteSpace(Name))
-                throw new AssistantTextUnavailableException(
-                    $"{path}: a parameter of '{tool}' has no name.");
-
-            if (string.IsNullOrWhiteSpace(Description))
-                throw new AssistantTextUnavailableException(
-                    $"{path}: parameter '{Name}' of '{tool}' has no description. The description is " +
-                    "what the model routes on; an empty one is not a valid tuning.");
-
-            if (!KnownTypes.Contains(Type))
-                throw new AssistantTextUnavailableException(
-                    $"{path}: parameter '{Name}' of '{tool}' has type '{Type}', which is not one of " +
-                    $"{string.Join(", ", KnownTypes.Order(StringComparer.Ordinal))}.");
-
-            return new LlmToolParameter(Name, Description.Trim(), Required, Type,
-                Enum is { Count: > 0 } ? Enum : null);
-        }
-    }
-
-    private sealed record ToolDoc(
-        string? Capability, string? Label, string? Description, IReadOnlyList<ParamDoc>? Params)
-    {
-        public LlmToolDefinition ToDefinition(Tool tool, string path)
-        {
-            if (string.IsNullOrWhiteSpace(Description))
-                throw new AssistantTextUnavailableException(
-                    $"{path}: tool '{tool.Name}' has no description. The description is how the model " +
-                    "knows when to call it; an empty one silently removes the tool from play.");
-
-            var parameters = (Params ?? [])
-                .Select(p => p.ToParameter(tool.Name, path))
-                .ToArray();
-
-            return new LlmToolDefinition(tool, Description.Trim(), parameters);
-        }
-    }
 }

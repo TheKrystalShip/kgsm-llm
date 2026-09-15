@@ -1,8 +1,7 @@
-using System.Security.Cryptography;
-
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Agent.Confirmations;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 
 using TheKrystalShip.Llm.Conversation;
@@ -93,7 +92,7 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
     {
         ArgumentNullException.ThrowIfNull(confirmation);
 
-        var id = NewHandle();
+        var id = ConfirmationHandle.New();
         lock (_writeGate)
         {
             using var connection = Open();
@@ -308,18 +307,6 @@ internal sealed class SqlitePendingConfirmationStore : IPendingConfirmationStore
             cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
             cmd.ExecuteNonQuery();
         }
-    }
-
-    /// <summary>
-    /// 16 bytes from the cryptographic RNG, hex-encoded. The handle is the capability, so it is
-    /// unguessable by construction and carries nothing about what it redeems; 32 characters leaves
-    /// room inside every surface's identifier limits, Discord's 100-character button id included.
-    /// </summary>
-    private static string NewHandle()
-    {
-        Span<byte> bytes = stackalloc byte[16];
-        RandomNumberGenerator.Fill(bytes);
-        return Convert.ToHexStringLower(bytes);
     }
 
     /// <summary>Opportunistic cleanup of rows past their lifetime, run inline with every

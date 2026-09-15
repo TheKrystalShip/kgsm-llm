@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 
 using NSubstitute;
 
+using TheKrystalShip.Agent.Replies;
 using TheKrystalShip.Kgsm.Assistant.Envelope;
 using TheKrystalShip.Kgsm.Assistant.Health;
 using TheKrystalShip.Kgsm.Assistant.Ports;
@@ -382,9 +383,9 @@ public class ServerAssistantStreamTests
         // was asked for rather than on the action the rejected reply invented.
         agent.Verdicts[0].Nudge.Should().Be(UnbackedActionClaim.NudgeFor("back up ketchup"));
         agent.Verdicts[0].Nudge.Should().Contain("back up ketchup");
-        agent.Verdicts[0].Amendment.Should().Be(UnbackedActionClaim.RetryNotice);
+        agent.Verdicts[0].Amendment.Should().Be(ServerActionClaim.Check.RetryNotice);
         agent.Verdicts[1].WantsRetry.Should().BeFalse();
-        agent.Verdicts[1].Amendment.Should().Be(UnbackedActionClaim.Correction);
+        agent.Verdicts[1].Amendment.Should().Be(ServerActionClaim.Check.Correction);
     }
 
     /// <summary>
@@ -412,7 +413,7 @@ public class ServerAssistantStreamTests
     public async Task AnAlreadyCorrectedReply_IsNotCorrectedTwice()
     {
         var confirmations = new ConfirmationContext();
-        var claimed = "I've staged a backup for Ketchup." + UnbackedActionClaim.Correction;
+        var claimed = "I've staged a backup for Ketchup." + ServerActionClaim.Check.Correction;
         var agent = new ScriptedAgent(confirmations, new[] { AgentEvent.Final(claimed) });
 
         var events = await DrainAsync(Create(agent, confirmations).RunStreamAsync("web:1", "back up ketchup", true));

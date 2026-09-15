@@ -3,6 +3,8 @@ using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
+using TheKrystalShip.Agent;
+using TheKrystalShip.Agent.Prompts;
 using TheKrystalShip.Kgsm.Assistant.Ports;
 using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;

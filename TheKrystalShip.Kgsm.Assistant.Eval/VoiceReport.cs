@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 
+using TheKrystalShip.Agent.Replies;
+
 namespace TheKrystalShip.Kgsm.Assistant.Eval;
 
 /// <summary>What one case's reply looked like under one style.</summary>

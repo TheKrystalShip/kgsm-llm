@@ -3,6 +3,8 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Agent.Prompts;
+using TheKrystalShip.Agent.Replies;
 using TheKrystalShip.Kgsm.Assistant.Audit;
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Consoles;

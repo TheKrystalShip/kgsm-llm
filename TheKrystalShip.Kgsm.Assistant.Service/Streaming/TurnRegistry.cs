@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Agent.Conversation;
 using TheKrystalShip.Kgsm.Assistant.Infrastructure;
 using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
@@ -252,53 +253,20 @@ internal sealed class TurnRegistry : ITurnRegistry
 
     /// <summary>
     /// Folds the conversation into a checkpoint when the turn that just ran left the context window
-    /// close to full.
+    /// close to full, by what the backend measured; <see cref="ContextCompaction"/> holds the rule.
+    /// <c>/compact</c> remains for asking early.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Nobody is going to ask for this.</b> A conversation that is never compacted grows until the
-    /// backend drops the front of it, and the first anybody knows is the assistant having forgotten
-    /// something they never told it to forget. A room shared by a channel makes that certain: it is one
-    /// conversation for the life of the place, and the people talking into it have no reason to know a
-    /// context window exists. <c>/compact</c> remains for asking early.
-    /// </para>
-    /// <para>
-    /// <b>Measured, never estimated.</b> The trigger is the occupancy the backend reported for the turn
-    /// that just ran. A turn that reported none is left alone rather than compacted on a guess.
-    /// </para>
-    /// <para>
-    /// <b>Failure is silent by design.</b> Compaction needs a model call, and one that fails costs a
-    /// larger context next turn — not an answer. Raising it here would report a fault against a turn
-    /// that has already succeeded and whose reply is on the person's screen.
-    /// </para>
-    /// </remarks>
     private async Task CompactIfFullAsync(TurnSession session)
     {
-        var at = _conversationOptions.Value.CompactAtPercent;
-        if (at <= 0) return;
-
-        var usage = session.Usage;
-        if (usage is null || usage.ContextWindow <= 0) return;
-        if (usage.UsedTokens * 100 < usage.ContextWindow * at) return;
-
         try
         {
             using var scope = _scopes.CreateScope();
-            var compactor = scope.ServiceProvider.GetRequiredService<IConversationCompactor>();
-
-            var result = await compactor.CompactAsync(session.ConversationId, CancellationToken.None);
-            if (result.IsFailure)
-            {
-                _log.LogWarning(
-                    "Could not compact {Conversation} at {Used}/{Window} tokens: {Reason}",
-                    session.ConversationId, usage.UsedTokens, usage.ContextWindow, result.Error);
-                return;
-            }
-
-            if (result.Value!.Compacted)
-                _log.LogInformation(
-                    "Compacted {Conversation} — it was using {Used} of {Window} tokens",
-                    session.ConversationId, usage.UsedTokens, usage.ContextWindow);
+            await ContextCompaction.CompactIfFullAsync(
+                scope.ServiceProvider.GetRequiredService<IConversationCompactor>(),
+                session.ConversationId,
+                session.Usage is { } usage ? new LlmUsage(usage.PromptTokens, usage.ResponseTokens, usage.ContextWindow) : null,
+                _conversationOptions.Value.CompactAtPercent,
+                _log);
         }
         catch (Exception ex)
         {

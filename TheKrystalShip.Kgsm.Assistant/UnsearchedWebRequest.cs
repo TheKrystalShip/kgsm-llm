@@ -17,7 +17,7 @@ namespace TheKrystalShip.Kgsm.Assistant;
 /// researched and is not, and nothing in it says so.
 /// </para>
 /// <para>
-/// <b>The correction is the same shape as <see cref="UnbackedActionClaim"/></b>: re-prompt once with
+/// <b>The correction is the same shape as <see cref="ServerActionClaim"/></b>: re-prompt once with
 /// what is measured, and if the second attempt still does not look, leave the reply standing with an
 /// honest note rather than discarding content that may be useful. One re-prompt, because a model that
 /// will not call a tool twice will not call it a third time either, and the person is waiting.

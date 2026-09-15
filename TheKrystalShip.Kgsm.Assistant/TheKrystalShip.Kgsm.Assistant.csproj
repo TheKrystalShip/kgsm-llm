@@ -7,7 +7,7 @@
 
     <PackageId>TheKrystalShip.Kgsm.Assistant</PackageId>
     <Authors>Heisenberg</Authors>
-    <Version>8.1.0</Version>
+    <Version>9.0.0</Version>
     <PackageProjectUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TheKrystalShip/TheKrystalShip.Llm</RepositoryUrl>
     <RepositoryType>GitHub</RepositoryType>
@@ -40,8 +40,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The agent loop, published from tks-agent. -->
+    <!-- The agent loop, and the harness every assistant built on it shares: the prompt directory,
+         the catalog file, the reply checks, compaction and confirmation handles. Both are published
+         from tks-agent. -->
     <PackageReference Include="TheKrystalShip.Llm" Version="2.4.0" />
+    <PackageReference Include="TheKrystalShip.Agent" Version="1.0.0" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
+using TheKrystalShip.Agent;
+
 namespace TheKrystalShip.Kgsm.Assistant;
 
 /// <summary>

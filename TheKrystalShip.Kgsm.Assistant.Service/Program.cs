@@ -12,6 +12,7 @@ using Microsoft.Extensions.FileProviders;
 
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Agent;
 using TheKrystalShip.Kgsm.Assistant;
 using TheKrystalShip.Kgsm.Assistant.Blueprints;
 using TheKrystalShip.Kgsm.Assistant.Envelope;

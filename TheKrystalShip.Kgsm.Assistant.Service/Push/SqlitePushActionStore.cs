@@ -1,7 +1,6 @@
-using System.Security.Cryptography;
-
 using Microsoft.Extensions.Options;
 
+using TheKrystalShip.Agent.Confirmations;
 using TheKrystalShip.Kgsm.Assistant.Service.PendingConfirmations;
 using TheKrystalShip.Llm.Conversation;
 
@@ -59,7 +58,7 @@ internal sealed class SqlitePushActionStore : IPushActionStore
         ArgumentException.ThrowIfNullOrWhiteSpace(stager.UserId);
         ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
 
-        var handle = NewHandle();
+        var handle = ConfirmationHandle.New();
         lock (_writeGate)
         {
             using var connection = StateDatabase.Open(_connectionString);
@@ -176,17 +175,6 @@ internal sealed class SqlitePushActionStore : IPushActionStore
             cmd.Parameters.AddWithValue("$confirmation", confirmationHandle);
             cmd.ExecuteNonQuery();
         }
-    }
-
-    /// <summary>
-    /// 16 bytes from the cryptographic RNG, hex-encoded — the same 32 characters a confirmation handle
-    /// is, and unguessable for the same reason: the handle <em>is</em> the capability.
-    /// </summary>
-    private static string NewHandle()
-    {
-        Span<byte> bytes = stackalloc byte[16];
-        RandomNumberGenerator.Fill(bytes);
-        return Convert.ToHexStringLower(bytes);
     }
 
     /// <summary>Opportunistic cleanup, inline with minting: handles are written far less often than

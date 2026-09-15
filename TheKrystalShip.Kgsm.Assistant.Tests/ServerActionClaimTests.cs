@@ -1,18 +1,21 @@
 using FluentAssertions;
 
+using TheKrystalShip.Agent.Replies;
+
 using Xunit;
 
 namespace TheKrystalShip.Kgsm.Assistant.Tests;
 
 /// <summary>
-/// The detector behind the assistant's action-claim correction. Every "claims" case below is a
-/// VERBATIM reply the model actually produced on a turn that staged nothing and ran nothing; every
-/// "honest" case is a verbatim reply from a turn that was truthful. Real prose, because the thing
-/// being tested is a judgement about prose, and invented examples would only prove the pattern
-/// matches itself.
+/// The action-claim check in this assistant's words. Every "claims" case below is a VERBATIM reply the
+/// model actually produced on a turn that staged nothing and ran nothing; every "honest" case is a
+/// verbatim reply from a turn that was truthful. Real prose, because the thing being tested is a
+/// judgement about prose, and invented examples would only prove the pattern matches itself.
 /// </summary>
-public class UnbackedActionClaimTests
+public class ServerActionClaimTests
 {
+    private static readonly UnbackedActionClaim Claim = ServerActionClaim.Check;
+
     [Theory]
     // Claimed a staging that never happened — the user is told to expect a button nobody posted.
     [InlineData("I've staged a backup for **Ketchup**. You'll just need to confirm it on your end to kick off the process.")]
@@ -30,7 +33,7 @@ public class UnbackedActionClaimTests
     [InlineData("The backup for Ketchup has been queued. Confirm when you're ready.")]
     public void AClaimOfAnActionIsDetected(string reply)
     {
-        UnbackedActionClaim.IsPresentIn(reply).Should().BeTrue();
+        Claim.IsPresentIn(reply).Should().BeTrue();
     }
 
     [Theory]
@@ -51,15 +54,15 @@ public class UnbackedActionClaimTests
     [InlineData("Got it, we've currently got four servers set up: Ketchup (Palworld), Minecraft, Project Zomboid, and Romestead.")]
     public void AnHonestReplyIsLeftAlone(string reply)
     {
-        UnbackedActionClaim.IsPresentIn(reply).Should().BeFalse();
+        Claim.IsPresentIn(reply).Should().BeFalse();
     }
 
     [Fact]
     public void EmptyRepliesAreNotClaims()
     {
-        UnbackedActionClaim.IsPresentIn(null).Should().BeFalse();
-        UnbackedActionClaim.IsPresentIn("").Should().BeFalse();
-        UnbackedActionClaim.IsPresentIn("   ").Should().BeFalse();
+        Claim.IsPresentIn(null).Should().BeFalse();
+        Claim.IsPresentIn("").Should().BeFalse();
+        Claim.IsPresentIn("   ").Should().BeFalse();
     }
 
     /// <summary>
@@ -69,7 +72,7 @@ public class UnbackedActionClaimTests
     [Fact]
     public void AnOfferDoesNotLaunderAClaimMadeAlongsideIt()
     {
-        UnbackedActionClaim.IsPresentIn(
+        Claim.IsPresentIn(
             "I've stopped Ketchup. I can also back up Terraria if you want.").Should().BeTrue();
     }
 
@@ -80,21 +83,9 @@ public class UnbackedActionClaimTests
     [Fact]
     public void TheCorrectionIsRecognisedInAReplyThatCarriesIt()
     {
-        UnbackedActionClaim.CorrectionIsPresentIn(
-            "I've stopped Ketchup." + UnbackedActionClaim.Correction).Should().BeTrue();
-        UnbackedActionClaim.CorrectionIsPresentIn("I've stopped Ketchup.").Should().BeFalse();
-        UnbackedActionClaim.CorrectionIsPresentIn(null).Should().BeFalse();
-    }
-
-    /// <summary>
-    /// The nudge puts the request back in front of the model, so a long one is cut to an excerpt
-    /// rather than spending the turn's context restating a pasted file.
-    /// </summary>
-    [Fact]
-    public void TheNudgeRestatesTheRequest_AndCutsALongOne()
-    {
-        UnbackedActionClaim.NudgeFor("stop minecraft").Should().Contain("\"stop minecraft\"");
-        UnbackedActionClaim.NudgeFor(new string('x', 900)).Should().Contain("…")
-            .And.HaveLength(UnbackedActionClaim.NudgeFor(new string('x', 300)).Length + 1);
+        Claim.CorrectionIsPresentIn(
+            "I've stopped Ketchup." + Claim.Correction).Should().BeTrue();
+        Claim.CorrectionIsPresentIn("I've stopped Ketchup.").Should().BeFalse();
+        Claim.CorrectionIsPresentIn(null).Should().BeFalse();
     }
 }

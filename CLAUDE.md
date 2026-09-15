@@ -84,6 +84,12 @@ The layer cake — **one brain, many surfaces** (full diagram + rationale in `do
   `tks-agent`, which belongs to neither ecosystem. Owns the model round-trip, iteration cap,
   tool-output truncation, and conversation memory. A change to it is a bump and publish there and a
   re-pin here.
+- **`TheKrystalShip.Agent`** — the harness around the loop, from the same repository and on the same
+  terms: the prompt directory `FilePromptOverrides` reads through, the `tools.json` reader and
+  agreement check under `DiskToolCatalog`, the reply checks and `ReplyGuard`, conversation compaction,
+  and the confirmation handle both Service stores mint. What is KGSM's stays here: the dispatcher, the
+  tiers, the capability binding, `ConfirmationKind`, the streaming turn session, and the words a
+  server action is claimed in (`ServerActionClaim`).
 - **`TheKrystalShip.Kgsm.Assistant`** — the **brain**: tool catalog, system prompt, action policy,
   the `search` aggregator, and **ports** (`IRetrieval`, `IWebSearch`, kgsm command/query interfaces).
 - **`TheKrystalShip.Kgsm.Assistant.Infrastructure`** — **adapters** binding the ports to reality
@@ -259,7 +265,8 @@ Things that bite if you don't know them:
   is a fair answer.
 - **The rule covers the model's account of its own turn.** A reply is held against what the turn did:
   on a turn that staged nothing and ran nothing, a first-person claim of a staged or completed action
-  is false by construction (`UnbackedActionClaim`). The check is one-sided — it never runs on a turn
+  is false by construction (`ServerActionClaim`, this assistant's verbs over the harness's
+  `UnbackedActionClaim`). The check is one-sided — it never runs on a turn
   that staged or executed something, so it cannot contradict a real action; the auto-accept path
   records that it acted via `IConfirmationContext.NoteActionPerformed`. Offers ("I can stop it") and
   reports of the world ("it was restarted an hour ago") are honest and untouched. The claim is caught

@@ -1,3 +1,4 @@
+using TheKrystalShip.Agent;
 using TheKrystalShip.Llm.Models;
 using FluentAssertions;
 

@@ -1,3 +1,4 @@
+using TheKrystalShip.Agent.Replies;
 using TheKrystalShip.Kgsm.Assistant;
 using System.Text.RegularExpressions;
 
@@ -365,7 +366,7 @@ internal static class C
     /// </para>
     /// </summary>
     public static Check MakesNoCompletedActionClaim(string label = "claims no action it didn't take") =>
-        new(Rubric.A_NoFabrication, label, (o, _) => !UnbackedActionClaim.IsPresentIn(o.Final));
+        new(Rubric.A_NoFabrication, label, (o, _) => !ServerActionClaim.Check.IsPresentIn(o.Final));
 
     public static Check FinalLacks(string pattern, string label, Rubric dim) =>
         new(dim, label, (o, _) => !Regex.IsMatch(o.Final, pattern, RegexOptions.IgnoreCase));

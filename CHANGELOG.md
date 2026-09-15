@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the harness around the loop is a package from tks-agent (1.63.2)
+
+The prompt directory, the `tools.json` reader and its agreement check, the fabricated-figure and
+unbacked-action checks with the retry-once review that runs them, the pending-confirmation note,
+conversation compaction and confirmation-handle minting come from `TheKrystalShip.Agent`, shared with
+the other assistant built on the loop. `FilePromptOverrides`, `DiskToolCatalog`, `ServerAssistant`,
+`TurnRegistry` and both Service stores keep their behaviour and call it; `ServerActionClaim` holds the
+verbs and correction a server action is claimed in. The published `TheKrystalShip.Kgsm.Assistant`
+takes a major version because the moved types leave its surface. A reply-check warning now names the
+check and its detail in one log line.
+
 ### Changed — the agent loop is a package from tks-agent (1.63.1)
 
 `TheKrystalShip.Llm` is consumed as `TheKrystalShip.Llm` 2.4.0 from the org feed, published from

@@ -40,7 +40,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <!-- The agent loop, published from tks-agent. -->
+    <PackageReference Include="TheKrystalShip.Llm" Version="2.4.0" />
   </ItemGroup>
 
 </Project>

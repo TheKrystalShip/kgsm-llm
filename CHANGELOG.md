@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the agent loop is a package from tks-agent (1.63.1)
+
+`TheKrystalShip.Llm` is consumed as `TheKrystalShip.Llm` 2.4.0 from the org feed, published from
+`tks-agent`, and its source and tests are no longer in this repository. The id, namespaces and public
+surface are the ones 2.3.0 had, so no code here changed.
+
 ### Changed — the speech client is shared, so this leaf names its socket (1.63.0)
 
 `TheKrystalShip.Speech` serves whatever daemon is on the other end of the socket and cannot know

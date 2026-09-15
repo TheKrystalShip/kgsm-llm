@@ -80,9 +80,10 @@ carries this same pattern. Cold-start runbook: `docs/DEPLOYMENT.md`.
 
 The layer cake — **one brain, many surfaces** (full diagram + rationale in `docs/ARCHITECTURE.md`):
 
-- **`TheKrystalShip.Llm`** — generic tool-calling **agent loop**. Knows nothing about KGSM;
-  publishable standalone (a sibling Discord bot consumes it as a package). Owns the model
-  round-trip, iteration cap, tool-output truncation, and conversation memory.
+- **`TheKrystalShip.Llm`** — generic tool-calling **agent loop**, consumed as a package from
+  `tks-agent`, which belongs to neither ecosystem. Owns the model round-trip, iteration cap,
+  tool-output truncation, and conversation memory. A change to it is a bump and publish there and a
+  re-pin here.
 - **`TheKrystalShip.Kgsm.Assistant`** — the **brain**: tool catalog, system prompt, action policy,
   the `search` aggregator, and **ports** (`IRetrieval`, `IWebSearch`, kgsm command/query interfaces).
 - **`TheKrystalShip.Kgsm.Assistant.Infrastructure`** — **adapters** binding the ports to reality

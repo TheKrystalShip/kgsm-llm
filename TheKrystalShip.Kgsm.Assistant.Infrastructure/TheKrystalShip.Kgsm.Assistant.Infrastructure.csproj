@@ -44,7 +44,7 @@
   <ItemGroup>
     <!-- The assistant ports this lib satisfies (IServerInventory / IServerOperations /
          IWebSearch / IRetrieval) + the reusable Result type. -->
-    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <PackageReference Include="TheKrystalShip.Llm" Version="2.4.0" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
     <!-- The Native-AOT RAG core: embedding client + versioned index reader + cosine search that
          back the IRetrieval adapter. The index file itself is produced out-of-band by the

@@ -6,8 +6,8 @@ The mental model for understanding this repo cold. For *running* it see
 ## The one-paragraph version
 
 A local LLM runs a **tool-calling agent loop**. The loop itself is generic and lives in
-`TheKrystalShip.Llm` — it knows how to talk to the model and round-trip tool calls, but nothing
-about KGSM. `TheKrystalShip.Kgsm.Assistant` is the **brain**: it defines the tool catalog, the
+`TheKrystalShip.Llm`, a package published from `tks-agent` — it knows how to talk to the model and
+round-trip tool calls, but nothing about KGSM. `TheKrystalShip.Kgsm.Assistant` is the **brain**: it defines the tool catalog, the
 system prompt, the action policy, and a set of **ports** (interfaces) for the things tools need.
 `*.Infrastructure` supplies the **adapters** that bind those ports to reality — the kgsm engine
 (via kgsm-lib), Tavily web search, a direct URL fetch, and a local RAG index. Two **surfaces** drive the same brain:
@@ -48,8 +48,8 @@ an HTTP/SSE **Service** (for the web SPA) and a terminal **CLI**. A separate, se
 
 ## Why it's split this way
 
-- **The loop is application-agnostic.** `TheKrystalShip.Llm` is publishable on its own (a Discord
-  bot in a sibling repo consumes it as a package). It owns the model round-trip, the iteration
+- **The loop is application-agnostic.** `TheKrystalShip.Llm` lives in `tks-agent`, a repository
+  belonging to no product, and MovieBot pins the same package this repo does. It owns the model round-trip, the iteration
   cap, tool-output truncation, and conversation memory — and is handed the tools, prompt, and
   per-call authorization *by the host, every turn*. It never learns what a tool means.
 - **Ports/adapters keep the brain testable and the engine swappable.** The brain depends on

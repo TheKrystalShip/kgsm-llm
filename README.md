@@ -15,7 +15,6 @@ plus a self-contained RAG subsystem:
 
 | Project | Role |
 |---------|------|
-| **`TheKrystalShip.Llm`** | Generic Ollama tool-calling **agent loop** library (transport, memory, loop). Knows nothing about KGSM. → [README](TheKrystalShip.Llm/README.md) |
 | **`TheKrystalShip.Kgsm.Assistant`** | The KGSM **brain**: tool catalog, ports, system prompt, action policy, the `search` aggregator |
 | **`TheKrystalShip.Kgsm.Assistant.Infrastructure`** | **Adapters** that bind the ports to reality — kgsm-lib, Tavily web search, the RAG index |
 | **`TheKrystalShip.Kgsm.Assistant.Service`** | **HTTP/SSE turn API** (for the web SPA), Discord-OAuth auth → [README](TheKrystalShip.Kgsm.Assistant.Service/README.md) |

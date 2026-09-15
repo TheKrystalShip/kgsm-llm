@@ -10,7 +10,7 @@
          ships under. The three published libraries (TheKrystalShip.Llm, .Kgsm.Assistant and
          .Kgsm.Assistant.Relay) each version independently of it and of each other. Read by
          deploy/version.sh, which is the single source for packaging. -->
-    <Version>1.63.0</Version>
+    <Version>1.63.1</Version>
     <!-- Forward-compat insurance: roll a framework-dependent run forward to a newer installed
          major if this box ever lacks the net10 ASP.NET Core shared framework. -->
     <RollForward>LatestMajor</RollForward>
@@ -80,7 +80,7 @@
          policy, ConfirmAsync). The assistant stays KGSM.Lib-free; the KGSM.Lib glue
          that satisfies its ports now lives in the shared Infrastructure library
          (AddKgsmAdapters), which this service and the CLI both sit on. -->
-    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <PackageReference Include="TheKrystalShip.Llm" Version="2.4.0" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Relay\TheKrystalShip.Kgsm.Assistant.Relay.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />

@@ -28,7 +28,7 @@
   <ItemGroup>
     <!-- Backend, three calls: AddLocalLlm (Llm) + AddKgsmAssistant (Assistant) +
          AddKgsmAdapters (Infrastructure, the socket-safe seam). No ASP.NET. -->
-    <ProjectReference Include="..\TheKrystalShip.Llm\TheKrystalShip.Llm.csproj" />
+    <PackageReference Include="TheKrystalShip.Llm" Version="2.4.0" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant\TheKrystalShip.Kgsm.Assistant.csproj" />
     <ProjectReference Include="..\TheKrystalShip.Kgsm.Assistant.Infrastructure\TheKrystalShip.Kgsm.Assistant.Infrastructure.csproj" />
   </ItemGroup>

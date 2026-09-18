@@ -1,0 +1,31 @@
+# kgsm-assistant — how a request to the assistant is handled, included by every server block that serves
+# it: the host vhost in /etc/nginx/conf.d/kgsm-assistant.conf, and each block the service generates in
+# /var/lib/kgsm/nginx/kgsm-assistant.conf for the names its cluster's DNS anchor gave it.
+#
+# The generated blocks carry only a name and its certificate; everything about where a request goes is
+# here, installed with the component and written by nothing at runtime.
+
+client_max_body_size 32m;
+
+location / {
+    proxy_pass         http://127.0.0.1:5180;
+    proxy_http_version 1.1;
+
+    # Host travels unchanged. The scheme matters here too: the sign-in handshake cookie is written
+    # Secure on any non-development host, but the callback's own redirect handling and anything that
+    # reasons about the request's origin should see what the browser actually spoke.
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   Connection        '';
+
+    # SSE (/turn, /confirm): the app sends X-Accel-Buffering: no, which nginx honours; stated here so
+    # the behaviour does not depend on that header staying in place upstream.
+    proxy_buffering    off;
+    proxy_cache        off;
+
+    # A blueprint finalize is a MINUTES-long stream of progress frames and heartbeats. The 60s default
+    # would cut it mid-run.
+    proxy_read_timeout 3600s;
+}

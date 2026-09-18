@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the assistant capability's name, served by whichever member holds it (1.64.0)
+
+In a cluster with a DNS anchor, `assistant.anchors.<zone>` points at the host the holder of
+`assistant` states, and the holder serves it on a certificate the DNS anchor issues. The service states
+its host from `Cluster__PublicHost` (normally the network's dynamic-DNS name), keeps a key per name
+under `/var/lib/kgsm/tls/kgsm-assistant/`, writes its site to `/var/lib/kgsm/nginx/`, and reloads nginx
+through a grant allowing that alone. Taken through `TheKrystalShip.KGSM.Dns 0.2.0-dev.4`; inert on a
+host in no cluster.
+
+- **The proxy rules are one file**, `/etc/nginx/kgsm/kgsm-assistant.locations`, included by the host
+  vhost and by every generated block, so a name served either way is handled the same way.
+- **The package ships the serving pieces**: the rules, the include, the directories as `tmpfiles.d`
+  entries, and the reload grant for the service account. `setup.sh` installs the same for a dev deploy.
+
 ### Changed — the harness around the loop is a package from tks-agent (1.63.2)
 
 The prompt directory, the `tools.json` reader and its agreement check, the fabricated-figure and

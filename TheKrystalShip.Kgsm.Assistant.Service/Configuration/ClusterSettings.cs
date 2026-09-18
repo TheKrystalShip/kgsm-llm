@@ -51,6 +51,23 @@ public sealed class AssistantClusterOptions
     public string PublicBaseUrl { get; set; } = "";
 
     /// <summary>
+    /// Where this machine is reached from the internet, for the cluster's DNS anchor to point the
+    /// capability's name at.
+    /// </summary>
+    /// <remarks>
+    /// A host rather than an address with a scheme: the DNS anchor publishes the capability's name as an
+    /// alias of it, so it is normally the dynamic-DNS name the network keeps pointed at a changing home
+    /// address. Blank states none, and the name is not published.
+    /// </remarks>
+    /// <panel>Where this machine is reached from the internet — normally the dynamic-DNS name its network
+    /// keeps pointed at a changing home address, such as example.ddns.net. In a cluster with a DNS anchor,
+    /// the assistant capability's name points at it while this assistant holds it, and this assistant
+    /// serves that name on a certificate the DNS anchor issues. Only read when this assistant is part of a
+    /// cluster.</panel>
+    [ConfigField("clusterPublicHost", "Public host", Group = "cluster", Type = ConfigType.String)]
+    public string PublicHost { get; set; } = "";
+
+    /// <summary>
     /// How long an answer from the cluster's nodes is reused before they are asked again, in seconds.
     /// </summary>
     /// <remarks>

@@ -1068,6 +1068,16 @@
       "risk": "safe"
     },
     {
+      "key": "clusterPublicHost",
+      "env": "Cluster__PublicHost",
+      "label": "Public host",
+      "description": "Where this machine is reached from the internet — normally the dynamic-DNS name its network keeps pointed at a changing home address, such as example.ddns.net. In a cluster with a DNS anchor, the assistant capability's name points at it while this assistant holds it, and this assistant serves that name on a certificate the DNS anchor issues. Only read when this assistant is part of a cluster.",
+      "group": "cluster",
+      "type": "string",
+      "default": "",
+      "risk": "safe"
+    },
+    {
       "key": "clusterFleetWindowSec",
       "env": "Cluster__FleetWindowSeconds",
       "label": "Fleet answer window",

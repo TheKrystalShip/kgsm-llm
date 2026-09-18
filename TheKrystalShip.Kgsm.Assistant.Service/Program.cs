@@ -38,6 +38,7 @@ using TheKrystalShip.KGSM.Auth.Cluster;
 using TheKrystalShip.KGSM.Cluster;
 using TheKrystalShip.KGSM.Cluster.Messaging;
 using TheKrystalShip.KGSM.Cluster.Membership;
+using TheKrystalShip.KGSM.Dns.Member;
 using TheKrystalShip.KGSM.WebPush;
 using TheKrystalShip.Llm.Agent;
 using TheKrystalShip.Llm.Conversation;
@@ -134,6 +135,11 @@ bool clustered = ClusterConfiguration.Secret(builder.Configuration).Length > 0;
     });
 
     builder.Services.AddHostedService<AssistantCapabilityWorker>();
+
+    // The assistant capability's name, when a DNS anchor holds the cluster's zone: this member says
+    // where it is reached, and while it holds the capability it keeps a certificate for the name and
+    // serves it. Inert with no cluster and with nobody holding dns.
+    builder.Services.AddKgsmDnsMember(clusterSettings.PublicHost, "kgsm-assistant");
 
     // Deciding a call another member makes for somebody who is not signed in here. Registered
     // unconditionally and inert without a secret, like everything else in this block: the token check

@@ -149,6 +149,10 @@
     // blank behind a reverse proxy, where what a browser uses and what other members connect to are
     // different names.
     "PublicBaseUrl": "",
+    // Where this machine is reached from the internet — normally its network's dynamic-DNS name. The
+    // cluster's DNS anchor points the assistant capability's name at it while this assistant holds it.
+    // Blank states no host, and the name is not published.
+    "PublicHost": "",
     // How long what the cluster's nodes said is reused before they are asked again. Seconds, because
     // nothing tells this member that another machine changed — the window is the whole of what bounds
     // how stale an answer gets. Only read when this assistant is in a cluster.

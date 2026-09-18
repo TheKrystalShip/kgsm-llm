@@ -99,6 +99,22 @@ package_kgsm-llm() {
     find "${pkgdir}/usr/share/kgsm-assistant/prompts" -type f -exec chmod 0644 {} +
     find "${pkgdir}/usr/share/kgsm-assistant/prompts" -type d -exec chmod 0755 {} +
 
+    # Serving the name the cluster's DNS anchor gives the assistant capability: the proxy rules every
+    # server block for the assistant includes, the include that loads the site it generates, its key
+    # and site directories, and the grant to reload the web server after writing the site — reload and
+    # nothing else. Inert on a machine with no nginx.
+    install -Dm644 "${repo}/deploy/nginx/kgsm-assistant.locations" \
+        "${pkgdir}/etc/nginx/kgsm/kgsm-assistant.locations"
+    install -Dm644 "${repo}/deploy/nginx/kgsm-assistant.sites.conf" \
+        "${pkgdir}/etc/nginx/conf.d/00-kgsm-assistant-sites.conf"
+    install -Dm644 "${repo}/deploy/kgsm-assistant.serving.tmpfiles" \
+        "${pkgdir}/usr/lib/tmpfiles.d/kgsm-assistant-serving.conf"
+    sed -e "s|@PROJECT@|kgsm-assistant|g" -e "s|@SVC_USER@|kgsm|g" \
+        "${repo}/deploy/polkit/47-kgsm-assistant-nginx-reload.rules.in" \
+        > "${srcdir}/47-kgsm-assistant-nginx-reload.rules"
+    install -Dm644 "${srcdir}/47-kgsm-assistant-nginx-reload.rules" \
+        "${pkgdir}/usr/share/polkit-1/rules.d/47-kgsm-assistant-nginx-reload.rules"
+
     install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
 

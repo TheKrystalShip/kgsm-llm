@@ -79,6 +79,53 @@ fi
 # lifecycle are host-level and belong to no leaf.
 NGINX_FRAGMENT="${REPO_DIR}/deploy/nginx/kgsm-assistant.conf"
 
+# Serving the name the cluster's DNS anchor gives the assistant capability: the service's keys, the site
+# it generates, its proxy rules (which the vhost above includes too), the include that loads the site,
+# and the grant to reload the web server after writing it. Named for the service, as the vhost is.
+SERVING_COMPONENT="kgsm-assistant"
+TLS_DIR="/var/lib/kgsm/tls/${SERVING_COMPONENT}"
+SITES_DIR="/var/lib/kgsm/nginx"
+LOCATIONS_SRC="${REPO_DIR}/deploy/nginx/${SERVING_COMPONENT}.locations"
+SITES_INCLUDE_SRC="${REPO_DIR}/deploy/nginx/${SERVING_COMPONENT}.sites.conf"
+NGINX_RELOAD_TEMPLATE="${REPO_DIR}/deploy/polkit/47-${SERVING_COMPONENT}-nginx-reload.rules.in"
+NGINX_RELOAD_DST="/etc/polkit-1/rules.d/47-${SERVING_COMPONENT}-nginx-reload.rules"
+
+setup_serving() {
+    if [[ ! -d /etc/nginx ]]; then
+        log "nginx is not installed on this host — the assistant's cluster name is published, and served by nothing here"
+        return 0
+    fi
+
+    # Keys live here, readable by this component alone; the web server reads them as root.
+    if [[ ! -d /var/lib/kgsm/tls ]]; then
+        $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" /var/lib/kgsm/tls
+    fi
+    $SUDO install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" "$TLS_DIR"
+
+    # Shared by every component on the machine, each writing and including only its own file. Setgid so
+    # a file keeps the directory's group whichever component writes it.
+    if [[ ! -d "$SITES_DIR" ]]; then
+        log "creating ${SITES_DIR} — the sites KGSM components generate"
+        $SUDO install -d -m 2775 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" "$SITES_DIR"
+    fi
+
+    $SUDO install -D -m 0644 -o root -g root "$LOCATIONS_SRC" "/etc/nginx/kgsm/${SERVING_COMPONENT}.locations"
+    # This component's own include, one per component, so two components on one machine never claim
+    # the same file.
+    $SUDO install -m 0644 -o root -g root "$SITES_INCLUDE_SRC" \
+        "/etc/nginx/conf.d/00-${SERVING_COMPONENT}-sites.conf"
+
+    local rendered
+    rendered="$(mktemp)"
+    sed -e "s|@PROJECT@|${SERVING_COMPONENT}|g" -e "s|@SVC_USER@|${DEPLOY_USER}|g" \
+        "$NGINX_RELOAD_TEMPLATE" > "$rendered"
+    if ! $SUDO cmp -s "$rendered" "$NGINX_RELOAD_DST" 2>/dev/null; then
+        log "installing the web-server reload grant → ${NGINX_RELOAD_DST}"
+        $SUDO install -D -m 0644 "$rendered" "$NGINX_RELOAD_DST"
+    fi
+    rm -f "$rendered"
+}
+
 # The leaf id kgsm-api knows this project by — the descriptor's "id", its filename stem in the
 # discovery dir, and the {leaf} segment of the API's config route. Usually the project name minus
 # the kgsm- prefix, but NOT always: kgsm-llm ships the leaf "assistant". State it, don't derive it.

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the assistant is reached at its capability's name (1.65.0)
+
+In a cluster with a DNS anchor, `Cluster__PublicBaseUrl` is left unset: while the service holds the
+assistant capability it advertises `assistant.anchors.<zone>` to the cluster once its site serves the
+name, and a reader resolving the assistant is sent there. `deploy/setup.sh` installs no host vhost —
+the names are served from the site the service generates, and `kgsm-assistant.locations` is included
+by those blocks alone. Takes `TheKrystalShip.KGSM.Cluster 1.0.0-dev.20` and
+`TheKrystalShip.KGSM.Dns 0.2.0-dev.7`.
+
 ### Added — the assistant capability's name, served by whichever member holds it (1.64.0)
 
 In a cluster with a DNS anchor, `assistant.anchors.<zone>` points at the host the holder of

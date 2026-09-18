@@ -1061,7 +1061,7 @@
       "key": "clusterPublicBaseUrl",
       "env": "Cluster__PublicBaseUrl",
       "label": "Public address",
-      "description": "The public address people reach this assistant's chat at. Leave blank unless it sits behind a reverse proxy, where the address a browser uses is not the one other machines connect to.",
+      "description": "The public address people reach this assistant's chat at. Leave blank in a cluster with a DNS anchor, which names the assistant; set it only where nothing names it.",
       "group": "cluster",
       "type": "string",
       "default": "",

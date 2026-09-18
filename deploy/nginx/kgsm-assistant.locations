@@ -1,6 +1,5 @@
-# kgsm-assistant — how a request to the assistant is handled, included by every server block that serves
-# it: the host vhost in /etc/nginx/conf.d/kgsm-assistant.conf, and each block the service generates in
-# /var/lib/kgsm/nginx/kgsm-assistant.conf for the names its cluster's DNS anchor gave it.
+# kgsm-assistant — how a request to the assistant is handled, included by every block the service
+# generates in /var/lib/kgsm/nginx/kgsm-assistant.conf for the names its cluster's DNS anchor gave it.
 #
 # The generated blocks carry only a name and its certificate; everything about where a request goes is
 # here, installed with the component and written by nothing at runtime.

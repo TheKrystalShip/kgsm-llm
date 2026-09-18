@@ -74,14 +74,9 @@ if host_is_clustered; then
     LEAF_DESCRIPTOR="$LEAF_DESCRIPTOR_ANCHOR"
 fi
 
-# This project's own nginx server block, installed into /etc/nginx/conf.d/ by setup.sh when the
-# host runs nginx. Each leaf ships its own vhost; the :80 ACME block and the certificate
-# lifecycle are host-level and belong to no leaf.
-NGINX_FRAGMENT="${REPO_DIR}/deploy/nginx/kgsm-assistant.conf"
-
 # Serving the name the cluster's DNS anchor gives the assistant capability: the service's keys, the site
-# it generates, its proxy rules (which the vhost above includes too), the include that loads the site,
-# and the grant to reload the web server after writing it. Named for the service, as the vhost is.
+# it generates, its proxy rules, the include that loads the site, and the grant to reload the web server
+# after writing it. Named for the service.
 SERVING_COMPONENT="kgsm-assistant"
 TLS_DIR="/var/lib/kgsm/tls/${SERVING_COMPONENT}"
 SITES_DIR="/var/lib/kgsm/nginx"

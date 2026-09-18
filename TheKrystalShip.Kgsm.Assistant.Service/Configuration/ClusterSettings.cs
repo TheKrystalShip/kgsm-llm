@@ -40,13 +40,12 @@ public sealed class AssistantClusterOptions
     /// The address a browser reaches this assistant at, stated rather than observed.
     /// </summary>
     /// <remarks>
-    /// A member learns addresses by being reached at them, and the configured one wins. Blank is the
-    /// ordinary case for a machine that can see its own address; it is not blank behind a reverse
-    /// proxy, where what a browser uses and what a member connects to are different names.
+    /// The configured one wins over every address the member was given or reflected at. Blank is the
+    /// ordinary case in a cluster with a DNS anchor: the assistant capability's name is advertised while
+    /// this service serves it.
     /// </remarks>
-    /// <panel>The public address people reach this assistant's chat at. Leave blank unless it sits
-    /// behind a reverse proxy, where the address a browser uses is not the one other machines connect
-    /// to.</panel>
+    /// <panel>The public address people reach this assistant's chat at. Leave blank in a cluster with a
+    /// DNS anchor, which names the assistant; set it only where nothing names it.</panel>
     [ConfigField("clusterPublicBaseUrl", "Public address", Group = "cluster", Type = ConfigType.String)]
     public string PublicBaseUrl { get; set; } = "";
 

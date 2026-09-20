@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 
 using TheKrystalShip.Api.Contracts;
+using TheKrystalShip.Kgsm.Assistant.Service.Configuration;
 using TheKrystalShip.KGSM.ComponentSurface;
 
 namespace TheKrystalShip.Kgsm.Assistant.Service;
@@ -78,8 +79,46 @@ internal static class SurfaceEndpoints
                     "This service's journal could not be read on this host.")),
                     statusCode: StatusCodes.Status503ServiceUnavailable));
 
+        // The commands this service answers to, as its own manifest declares them.
+        //
+        // Passed through rather than modelled: the manifest is a file format a component ships on
+        // disk, and every reader of it renders what it declares. Holding a typed copy here would be a
+        // second statement of the same schema, free to disagree with the file the build wrote.
+        //
+        // Parsed before it is served, though, because a malformed manifest reaching a browser is a
+        // rendering failure with no explanation in it, and 503 with a reason is the honest answer.
+        admin.MapGet("/commands", () =>
+        {
+            string path = SurfacePaths.Commands();
+
+            string raw;
+            try { raw = File.ReadAllText(path); }
+            catch (FileNotFoundException) { return NoManifest(); }
+            catch (DirectoryNotFoundException) { return NoManifest(); }
+            catch (IOException)
+            {
+                return Results.Json(new ErrorEnvelope(new ErrorBody("manifest_unreadable",
+                    "This service's command manifest could not be read on this host.")),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            try { using (JsonDocument.Parse(raw)) { } }
+            catch (JsonException)
+            {
+                return Results.Json(new ErrorEnvelope(new ErrorBody("manifest_unreadable",
+                    "This service's command manifest is on disk but is not valid JSON.")),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            return Results.Content(raw, "application/json");
+        });
+
         admin.MapGet("/logs/stream", StreamAsync);
     }
+
+    private static IResult NoManifest() =>
+        Results.NotFound(new ErrorEnvelope(new ErrorBody("no_manifest",
+            "This service has no command manifest installed, so it declares no commands.")));
 
     /// <summary>
     /// <c>GET /admin/logs/stream</c> — the same lines, as they happen.

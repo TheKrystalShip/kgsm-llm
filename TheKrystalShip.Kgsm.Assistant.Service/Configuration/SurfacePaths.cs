@@ -26,6 +26,12 @@ internal static class SurfacePaths
     /// <summary>Where a deploy installs the descriptor of a component that is a leaf here.</summary>
     public const string LeafDescriptor = "/var/lib/kgsm/leaves/" + ComponentId + ".json";
 
+    /// <summary>The command manifest of a component that is an anchor here.</summary>
+    public const string AnchorCommands = "/var/lib/kgsm/anchors/commands/" + ComponentId + ".json";
+
+    /// <summary>The command manifest of a component that is a leaf here.</summary>
+    public const string LeafCommands = "/var/lib/kgsm/leaves/commands/" + ComponentId + ".json";
+
     /// <summary>The override file's location when nobody has configured one — beside the rest of this
     /// service's state, which is the directory its unit already provisions.</summary>
     public const string DefaultOverridePath = StatePaths.DefaultDirectory + "/config-override.env";
@@ -46,4 +52,12 @@ internal static class SurfacePaths
     /// <summary>Where a change made through the panel is written.</summary>
     public static string Override(string? configured) =>
         string.IsNullOrWhiteSpace(configured) ? DefaultOverridePath : configured.Trim();
+
+    /// <summary>
+    /// The command manifest to serve, read the same way and for the same reason as the descriptor:
+    /// the deploy installs it beside whichever descriptor it installed, so its location is the same
+    /// answer to what this component currently is.
+    /// </summary>
+    public static string Commands() =>
+        File.Exists(AnchorCommands) ? AnchorCommands : LeafCommands;
 }

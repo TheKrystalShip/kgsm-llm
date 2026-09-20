@@ -497,15 +497,17 @@ const string OriginHeaderName = "X-Assistant-Origin";
 // cross-origin preflight (OPTIONS) is answered by the CORS middleware, pre-auth.
 //
 // DELETE is here because a client owns its conversations and deleting one is a DELETE; without it a
-// cross-origin client can hold a whole chat history it has no way to remove. The list is the verbs
-// this service actually answers on — not a wildcard.
+// cross-origin client can hold a whole chat history it has no way to remove. PUT is here because
+// changing this service's own configuration is one, and a verb missing from this list is refused at
+// the preflight — before any handler runs, so the panel sees a network failure rather than a refusal
+// and has nothing to report. The list is the verbs this service actually answers on — not a wildcard.
 //
 // X-Assistant-Origin is how a surface names its own event stream. Without it on this list the
 // preflight refuses the header and a cross-origin surface silently loses the ability to recognise its
 // own echoes — it would re-apply everything it just did.
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(authOptions.AllowedOrigins)
-    .WithMethods("GET", "POST", "DELETE")
+    .WithMethods("GET", "POST", "PUT", "DELETE")
     .WithHeaders("Authorization", "Content-Type", OriginHeaderName)));
 
 var app = builder.Build();

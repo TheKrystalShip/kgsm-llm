@@ -92,19 +92,38 @@ install_leaf_descriptor
 # The catalog of commands the Control Panel lists, in a subdirectory of the same discovery tree so
 # it cannot be mistaken for a config descriptor by the scan that reads those. Written by the build
 # from the binary it just produced; installed here, unprivileged, because the parent directory is
-# ours. The panel reads it by scanning a directory, so this leaf's command surface becomes
-# documented by landing one file — with no rebuild in kgsm-api.
+# ours.
+#
+# It lands beside the descriptor, in the commands subdirectory of whichever tree that went to, so
+# one question answers both: a node's API scans the leaves tree for the components it serves, and an
+# anchor reads its own out of the anchors tree because no node above it will. A component that has
+# changed kind leaves the manifest of the kind it no longer is behind, and a stale one in the leaves
+# tree is read as a leaf's however the component now describes itself.
 install_command_manifest() {
     local src="${REPO_DIR}/deploy/${PROJECT}.commands.json"
     [[ -f "$src" ]] || { warn "no command manifest at ${src} — the Control Panel will list no commands."; return 0; }
 
-    local dir="${LEAF_DESCRIPTOR_DIR}/commands"
+    local base
+    base="$(descriptor_dir_for "$LEAF_DESCRIPTOR")" || {
+        err "cannot place the command manifest: ${LEAF_DESCRIPTOR} names neither kind."
+        return 1
+    }
+
+    local dir="${base}/commands"
     mkdir -p "$dir"
 
     local dst="${dir}/${LEAF_ID}.json"
     if ! cmp -s "$src" "$dst"; then
         log "command manifest changed → ${dst}"
         install -m 0644 "$src" "$dst"
+    fi
+
+    local other
+    [[ "$base" == "$ANCHOR_DESCRIPTOR_DIR" ]] && other="${LEAF_DESCRIPTOR_DIR}/commands/${LEAF_ID}.json" \
+                                              || other="${ANCHOR_DESCRIPTOR_DIR}/commands/${LEAF_ID}.json"
+    if [[ -f "$other" ]]; then
+        log "removing ${other} — this component's commands are declared in ${dir}"
+        rm -f "$other"
     fi
 }
 install_command_manifest

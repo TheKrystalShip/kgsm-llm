@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the commands this service declares, served with the rest of its own surface (1.69.0)
+
+`GET /admin/commands` answers this component's own command manifest. A node's API reads its leaves'
+manifests out of the discovery tree and passes them through; a component that is an anchor has no
+node above it to do that, so it reads its own. Passed through rather than modelled — the manifest is
+a file format a component ships on disk, and a typed copy here would be a second statement of the
+same schema — but parsed before it is served, because a malformed manifest reaching a browser is a
+rendering failure with no explanation in it.
+
+The deploy installs it in the commands subdirectory of whichever tree the descriptor went to, and
+clears the one in the other, so where a component's commands are declared is the same answer as what
+kind of component it is.
+
+### Fixed — a configuration change is no longer refused before it is made (1.69.0)
+
+The cross-origin policy lists `PUT`. Without it the browser refuses the config apply at the
+preflight, before any handler here runs — so the panel sees a network failure with no status and
+nothing in this service's journal records it.
+
 ### Added — this service answers for its own configuration, unit and journal (1.68.0)
 
 `GET/PUT /admin/config`, `GET /admin/system`, `GET /admin/logs` and `GET /admin/logs/stream`, on the

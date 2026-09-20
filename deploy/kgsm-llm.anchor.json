@@ -152,6 +152,24 @@
       "risk": "wiring"
     },
     {
+      "key": "surfaceDescriptorPath",
+      "env": "Assistant__Surface__DescriptorPath",
+      "label": "Descriptor",
+      "description": "Where this service reads its own configuration descriptor from. Leave it empty to use wherever the deploy installed it; setting it wrong leaves the configuration page empty.",
+      "group": "general",
+      "type": "path",
+      "risk": "wiring"
+    },
+    {
+      "key": "surfaceOverridePath",
+      "env": "Assistant__Surface__OverridePath",
+      "label": "Override file",
+      "description": "Where this service writes configuration changes made through the panel. It has to match what its systemd drop-in loads, or every change is written and never read.",
+      "group": "general",
+      "type": "path",
+      "risk": "wiring"
+    },
+    {
       "key": "llmProvider",
       "env": "Llm__Provider",
       "label": "Inference server",

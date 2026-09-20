@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — this service answers for its own configuration, unit and journal (1.68.0)
+
+`GET/PUT /admin/config`, `GET /admin/system`, `GET /admin/logs` and `GET /admin/logs/stream`, on the
+same admin group and gate as the conversation review: these values name where the conversation store
+and the signing key live, and the journal carries usernames, addresses and the shape of every failure
+this service has had.
+
+A component owns its configuration, overrides, journal and lifecycle wherever it runs, and only the
+way a browser reaches them differs. This one is whichever its deployment makes it — a node's leaf on a
+machine standing alone, the cluster's anchor otherwise — so it serves them itself and both standings
+read the same surface. Everything below the transport is
+`TheKrystalShip.KGSM.ComponentSurface 1.0.0-dev.4`, the one implementation of the descriptor's rules,
+published from the repo that also generates the file it reads.
+
+`Assistant__Surface__DescriptorPath` and `Assistant__Surface__OverridePath` are blank by default and
+resolved rather than assumed: the descriptor is read from whichever of `anchors/` or `leaves/` the
+deploy installed it into, and the override file sits beside the rest of this service's state.
+
+`deploy/setup.sh` installs the systemd drop-in that loads that override file back, and a polkit grant
+scoped to restarting this one unit. Until it is re-run the configuration surface reports itself
+**readable and locked**, naming the file nothing loads — rather than accepting a change that would be
+written and never read.
+
 ### Changed — an admin can renew the assistant's certificate from the cluster's DNS page (1.67.0)
 
 Takes `TheKrystalShip.KGSM.Dns 0.2.0-dev.14`: when the DNS anchor asks this member to renew the

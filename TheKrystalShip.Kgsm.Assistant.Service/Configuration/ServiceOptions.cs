@@ -30,6 +30,7 @@ public sealed class AssistantServiceOptions
     public WebhookOptions Webhook { get; set; } = new();
     public PushOptions Push { get; set; } = new();
     public LifecycleOptions Lifecycle { get; set; } = new();
+    public SurfaceOptions Surface { get; set; } = new();
 }
 
 /// <summary>
@@ -348,4 +349,41 @@ public sealed class AuthOptions
         TimeSpan.FromSeconds(AccessTtlSeconds > 0 ? AccessTtlSeconds : 900),
         TimeSpan.FromSeconds(SessionTtlSeconds > 0 ? SessionTtlSeconds : 30 * 24 * 60 * 60),
         Issuer: "kgsm-assistant");
+}
+
+/// <summary>
+/// Where this service's own Control Panel surface reads and writes — the descriptor its build
+/// generated, and the override file a change through the panel is written to.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A component owns its own configuration, journal and lifecycle wherever it runs; what differs is
+/// the way a browser reaches them. This one answers over HTTP on its own origin, because in a cluster
+/// it is a peer of every node rather than something one of them hosts.
+/// </para>
+/// <para>
+/// <b>Both blank by default, and resolved rather than assumed.</b> This component is whichever its
+/// deployment makes it, so its descriptor is installed under <c>anchors/</c> or under <c>leaves/</c>
+/// and the deploy clears the other. Blank means "look where the deploy puts it", which is the only
+/// answer that is right for both standings; a path set here names one deliberately, which is what a
+/// harness needs to read a sandboxed copy rather than the live one.
+/// </para>
+/// </remarks>
+public sealed class SurfaceOptions
+{
+    /// <summary>The descriptor this service's configuration surface is projected from. Blank resolves
+    /// to whichever of the two standard locations the deploy installed.</summary>
+    /// <panel>Where this service reads its own configuration descriptor from. Leave it empty to use
+    /// wherever the deploy installed it; setting it wrong leaves the configuration page empty.</panel>
+    [ConfigField("surfaceDescriptorPath", "Descriptor", Group = "general", Type = ConfigType.Path,
+        Risk = ConfigRisk.Wiring, NoDefault = true)]
+    public string DescriptorPath { get; set; } = "";
+
+    /// <summary>Where a change made through the panel is written. Blank resolves beside the rest of
+    /// this service's state.</summary>
+    /// <panel>Where this service writes configuration changes made through the panel. It has to match
+    /// what its systemd drop-in loads, or every change is written and never read.</panel>
+    [ConfigField("surfaceOverridePath", "Override file", Group = "general", Type = ConfigType.Path,
+        Risk = ConfigRisk.Wiring, NoDefault = true)]
+    public string OverridePath { get; set; } = "";
 }

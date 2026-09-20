@@ -238,6 +238,41 @@ else
 fi
 rm -f "$POLKIT_RENDERED"
 
+# ── 5b. This service's own configuration surface ──────────────────────────────
+# The drop-in that feeds a change back to this service, and the grant that lets it bounce itself to
+# pick one up. Both are static and installed once; what changes at runtime is the override file's
+# contents, which the service writes unprivileged in its own state directory.
+#
+# Ordered after the unit symlinks above, so the drop-in directory belongs to a unit systemd already
+# knows about, and before the daemon-reload below picks it up.
+CONFIG_CHANGED=0
+
+CONFIG_DROPIN_RENDERED="$(mktemp)"
+render_config_dropin > "$CONFIG_DROPIN_RENDERED"
+if $SUDO cmp -s "$CONFIG_DROPIN_RENDERED" "$CONFIG_DROPIN_DST" 2>/dev/null; then
+    : # already current
+else
+    log "installing config drop-in → ${CONFIG_DROPIN_DST}"
+    $SUDO install -D -m 0644 "$CONFIG_DROPIN_RENDERED" "$CONFIG_DROPIN_DST"
+    CONFIG_CHANGED=1
+fi
+rm -f "$CONFIG_DROPIN_RENDERED"
+
+CONFIG_POLKIT_RENDERED="$(mktemp)"
+render_config_polkit > "$CONFIG_POLKIT_RENDERED"
+if $SUDO cmp -s "$CONFIG_POLKIT_RENDERED" "$CONFIG_POLKIT_DST" 2>/dev/null; then
+    : # already current
+else
+    log "installing self-restart grant → ${CONFIG_POLKIT_DST}"
+    $SUDO install -D -m 0644 "$CONFIG_POLKIT_RENDERED" "$CONFIG_POLKIT_DST"
+fi
+rm -f "$CONFIG_POLKIT_RENDERED"
+
+if [[ "$CONFIG_CHANGED" -eq 1 ]]; then
+    log "reloading systemd (the config drop-in changed)"
+    $SUDO systemctl daemon-reload
+fi
+
 # ── 6. Enable, and start what can start ───────────────────────────────────────
 # Enablement is unconditional — wiring the unit into boot is the whole point of this script.
 # STARTING it is only possible once something exists at the unit's ExecStart, and on a host that

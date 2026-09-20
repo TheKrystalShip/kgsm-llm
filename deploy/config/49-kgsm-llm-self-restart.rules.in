@@ -1,0 +1,32 @@
+// 49-kgsm-llm-self-restart.rules — the assistant restarting itself to apply a config change.
+//
+// Rendered from kgsm-llm/deploy/config/49-kgsm-llm-self-restart.rules.in and installed by
+// deploy/setup.sh. This is a SECOND grant, distinct from the deploy one beside it, and the two are
+// separate because their subjects are: the deploy grant names whoever deploys, this one names the
+// account the service runs as. Under deploy.sh those are the same person and this rule adds nothing;
+// packaged, the service runs as its own account and this is the only thing that lets a change made
+// on its configuration page take effect.
+//
+// It is scoped as narrowly as the thing it exists for: one unit, and only the verbs that bounce it.
+// Never start, stop, enable, disable or mask — a service that can stop itself and not start again is
+// one nobody can reach to turn back on, and nothing here needs that.
+//
+// Managed by setup.sh — re-run it rather than hand-editing the installed copy.
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return;
+    }
+
+    if (subject.user !== "@SVC_USER@") {
+        return;
+    }
+
+    if (action.lookup("unit") !== "@UNIT@") {
+        return;
+    }
+
+    var verb = action.lookup("verb");
+    if (verb === "restart" || verb === "try-restart" || verb === "reload-or-restart") {
+        return polkit.Result.YES;
+    }
+});

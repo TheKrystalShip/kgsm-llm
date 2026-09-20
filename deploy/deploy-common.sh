@@ -178,6 +178,7 @@ setup_project_extras() {
         $SUDO install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" /var/lib/llama /var/lib/llama/models
     fi
 }
+
 # ── END PROJECT BLOCK ─────────────────────────────────────────────────────────
 
 # ── Derived paths (do not edit) ───────────────────────────────────────────────
@@ -239,6 +240,45 @@ KGSM_AUTH_DIR="${KGSM_AUTH_DIR:-/var/lib/kgsm/auth}"
 # run can set SUDO='sudo -A' + SUDO_ASKPASS=… to provision without an interactive prompt; no
 # password is ever stored in the repo.
 SUDO="${SUDO:-sudo}"
+
+
+# ── This service's own configuration surface ──────────────────────────────────
+# The service serves the page its configuration is changed on, because it owns that configuration
+# wherever it runs: a node's leaf on a machine standing alone, the cluster's anchor otherwise, and in
+# neither case is there something next door that should be answering for it. Two things have to be in
+# place for a change to take effect, and both are installed once by setup.sh:
+#
+#   the drop-in   feeds the override file back to the unit, ordered after everything else it loads
+#   the grant     lets the account the service runs as bounce its own unit, and nothing else
+#
+# The override FILE is not installed by anything — the service writes it, unprivileged, in its own
+# state directory, and its absence is the normal state of a host nobody has changed.
+CONFIG_OVERRIDE_FILE="${KGSM_ASSISTANT_CONFIG_OVERRIDE:-/var/lib/kgsm-assistant/config-override.env}"
+CONFIG_DROPIN_TEMPLATE="${REPO_DIR}/deploy/config/50-${PROJECT}-config.conf"
+CONFIG_DROPIN_DST="${SYSTEMD_DIR}/${UNITS[0]}.d/50-${PROJECT}-config.conf"
+CONFIG_POLKIT_TEMPLATE="${REPO_DIR}/deploy/config/49-${PROJECT}-self-restart.rules.in"
+CONFIG_POLKIT_DST="/etc/polkit-1/rules.d/49-${PROJECT}-self-restart.rules"
+
+render_config_dropin() {
+    [[ -f "$CONFIG_DROPIN_TEMPLATE" ]] || { err "missing drop-in template: ${CONFIG_DROPIN_TEMPLATE}"; return 1; }
+    local rendered
+    rendered="$(< "$CONFIG_DROPIN_TEMPLATE")"
+    printf '%s\n' "${rendered//@OVERRIDE_FILE@/${CONFIG_OVERRIDE_FILE}}"
+}
+
+# The service account, which is what the grant names. render_unit rewrites the unit's User= to the
+# deploying user, so under deploy.sh these are one account and this grant restates what the deploy
+# grant already allows. It is installed anyway: the two say different things, they are read by
+# different templates, and a host where the service account is its own is exactly the host where
+# nobody would think to check.
+render_config_polkit() {
+    [[ -f "$CONFIG_POLKIT_TEMPLATE" ]] || { err "missing polkit template: ${CONFIG_POLKIT_TEMPLATE}"; return 1; }
+    local rendered
+    rendered="$(< "$CONFIG_POLKIT_TEMPLATE")"
+    rendered="${rendered//@SVC_USER@/${DEPLOY_USER}}"
+    rendered="${rendered//@UNIT@/${UNITS[0]}}"
+    printf '%s\n' "$rendered"
+}
 
 # ── Output helpers ────────────────────────────────────────────────────────────
 log()  { printf '\033[1;34m>> %s\033[0m\n' "$*"; }

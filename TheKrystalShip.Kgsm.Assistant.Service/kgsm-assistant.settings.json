@@ -117,6 +117,16 @@
     "Webhook": {
       "Secret": ""
     },
+    // Where this service reads and writes its OWN Control Panel surface. Both blank, and resolved
+    // rather than assumed: this component is a node's leaf on a machine standing alone and the
+    // cluster's anchor otherwise, so its descriptor is installed under anchors/ or under leaves/ and
+    // the deploy clears the other. Blank means "wherever the deploy put it", which is the only answer
+    // right for both; a path set here names one deliberately, which is what a harness needs to read a
+    // sandboxed copy rather than the live one.
+    "Surface": {
+      "DescriptorPath": "",
+      "OverridePath": ""
+    },
     "Push": {
       "Enabled": true,
       "Subject": "https://github.com/TheKrystalShip/KGSM",

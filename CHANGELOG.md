@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the service's cluster state belongs to one cluster (1.69.2)
+
+Takes `TheKrystalShip.KGSM.Cluster 1.0.0-dev.22`: started with a different cluster secret, the service
+discards the roster, the capability assignments and the queued messages it learned in the old cluster
+before anything reads them, so a machine moving to another cluster never gossips its old `assistant`
+assignment into the new one.
+
 ### Changed — this service's own surface is the shared HTTP routes (1.69.1)
 
 `/admin/config`, `/admin/system`, `/admin/logs`, `/admin/logs/stream` and `/admin/commands` are

@@ -47,6 +47,7 @@ using TheKrystalShip.Llm.Interfaces;
 using TheKrystalShip.Llm.Models;
 using TheKrystalShip.Llm.Backends;
 using TheKrystalShip.KGSM.ComponentSurface;
+using TheKrystalShip.KGSM.ComponentSurface.Http;
 
 // Writing the command manifest is a build step, not a service: the build runs the binary it just
 // produced so the shipped file is generated from this build's own catalog. Handled before anything
@@ -183,21 +184,14 @@ builder.Services.Configure<AuthOptions>(
 //
 // The paths are resolved rather than assumed, because which of the two this is decides where the
 // deploy put the descriptor. See SurfacePaths.
-builder.Services.AddSingleton(sp =>
+builder.Services.AddComponentSurface(sp =>
 {
     SurfaceOptions surface = sp.GetRequiredService<IOptions<AssistantServiceOptions>>().Value.Surface;
     return new ComponentSurfaceOptions(
         SurfacePaths.Descriptor(surface.DescriptorPath),
-        SurfacePaths.Override(surface.OverridePath));
+        SurfacePaths.Override(surface.OverridePath),
+        SurfacePaths.Commands());
 });
-builder.Services.AddSingleton<ComponentDescriptorStore>();
-builder.Services.AddSingleton<ComponentOverrideStore>();
-builder.Services.AddSingleton<ComponentFloorReader>();
-builder.Services.AddSingleton<ComponentUnitControl>();
-builder.Services.AddSingleton<ComponentUnitReader>();
-builder.Services.AddSingleton<ComponentConfigService>();
-builder.Services.AddSingleton<ComponentJournal>();
-builder.Services.AddSingleton<ComponentJournalFollower>();
 // The ecosystem's shared authorization block. Only the application is read from it here: this
 // surface signs people in through Discord, and what they may do afterwards comes from their KGSM
 // account. The guild and role ids in that same file are kgsm-bot's.
@@ -1572,10 +1566,14 @@ var review = app.MapGroup("/admin")
     .AddEndpointFilter<BearerAuthFilter>()
     .AddEndpointFilter<AdminOnlyFilter>();
 
-// What this service answers about ITSELF — its configuration, its unit and its journal. Same group and
-// same gate as the conversation review: these values name where the conversation store and the signing
-// key live, and the journal carries usernames, addresses and the shape of every failure it has had.
-SurfaceEndpoints.Map(review);
+// What this service answers about ITSELF — its configuration, its unit, its journal and the commands
+// it declares. Same group and same gate as the conversation review: these values name where the
+// conversation store and the signing key live, and the journal carries usernames, addresses and the
+// shape of every failure it has had.
+//
+// The routes are the library's, identical to the ones every other component serves, so one Control
+// Panel page renders this service's surface whether it is deployed as a leaf or as the anchor.
+review.MapComponentSurface();
 
 // Everyone who has talked to this assistant, derived from the conversation ids themselves (the store
 // holds no user registry). The list a reviewer picks from.

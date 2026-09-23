@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — this service's own surface is the shared HTTP routes (1.69.1)
+
+`/admin/config`, `/admin/system`, `/admin/logs`, `/admin/logs/stream` and `/admin/commands` are
+`TheKrystalShip.KGSM.ComponentSurface.Http`'s routes on the admin group, and the descriptor and command
+manifest are resolved through `ComponentSurfacePaths`. The answers are the ones every component gives,
+so one Control Panel page renders this service's surface whether it is deployed as a leaf or an anchor.
+
 ### Added — the commands this service declares, served with the rest of its own surface (1.69.0)
 
 `GET /admin/commands` answers this component's own command manifest. A node's API reads its leaves'

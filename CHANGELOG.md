@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — switching to Ollama installs its configuration from the repo (1.69.4)
+
+`deploy/llama-server/use-backend.sh ollama` installs `ollama-override.conf` (loopback bind, context
+window, one request at a time, resident model) as Ollama's drop-in and `ollama-preload.service` beside
+it, disabled, before starting Ollama. A host switched to Ollama carries what the repo says rather than
+what was last written by hand.
+
 ### Fixed — a fact the service changes across a restart reaches the cluster (1.69.3)
 
 Takes `TheKrystalShip.KGSM.Cluster 1.0.0-dev.23`: a restart that re-publishes as many facts as before, one

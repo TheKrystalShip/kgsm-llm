@@ -82,6 +82,12 @@ ollama)
     # Boot state follows the choice. Leaving both backends enabled makes a reboot a race that
     # Conflicts= resolves arbitrarily, and the assistant would come up pointed at the loser.
     systemctl disable "${LLAMA_UNITS[@]}" 2>/dev/null || true
+    # Ollama's configuration and its preload unit come from this directory, so a host switched to it
+    # carries exactly what the repo says rather than whatever was last written by hand.
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    install -D -m 0644 "$here/ollama-override.conf" /etc/systemd/system/ollama.service.d/override.conf
+    install -D -m 0644 "$here/ollama-preload.service" /etc/systemd/system/ollama-preload.service
+    systemctl daemon-reload
     # The llamacpp switch masks it, so it has to be released before it can be enabled or started.
     systemctl unmask ollama.service 2>/dev/null || true
     systemctl enable ollama.service 2>/dev/null || true

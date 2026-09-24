@@ -1,0 +1,14 @@
+# Loads the assistant's chat model into VRAM at boot and pins it, for a host that wants Ollama's first
+# answer as fast as its last. Installed disabled by use-backend.sh ollama; residency is the operator's call.
+[Unit]
+Description=Preload gemma4:12b into VRAM and pin it
+After=ollama.service
+Requires=ollama.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/curl -fsS --retry 30 --retry-connrefused --retry-delay 2 http://localhost:11434/api/generate -d '{"model":"gemma4:12b","keep_alive":-1}'
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the own-surface tests open no store of the machine running them (1.69.5)
+
+`OwnSurfaceTests` relocate the account replica and the conversation database — and with it every store
+beside it — into the test's own directory. At their defaults they opened the machine's live assistant
+files, and failed on any machine that runs no assistant, including the release workflow's runner.
+
 ### Changed — switching to Ollama installs its configuration from the repo (1.69.4)
 
 `deploy/llama-server/use-backend.sh ollama` installs `ollama-override.conf` (loopback bind, context

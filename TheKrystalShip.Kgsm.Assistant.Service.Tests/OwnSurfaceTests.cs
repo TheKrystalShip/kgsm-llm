@@ -57,6 +57,11 @@ public sealed class OwnSurfaceTests : IClassFixture<WebApplicationFactory<Progra
         {
             b.UseSetting("Assistant:Surface:DescriptorPath", DescriptorPath);
             b.UseSetting("Assistant:Surface:OverridePath", OverridePath);
+            // The stores, relocated like every path above. At their defaults they are the machine's own
+            // — this service's live conversations and the account replica every service reads — which a
+            // test must never open, and which a machine that runs no assistant does not have at all.
+            b.UseSetting("Auth:UsersDbPath", Path.Combine(_dir, "users.db"));
+            b.UseSetting("Conversation:DatabasePath", Path.Combine(_dir, "conversations.db"));
         }).Services;
     }
 
